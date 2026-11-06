@@ -1,0 +1,908 @@
+/*
+ * Desktop only, 1100 px and up (desktop design §5). Linked after style.css with media="screen and (min-width: 1100px)",
+ * so a phone never applies it and print keeps today's styles; every rule is also inside @media (min-width: 1100px), a
+ * second lock that desk.test.ts enforces. It keeps style.css's rules: colours only as tokens (hex only in :root blocks),
+ * font sizes only var(--t-*), the three radii, :hover only for a fine pointer, pressed transforms only with motion on.
+ */
+
+/* ---- Tiers (design §2): sidebar width, content cap, padding, the home's right column; the sidebar's paper ---- */
+@media (min-width: 1100px) {
+  :root { --side-w: 208px; --list-w: 280px; --cap: 1040px; --pad: 28px; --desk-right: 280px; --side-bg: #f4f2ec; }
+  @media (prefers-color-scheme: dark) { :root { --side-bg: #0c101b; } }
+  @media (min-width: 1280px) { :root { --side-w: 216px; --list-w: 300px; --cap: 1100px; --pad: 32px; --desk-right: 300px; } }
+  @media (min-width: 1440px) { :root { --side-w: 232px; --list-w: 320px; --cap: 1200px; --pad: 40px; --desk-right: 340px; } }
+  @media (min-width: 1920px) { :root { --side-w: 248px; --list-w: 360px; --cap: 1440px; --pad: 48px; --desk-right: 400px; } }
+}
+
+/* ---- The shell (design §3): the sidebar replaces the header, the tab bar and the in-content section pills ---- */
+@media (min-width: 1100px) {
+  body.app { padding-left: var(--side-w); }
+  body.app > header.top { display: none; }
+  /* The section pills move to the sidebar; a row that also holds the week arrows or All weeks keeps those. */
+  .subnav > a { display: none; }
+  .subnav:not(:has(.subnav-extra)) { display: none; }
+  /* The document scrolls, in one capped column right of the sidebar; panes of their own come later (D2). */
+  body.app main { max-width: calc(var(--cap) + 2 * var(--pad)); padding: 28px var(--pad) 48px; }
+  /* Sticky parts were placed under the 4.5rem phone header; without it they sit near the top. */
+  html { scroll-padding-top: 1.5rem; }
+  .pnav, .paside .sticky { top: 1.5rem; }
+  .col:last-child { top: 1.5rem; }
+  .settings-nav { top: 1.5rem; }
+
+  /* The sidebar keeps its hidden attribute: shown here, it is rendered and exposed; in print it stays hidden. */
+  .side, .side[hidden] {
+    display: flex; flex-direction: column; position: fixed; inset: 0 auto 0 0; z-index: 11; width: var(--side-w); box-sizing: border-box;
+    overflow-y: auto; padding: 12px 12px 12px; background: var(--side-bg); border-right: 1px solid var(--line); view-transition-name: side;
+  }
+  /* As in the mockup at 1440: the brand text 18 px from the top, the search at 53 and the Projects pill at 103. */
+  .side .brand { display: flex; padding: 3px 10px 12px; }
+  .side-find { display: flex; flex-direction: row; align-items: center; gap: 8px; height: 34px; margin: 0 0 16px; padding: 0 8px 0 10px; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: var(--r-inset); background: var(--surface); }
+  .side-find:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .side-find input { flex: 1; min-width: 0; min-height: 0; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--fg); font-size: var(--t-sub); box-shadow: none; outline: none; }
+  .side-find input:focus { box-shadow: none; }
+  .side-find input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+  .side-find-icon { flex: none; width: 15px; height: 15px; color: var(--muted); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+  .side-find kbd { flex: none; padding: 1px 6px; border: 1px solid var(--line-strong); border-radius: var(--r-inset); background: var(--bg); color: var(--muted); font-family: var(--text); font-size: var(--t-label); font-weight: 600; line-height: 1.4; }
+  .side-places, .side-subs { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+  .side-places { gap: 6px; margin-bottom: 22px; }
+  .side-subs { gap: 1px; margin-top: 1px; }
+  .side-place { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: var(--r-pill); color: var(--ink2); font-size: var(--t-sub); font-weight: 500; line-height: 1; }
+  .side-place[aria-current] { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
+  .side-sub { display: flex; align-items: center; height: 30px; margin-left: 12px; padding: 0 12px; border-radius: var(--r-pill); color: var(--muted); font-size: var(--t-sub); font-weight: 500; line-height: 1; }
+  .side-sub[aria-current="page"] { background: var(--raised); color: var(--fg); font-weight: 600; }
+  /* The one orange dot: something needs you. On the black pill it is ringed so it still reads. */
+  .side-need { flex: none; width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--accent); }
+  .side-place[aria-current] .side-need { box-shadow: 0 0 0 2px var(--primary-fg); }
+  /* Settings sits at the foot, under a hairline, and speaks only when the backup is late. */
+  .side-settings { position: relative; margin-top: auto; }
+  .side-settings::before { content: ""; position: absolute; left: 0; right: 0; top: -11px; height: 1px; background: var(--line); }
+  .side-warn { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; color: var(--attention); font-size: var(--t-meta); font-weight: 600; white-space: nowrap; }
+  .side-place[aria-current] .side-warn { color: var(--primary-fg); }
+  .side-place[aria-current] .side-warn .dot { box-shadow: 0 0 0 2px var(--primary-fg); }
+  ::view-transition-group(side), ::view-transition-old(side), ::view-transition-new(side) { animation: none; }
+}
+/* No cross-document cross-fade on the desktop (style.css's, for the phone): desk.js also loads pages by script, and a
+   transition the next page did not take up was aborted with an uncaught error on the page that left. */
+@media (min-width: 1100px) {
+  @view-transition { navigation: none; }
+}
+@media (min-width: 1100px) {
+  @media (hover: hover) and (pointer: fine) {
+    .side-place:not([aria-current]):hover { background: var(--raised); }
+    .side-sub:not([aria-current="page"]):hover { background: var(--raised); color: var(--ink2); }
+  }
+}
+
+
+/* ---- A page (design §2, §4.5): beside the sidebar, the article and its rail share under 820 px below L (about 580 at
+   1100, 744 at 1280), so up to 1439 px a page keeps today's 720–1099 layout: the Pages list, the article, its rail under
+   it, and "On this page" as a closed fold. From 1440 the rail sits beside the article and lists "On this page" itself. ---- */
+@media (min-width: 1100px) {
+  @media (max-width: 1439px) {
+    .pages-wrap.with-aside { grid-template-columns: 13rem minmax(0, 1fr); }
+    .paside .toc, .paside .toc-h { display: none; }
+    .paside { grid-column: 2; grid-row: 2; }
+    .paside .sticky { position: static; max-height: none; overflow-y: visible; }
+  }
+  @media (min-width: 1440px) { .toc-fold { display: none; } }
+}
+
+/* ---- The desktop Projects home (design §4.1): the main column and a right column for Also open ---- */
+@media (min-width: 1100px) {
+  .phome:not(.has-panel) { max-width: none; }
+  /* Rows: 1 title and idea, 2 error, 3 banner, 4 For you heading, 5 For you, 6 empty line, 7 On the go, 8 and 9 the
+     Everything else heading and strip at S and M (9 is the 1fr row Also open's span crosses, so Also open's height never
+     stretches the left rows), 10 and 11 the heading and strip from L, under both columns. */
+  .phome:not(.has-panel) > .plist { display: grid; grid-template-columns: minmax(0, 1fr) var(--desk-right); grid-template-rows: repeat(8, auto) 1fr auto auto; column-gap: 28px; row-gap: 0; align-items: start; }
+  /* A column would be empty (nothing pinned, every open project pinned, or an empty brain): one column, no hole. */
+  .phome:not(.has-panel) > .plist:not(:has(#ongo)), .phome:not(.has-panel) > .plist:not(:has(#alsoopen)) { grid-template-columns: minmax(0, 1fr); }
+  .phome:not(.has-panel) > .plist > h1 { grid-row: 1; grid-column: 1; justify-self: start; margin-bottom: 22px; }
+  .phome:not(.has-panel) > .plist > form.idea { grid-row: 1; grid-column: 1 / -1; justify-self: end; margin-bottom: 22px; }
+  .phome:not(.has-panel) > .plist > .error { grid-row: 2; grid-column: 1 / -1; margin-bottom: 22px; }
+  .phome:not(.has-panel) > .plist > .banner { grid-row: 3; grid-column: 1 / -1; margin-bottom: 22px; }
+  .phome:not(.has-panel) > .plist > .fy-h { grid-row: 4; grid-column: 1; }
+  .phome:not(.has-panel) > .plist > .foryou { grid-row: 5; grid-column: 1; }
+  .phome:not(.has-panel) > .plist > .empty { grid-row: 6; grid-column: 1; }
+  .phome:not(.has-panel) > .plist > section:has(> #ongo) { grid-row: 7; grid-column: 1; }
+  .phome:not(.has-panel) > .plist > section:has(> #alsoopen) { grid-row: 4 / span 6; grid-column: 2; }
+  .phome:not(.has-panel) > .plist:not(:has(#ongo)) > section:has(> #alsoopen) { grid-column: 1; grid-row: 7; }
+  .phome:not(.has-panel) > .plist > .pf-h { grid-row: 8; grid-column: 1; margin-top: 28px; }
+  .phome:not(.has-panel) > .plist > .pfolds { grid-row: 9; grid-column: 1; margin-top: 0; }
+  /* The first heading of each column shares row 4's top edge; a left block after another is 28px below it. */
+  .phome:not(.has-panel) > .plist > section { margin: 0; }
+  .phome:not(.has-panel) > .plist h2 { margin-bottom: 12px; }
+  .phome:not(.has-panel) > .plist > .foryou ~ .empty, .phome:not(.has-panel) > .plist > .foryou ~ section:has(> #ongo) { margin-top: 28px; }
+  .phome:not(.has-panel) > .plist:not(:has(#ongo)) > .foryou ~ section:has(> #alsoopen) { margin-top: 28px; }
+  /* The date after the title, and a For you heading (desktop only) so both columns start on one line. */
+  .phome:not(.has-panel) .phome-date[hidden] { display: inline; margin-left: 14px; font-size: var(--t-sub); font-weight: 400; color: var(--muted); letter-spacing: 0; }
+  .phome:not(.has-panel) .fy-h[hidden] { display: block; }
+  .phome:not(.has-panel) .pf-h[hidden] { display: block; }
+  /* The idea field sits right of the title at its own width (style.css's 100% would cover the title). */
+  .phome:not(.has-panel) .idea { width: auto; justify-self: end; }
+  .phome:not(.has-panel) .idea input { flex: none; width: 320px; }
+  /* One loud thing per screen: Add idea is a white pill until the field holds text, then the black one. */
+  .phome .idea button.primary { background: var(--surface); border-color: var(--line-strong); color: var(--fg); }
+  .phome .idea:has(input:not(:placeholder-shown)) button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
+  /* Also open, every row shown (design §4.1, §4.2): the "N more" fold app.js opens loses its summary, on the plain home
+     and in the list pane beside an open project. */
+  .prows details.more[data-desk-open][open] > summary { display: none; }
+  .prows .row.prow { min-height: 39px; padding: 0 16px; gap: 10px; grid-template-columns: 8px minmax(0, 9rem) minmax(0, 1fr) auto; }
+  .prows .prow-when { display: none; }
+  /* On the plain home a row is the ring, the bold name and its one-liner with an ellipsis (design §4.1, the mockup's
+     .also rows): no Next and no chip, which squeezed the text to nothing in the narrow right column. */
+  .phome:not(.has-panel) .prows .row.prow { grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr); }
+  .phome:not(.has-panel) .prows :is(.prow-next, .prow-chip) { display: none; }
+  .phome:not(.has-panel) .prows .prow-one[hidden] { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--t-sub); }
+  @media (min-width: 1920px) {
+    .phome:not(.has-panel) > .plist { column-gap: 40px; }
+    .phome:not(.has-panel) .idea input { width: 380px; }
+    .prows .row.prow { grid-template-columns: 8px minmax(0, 11rem) minmax(0, 1fr) auto auto; }
+    .prows .prow-when { display: block; }
+    .phome:not(.has-panel) .prows .row.prow { grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr) auto; }
+  }
+}
+@media (min-width: 1100px) {
+  @media (hover: hover) and (pointer: fine) {
+    .phome .idea button.primary:hover { border-color: var(--fg); }
+    .phome .idea:has(input:not(:placeholder-shown)) button.primary:hover { border-color: var(--primary); }
+  }
+}
+
+/* ---- On the go as rows (design §4.1, approved): one card, a row per project, CSS grid on the phone's .pcard markup ---- */
+@media (min-width: 1100px) {
+  .phome:not(.has-panel) .pcards { display: block; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); overflow: hidden; }
+  .phome:not(.has-panel) .pcards > li { position: relative; }
+  .phome:not(.has-panel) .pcards > li + li::before { content: ""; position: absolute; top: 0; left: 42px; right: 0; height: 1px; background: var(--line); pointer-events: none; }
+  .phome:not(.has-panel) .pcards .pcard {
+    display: grid; grid-template-columns: 10px minmax(0, 10.5rem) minmax(0, 1fr) auto 8px; align-items: center; row-gap: 0; column-gap: 14px;
+    min-height: 58px; height: auto; padding: 9px 18px; border: 0; border-radius: 0; background: transparent; box-sizing: border-box;
+  }
+  .phome:not(.has-panel) .pcards :is(.pcard-head, .pcard-foot) { display: contents; }
+  .phome:not(.has-panel) .pcards .ring { grid-column: 1; grid-row: 1 / span 2; }
+  .phome:not(.has-panel) .pcards .pcard-name { grid-column: 2; grid-row: 1; }
+  .phome:not(.has-panel) .pcards .pcard-one { grid-column: 2; grid-row: 2; margin-top: 0; font-size: var(--t-meta); }
+  .phome:not(.has-panel) .pcards .pcard-line { grid-column: 3; grid-row: 1 / span 2; }
+  .phome:not(.has-panel) .pcards .pcard-head .chip { grid-column: 4; grid-row: 1 / span 2; margin-top: 0; }
+  .phome:not(.has-panel) .pcards .meta-line { display: none; }
+  .phome:not(.has-panel) .pcards .meta-line > li:first-child { display: none; }
+  /* The chevron, drawn like .chev, in the last column. */
+  .phome:not(.has-panel) .pcards .pcard::after { content: ""; grid-column: -2; grid-row: 1 / span 2; justify-self: end; width: 7px; height: 7px; margin-right: 3px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); }
+  .phome:not(.has-panel) .pcards .pcard:active { background: var(--raised); }
+  @media (min-width: 1440px) {
+    .phome:not(.has-panel) .pcards .pcard { grid-template-columns: 10px minmax(0, 12.5rem) minmax(0, 1fr) auto 5.75rem 8px; }
+    .phome:not(.has-panel) .pcards .meta-line { display: flex; grid-column: 5; grid-row: 1 / span 2; justify-content: flex-end; margin: 0; clip-path: none; }
+    .phome:not(.has-panel) .pcards .meta-line > li::before { display: none; }
+  }
+  @media (min-width: 1920px) {
+    .phome:not(.has-panel) .pcards .pcard { grid-template-columns: 10px minmax(0, 15rem) minmax(0, 1fr) auto 6.5rem 8px; }
+  }
+}
+@media (min-width: 1100px) {
+  @media (prefers-reduced-motion: no-preference) {
+    .phome:not(.has-panel) .pcards .pcard:active { transform: none; }
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .phome:not(.has-panel) .pcards .pcard:hover { background: color-mix(in srgb, var(--raised) 50%, transparent); }
+  }
+}
+
+/* ---- Everything else (design §4.1): one strip of cells, Not in the brain yet always last; named shelves at 1920 ---- */
+@media (min-width: 1100px) {
+  .phome:not(.has-panel) .pfolds { display: flex; flex-wrap: wrap; }
+  .phome:not(.has-panel) .pfolds > li { flex: 1 1 30%; min-width: 0; box-shadow: -1px 0 0 var(--line), 0 -1px 0 var(--line); }
+  .phome:not(.has-panel) .pfolds > li + li::before { content: none; }
+  .phome:not(.has-panel) .pfolds > li > details.fold > summary, .phome:not(.has-panel) .pfolds > li > a.row {
+    min-height: 46px; padding: 0 14px; border-radius: 0; font-size: var(--t-sub); font-weight: 600; white-space: nowrap;
+  }
+  .phome:not(.has-panel) .pfolds > li > details.fold > summary .n { margin-right: 0.5rem; }
+  /* As in the mockup: a closed fold cell is its name and count; All discussions and Not in the brain yet keep their chevron. */
+  .phome:not(.has-panel) .pfolds > li > details.fold:not(#notyet):not([open]) > summary .chev { display: none; }
+  .phome:not(.has-panel) .pfolds > li > a.row b { font-weight: inherit; }
+  /* "All discussions 9 ›", as in the mockup's strip (the phone's row has no count). */
+  .phome:not(.has-panel) .pfolds > li > a.row .n[hidden] { display: inline; }
+  /* Last, so the regular cells never move when it comes and goes; at S and M on a line of its own. */
+  .phome:not(.has-panel) .pfolds > li:has(> #notyet) { order: 1; flex-basis: 100%; }
+  /* A fold opened by hand (or by /#notyet) shows its rows on a full line under the strip. */
+  .phome:not(.has-panel) .pfolds > li:has(> details[open]) { flex-basis: 100%; order: 2; }
+  .phome:not(.has-panel) .pfolds > li:has(> #notyet[open]) { flex-basis: 100%; order: 2; }
+  .pfolds .row.prow { min-height: 39px; padding: 0 16px; gap: 10px; grid-template-columns: 8px minmax(0, 9rem) minmax(0, 1fr) auto; }
+  .pfolds .prow-when { display: none; }
+  @media (min-width: 1440px) {
+    .phome:not(.has-panel) > .plist > .pf-h { grid-row: 10; grid-column: 1 / -1; }
+    .phome:not(.has-panel) > .plist > .pfolds { grid-row: 11; grid-column: 1 / -1; }
+    .phome:not(.has-panel) .pfolds > li { flex: 1 1 auto; }
+    .phome:not(.has-panel) .pfolds > li:has(> #notyet) { flex-basis: auto; }
+    .phome:not(.has-panel) .pfolds > li:has(> details[open]), .phome:not(.has-panel) .pfolds > li:has(> #notyet[open]) { flex-basis: 100%; }
+  }
+  @media (min-width: 1920px) {
+    /* Shelves: each cell its own card, the summary its title, the rows only the ring and the name. */
+    .phome:not(.has-panel) .pfolds { gap: 12px; background: none; border: 0; border-radius: 0; overflow: visible; }
+    .phome:not(.has-panel) .pfolds > li { flex: 1 1 0; padding: 13px 16px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: none; }
+    .phome:not(.has-panel) .pfolds > li:has(> #notyet) { flex: 1.3 1 0; }
+    .phome:not(.has-panel) .pfolds > li:has(> details[open]) { flex: 1 1 0; order: 0; }
+    .phome:not(.has-panel) .pfolds > li:has(> #notyet) { order: 1; }
+    .phome:not(.has-panel) .pfolds > li:has(> details[open]:not([data-desk-open])), .phome:not(.has-panel) .pfolds > li:has(> #notyet[open]) { flex-basis: 100%; order: 2; }
+    .phome:not(.has-panel) .pfolds > li > details.fold > summary, .phome:not(.has-panel) .pfolds > li > a.row {
+      min-height: 0; padding: 0; background: none; font-family: var(--display); font-size: var(--t-headline); font-weight: 650;
+    }
+    .phome:not(.has-panel) .pfolds > li > details.fold > summary .chev { display: none; }
+    .phome:not(.has-panel) .pfolds > li > details[open] > .fold-list { margin-top: 8px; }
+    .phome:not(.has-panel) .pfolds .fold-list > li::before { content: none; }
+    .phome:not(.has-panel) .pfolds .row.prow { grid-template-columns: 8px minmax(0, 1fr); min-height: 27px; padding: 0; gap: 8px; color: var(--ink2); font-size: var(--t-sub); background: none; }
+    .phome:not(.has-panel) .pfolds .prow-name { font-weight: 400; }
+    .phome:not(.has-panel) .pfolds :is(.prow-next, .prow-chip, .prow-when, .row-note) { display: none; }
+    /* Not in the brain yet opened by hand keeps its full row and its padded rows. */
+    .phome:not(.has-panel) .pfolds > li:has(> details[open]:not([data-desk-open])) .row.prow { grid-template-columns: 8px minmax(0, 9rem) minmax(0, 1fr) auto; padding: 0 16px; }
+    /* Each shelf: its title and count, the first three names, then "N more ›" (or "Open ›"), so the row stays short. */
+    .phome:not(.has-panel) .pfolds > li > details[data-desk-open] > .fold-list > li:nth-child(n+4) { display: none; }
+    .phome:not(.has-panel) .pfolds > li > details[data-desk-open][open] > .shelf-more[hidden], .phome:not(.has-panel) .pfolds > li > .shelf-more[hidden] {
+      display: flex; align-items: center; gap: 8px; width: fit-content; margin-top: 6px; color: var(--muted); font-size: var(--t-meta); font-weight: 600;
+    }
+    /* All discussions: the title is its link (no chevron), then three titles, each opening its discussion. */
+    .phome:not(.has-panel) .pfolds > li > a.row .chev { display: none; }
+    .phome:not(.has-panel) .pfolds > li > .shelf-names[hidden] { display: block; margin: 8px 0 0; padding: 0; list-style: none; }
+    .phome:not(.has-panel) .pfolds > li > .shelf-names a { display: block; height: 27px; line-height: 27px; color: var(--ink2); font-size: var(--t-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .phome:not(.has-panel) .pfolds > li > .shelf-names a::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 8px; vertical-align: 0.1em; border-radius: 50%; background: var(--line-strong); }
+    /* Not in the brain yet, closed: under its title the first folders and "Ignored N ›"; a click anywhere opens it. */
+    .phome:not(.has-panel) .pfolds #notyet:not([open]) > summary { flex-wrap: wrap; }
+    .phome:not(.has-panel) .pfolds #notyet:not([open]) .nib-peek[hidden] { display: flex; flex-direction: column; flex-basis: 100%; min-width: 0; margin-top: 8px; font-family: var(--text); font-size: var(--t-sub); font-weight: 400; color: var(--ink2); }
+    .phome:not(.has-panel) .pfolds .nib-peek > span { display: block; height: 27px; line-height: 27px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .phome:not(.has-panel) .pfolds .nib-peek > span:not(.nib-peek-more)::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 8px; vertical-align: 0.1em; border-radius: 50%; background: var(--line-strong); }
+    .phome:not(.has-panel) .pfolds .nib-peek > .nib-peek-more { display: flex; align-items: center; gap: 8px; height: auto; line-height: normal; margin-top: 6px; color: var(--muted); font-size: var(--t-meta); font-weight: 600; }
+    .phome:not(.has-panel) .pfolds > li > details.fold > summary .nib-peek .chev { display: inline-block; margin-left: 0; }
+  }
+}
+
+/* ---- desk.js chrome (D2): the keys sheet (?) and the On the go hint ---- */
+@media (min-width: 1100px) {
+  .desk-keys { width: 600px; max-width: calc(100vw - 80px); padding: 22px 26px; box-sizing: border-box; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow-pop); }
+  .desk-keys::backdrop { background: var(--scrim); }
+  .desk-keys:focus-visible { outline: none; }
+  .desk-keys h2 { margin: 0 0 4px; font-size: var(--t-headline); font-weight: 650; line-height: 1.3; }
+  .desk-keys p { margin: 0 0 14px; color: var(--muted); font-size: var(--t-meta); }
+  .desk-keys dl { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 9px 12px; margin: 0; font-size: var(--t-sub); }
+  .desk-keys dt { text-align: right; white-space: nowrap; }
+  .desk-keys dd { margin: 0; color: var(--ink2); }
+  .desk-keys .desk-muted { color: var(--muted); }
+  :is(.desk-keys, .desk-hint, .desk-keyline, .desk-toast, .desk-next) kbd {
+    display: inline-block; padding: 3px 5px; border: 1px solid var(--line-strong); border-radius: var(--r-inset); background: var(--bg);
+    color: var(--muted); font-family: var(--text); font-size: var(--t-label); font-weight: 600; line-height: 1; white-space: nowrap;
+  }
+  .phome:not(.has-panel) #ongo { display: flex; align-items: baseline; gap: 6px; }
+  .desk-hint { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; color: var(--muted); font-size: var(--t-meta); font-weight: 500; letter-spacing: 0; text-transform: none; }
+}
+
+/* ---- Settings › This Mac (design §4.9): two switches per device, from desk.js ---- */
+@media (min-width: 1100px) {
+  .desk-mac { margin: 4px 0 6px; padding: 0; list-style: none; }
+  .desk-mac > li { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 3px 16px; align-items: center; padding: 14px 0; border-top: 1px solid var(--line); }
+  .desk-mac > li:first-child { border-top: 0; }
+  .desk-mac-name { grid-column: 1; font-size: var(--t-body); font-weight: 600; line-height: 1.3; }
+  .desk-mac-note { grid-column: 1; color: var(--muted); font-size: var(--t-meta); }
+  .desk-switch { grid-column: 2; grid-row: 1 / span 2; position: relative; width: 42px; height: 26px; min-height: 0; padding: 0; border: 0; border-radius: var(--r-pill); cursor: pointer; }
+  .desk-switch::after { content: ""; position: absolute; top: 3px; width: 20px; height: 20px; border-radius: 50%; }
+  .desk-switch[aria-checked="true"] { background: var(--primary); }
+  .desk-switch[aria-checked="true"]::after { right: 3px; background: var(--primary-fg); }
+  .desk-switch[aria-checked="false"] { background: var(--line-strong); }
+  .desk-switch[aria-checked="false"]::after { left: 3px; background: var(--muted); }
+  .desk-switch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+}
+
+/* ---- Projects: the list pane and the sheet (design §2, §3, §4.2). The server's /?project=x already renders the list
+   (.plist) and the panel (.ppanel) side by side; here they become a list pane and a white sheet, each scrolling on its
+   own, so the desktop works with JavaScript off. desk.js (html.desk-on) adds the sheet's bar and swaps its content. ---- */
+@media (min-width: 1100px) {
+  body.app:has(main > .phome.has-panel) { overflow: hidden; }
+  body.app:has(main > .phome.has-panel) main { height: 100dvh; max-width: none; margin: 0; padding: 0; box-sizing: border-box; }
+  .phome.has-panel { display: grid; grid-template-columns: var(--list-w) minmax(0, 1fr); gap: 0; align-items: stretch; height: 100%; max-width: none; margin: 0; }
+  .phome.has-panel.desk-nolist { grid-template-columns: minmax(0, 1fr); }
+  .phome.has-panel.desk-nolist > .plist { display: none; }
+  .phome.has-panel.desk-nolist > :is(.ppanel, .desk-sheet) { margin-left: 10px; }
+
+  /* The list pane: paper, its own scroll, rows instead of cards. */
+  .phome.has-panel > .plist { display: flex; flex-direction: column; gap: 0; position: relative; min-height: 0; height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: 16px 10px 28px 12px; box-sizing: border-box; }
+  .phome.has-panel > .plist > h1 { margin: 0; padding: 6px 8px 8px; font-size: var(--t-section); font-weight: 700; line-height: 1.25; letter-spacing: -0.015em; }
+  .phome.has-panel > .plist form.idea { display: none; }
+  .phome.has-panel > .plist > :is(.error, .banner) { margin: 8px 0 0; }
+  .phome.has-panel > .plist h2 { display: flex; align-items: center; gap: 6px; margin: 0; padding: 16px 10px 6px; font-family: var(--text); font-size: var(--t-label); font-weight: 600; line-height: 1.3; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .phome.has-panel > .plist h2 .n { color: var(--muted); font-weight: 600; }
+  .phome.has-panel .fy-h[hidden] { display: block; }
+  .phome.has-panel > .plist > section { margin: 0; }
+  .phome.has-panel > .plist :is(ul.group, .pcards) { background: none; border: 0; border-radius: 0; overflow: visible; box-shadow: none; }
+  .phome.has-panel > .plist ul.group > li + li::before { left: 12px; right: 12px; }
+  .phome.has-panel > .plist .fold-list > li::before { left: 12px; right: 12px; }
+  .phome.has-panel > .plist :is(ul.group > li, .fold-list > li):has(> :is(a, .row).is-selected)::before,
+  .phome.has-panel > .plist :is(ul.group > li, .fold-list > li):has(> :is(a, .row).is-selected) + li::before { display: none; }
+
+  /* Rows (the mockup's .row): 9px 12px, inset corners, a transparent border that the selection fills in. */
+  .phome.has-panel > .plist :is(.pcard, .row) { min-height: 0; padding: 9px 12px; gap: 2px 10px; border-radius: var(--r-inset); border: 1px solid transparent; background: transparent; box-shadow: none; font-size: var(--t-sub); }
+  .phome.has-panel > .plist :is(.pcard, .row).is-selected { background: var(--surface); border-color: var(--line); box-shadow: none; }
+  .phome.has-panel > .plist :is(a, summary, button):focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .phome.has-panel > .plist .row .txt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+  .phome.has-panel > .plist .row .txt b { font-weight: 600; }
+
+  /* On the go: two lines, the name with its one chip, then Next clamped to two lines. */
+  .phome.has-panel > .plist .pcards { display: block; padding: 0; }
+  .phome.has-panel > .plist .pcards > li { position: relative; }
+  .phome.has-panel > .plist .pcards > li + li::before { content: ""; position: absolute; top: -1px; left: 12px; right: 12px; height: 1px; background: var(--line); pointer-events: none; }
+  .phome.has-panel > .plist .pcards > li:has(> .is-selected)::before, .phome.has-panel > .plist .pcards > li:has(> .is-selected) + li::before { display: none; }
+  .phome.has-panel > .plist .pcard { display: flex; flex-direction: column; height: auto; }
+  .phome.has-panel > .plist .pcard-head { align-items: center; }
+  .phome.has-panel > .plist .pcard-name { font-family: var(--text); font-size: var(--t-sub); font-weight: 600; line-height: 1.35; letter-spacing: 0; }
+  .phome.has-panel > .plist .pcard-line { color: var(--muted); font-size: var(--t-meta); line-height: 1.4; }
+  .phome.has-panel > .plist :is(.pcard-one, .pcard-foot) { display: none; }
+
+  /* Also open and the fold rows: one line, the ring, the name and Next with an ellipsis. */
+  .phome.has-panel > .plist .row.prow { grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr); min-height: 0; gap: 8px; }
+  .phome.has-panel > .plist .prow-name { font-weight: 600; }
+  .phome.has-panel > .plist .prow-next { font-size: var(--t-sub); }
+  .phome.has-panel > .plist .row.prow :is(.prow-chip, .prow-when, .row-note) { display: none; }
+
+  /* The folds: closed shelf rows under a hairline (36 px), opening in place; All discussions with its count. */
+  .phome.has-panel > .plist .pfolds { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .phome.has-panel > .plist .pfolds > li + li::before { display: none; }
+  .phome.has-panel > .plist .pfolds :is(details.fold > summary, a.row) { min-height: 36px; padding: 0 12px; color: var(--ink2); font-size: var(--t-sub); font-weight: 500; }
+  .phome.has-panel > .plist .pfolds a.row b { font-weight: inherit; }
+  .phome.has-panel .pfolds a.row .n[hidden] { display: inline; }
+  .phome.has-panel > .plist .pfolds .fold-list .row.prow { padding-left: 24px; }
+
+  /* Not in the brain yet opened in place (no JavaScript, or beside off): the name on its own line, the actions under it. */
+  .phome.has-panel > .plist .notinbrain .rows.nib > li { grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 8px; padding: 8px 12px; }
+  .phome.has-panel > .plist .notinbrain .rows.nib > li > .nib-name { grid-column: 1 / -1; }
+  .phome.has-panel > .plist .notinbrain > .nib-intro { margin: 0 12px 8px; }
+  .phome.has-panel > .plist .notinbrain .nib-ignored { margin: 12px 12px 6px; }
+
+  /* For you rows: the dot, the sentence on up to two lines. */
+  .phome.has-panel > .plist .foryou .row { grid-template-columns: 8px minmax(0, 1fr) auto; }
+  .phome.has-panel > .plist .foryou .row.nolead { grid-template-columns: minmax(0, 1fr) auto; }
+  .phome.has-panel > .plist .fy-week button.row { padding-right: 84px; }
+  .phome.has-panel > .plist .fy-week .fy-not { right: 4px; }
+
+  /* The sheet without JavaScript: the server's panel as one white card, 10 px off the edges, its own scroll. */
+  .phome.has-panel > .ppanel { align-self: stretch; min-height: 0; margin: 10px 10px 10px 0; padding: 20px 36px 48px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; container-type: inline-size; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); }
+  .phome.has-panel > .ppanel .ppanel-back { display: inline-block; }
+  html.desk-on .phome.has-panel .ppanel-back { display: none; }
+}
+@media (min-width: 1100px) {
+  @media (hover: hover) and (pointer: fine) {
+    .phome.has-panel > .plist :is(.pcard, .row):hover { background: color-mix(in srgb, var(--raised) 60%, transparent); }
+    .phome.has-panel > .plist :is(.pcard, .row).is-selected:hover { background: var(--surface); }
+  }
+}
+
+/* ---- The sheet desk.js builds (design §3): the bar with the crumb and quiet actions, then the canonical page's own
+   content in a main column and a side column that follow the sheet's width (container queries), not the window's ---- */
+@media (min-width: 1100px) {
+  .desk-sheet { position: relative; align-self: stretch; min-width: 0; min-height: 0; margin: 10px 10px 10px 0; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; container-type: inline-size; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); overflow-wrap: anywhere; }
+  .desk-sheet:focus { outline: none; }
+  .desk-bar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 14px 0 24px; box-sizing: border-box; background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: saturate(1.4) blur(10px); }
+  .desk-crumb { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; color: var(--muted); font-size: var(--t-sub); font-weight: 500; line-height: 1; white-space: nowrap; }
+  .desk-crumb b { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg); font-weight: 600; }
+  .desk-acts { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+  .desk-acts > :is(.desk-hide, .desk-x) { display: inline-flex; white-space: nowrap; align-items: center; justify-content: center; height: 32px; min-height: 0; padding: 0 10px; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink2); font-size: var(--t-sub); font-weight: 500; box-shadow: none; }
+  .desk-acts > .desk-x { width: 32px; padding: 0; border-radius: 50%; color: var(--muted); }
+  .desk-x-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+  .desk-acts > :is(.desk-hide, .desk-x):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .desk-body { max-width: 1180px; padding: 6px 36px 48px; box-sizing: border-box; }
+  .desk-head { margin-bottom: 22px; }
+  .desk-head:empty { display: none; }
+  .desk-cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; align-items: start; }
+  .desk-cols:has(> .desk-aside:empty) { grid-template-columns: minmax(0, 1fr); }
+  .desk-main, .desk-aside { min-width: 0; }
+  /* The live line is visually hidden; fixed, so it never adds a pixel under the panes. */
+  #desk-live { position: fixed; top: 0; left: 0; }
+  .desk-fail { margin: 12px 0; color: var(--muted); }
+  .desk-fail a { color: var(--fg); font-weight: 600; }
+
+  /* The project's panel, in the sheet: no card of its own; its heading at the title size. */
+  .desk-sheet .ppanel { margin: 0; padding: 0; border: 0; border-radius: 0; background: none; overflow: visible; container-type: normal; }
+  .desk-sheet #panel-title { margin: 6px 0; font-size: var(--t-title); font-weight: 700; line-height: 1.15; letter-spacing: -0.025em; }
+  .desk-head .meta-line { margin-top: 6px; }
+  /* The side column: eyebrow headings, and the parts that left the panel keep its look. */
+  :is(.desk-aside, .desk-main) :is(h3, .desk-side h3) { margin: 26px 0 10px; font-family: var(--text); font-size: var(--t-label); font-weight: 600; line-height: 1.3; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  :is(.desk-aside, .desk-main .ppanel) > h3:first-child, :is(.desk-aside, .desk-main) > section > h3 { margin-top: 0; }
+  .desk-aside > section + section, .desk-aside > * + section { margin-top: 26px; }
+  .desk-aside > a.row { padding-inline: 0; min-height: 40px; font-size: var(--t-sub); }
+  .desk-aside .pfold { margin-top: 0.75rem; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .desk-aside .pfold > summary { color: var(--fg); font-size: var(--t-body); }
+  .desk-aside .plain-list > li { font-size: var(--t-sub); }
+  /* The project keyline at the foot of the main column. */
+  .desk-keyline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 28px 0 0; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--t-meta); font-weight: 500; line-height: 1; }
+  .desk-keyline > span { display: inline-flex; align-items: center; gap: 5px; }
+  .desk-keyline > .desk-sep { white-space: pre; }
+  /* Overview, the list pane's one quiet action, at the right of its title. */
+  .desk-overview { position: absolute; top: 25px; right: 18px; color: var(--ink2); font-size: var(--t-sub); font-weight: 600; line-height: 1.25; }
+  .desk-overview:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-inset); }
+
+  @container (min-width: 760px) {
+    .desk-cols { grid-template-columns: minmax(0, 1fr) 268px; column-gap: 36px; }
+    .desk-sheet .jump { display: none; }
+  }
+  @container (min-width: 1000px) {
+    .desk-body { padding: 6px 56px 56px; }
+  }
+  @container (min-width: 1060px) {
+    .desk-cols { grid-template-columns: minmax(0, 1fr) 340px; column-gap: 56px; }
+  }
+}
+@media (min-width: 1100px) {
+  @media (hover: hover) and (pointer: fine) {
+    .desk-acts > :is(.desk-hide, .desk-x):hover { background: var(--raised); color: var(--fg); }
+    .desk-overview:hover { color: var(--fg); }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .plist.desk-in { animation: desk-slide 160ms var(--ease-out); }
+    .desk-body.desk-fade { animation: desk-fade 120ms var(--ease-out); }
+    @keyframes desk-slide { from { transform: translateX(-12px); opacity: 0; } to { transform: none; opacity: 1; } }
+    @keyframes desk-fade { from { opacity: 0; } to { opacity: 1; } }
+  }
+}
+
+/* ---- The tick toast (design §4.2): the black pill colour, centred under the content, 5 s, with Undo ---- */
+@media (min-width: 1100px) {
+  .desk-toast { position: fixed; left: calc(var(--side-w) + (100vw - var(--side-w)) / 2); bottom: 22px; z-index: 40; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; max-width: calc(100vw - var(--side-w) - 40px); padding: 10px 12px 10px 16px; box-sizing: border-box; border-radius: var(--r-card); background: var(--primary); color: var(--primary-fg); font-size: var(--t-sub); font-weight: 500; line-height: 1.2; box-shadow: var(--shadow-pop); }
+  .desk-toast > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .desk-toast button { min-height: 0; height: auto; padding: 4px 6px; border: 0; border-radius: var(--r-inset); background: transparent; color: var(--primary-fg); font-size: var(--t-sub); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; box-shadow: none; }
+  .desk-toast button:focus-visible { outline: 2px solid var(--primary-fg); outline-offset: 2px; }
+  .desk-toast kbd { border-color: color-mix(in srgb, var(--primary-fg) 40%, transparent); background: transparent; color: var(--primary-fg); }
+}
+
+/* ---- Manage as a menu in the sheet bar (design §4.2): a quiet text pill, its body a dropdown card ---- */
+@media (min-width: 1100px) {
+  .desk-acts > details.manage { position: static; margin: 0; border: 0; }
+  .desk-acts > details.manage > summary { display: inline-flex; align-items: center; height: 32px; min-height: 0; padding: 0 10px; border: 0; border-radius: var(--r-pill); color: var(--ink2); font-size: var(--t-sub); font-weight: 500; cursor: pointer; }
+  .desk-acts > details.manage > summary .chev { display: none; }
+  .desk-acts > details.manage[open] > summary { background: var(--raised); color: var(--fg); }
+  .desk-acts > details.manage > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .desk-acts > details.manage > .desk-menu { position: absolute; right: 14px; top: 48px; z-index: 3; width: 22rem; max-height: min(70vh, 36rem); overflow-y: auto; padding: 12px 16px; box-sizing: border-box; background: var(--elevated); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow-pop); color: var(--fg); font-size: var(--t-sub); }
+  .desk-menu h3 { margin: 16px 0 8px; font-family: var(--text); font-size: var(--t-label); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .desk-menu .panel-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .desk-menu > a.row { min-height: 40px; padding-inline: 0; }
+  .desk-menu .continue { margin-top: 12px; }
+}
+@media (min-width: 1100px) {
+  @media (hover: hover) and (pointer: fine) {
+    .desk-acts > details.manage > summary:hover { background: var(--raised); color: var(--fg); }
+  }
+}
+
+/* ---- Not in the brain yet in the sheet (design §4.1): the intro, then 48 px rows with the actions on the right ---- */
+@media (min-width: 1100px) {
+  .desk-notyet { max-width: 52rem; }
+  .desk-notyet > h1 { margin: 6px 0 6px; font-size: var(--t-title); font-weight: 700; line-height: 1.15; letter-spacing: -0.025em; }
+  .desk-notyet > h1:focus { outline: none; }
+  .desk-notyet .nib-intro { margin: 0 0 14px; color: var(--muted); font-size: var(--t-sub); }
+  .desk-notyet .nib { margin: 0; padding: 0; list-style: none; border-bottom: 1px solid var(--line); }
+  .desk-notyet .nib > li { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0; border-top: 1px solid var(--line); }
+  .desk-notyet .nib > li:first-child { border-top: 0; }
+  .desk-notyet .nib-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .desk-notyet .nib .quiet { color: var(--muted); font-size: var(--t-meta); white-space: nowrap; }
+  .desk-notyet .nib form { display: inline-flex; margin: 0; }
+  .desk-notyet .nib form:first-of-type { margin-left: auto; }
+  .desk-notyet .nib button { height: 30px; min-height: 0; padding: 0 14px; font-size: var(--t-sub); }
+  .desk-notyet .nib button.sm { background: var(--surface); border: 1px solid var(--line-strong); color: var(--fg); }
+  .desk-notyet .nib button.ghost { background: transparent; border-color: transparent; color: var(--ink2); }
+  .desk-notyet .nib-ignored { margin: 26px 0 6px; font-family: var(--text); font-size: var(--t-label); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .desk-notyet .nib-ignored .n { color: var(--muted); }
+  .desk-notyet > .error { margin: 8px 0 14px; }
+
+  /* The list pane's folds: counts on the right, and Not in the brain yet last, as in the mockup. */
+  .phome.has-panel > .plist .pfolds { display: flex; flex-direction: column; }
+  .phome.has-panel > .plist .pfolds > li:has(> #notyet) { order: 1; }
+  .phome.has-panel > .plist .pfolds :is(details.fold > summary, a.row) .n { margin-left: auto; margin-right: 8px; }
+  .phome.has-panel > .plist .pfolds details.fold > summary .chev { margin-left: 0; }
+  .phome.has-panel > .plist .pfolds a.row .txt { display: flex; align-items: center; }
+}
+
+/* ---- For you in the sheet: the approval (design §4.3, the mockup's approvalDetail): the card's own content, wider ---- */
+@media (min-width: 1100px) {
+  /* The reading width, also when no profile column sits beside the suggestion (as the discussion's decide box). */
+  .desk-sheet .approvals { max-width: 52rem; margin: 0; padding: 0; }
+  .desk-sheet .approvals + .desk-next { max-width: 52rem; }
+  .desk-sheet .approvals:has(> ul.cards > li:only-child) > h1 { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+  .desk-sheet .approvals > h1 { margin: 6px 0 14px; font-size: var(--t-title); font-weight: 700; letter-spacing: -0.025em; }
+  .desk-sheet .approvals > ul.cards { margin: 0; padding: 0; list-style: none; }
+  .desk-sheet .approvals > ul.cards > li + li { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--line); }
+  .desk-sheet .approval-card { display: flex; flex-direction: column; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+  .desk-sheet .approval-card > .meta-line { order: -1; margin-top: 0; margin-bottom: 0; }
+  .desk-sheet .approval-head { margin: 6px 0; font-family: var(--display); font-size: var(--t-title); font-weight: 700; line-height: 1.15; letter-spacing: -0.025em; }
+  .desk-sheet .approval-head .writer { font: inherit; color: inherit; }
+  .desk-sheet .approval-head .writer::before { display: none; }
+  .desk-sheet .approval-head:focus { outline: none; }
+  .desk-sheet .approval-card .held { margin: 4px 0 10px; color: var(--error); }
+  .desk-sheet .approval-card .label { margin: 16px 0 8px; font-family: var(--text); font-size: var(--t-label); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .desk-sheet .approval-card blockquote { margin: 0 0 10px; padding: 14px 16px; border: 0; border-radius: var(--r-inset); background: var(--raised); font-size: var(--t-prose); }
+  .desk-sheet .approval-card blockquote.proposed { margin-top: 12px; }
+  .desk-sheet .approval-card form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
+  .desk-sheet .approval-card .actions { display: flex; flex: 1 1 100%; align-items: center; gap: 8px; }
+  .desk-sheet .approval-card form:has(.edit-first[open]) .edit-text { display: flex; flex: 1 1 100%; margin: 0 0 4px; }
+  .desk-sheet .approval-card .actions > :is(button, .edit-first > summary) { flex: none; width: auto; min-width: 0; height: 34px; min-height: 0; padding: 0 16px; font-size: var(--t-sub); }
+  .desk-sheet .approval-card .actions > .edit-first { margin: 0; }
+  .desk-sheet .approval-card .edit-first > summary { display: inline-flex; align-items: center; height: 34px; padding: 0 14px; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font-size: var(--t-sub); font-weight: 600; }
+  .desk-sheet .approval-card .push-right { margin-left: auto; color: var(--error); }
+  /* The sheet moves on to what comes next (Next for you), so "Both buttons bring you back here" is not true there. */
+  .desk-sheet .approval-card .approval-foot { display: none; }
+  /* desk.js shapes the card as the mockup: the writer leads the meta line, Suggested, then Replaces struck through. */
+  .desk-sheet .approval-card > .meta-line .writer { color: var(--fg); font-weight: 600; }
+  .desk-sheet .approval-card .label + blockquote { margin-top: 0; }
+  .desk-sheet .approval-card blockquote.replaced { color: var(--muted); text-decoration: line-through; }
+  .desk-sheet .approval-card blockquote.replaced a { color: inherit; }
+  .desk-sheet .approval-card:has(.edit-first[open]) .desk-suggested { display: none; }
+  .desk-sheet .approval-card .actions kbd { margin-left: 6px; font-family: var(--text); font-size: var(--t-meta); font-weight: 500; opacity: 0.6; }
+
+  /* Next for you, at the foot of the main column (desk-only, from the side fragment). */
+  .desk-sheet .desk-next { display: flex; align-items: center; gap: 12px; margin: 28px 0 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .desk-sheet .desk-next > h3 { flex: none; margin: 0; }
+  .desk-sheet .desk-next > a.row { display: flex; flex: 1; align-items: center; gap: 10px; min-height: 36px; padding: 0 8px; border-radius: var(--r-inset); color: var(--fg); font-size: var(--t-sub); }
+  .desk-sheet .desk-next > a.row .txt { flex: 1; min-width: 0; }
+  .desk-sheet .desk-next > a.row kbd { margin-left: auto; }
+  .desk-sheet .desk-next > a.row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  /* Your profile today, in the side column: the fact, then who and when; the one that would be replaced says so. */
+  .desk-profile .plain-list > li { display: flex; flex-direction: column; gap: 2px; }
+  .desk-profile .more-link { display: inline-block; margin-top: 8px; color: var(--ink2); font-size: var(--t-meta); font-weight: 600; }
+}
+@media (min-width: 1100px) {
+  @media (hover: hover) and (pointer: fine) {
+    .desk-sheet .desk-next > a.row:hover { background: color-mix(in srgb, var(--raised) 60%, transparent); }
+  }
+}
+
+/* ---- For you in the sheet: the discussion (design §4.4): the latest replies in columns, earlier rounds open ---- */
+@media (min-width: 1100px) {
+  .desk-sheet .discussion { max-width: none; margin: 0; padding: 0; gap: 14px; }
+  .desk-sheet .discussion > h1 { margin: 0; font-size: var(--t-title); font-weight: 700; line-height: 1.15; letter-spacing: -0.025em; }
+  .desk-sheet .discussion > h1:focus { outline: none; }
+  .desk-sheet .replies { gap: 14px; }
+  .desk-sheet .reply { padding: 14px 16px; border-radius: var(--r-inset); font-size: var(--t-sub); }
+  .desk-sheet .decide { max-width: 52rem; margin-top: 8px; padding: 0; padding-top: 18px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; }
+  .desk-sheet .discussion > section.panel:not(.decide):not(.decided) { border: 0; background: none; padding: 0; }
+  /* The sheet sits inside .phome, whose forms are one row (style.css): a discussion's forms keep their own column. */
+  .desk-sheet .discussion form { display: flex; flex-direction: column; gap: 1rem; }
+  .desk-sheet .discussion .pill form { display: inline; }
+  .desk-sheet .discussion .decide .actions button { flex: none; width: auto; }
+  .desk-sheet .decide .actions button[type="submit"] { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
+  @container (min-width: 760px) {
+    .desk-sheet .replies { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  }
+}
+
+/* ---- D34: every place's panes (design §2, §3). desk.js builds main > .desk-panes[data-place] from the place's own
+   page: a list pane (.desk-list) and the sheet, each scrolling on its own. Projects keeps its D2 rules beside these. ---- */
+@media (min-width: 1100px) {
+  body.app:has(main > .desk-panes) { overflow: hidden; }
+  body.app:has(main > .desk-panes) main { height: 100dvh; max-width: none; margin: 0; padding: 0; box-sizing: border-box; }
+  .desk-panes { display: grid; grid-template-columns: var(--list-w) minmax(0, 1fr); gap: 0; align-items: stretch; height: 100%; max-width: none; margin: 0; }
+  .desk-panes.desk-nolist { grid-template-columns: minmax(0, 1fr); }
+  .desk-panes.desk-nolist > .desk-list { display: none; }
+  .desk-panes.desk-nolist > .desk-sheet { margin-left: 10px; }
+  .desk-panes > .desk-list { position: relative; top: auto; min-height: 0; height: 100%; max-height: none; overflow-y: auto; overscroll-behavior: contain; padding: 16px 10px 28px 12px; box-sizing: border-box; border: 0; }
+  .desk-panes > .desk-list:focus { outline: none; }
+  /* The list's header: the place's title with its count, and one quiet action on the right. */
+  .desk-list-h { display: flex; align-items: baseline; gap: 10px; padding: 6px 8px 8px; }
+  .desk-list-h h1 { margin: 0; font-size: var(--t-section); font-weight: 700; line-height: 1.25; letter-spacing: -0.015em; }
+  .desk-list-h h1 .n { margin-left: 8px; color: var(--muted); font-size: var(--t-sub); font-weight: 500; letter-spacing: 0; }
+  .desk-list-h > a { margin-left: auto; color: var(--ink2); font-size: var(--t-sub); font-weight: 600; }
+  .desk-list-h > a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-inset); }
+}
+
+/* ---- Pages: .pnav as the list pane (design §4.5): area eyebrows with counts, the D2 row recipe, the two closed folds
+   lifted from /pages at its foot ---- */
+@media (min-width: 1100px) {
+  .desk-list.pnav { font-size: var(--t-sub); }
+  .desk-list.pnav > h2, .desk-list.pnav > details > summary { display: flex; align-items: center; gap: 6px; margin: 0; padding: 16px 10px 6px; font-family: var(--text); font-size: var(--t-label); font-weight: 600; line-height: 1.3; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .desk-list.pnav > h2 .n { margin-left: auto; color: var(--muted); font-weight: 600; }
+  .desk-list.pnav > details > summary .n { margin-left: auto; }
+  .desk-list.pnav > details > summary .chev { margin-left: 8px; }
+  .desk-list.pnav a { padding: 6px 12px; border: 1px solid transparent; border-radius: var(--r-inset); color: var(--fg); line-height: 1.35; }
+  .desk-list.pnav a[aria-current="page"] { background: var(--surface); border-color: var(--line); font-weight: 600; }
+  .desk-list.pnav a:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  /* The foot folds, closed shelf rows under a hairline, as in the Projects list. */
+  .desk-list.pnav > .nopage-group { margin: 12px 0 0; padding: 8px 0 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; box-shadow: none; overflow: visible; }
+  .desk-list.pnav > .nopage-group > li + li::before { display: none; }
+  .desk-list.pnav > .nopage-group details.fold > summary { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px; color: var(--ink2); font-size: var(--t-sub); font-weight: 500; text-transform: none; letter-spacing: 0; }
+  .desk-list.pnav > .nopage-group details.fold > summary .n { margin-left: auto; color: var(--muted); }
+  /* style.css gives .pnav summaries eyebrow margins; these are rows. */
+  .desk-list.pnav > .nopage-group details.fold > summary { margin: 0; }
+  .desk-list.pnav > .nopage-group details.fold > summary .chev { margin-left: 8px; }
+  .desk-list.pnav > .nopage-group .fold-list a.row { display: grid; padding: 8px 12px 8px 24px; }
+  .desk-list.pnav > .nopage-group .fold-body { padding: 4px 12px 8px; }
+}
+@media (min-width: 1100px) {
+  @media (hover: hover) and (pointer: fine) {
+    .desk-list.pnav a:not([aria-current="page"]):hover { background: color-mix(in srgb, var(--raised) 60%, transparent); text-decoration: none; }
+  }
+}
+
+/* ---- The page sheet (design §2, §4.5): the article and its rail by the sheet's own width. Under 820 px no rail: Edit
+   and Ask move into the bar, the live box is one line, On this page a closed fold; from 820 a 216 px rail, from 1100 a
+   272 px one. D1's no-JavaScript page rules (unscoped, above) also match in here; these override them. ---- */
+@media (min-width: 1100px) {
+  /* A #link jumps below the sticky bar. */
+  .desk-sheet { scroll-padding-top: 64px; }
+  .desk-sheet[data-kind="page"] .desk-cols { grid-template-columns: minmax(0, 1fr); }
+  .desk-sheet[data-kind="page"] .pmain h1 { margin: 6px 0 6px; font-size: var(--t-display); font-weight: 700; line-height: 1.1; letter-spacing: -0.03em; }
+  .desk-sheet[data-kind="page"] .pmain h1:focus { outline: none; }
+  .desk-sheet[data-kind="page"] .paside { grid-column: auto; grid-row: auto; }
+  .desk-sheet[data-kind="page"] .live-full { display: none; }
+  .desk-sheet[data-kind="page"] .livefold { display: block; margin: 8px 0 20px; padding: 8px 16px; }
+  .desk-sheet[data-kind="page"] .toc-fold { display: block; }
+  .desk-sheet[data-kind="page"] :is(.paside .toc, .paside .toc-h) { display: none; }
+  .desk-sheet[data-kind="page"] .paside > .sticky > a.button.primary { display: none; }
+  /* The prose keeps its measure; pictures and diagrams (round 2 §12) use the whole article column. */
+  .desk-sheet[data-kind="page"] .art { max-width: none; }
+  .desk-sheet[data-kind="page"] .art > :not(.diagram, figure) { max-width: 40rem; }
+  .desk-sheet[data-kind="page"] .art > :is(.diagram, figure) { max-width: none; width: 100%; }
+  @media (min-width: 1920px) {
+    .desk-sheet[data-kind="page"] .art > :not(.diagram, figure) { max-width: 42rem; }
+  }
+  /* The bar's narrow actions: Ask an AI as a quiet text action, Edit the sheet's one black pill. */
+  .desk-bar .desk-narrow { display: inline-flex; align-items: center; gap: 4px; }
+  .desk-narrow > .desk-ask { white-space: nowrap; height: 32px; min-height: 0; padding: 0 10px; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink2); font-size: var(--t-sub); font-weight: 600; }
+  .desk-narrow > a.button.primary { white-space: nowrap; height: 32px; min-height: 0; padding: 0 14px; font-size: var(--t-sub); }
+  .desk-narrow > :is(.desk-ask, a):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .desk-crumb .ring { flex: none; }
+  /* The rail's Edit carries its key, as in the mockup. */
+  .desk-sheet[data-kind="page"] .paside a.button.primary kbd { margin-left: 2px; font-family: var(--text); font-size: var(--t-meta); font-weight: 500; opacity: 0.6; }
+
+  @container (min-width: 820px) {
+    .desk-bar .desk-narrow { display: none; }
+    .desk-sheet[data-kind="page"] .desk-cols { grid-template-columns: minmax(0, 1fr) 216px; column-gap: 40px; }
+    .desk-sheet[data-kind="page"] .live-full { display: block; }
+    .desk-sheet[data-kind="page"] .livefold { display: none; }
+    .desk-sheet[data-kind="page"] .toc-fold { display: none; }
+    .desk-sheet[data-kind="page"] :is(.paside .toc, .paside .toc-h) { display: block; }
+    .desk-sheet[data-kind="page"] .paside > .sticky > a.button.primary { display: inline-flex; }
+    .desk-sheet[data-kind="page"] .paside .sticky { position: sticky; top: 68px; max-height: calc(100dvh - 100px); overflow-y: auto; }
+    /* The live box in the rail: one column. */
+    .desk-sheet[data-kind="page"] .paside .live-cols { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .desk-sheet[data-kind="page"] .paside .live { margin: 14px 0 18px; }
+  }
+  @container (min-width: 1100px) {
+    .desk-sheet[data-kind="page"] .desk-cols { grid-template-columns: minmax(0, 1fr) 272px; column-gap: 56px; }
+  }
+}
+@media (min-width: 1100px) {
+  @media (hover: hover) and (pointer: fine) {
+    .desk-narrow > .desk-ask:hover { background: var(--raised); }
+  }
+}
+
+/* ---- Facts: the /facts list as the list pane (design §4.6): its filter open and compact, rows not cards ---- */
+@media (min-width: 1100px) {
+  .desk-panes > .desk-list.narrow { max-width: none; margin: 0; }
+  .desk-list.narrow > h1 { margin: 0; padding: 6px 8px 8px; font-size: var(--t-section); font-weight: 700; line-height: 1.25; letter-spacing: -0.015em; }
+  .desk-list.narrow > h1 .n { margin-left: 8px; color: var(--muted); font-size: var(--t-sub); font-weight: 500; letter-spacing: 0; }
+  .desk-list.narrow > nav.seg { margin: 4px 6px 8px; }
+  .desk-list .seg { flex-wrap: wrap; gap: 2px; }
+  .desk-list .seg a { min-height: 30px; padding: 0 10px; font-size: var(--t-meta); }
+  .desk-list.narrow > .tidy-line { margin: 4px 8px 8px; font-size: var(--t-meta); }
+  .desk-list details.filter-fold > summary { display: none; }
+  .desk-list details.filter-fold { margin: 0 6px 6px; border: 0; background: none; }
+  .desk-list .filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin: 0 0 8px; font-size: var(--t-meta); }
+  .desk-list .filters > :is(.grow, .seg-field, .actions) { grid-column: 1 / -1; }
+  .desk-list .filters :is(input, select) { min-height: 36px; font-size: var(--t-sub); }
+  .desk-list .filters .actions button { min-height: 36px; width: 100%; }
+  .desk-list .cards.list { gap: 0; }
+  .desk-list .cards.list > li.card { position: relative; padding: 9px 12px; border: 1px solid; border-color: transparent; border-radius: var(--r-inset); background: transparent; box-shadow: none; font-size: var(--t-sub); }
+  .desk-list .cards.list > li.card + li.card::before { content: ""; position: absolute; top: -1px; left: 12px; right: 12px; height: 1px; background: var(--line); pointer-events: none; }
+  .desk-list .cards.list > li.card:has(> .is-selected) { background: var(--surface); border-color: var(--line); }
+  .desk-list .cards.list > li.card:has(> .is-selected)::before, .desk-list .cards.list > li.card:has(> .is-selected) + li.card::before { display: none; }
+  .desk-list .cards.list .card-link { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; margin-bottom: 2px; white-space: normal; line-height: 1.35; }
+  .desk-list .cards.list .card-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-inset); }
+  .desk-list .cards.list .meta-line { flex-wrap: nowrap; overflow: hidden; white-space: nowrap; font-size: var(--t-meta); }
+  .desk-list .cards.list .meta-line > li { flex: none; }
+}
+@media (min-width: 1100px) {
+  @media (hover: hover) and (pointer: fine) {
+    .desk-list .cards.list > li.card:not(:has(> .is-selected)):hover { background: color-mix(in srgb, var(--raised) 60%, transparent); }
+  }
+}
+
+/* ---- The fact sheet (design §4.6): the fact at the section size; Edit an outlined pill and Delete… a text action in
+   the bar (Delete only through its question); the timeline, Where it shows and Near it in the side column ---- */
+@media (min-width: 1100px) {
+  .desk-sheet[data-kind="fact"] .desk-main { max-width: 52rem; }
+  .desk-sheet[data-kind="fact"] .narrow { max-width: none; margin: 0; }
+  .desk-sheet[data-kind="fact"] h1.fact-text { margin: 6px 0 8px; font-size: var(--t-section); font-weight: 600; line-height: 1.35; letter-spacing: -0.01em; }
+  .desk-sheet[data-kind="fact"] h1.fact-text:focus { outline: none; }
+  .desk-sheet[data-kind="fact"] #edit form.danger { display: none; }
+  .desk-sheet[data-kind="fact"] .desk-aside .chain { margin-bottom: 0; }
+  .desk-sheet[data-kind="fact"] .desk-aside .where .rows > li { font-size: var(--t-sub); }
+  .desk-acts > .desk-edit { display: inline-flex; align-items: center; gap: 6px; height: 32px; min-height: 0; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font-size: var(--t-sub); font-weight: 600; }
+  .desk-acts > .desk-edit kbd { font-family: var(--text); font-size: var(--t-meta); font-weight: 500; opacity: 0.6; }
+  .desk-acts > .desk-delete { height: 32px; min-height: 0; padding: 0 10px; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink2); font-size: var(--t-sub); font-weight: 600; }
+  .desk-acts > :is(.desk-edit, .desk-delete):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .desk-confirm { width: 420px; max-width: calc(100vw - 80px); padding: 22px 24px; box-sizing: border-box; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow-pop); }
+  .desk-confirm::backdrop { background: var(--scrim); }
+  .desk-confirm h2 { margin: 0 0 6px; font-size: var(--t-headline); font-weight: 650; line-height: 1.3; }
+  .desk-confirm p { margin: 0 0 18px; color: var(--muted); font-size: var(--t-sub); }
+  .desk-confirm .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .desk-confirm .actions button { min-height: 36px; }
+}
+@media (min-width: 1100px) {
+  @media (hover: hover) and (pointer: fine) {
+    .desk-acts > .desk-edit:hover { border-color: var(--fg); }
+    .desk-acts > .desk-delete:hover { background: var(--raised); }
+  }
+}
+
+/* ---- Week (design §4.7): Last week as a spread on today's reviewView siblings. Every part defaults to the full width
+   (a page with no spread stays one column); the safety lines take the auto rows above the spread, which sits in rows
+   20–22; Behind the scenes, the tidy line, Latest changes, Done reading and the footer follow, full width. Rows with
+   nothing in them take no space (row-gap 0; each part carries its own 20 px below). ---- */
+@media (min-width: 1100px) {
+  .review { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 20px; row-gap: 0; align-items: start; max-width: var(--cap); margin: 0 auto; }
+  .review > * { grid-column: 1 / -1; margin-top: 0; margin-bottom: 20px; }
+  /* style.css gives a week's sections no space below; on the spread each part keeps its 20 px. */
+  .review > :is(section, details) { margin-bottom: 20px; }
+  .review > .rv-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; column-gap: 24px; margin-bottom: 14px; }
+  .review > .rv-head > h1 { grid-column: 1; margin: 0 0 4px; font-size: var(--t-display); }
+  .review > .rv-head > :not(h1, .subnav) { grid-column: 1; }
+  .review > .rv-head > .subnav { grid-column: 2; grid-row: 2; margin: 0; }
+  /* Inside a card, a list is rows, not a card of its own. */
+  .review > section.rv-sec:not(.latest) :is(ul.group, .fold-list) { background: none; border: 0; border-radius: 0; box-shadow: none; overflow: visible; }
+  .review > section.rv-sec:not(.latest) ul.group > li > .row { padding-left: 0; padding-right: 0; }
+  .review > .lede { margin-bottom: 22px; }
+  .review > p.flagline { margin-bottom: 10px; }
+  .review > details.fold.more { margin-bottom: 20px; }
+  /* The spread's parts read as cards, as in the mockup. */
+  .review > section.rv-sec:not(.latest) { padding: 16px 18px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); }
+  .review > section.panel:not(.growth) { grid-column: 1; grid-row: 20; }
+  .review > section.rv-sec:has(ul.quiet, > p.also.flat) { grid-column: 1; grid-row: 21; }
+  .review > section.panel.growth { grid-column: 2; grid-row: 22; }
+  .review > section.rv-sec:has(ul.decisions) { grid-column: 2; grid-row: 20 / 22; }
+  .review > section.rv-sec:has(ul.moved, > .chips) { grid-column: 1; grid-row: 22; }
+  .review > details.panel.fold { grid-row: 30; }
+  .review > p.tidy-line { grid-row: 31; }
+  .review > #latest { grid-row: 32; }
+  .review > form { grid-row: 33; justify-self: start; }
+  .review > p.rv-foot { grid-row: 34; }
+  @media (min-width: 1440px) {
+    .review { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr); }
+    .review > section.panel.growth { grid-column: 1; grid-row: 22; }
+    .review > section.rv-sec:has(ul.decisions) { grid-area: 20 / 2 / 23 / 3; }
+    .review > section.rv-sec:has(ul.moved, > .chips) { grid-area: 20 / 3 / 23 / 4; }
+  }
+  /* With nothing moved there is no third column: Decided takes the second, wider one (:has() cannot nest, so two). */
+  @media (min-width: 1440px) {
+    .review:not(:has(> section.rv-sec ul.moved)):not(:has(> section.rv-sec > .chips)) { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); }
+  }
+  /* Went quiet: the project and its line, the actions under them, as in the mockup. */
+  .review > section.rv-sec .row.rv-quiet { grid-template-columns: 8px minmax(0, 1fr); row-gap: 8px; }
+  .review > section.rv-sec .row.rv-quiet > .acts { grid-column: 2; justify-self: start; }
+  .review > section.rv-sec .fold-list .row { padding-left: 0; }
+  .review > section.rv-sec .fold-list > li::before { left: 0; }
+  /* Behind the scenes, closed: its title, the counts beside it, the chevron on the right. */
+  .review > details.panel.fold > summary { min-height: 0; padding: 4px 0; }
+  .review > details.panel.fold > summary .hint { margin-left: 8px; }
+  .review > details.panel.fold > summary .chev { margin-left: auto; }
+  /* So far is two columns at every width: Waiting, Went quiet, Growth; then What moved over Decided. */
+  .review:has(> #latest) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .review:has(> #latest) > section.panel.growth { grid-area: 22 / 1 / 23 / 2; }
+  .review:has(> #latest) > section.rv-sec:has(ul.moved, > .chips) { grid-area: 20 / 2 / 21 / 3; }
+  .review:has(> #latest) > section.rv-sec:has(ul.decisions) { grid-area: 21 / 2 / 23 / 3; }
+  /* Growth keeps its own layout in the frame: 46rem, centred. */
+  main > .narrow:has(> .rv-head) { max-width: 46rem; margin-inline: auto; }
+
+  /* Decided: nine rows (three, then six from the fold), its count, and "N more" for the rest (desk.js). */
+  .review .decisions + .desk-more, .review .desk-more { display: inline-flex; align-items: center; min-height: 36px; margin-top: 6px; padding: 0; border: 0; background: none; color: var(--ink2); font-size: var(--t-sub); font-weight: 600; }
+  .review .desk-more:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-inset); }
+  .review .rv-sec .panel-head h2 .n { margin-left: 8px; color: var(--muted); font-weight: 500; }
+  html.desk-on .review .decisions details.more > summary { display: none; }
+  html.desk-on .review .decisions:not(.desk-all) details.more .fold-list > li:nth-child(n+7) { display: none; }
+  .review .decisions .row.decision.is-selected { background: var(--raised); border-radius: var(--r-inset); }
+}
+
+/* ---- The decision peek (design §4.7): the canonical fact page in a sheet over the right side, no history ---- */
+@media (min-width: 1100px) {
+  .desk-peek { position: fixed; top: 10px; right: 10px; bottom: 10px; left: auto; z-index: 30; width: 420px; max-width: calc(100vw - 20px); height: auto; max-height: none; margin: 0; padding: 0; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow-pop); }
+  .desk-peek:focus { outline: none; }
+  .desk-peek .desk-bar { padding: 0 10px 0 20px; }
+  .desk-peek .desk-peek-body { padding: 6px 28px 28px; }
+  .desk-peek .desk-peek-open { margin-left: auto; color: var(--ink2); font-size: var(--t-sub); font-weight: 600; white-space: nowrap; }
+  .desk-peek .desk-x { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; min-height: 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); }
+  .desk-peek :is(.desk-peek-open, .desk-x):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .desk-peek .narrow { max-width: none; margin: 0; }
+  .desk-peek :is(#edit, #history, #picker) { display: none; }
+  .desk-peek h1.fact-text { margin: 6px 0 8px; font-size: var(--t-headline); font-weight: 600; line-height: 1.35; }
+  .desk-peek h1.fact-text:focus { outline: none; }
+  .desk-peek .desk-keyline { margin: 22px 0 0; }
+  @media (min-width: 1920px) { .desk-peek { width: 480px; } }
+}
+@media (min-width: 1100px) {
+  @media (prefers-reduced-motion: no-preference) {
+    .desk-peek[open] { animation: desk-peek 220ms cubic-bezier(.32, .72, 0, 1); }
+    @keyframes desk-peek { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .desk-peek .desk-x:hover, .review .desk-more:hover { background: var(--raised); }
+  }
+}
+
+/* ---- Settings (design §4.9): the index as the list pane, following the scroll; every section in one sheet, centred
+   at 44rem and divided by hairlines. Without desk.js, D1's capped column stays. ---- */
+@media (min-width: 1100px) {
+  .desk-panes[data-place="settings"] > .settings-nav { display: none; }
+  .desk-panes[data-place="settings"] > .desk-list > h1 { margin: 0; padding: 6px 8px 8px; font-size: var(--t-section); font-weight: 700; line-height: 1.25; letter-spacing: -0.015em; }
+  .desk-panes[data-place="settings"] .settings-index { display: block; margin: 4px 0 0; background: none; border: 0; border-radius: 0; box-shadow: none; overflow: visible; }
+  .desk-panes[data-place="settings"] .settings-index > li + li::before { display: none; }
+  .desk-panes[data-place="settings"] .settings-index .row { min-height: 0; padding: 9px 12px; border: 1px solid transparent; border-radius: var(--r-inset); background: transparent; font-size: var(--t-sub); }
+  .desk-panes[data-place="settings"] .settings-index .row.is-selected { background: var(--surface); border-color: var(--line); }
+  .desk-panes[data-place="settings"] .settings-index .row .txt { font-weight: 600; }
+  .desk-panes[data-place="settings"] .settings-index .row :is(.st, .chev) { font-size: var(--t-meta); }
+  .desk-panes[data-place="settings"] .settings-index .row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .desk-panes[data-place="settings"] > .desk-list > :is(.lede, .error) { margin: 14px 8px 0; color: var(--muted); font-size: var(--t-meta); }
+  .desk-sheet[data-kind="settings"] .desk-main { max-width: 44rem; margin: 0 auto; }
+  .desk-sheet[data-kind="settings"] section.panel { margin: 0; padding: 28px 0; background: none; border: 0; border-top: 1px solid var(--line); border-radius: 0; box-shadow: none; }
+  .desk-sheet[data-kind="settings"] section.panel:first-child { border-top: 0; padding-top: 8px; }
+}
+@media (min-width: 1100px) {
+  @media (hover: hover) and (pointer: fine) {
+    .desk-panes[data-place="settings"] .settings-index .row:not(.is-selected):hover { background: color-mix(in srgb, var(--raised) 60%, transparent); }
+  }
+}
+
+/* ---- The ⌘K palette (design §4.10): a dialog over the scrim, the field, results with a preview, the keys ---- */
+@media (min-width: 1100px) {
+  .desk-palette { width: 820px; max-width: calc(100vw - 80px); max-height: calc(100dvh - 140px); margin-top: 96px; margin-bottom: auto; padding: 0; box-sizing: border-box; overflow: hidden; flex-direction: column; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow-pop); }
+  .desk-palette[open] { display: flex; }
+  .desk-palette::backdrop { background: var(--scrim); }
+  .desk-pal-in { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+  .desk-pal-icon { flex: none; width: 20px; height: 20px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; }
+  .desk-palette input.desk-pal-q { flex: 1; min-width: 0; min-height: 0; height: 32px; padding: 0; border: 0; background: transparent; color: var(--fg); font-size: var(--t-headline); outline: none; box-shadow: none; }
+  .desk-palette input.desk-pal-q:focus-visible { outline: none; box-shadow: none; }
+  .desk-pal-in kbd, .desk-pal-foot kbd, .desk-pal-opt kbd { display: inline-block; padding: 3px 5px; border: 1px solid var(--line-strong); border-radius: var(--r-inset); background: var(--bg); color: var(--muted); font-family: var(--text); font-size: var(--t-label); font-weight: 600; line-height: 1; }
+  .desk-pal-body { display: flex; flex: 1; min-height: 0; }
+  .desk-pal-res { flex: 1; min-width: 0; max-height: 460px; overflow-y: auto; overscroll-behavior: contain; padding: 6px 8px 10px; }
+  .desk-pal-h { margin: 10px 10px 4px; font-size: var(--t-label); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .desk-pal-res [role="option"] { display: flex; align-items: baseline; gap: 10px; padding: 8px 10px; border-radius: var(--r-inset); cursor: pointer; font-size: var(--t-sub); }
+  .desk-pal-res [role="option"][aria-selected="true"] { background: var(--raised); }
+  .desk-pal-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .desk-pal-t mark { background: none; color: inherit; font-weight: 700; }
+  .desk-pal-s { flex: 0 1 auto; min-width: 0; max-width: 45%; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--t-meta); text-align: right; }
+  .desk-pal-opt kbd { margin-left: auto; }
+  .desk-pal-note { margin: 12px 10px 4px; color: var(--muted); font-size: var(--t-sub); }
+  .desk-pal-prev { flex: none; width: 300px; padding: 18px 20px; box-sizing: border-box; overflow-y: auto; background: var(--bg); border-left: 1px solid var(--line); font-size: var(--t-sub); }
+  .desk-pal-prev p { margin: 0 0 8px; overflow-wrap: anywhere; }
+  .desk-pal-pl { color: var(--muted); font-size: var(--t-label); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  .desk-pal-pk { color: var(--muted); font-size: var(--t-meta); font-weight: 500; letter-spacing: 0; text-transform: none; }
+  .desk-pal-pl { display: block; margin-bottom: 2px; }
+  .desk-pal-pt { font-size: var(--t-headline); font-weight: 650; line-height: 1.3; }
+  .desk-pal-ps, .desk-pal-pm { color: var(--muted); }
+  .desk-pal-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--t-meta); }
+  .desk-pal-foot .desk-sep { white-space: pre; }
+  .desk-pal-scope { margin-left: auto; }
+}
+@media (min-width: 1100px) {
+  @media (prefers-reduced-motion: no-preference) {
+    .desk-palette[open] { animation: desk-fade 120ms var(--ease-out); }
+  }
+}
+
+/* ---- Graph (design §4.8): the window fills the content area, 10 px off the edges; a selected project's card docks on
+   the right as its peek (graph3d.js centres the scene left of it, from --g-inset-right); ⌘K finds nodes, so the window's
+   own Find goes, only while desk.js runs (without it the desktop Graph keeps its find field) ---- */
+@media (min-width: 1100px) {
+  /* Registered as a length, so getComputedStyle gives graph3d.js the used value (440px), not the calc() text. */
+  @property --g-inset-right { syntax: '<length>'; inherits: true; initial-value: 0px; }
+  body.app.graph-on main { max-width: none; padding: 10px; }
+  html.desk-on .graph-find { display: none; }
+  .graph { --peek-w: 420px; }
+  .graph:has(> .graph-card:not([hidden]):not(.graph-peek)) { --g-inset-right: calc(var(--peek-w) + 20px); }
+  .graph-card:not(.graph-peek) h2 { margin: 4px 0 6px; font-size: var(--t-title); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; }
+  .graph-card:not(.graph-peek) { top: 10px; right: 10px; bottom: 10px; left: auto; width: var(--peek-w); max-height: none; padding: 20px 24px; border-radius: var(--r-card); box-shadow: var(--shadow-pop); }
+  /* The key line moves left of the docked card, and up a row, clear of the window's buttons. */
+  .graph:has(> .graph-card:not([hidden]):not(.graph-peek)) .graph-keys { right: calc(var(--peek-w) + 30px); bottom: 4rem; }
+  @media (min-width: 1920px) { .graph { --peek-w: 480px; } }
+}
+
+/* ---- Polish (design §2, §6, §9): a skip link first, 44 px rows under a coarse pointer (an iPad in landscape) ---- */
+@media (min-width: 1100px) {
+  .desk-skip:not(:focus-visible) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .desk-skip:focus-visible { position: fixed; top: 10px; left: 10px; z-index: 60; display: inline-flex; align-items: center; min-height: 36px; padding: 0 16px; color: var(--fg); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-pill); box-shadow: var(--shadow-pop); font-size: var(--t-sub); font-weight: 600; outline: 2px solid var(--focus); outline-offset: 2px; }
+  .desk-list:focus { outline: none; }
+  @media (pointer: coarse) {
+    .desk-list :is(a, summary, .row, li.card) { min-height: 44px; }
+    .desk-pal-res [role="option"] { min-height: 44px; align-items: center; }
+  }
+}

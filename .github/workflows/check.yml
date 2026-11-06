@@ -1,0 +1,26 @@
+name: check
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # The publish gate: no private files, no secrets, and no word from the maintainer's own list (kept in a
+      # repository secret so the list itself is never published). Skipped where the secret isn't set, as in forks.
+      - name: Publish gate
+        env:
+          DENYLIST: ${{ secrets.PUBLISH_DENYLIST }}
+        run: |
+          if [ -z "$DENYLIST" ]; then echo "PUBLISH_DENYLIST is not set, so the word check is skipped."; printf '' > "$RUNNER_TEMP/denylist.txt"; else printf '%s\n' "$DENYLIST" > "$RUNNER_TEMP/denylist.txt"; fi
+          scripts/publish/check-public-tree.sh "$RUNNER_TEMP/denylist.txt" --no-tests

@@ -1,0 +1,21 @@
+.superpowers/
+node_modules
+.env
+*.db
+dist/
+data/
+backups/
+/models
+dist-windows/
+.DS_Store
+offsite-recipient.txt
+
+# git worktrees for parallel work
+.worktrees/
+__pycache__/
+
+# The owner's own settings and texts (open source O1): never in the repo.
+/overlay/
+
+# Sample data from npm run demo:seed
+/demo-data/

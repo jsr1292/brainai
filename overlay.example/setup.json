@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "extra": {
+    "coding": [
+      "At the end of a work session in a repo with a `homeserver` remote, push to it."
+    ],
+    "claude-code": [
+      "Plan in a file under docs/plans before changing more than a few files."
+    ]
+  }
+}

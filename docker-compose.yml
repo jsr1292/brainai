@@ -1,0 +1,45 @@
+# Exactly ONE app container: login rate limiting is in memory.
+#
+# No `ports:` on either service, on purpose: the app is reachable ONLY through
+# the Cloudflare Tunnel. The login rate limiter trusts the `cf-connecting-ip`
+# header, and that header is only safe to trust when the origin cannot be
+# reached any other way.
+services:
+  app:
+    build: .
+    # A real PID 1 (tini) forwards SIGTERM to node and reaps zombies, so `docker compose stop` shuts down cleanly.
+    init: true
+    env_file: .env
+    environment:
+      # Set OWNER_TIMEZONE in .env (e.g. Europe/Berlin): weeks and days follow it. UTC when it isn't set.
+      - TZ=${OWNER_TIMEZONE:-UTC}
+      # Safe only because no port is published: the tunnel is the one way in, so its header is the caller's address.
+      - TRUST_CF_CONNECTING_IP=true
+      # .env also holds the tunnel's token, which the app never needs: blanked here so a bug in the app can't leak it.
+      - TUNNEL_TOKEN=
+    # Runs as your host uid:gid (PUID/PGID in .env) so ./data stays writable for
+    # the host-side backup script.
+    user: "${PUID}:${PGID}"
+    volumes:
+      - ./data:/app/data
+      # Your own texts and settings (overlay.example/ shows what goes there). Optional.
+      - ./overlay:/app/overlay:ro
+    mem_limit: 1g
+    restart: unless-stopped
+    logging: &logging
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+    # Never auto-updated or restarted by Watchtower, if you run it: updates
+    # happen only through `git pull && docker compose up -d --build` (docs/RUNBOOK.md).
+    labels:
+      - com.centurylinklabs.watchtower.enable=false
+  tunnel:
+    image: cloudflare/cloudflared:2026.9.3
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    depends_on: [app]
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      - com.centurylinklabs.watchtower.enable=false
