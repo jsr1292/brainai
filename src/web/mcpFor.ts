@@ -6,6 +6,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Access } from '../discussions/types.js';
 import { buildMcpServer } from '../mcp/server.js';
 import type { AppDeps } from './app.js';
+import { healthOf } from './healthData.js';
 
 export function mcpServerFor(d: AppDeps, o: { actorName: string; access: Access; projects?: string[]; clientId?: string; grantId?: string; onSetup?: (n: number) => void }): McpServer {
   return buildMcpServer(d.service, o.actorName, {
@@ -27,5 +28,6 @@ export function mcpServerFor(d: AppDeps, o: { actorName: string; access: Access;
     projects: o.projects,
     onSetup: o.onSetup,
     skills: d.skills,
+    health: () => healthOf(d, d.now()),
   });
 }

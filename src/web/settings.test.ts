@@ -363,5 +363,5 @@ test('Backups and health shows the brain version and the database version (O1)',
   const { f } = await start(t);
   const { BRAIN_VERSION } = await import('../version.js');
   assert.match(BRAIN_VERSION, /^\d+\.\d+\.\d+$/);
-  assert.match(await (await f('/settings')).text(), new RegExp(`Cairn ${BRAIN_VERSION.replace(/\./g, '\\.')} · database \\d+`));
+  assert.match(await (await f('/settings')).text(), new RegExp(`BrainAI ${BRAIN_VERSION.replace(/\./g, '\\.')} · database \\d+`));
 });

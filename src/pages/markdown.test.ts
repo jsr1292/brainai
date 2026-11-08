@@ -52,9 +52,9 @@ test('replaceSection replaces one section, heading included; empty text removes 
 });
 
 test('findLinks finds [[Title]] and [[fact:id]] once each, not inside code', () => {
-  const body = 'See [[cairn — shared memory]] and [[fact:abc-123]].\nAgain [[cairn — shared memory]].\n`[[In code]]`\n```\n[[In fence]]\n```\n[[wildlog]]';
+  const body = 'See [[brainai — shared memory]] and [[fact:abc-123]].\nAgain [[brainai — shared memory]].\n`[[In code]]`\n```\n[[In fence]]\n```\n[[wildlog]]';
   assert.deepEqual(findLinks(body), [
-    { kind: 'title', target: 'cairn — shared memory' }, { kind: 'fact', target: 'abc-123' }, { kind: 'title', target: 'wildlog' },
+    { kind: 'title', target: 'brainai — shared memory' }, { kind: 'fact', target: 'abc-123' }, { kind: 'title', target: 'wildlog' },
   ]);
 });
 

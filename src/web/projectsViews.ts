@@ -1,3 +1,4 @@
+import type { Health } from '../health/health.js';
 import type { Home, HomeSuggestion, ProjectCard, ProjectDetail } from '../projects/service.js';
 import { localDay, longDate } from '../timezone.js';
 import { AREAS, AREA_LABELS, type Project } from '../projects/types.js';
@@ -6,6 +7,7 @@ import { errorBlock, plural, writer } from './dashboardViews.js';
 import { replacedFold } from './factViews.js';
 import { html, type SafeHtml } from './html.js';
 import { forYouCard, forYouRows, type ApprovalSummary } from './forYou.js';
+import { disagreeGroup } from './disagreeViews.js';
 import { staleChip } from './freshnessViews.js';
 import { metaLine } from './metaLine.js';
 import { stripProjectPrefix } from './stripProject.js';
@@ -111,7 +113,7 @@ function panel(d: ProjectDetail, now: Date, error?: string): SafeHtml {
   const self = `/?project=${encodeURIComponent(p.name)}`;
   const state = p.pinnedAt ? 'On the go' : { idea: 'Idea', open: 'Open', parked: 'Parked', done: 'Done', archived: 'Archived' }[p.state];
   // The jump row: one chip per part that has something; a 0 drops its chip, and nothing at all drops the row.
-  const chips: [string, number][] = [['Waiting', d.waiting.length], ['Pages', d.pages.length], ['Discussions', d.discussionsTotal], ['Facts', d.facts.total]];
+  const chips: [string, number][] = [['Waiting', d.waiting.length], ['Disagree', d.disagreements.length], ['Pages', d.pages.length], ['Discussions', d.discussionsTotal], ['Facts', d.facts.total]];
   const jump = chips.every(([, n]) => n === 0) ? html`` : html`<nav class="jump" aria-label="In this project">${chips
     .filter(([, n]) => n > 0)
     .map(([word, n]) => html`<a href="#p-${word.toLowerCase()}">${word} ${n}</a>`)}</nav>`;
@@ -141,6 +143,7 @@ function panel(d: ProjectDetail, now: Date, error?: string): SafeHtml {
   <h3>Where you left off${d.leftOff ? html` <span class="quiet">· ${pastLabel(d.leftOff.updatedAt, now)}</span>` : ''}</h3>
   ${d.leftOff ? leftOff(d.leftOff.content) : d.card.roadmap?.now ? html`<p class="leftoff">${d.card.roadmap.now}</p>` : html`<p class="quiet">No status saved yet.</p>`}
   ${waiting}
+  ${disagreeGroup(p.name, d.disagreements, now)}
   ${doneToday}
   ${d.nextSteps.length > 0 ? html`<h3>Then</h3><ol class="then">${d.nextSteps.map((s) => html`<li>${s}</li>`)}</ol>` : ''}
   ${d.pages.length > 0 ? html`<h3 id="p-pages">Pages</h3>
@@ -202,6 +205,10 @@ export interface HomeViewInput {
   discussions?: { id: string; title: string }[];
   /** Whether any assistant has ever been connected; a new brain with none points to that first step. */
   connected?: boolean;
+  /** B1: how many pairs of facts disagree, not settled yet. */
+  disagreements?: number;
+  /** B1: brain health, for its For you row. */
+  health?: Health;
 }
 
 /**
@@ -223,7 +230,7 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   const sel = v.selected?.card.project.name;
   // System problems only, one at most: the backup warning. Approvals and discussions are For-you rows.
   const banner = v.backupProblem ? html`<div class="banner warn"><span class="dot attention" aria-hidden="true"></span><span class="txt">${v.backupProblem}</span><a class="button sm" href="/settings#health">Look</a></div>` : '';
-  const forYou = forYouCard(forYouRows({ approvals: v.approvals, discussions: v.discussionsWaiting ?? [], weekLine: v.weekLine ?? null, suggestions: home.suggestions }));
+  const forYou = forYouCard(forYouRows({ approvals: v.approvals, disagreements: v.disagreements ?? 0, health: v.health, discussions: v.discussionsWaiting ?? [], weekLine: v.weekLine ?? null, suggestions: home.suggestions }));
   const empty = home.onTheGo.length + home.open.length + home.quiet.length + home.ideas.length + home.parked.length + home.done.length + home.personal.length === 0;
   const rest = home.open.slice(ALSO_OPEN_SHOWN);
   const selectedInRest = rest.some((c) => c.project.name === sel);

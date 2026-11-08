@@ -517,7 +517,7 @@ test('closing with the real name of a discussion\'s project is accepted when it 
   memory.addAlias('vista', 'wildlog', owner);
   const r = await svc.close(who('Claude Code', 'Opus'), d.id, { decision: 'Use SQLite.', project: 'wildlog' });
   assert.equal(memory.get(r.memoryId)!.project, 'wildlog');
-  await assert.rejects(svc.close(who('Claude Code', 'Opus'), svc.open(who('Claude Code', 'Opus'), { title: 'T2', question: 'Q', project: 'vista' }).id, { decision: 'x', project: 'cairn' }), code('invalid', /belongs to project wildlog/));
+  await assert.rejects(svc.close(who('Claude Code', 'Opus'), svc.open(who('Claude Code', 'Opus'), { title: 'T2', question: 'Q', project: 'vista' }).id, { decision: 'x', project: 'brainai' }), code('invalid', /belongs to project wildlog/));
 });
 
 test('an assistant closing with a decision close to one the owner deleted is refused, leaving no card and the discussion open', async () => {

@@ -1,3 +1,5 @@
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { isAppPath } from './hostGuard.js';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { InvalidRequestError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { InvalidNameError } from '../auth/clientsStore.js';
@@ -8,6 +10,7 @@ import { PROJECT_RE } from '../memory/service.js';
 import type { AppDeps } from './app.js';
 import { projectChoices } from './dashboardViews.js';
 import { rateLimitKey } from './clientIp.js';
+import { viaDoor } from '../desktop/publicDoor.js';
 import { html, memoryName, page, type SafeHtml } from './html.js';
 
 export const SESSION_COOKIE = 'mem_session';
@@ -28,6 +31,28 @@ export function readCookie(req: Request, name: string): string | undefined {
     if (eq > 0 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
   }
   return undefined;
+}
+
+/**
+ * The desktop app's local mode (D1): while the owner has set no password, a browser request without a valid session
+ * gets one, here and now, so every owner check after it sees a signed-in owner. Only browser routes: the apps' own
+ * endpoints (`skip`), discovery documents and static files never create a session. The Host guard and the Origin
+ * check run before this, so a website cannot use it; a password, once set, ends it.
+ */
+export function localSignIn(d: Pick<AppDeps, 'owner' | 'sessions' | 'publicUrl'>, skip: readonly string[]): RequestHandler {
+  const options = { ...sessionCookieOptions(d.publicUrl), maxAge: SESSION_DAYS * 86_400_000 };
+  return (req, res, next) => {
+    // /app/open makes its own session from the ticket: signing in here too would make a second one.
+    if (isAppPath(req.path, skip) || req.path === '/app/open' || d.owner.hasPassword() || d.sessions.isValid(readCookie(req, SESSION_COOKIE))) return next();
+    // Only a page load opens a session: a subresource or fetch without the cookie would otherwise make one each time.
+    const mode = req.get('sec-fetch-mode');
+    if (mode !== undefined && mode !== 'navigate') return next();
+    const token = d.sessions.create(req.get('user-agent'));
+    res.cookie(SESSION_COOKIE, token, options);
+    const others = (req.headers.cookie ?? '').split(';').map((c) => c.trim()).filter((c) => c !== '' && !c.startsWith(`${SESSION_COOKIE}=`));
+    req.headers.cookie = [...others, `${SESSION_COOKIE}=${token}`].join('; ');
+    next();
+  };
 }
 
 /** Lets the request through only with a valid owner session; otherwise sends the browser to log in. */
@@ -89,6 +114,8 @@ export function authRoutes(d: AppDeps): Router {
   // otherwise a parallel burst would all pass check() before any fail() lands.
   const loginLock = new Mutex();
   const cookieOptions = sessionCookieOptions(d.publicUrl);
+  // At the desktop app's public address (D4) the browser is on https: its cookies are Secure there.
+  const optionsFor = (req: Request) => ({ ...cookieOptions, secure: cookieOptions.secure || viaDoor(req) });
 
   const loginForm = (status: number, res: Response, next: string, error?: string) =>
     send(res, status, 'Log in', html`<h1 class="login-mark"><span class="brand-dot" aria-hidden="true"></span>${memoryName()}</h1>
@@ -102,7 +129,48 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
 
   const notConfigured = (res: Response) => send(res, 503, 'Log in', html`<h1>${memoryName()}</h1><p>${NOT_CONFIGURED}.</p>`);
 
+  /**
+   * The desktop app's window opens a session without its key ever being in a URL (browser history is a file on
+   * disk): the app's own HTTP client trades the key (header X-App-Key) for a ticket that works once, within a minute,
+   * and the window opens /app/open?ticket=…. Local mode only. Anything wrong falls through to the unknown-page answer.
+   */
+  const appKey = d.localMode && d.appSecret ? createHash('sha256').update(d.appSecret).digest() : null;
+  const tickets = new Map<string, number>();
+  const TICKET_MS = 60_000;
+  const MAX_TICKETS = 20;
+  router.post('/app/ticket', (req, res, next) => {
+    const given = req.get('x-app-key') ?? '';
+    if (!appKey || given === '' || !timingSafeEqual(createHash('sha256').update(given).digest(), appKey)) return next();
+    const now = d.now().getTime();
+    for (const [t, until] of tickets) if (until < now) tickets.delete(t);
+    while (tickets.size >= MAX_TICKETS) tickets.delete(tickets.keys().next().value!);
+    const ticket = randomBytes(32).toString('base64url');
+    tickets.set(ticket, now + TICKET_MS);
+    res.set('Cache-Control', 'no-store').json({ ticket });
+  });
+  /**
+   * The desktop app checks the server it is about to trust is its own before it sends the key (D2): it sends a
+   * random challenge, and only a server holding APP_SECRET can answer with its HMAC. A squatter on the port cannot.
+   */
+  router.get('/app/hello', (req, res, next) => {
+    const challenge = typeof req.query.challenge === 'string' ? req.query.challenge : '';
+    if (!appKey || !d.appSecret || !/^[0-9a-f]{64}$/.test(challenge)) return next();
+    res.set('Cache-Control', 'no-store').json({ proof: createHmac('sha256', d.appSecret).update(challenge).digest('hex') });
+  });
+  router.get('/app/open', (req, res, next) => {
+    const ticket = typeof req.query.ticket === 'string' ? req.query.ticket : '';
+    const until = appKey ? tickets.get(ticket) : undefined;
+    if (until === undefined) return next();
+    tickets.delete(ticket);
+    if (until < d.now().getTime()) return next();
+    const token = d.sessions.create(req.get('user-agent'));
+    res.cookie(SESSION_COOKIE, token, { ...cookieOptions, maxAge: SESSION_DAYS * 86_400_000 });
+    res.set('Cache-Control', 'no-store').redirect(303, safeNext(req.query.next) ?? '/');
+  });
+
   router.get('/login', (req, res) => {
+    // Local mode with no password: there is nothing to log in with, and localSignIn has already signed the owner in.
+    if (d.localMode && !d.owner.hasPassword()) return res.redirect(302, safeNext(req.query.next) ?? '/');
     if (!d.owner.isConfigured()) return notConfigured(res);
     // The login form without a live session: the login ended here, elsewhere, or simply expired (and the browser
     // dropped the cookie with it). The cache may still hold pictures, so it is cleared; storage (the offline queue,
@@ -138,8 +206,8 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
     if (outcome.kind === 'failed') return loginForm(401, res, next ?? '', WRONG_CREDENTIALS);
 
     const token = d.sessions.create(req.get('user-agent'));
-    res.cookie(SESSION_COOKIE, token, { ...cookieOptions, maxAge: SESSION_DAYS * 86_400_000 });
-    if (!knownDevice) res.cookie(DEVICE_COOKIE, d.sessions.rememberDevice(), { ...cookieOptions, maxAge: DEVICE_DAYS * 86_400_000 });
+    res.cookie(SESSION_COOKIE, token, { ...optionsFor(req), maxAge: SESSION_DAYS * 86_400_000 });
+    if (!knownDevice) res.cookie(DEVICE_COOKIE, d.sessions.rememberDevice(), { ...optionsFor(req), maxAge: DEVICE_DAYS * 86_400_000 });
     res.redirect(302, next ?? '/');
   });
 

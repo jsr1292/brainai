@@ -8,7 +8,7 @@ import { projectNameFor, repoRoot, startContext } from './memoryStart.js';
 import { readToolUses, saveNudge, WORK_THRESHOLD } from './memorySave.js';
 
 test('the project name comes from the git repository folder, else the current folder', () => {
-  assert.equal(projectNameFor('/Users/owner/Projects/cairn/src', '/Users/owner/Projects/cairn', '/Users/owner'), 'cairn');
+  assert.equal(projectNameFor('/Users/owner/Projects/brainai/src', '/Users/owner/Projects/brainai', '/Users/owner'), 'brainai');
   assert.equal(projectNameFor('/Users/owner/Projects/Casa Azul', null, '/Users/owner'), 'casa-azul');
   assert.equal(projectNameFor('/Users/owner/Projects/CsvMerge', null, '/Users/owner'), 'csvmerge');
   assert.equal(projectNameFor('/Users/owner', null, '/Users/owner'), null);

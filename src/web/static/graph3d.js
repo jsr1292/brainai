@@ -1090,7 +1090,7 @@ function start(root) {
       if (p.runsOn.length) el(box, 'p', `Runs on ${p.runsOn.map((r) => label.get(r) ?? r).join(', ')}`, 'graph-card-meta');
       if (detail && detail.name === p.name) {
         if (detail.related.length) {
-          // One inline line, as the spec shows it: "Related: cairn: backups, nas · outline: backups".
+          // One inline line, as the spec shows it: "Related: brainai: backups, nas · outline: backups".
           const rel0 = el(box, 'p', '', 'graph-related');
           el(rel0, 'span', 'Related: ');
           for (const [k, rel] of detail.related.entries()) {

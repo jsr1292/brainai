@@ -1,3 +1,4 @@
+import { topReason, type Health } from '../health/health.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ReviewView, Scope, WaitRow } from '../review/present.js';
@@ -68,7 +69,19 @@ const builtAt = (iso: string): string => {
 };
 
 /** The read-only `weekly_review` tool. Full and read-only connections get it; discussions-only ones never reach here. */
-export function registerReviewTools(server: McpServer, reviews: ReviewService, o: { actorName: string; scope: Scope; work: boolean }, guard: Guard): void {
+/** Brain health as it is now (B1): one sentence and one data object, for a full connection only. */
+function healthParts(health: (() => Health) | undefined): { sentence: string; data: Record<string, unknown> } {
+  if (!health) return { sentence: '', data: {} };
+  const h = health();
+  // Only the top reason: the full lists stay on the dashboard (Settings › Brain health and backups).
+  const top = topReason(h);
+  return {
+    sentence: ` Brain health now: up to date ${h.upToDate.score}, ready ${h.ready.score}, waiting on you ${h.waiting.score}.`,
+    data: { brain_health: { up_to_date: h.upToDate.score, ready: h.ready.score, waiting_on_you: h.waiting.score, ...(top ? { top_reason: top } : {}) } },
+  };
+}
+
+export function registerReviewTools(server: McpServer, reviews: ReviewService, o: { actorName: string; scope: Scope; work: boolean; health?: () => Health }, guard: Guard): void {
   server.registerTool('weekly_review', {
     title: 'Weekly review',
     description: 'Use when the owner asks how the week went, what happened last week, or for a weekly review.',
@@ -81,7 +94,8 @@ export function registerReviewTools(server: McpServer, reviews: ReviewService, o
     const at = asked === 'now' ? { to: 'now' as const } : reviews.locate(asked);
     if (at.to === 'now') {
       const view = reviews.present(reviews.soFar(), 'now', o.scope);
-      return withData(`This week so far, made just now from what is stored${limited}.`, reviewJson(view, o));
+      const h = healthParts(o.scope.kind === 'full' ? o.health : undefined);
+      return withData(`This week so far, made just now from what is stored${limited}.${h.sentence}`, { ...reviewJson(view, o), ...h.data });
     }
     const stored = at.to === 'week' ? reviews.ensure(at.monday, o.actorName) : undefined;
     if (!stored) {
@@ -91,6 +105,7 @@ export function registerReviewTools(server: McpServer, reviews: ReviewService, o
         : `There is no review for that week. The first one is the week of ${weekRange(first)}.`);
     }
     const view = reviews.present(stored, stored.monday === reviews.lastMonday() ? 'last' : 'older', o.scope);
-    return withData(`The weekly review for ${weekRangeWithYear(stored.monday)}, built ${builtAt(stored.builtAt)} from what was stored at the end of Sunday${limited}.`, reviewJson(view, o));
+    const h = healthParts(o.scope.kind === 'full' ? o.health : undefined);
+    return withData(`The weekly review for ${weekRangeWithYear(stored.monday)}, built ${builtAt(stored.builtAt)} from what was stored at the end of Sunday${limited}.${h.sentence}`, { ...reviewJson(view, o), ...h.data });
   }));
 }

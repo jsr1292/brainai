@@ -38,8 +38,8 @@ test('thread words are shared, rare, not stopwords and not the project names', (
   const counts = corpus();
   assert.equal(WORD_BAR, 1.0);
   assert.equal(MAX_WORDS, 2);
-  assert.deepEqual(threadWords(['Nightly backups of cairn to the NAS with restic'], ['outline backups go to the nas with restic'],
-    counts, new Set(['cairn', 'outline'])), ['restic', 'nas']);
+  assert.deepEqual(threadWords(['Nightly backups of brainai to the NAS with restic'], ['outline backups go to the nas with restic'],
+    counts, new Set(['brainai', 'outline'])), ['restic', 'nas']);
   assert.deepEqual(threadWords(['backups nightly'], ['backups weekly'], counts, new Set()), []);
 });
 

@@ -75,7 +75,7 @@ test('installable: manifest, head tags and a non-caching service worker are serv
   const manifest = await mres.json() as any;
   assert.equal(manifest.display, 'standalone');
   assert.equal(manifest.start_url, '/');
-  assert.equal(manifest.name, 'Cairn');
+  assert.equal(manifest.name, 'BrainAI');
   assert.ok(manifest.icons.some((i: any) => i.purpose === 'maskable'));
 
   const login = await (await get('/login')).text();

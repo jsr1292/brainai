@@ -11,9 +11,9 @@ code with the home server but nothing else: its own database, no tunnel, no link
 |---|---|---|
 | Listens on (`HOST`) | `0.0.0.0` in the Docker image (the tunnel container reaches it); `127.0.0.1` when run directly | `127.0.0.1`: nothing else on the network can reach it |
 | Rate limits trust `cf-connecting-ip` (`TRUST_CF_CONNECTING_IP`) | yes in `docker-compose.yml`, which publishes no port: the tunnel is the only way in | no: any local program could fake the header |
-| MCP server name and instructions | `cairn`, `SERVER_INSTRUCTIONS` | `work-memory`, `WORK_INSTRUCTIONS` |
+| MCP server name and instructions | `brainai`, `SERVER_INSTRUCTIONS` | `work-memory`, `WORK_INSTRUCTIONS` |
 | Discussions | on, with Full or Discussions only at consent | on, every connection Full (no access choice at consent) |
-| Dashboard name | Cairn | Work brain |
+| Dashboard name | BrainAI | Work brain |
 
 `HOST` and `TRUST_CF_CONNECTING_IP` can still be set explicitly in either mode. The work instructions add five
 rules to the home ones: team facts go in the repo's AGENTS.md, not memory; about people, only who owns or decides

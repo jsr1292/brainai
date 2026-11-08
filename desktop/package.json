@@ -1,0 +1,12 @@
+{
+  "name": "brainai-desktop",
+  "private": true,
+  "version": "1.0.1",
+  "description": "The BrainAI Mac app: a Tauri shell around the BrainAI server in local mode.",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}

@@ -1,12 +1,12 @@
 /**
- * A sample brain with made-up content, for trying Cairn and for the README's screenshots. The owner, Alex, is
+ * A sample brain with made-up content, for trying BrainAI and for the README's screenshots. The owner, Alex, is
  * invented: a librarian in Berlin who runs a garden club's website, a small home server and a seed-swap phone app.
  * The facts are spread over the last eight days, so the week review has something to show.
  *
  *   npm run demo:seed -- <new data folder>     writes <folder>/memory.db (refuses one that exists)
  *   npm run demo:code                          prints the sign-in code for the demo account
  *
- * The demo account signs in with the password "try-cairn-demo" and the code from demo:code. That login is public, so the
+ * The demo account signs in with the password "try-brainai-demo" and the code from demo:code. That login is public, so the
  * seed only writes into a new or empty folder; never use the folder for real data.
  */
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
@@ -28,9 +28,9 @@ import { PageStore } from '../pages/store.js';
 import { ProjectStore } from '../projects/store.js';
 import type { Area } from '../projects/types.js';
 
-export const DEMO_PASSWORD = 'try-cairn-demo';
+export const DEMO_PASSWORD = 'try-brainai-demo';
 /** A fixed secret, so demo:code works without a QR code. Only ever for the demo account. */
-export const DEMO_TOTP_SECRET = 'CAIRNDEMOCAIRNDEMOCAIRNDEMOCAIRN';
+export const DEMO_TOTP_SECRET = 'BRAINAIDEMOBRAINAIDEMOBRAINAIDEM';
 
 const DAY = 86_400_000;
 const owner: Actor = { type: 'owner' };

@@ -327,14 +327,14 @@ test('a project whose folder has another name is found, and saved into, under th
   const registry = new ProjectStore(db, () => new Date());
   await service.remember({ kind: 'decision', content: 'The cellar is stored in SQLite', project: 'wildlog' }, owner);
   registry.setInfo('wildlog', { folder: 'Bramble' }, 'owner');
-  registry.create('cairn', { state: 'open' }, 'owner');
-  registry.setInfo('cairn', { folder: 'Casa Azul' }, 'owner');
+  registry.create('brainai', { state: 'open' }, 'owner');
+  registry.setInfo('brainai', { folder: 'Casa Azul' }, 'owner');
   // What the Claude Code start hook asks for in ~/Projects/Bramble and ~/Projects/Casa Azul.
   const b = await service.brief('bramble');
   assert.equal(b.found && b.brief.project, 'wildlog');
   const r = await service.remember({ kind: 'decision', content: 'Labels are printed from the phone', project: 'bramble' }, ai);
   assert.equal((r as any).memory.project, 'wildlog');
-  assert.equal(service.projectNamed('casa-azul'), 'cairn');
+  assert.equal(service.projectNamed('casa-azul'), 'brainai');
   assert.deepEqual(service.listProjects().map((p) => p.project), ['wildlog']);
   // A real project of that name is still itself.
   registry.create('bramble', { state: 'idea' }, 'owner');
@@ -408,7 +408,7 @@ test('an AI saving a second status for a project gets the existing ones back ins
 
 test('a status an AI saves as a decision tagged status is stored as a summary', async () => {
   const { service } = make();
-  const r = await service.remember({ kind: 'decision', content: 'cairn status 2026-10-20: review done', project: 'cairn', tags: ['status'] }, ai);
+  const r = await service.remember({ kind: 'decision', content: 'brainai status 2026-10-20: review done', project: 'brainai', tags: ['status'] }, ai);
   assert.equal((r as any).memory.kind, 'summary');
 });
 

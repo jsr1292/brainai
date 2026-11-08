@@ -81,7 +81,7 @@ const noNetwork = (async () => { throw new Error('no network in tests'); }) as u
  * non-replayed code. `publicUrl` overrides PUBLIC_URL (default http://localhost:<port>); `mode` and
  * `trustCfConnectingIp` are passed to the app as given; `sectionMatch` to the page service (undefined: the constant).
  */
-export async function startTestApp(opts: { publicUrl?: string; mode?: AppDeps['mode']; trustCfConnectingIp?: boolean; statusDir?: string; startAt?: Date; sectionMatch?: number | null; setupOverlay?: SetupOverlay } = {}): Promise<{
+export async function startTestApp(opts: { publicUrl?: string; mode?: AppDeps['mode']; trustCfConnectingIp?: boolean; statusDir?: string; startAt?: Date; sectionMatch?: number | null; setupOverlay?: SetupOverlay; localMode?: boolean; appSecret?: string | null; noPassword?: boolean; tools?: AppDeps['tools'] } = {}): Promise<{
   baseUrl: string;
   deps: AppDeps;
   nextTotp(): string;
@@ -103,8 +103,11 @@ export async function startTestApp(opts: { publicUrl?: string; mode?: AppDeps['m
   const provider = new MemoryOAuthProvider(db, clients, allowlist, now, new URL('/mcp', publicUrl));
   const discussions = new DiscussionService(new DiscussionStore(db, now), service, () => provider.activeConnections(), now);
   const owner = new OwnerAuth(db, now);
-  await owner.setPassword(TEST_PASSWORD);
-  owner.setTotpSecret(TEST_TOTP_SECRET);
+  // noPassword: a fresh desktop install, where the owner has set no password yet (D1).
+  if (!opts.noPassword) {
+    await owner.setPassword(TEST_PASSWORD);
+    owner.setTotpSecret(TEST_TOTP_SECRET);
+  }
   const pages = makePages({ db, store, service }, now, { sectionMatch: opts.sectionMatch });
   // The test floor: the fake embedder's similarities are not e5's.
   const meaning = new MeaningIndex(db, { floor: 0.5, kinds: ['decision'], now });
@@ -129,6 +132,9 @@ export async function startTestApp(opts: { publicUrl?: string; mode?: AppDeps['m
     allowlist,
     publicUrl, store, service, registry, projects, graph, discussions, growth, reviews, pages, images, diagramChecks: new DiagramChecks(db, now), uploadLinks: new UploadLinks(db, now), skills, skillSync: new SkillSync(db, now, skills), notes: new NoteService(db, pages, now), devices, folders, imports: new ImportLog(db, now), relatedSimilarity: 0.2, provider, owner, sessions: new SessionStore(db, now), limiter: new LoginLimiter(), clients, now,
     mode: opts.mode, trustCfConnectingIp: opts.trustCfConnectingIp, statusDir: opts.statusDir, setupOverlay: opts.setupOverlay,
+    localMode: opts.localMode, appSecret: opts.appSecret, db,
+    // Tests never reach the real Tailscale app on this computer, only a fake on the given PATH.
+    tools: opts.tools ? { tailscaleApp: '/nonexistent/Tailscale', ...opts.tools } : undefined,
   };
   server.on('request', createApp(deps));
 
@@ -143,6 +149,8 @@ export async function startTestApp(opts: { publicUrl?: string; mode?: AppDeps['m
       return totpAt(TEST_TOTP_SECRET, Math.floor(t / 30_000));
     },
     close: () => new Promise<void>((resolve, reject) => {
+      deps.reach?.shutdown();
+      deps.door?.close();
       server.closeAllConnections();
       server.close((e) => {
         db.close();

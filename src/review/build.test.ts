@@ -9,10 +9,10 @@ process.env.OWNER_TIMEZONE ??= 'Europe/Berlin';
 const START = 'Done: design (2026-10-09)\nNow: Brain round 1 (4/8)\nNext: pages\nWaiting on you: late one (by 2026-11-01); next week one (by 2026-11-08); later one (by 2026-11-09); undated one';
 const WAIT = 'Waiting on you: late one (by 2026-11-01); next week one (by 2026-11-08); later one (by 2026-11-09); undated one';
 
-/** cairn's roadmap through the week of 26 Oct, built on 3 Nov. */
+/** brainai's roadmap through the week of 26 Oct, built on 3 Nov. */
 function mcpWeek(): ReviewWorld {
   const w = reviewWorld('2026-10-10T10:00:00Z');
-  const r = w.save('2026-10-10T10:00:00Z', { kind: 'roadmap', content: START, project: 'cairn' });
+  const r = w.save('2026-10-10T10:00:00Z', { kind: 'roadmap', content: START, project: 'brainai' });
   w.edit('2026-10-27T10:00:00Z', r.id, `Done: design (2026-10-09); Pages: reading view and editor (2026-10-27)\nNow: Brain round 1 (5/8)\nNext: pages\n${WAIT}`);
   w.edit('2026-10-30T10:00:00Z', r.id, `Done: design (2026-10-09); Page tools (2026-10-30)\nNow: Brain round 1 (5/8)\nNext: pages\n${WAIT}`);
   w.edit('2026-10-31T10:00:00Z', r.id, `Done: design (2026-10-09); Page tools (2026-10-30)\nNow: Brain round 1 (7/8)\nNext: pages\n${WAIT}`);
@@ -23,13 +23,13 @@ function mcpWeek(): ReviewWorld {
 
 test('moved keeps steps dated inside the week from every version, also one trimmed later in the week', () => {
   const w = mcpWeek();
-  const p = buildReview(w.sources(), windowFor('2026-10-26')).projects.find((x) => x.project === 'cairn')!;
+  const p = buildReview(w.sources(), windowFor('2026-10-26')).projects.find((x) => x.project === 'brainai')!;
   assert.deepEqual(p.done, [{ text: 'Pages: reading view and editor', date: '2026-10-27' }, { text: 'Page tools', date: '2026-10-30' }]);
 });
 
 test('progress shows from and to only when the Now step and total match at both ends', () => {
   const w = mcpWeek();
-  const p = buildReview(w.sources(), windowFor('2026-10-26')).projects.find((x) => x.project === 'cairn')!;
+  const p = buildReview(w.sources(), windowFor('2026-10-26')).projects.find((x) => x.project === 'brainai')!;
   assert.deepEqual(p.progress, { now: 'Brain round 1', from: 4, to: 7, total: 8 });
 
   const v = reviewWorld('2026-10-10T10:00:00Z');
@@ -49,7 +49,7 @@ test('progress shows from and to only when the Now step and total match at both 
 
 test('late is due on or before Sunday, after is the next Monday to Sunday, the rest are counted', () => {
   const w = mcpWeek();
-  const p = buildReview(w.sources(), windowFor('2026-10-26')).projects.find((x) => x.project === 'cairn')!;
+  const p = buildReview(w.sources(), windowFor('2026-10-26')).projects.find((x) => x.project === 'brainai')!;
   assert.deepEqual(p.waiting, [{ text: 'late one', due: '2026-11-01', when: 'late' }, { text: 'next week one', due: '2026-11-08', when: 'after' }]);
   assert.equal(p.dated, 3);
   assert.equal(p.undated, 1);
@@ -57,8 +57,8 @@ test('late is due on or before Sunday, after is the next Monday to Sunday, the r
 
 test('a project marked done keeps its steps but has no waiting items', () => {
   const w = mcpWeek();
-  w.registry.setState('cairn', 'done', 'owner');
-  const p = buildReview(w.sources(), windowFor('2026-10-26')).projects.find((x) => x.project === 'cairn')!;
+  w.registry.setState('brainai', 'done', 'owner');
+  const p = buildReview(w.sources(), windowFor('2026-10-26')).projects.find((x) => x.project === 'brainai')!;
   assert.equal(p.done.length, 2);
   assert.deepEqual(p.waiting, []);
   assert.deepEqual([p.dated, p.undated], [0, 0]);
@@ -254,16 +254,16 @@ test('facts saved under an alias count toward the current project', () => {
 test('pages saved this week are grouped by project, each page once', () => {
   const w = reviewWorld('2026-10-20T10:00:00Z');
   w.db.prepare(`INSERT INTO pages(id, title, title_key, project, body, version, created_at, created_by, updated_at, updated_by)
-    VALUES (?, ?, ?, 'cairn', 'b', 2, 'x', 'c', 'x', 'c')`).run('p1', 'A', 'a');
+    VALUES (?, ?, ?, 'brainai', 'b', 2, 'x', 'c', 'x', 'c')`).run('p1', 'A', 'a');
   w.db.prepare(`INSERT INTO pages(id, title, title_key, project, body, version, created_at, created_by, updated_at, updated_by)
-    VALUES (?, ?, ?, 'cairn', 'b', 1, 'x', 'c', 'x', 'c')`).run('p2', 'B', 'b');
+    VALUES (?, ?, ?, 'brainai', 'b', 1, 'x', 'c', 'x', 'c')`).run('p2', 'B', 'b');
   const v = w.db.prepare("INSERT INTO page_versions(page_id, version, title, project, body, saved_at, saved_by) VALUES (?, ?, 'T', ?, 'b', ?, 'c')");
-  v.run('p1', 1, 'cairn', '2026-10-27T10:00:00.000Z');
-  v.run('p1', 2, 'cairn', '2026-10-28T10:00:00.000Z');
-  v.run('p2', 1, 'cairn', '2026-10-29T10:00:00.000Z');
+  v.run('p1', 1, 'brainai', '2026-10-27T10:00:00.000Z');
+  v.run('p1', 2, 'brainai', '2026-10-28T10:00:00.000Z');
+  v.run('p2', 1, 'brainai', '2026-10-29T10:00:00.000Z');
   v.run('p2', 2, null, '2026-10-30T10:00:00.000Z');
   w.at('2026-11-03T07:14:00Z');
-  assert.deepEqual(quietOf(w, 'cairn')!.pages, ['p1', 'p2']);
+  assert.deepEqual(quietOf(w, 'brainai')!.pages, ['p1', 'p2']);
 });
 
 test('decisions saved this week, statuses and roadmaps left out, newest first', () => {

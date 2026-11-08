@@ -1,0 +1,28 @@
+[package]
+name = "brainai"
+version = "1.0.1"
+description = "BrainAI: a shared brain for your AI assistants, on this Mac"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "brainai_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.8"
+# Plain http to this computer only: no TLS needed.
+ureq = { version = "2", default-features = false, features = ["json"] }

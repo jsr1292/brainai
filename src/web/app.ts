@@ -8,8 +8,16 @@ import type { ClientsStore } from '../auth/clientsStore.js';
 import type { LoginLimiter } from '../auth/loginLimiter.js';
 import type { OwnerAuth } from '../auth/owner.js';
 import type { MemoryOAuthProvider } from '../auth/provider.js';
+import type { DB } from '../db.js';
 import type { RedirectAllowlist } from '../auth/redirects.js';
 import { RefusedRedirects } from '../auth/refusedRedirects.js';
+import { fetchMetadataGuard, hostGuard } from './hostGuard.js';
+import { Reach } from '../desktop/reach.js';
+import { PublicDoor, viaDoor } from '../desktop/publicDoor.js';
+import { movedTo } from '../desktop/move.js';
+import { desktopRoutes } from './desktopRoutes.js';
+import { reachRoutes } from './reachRoutes.js';
+import { moveRoutes } from './moveRoutes.js';
 import type { SessionStore } from '../auth/sessions.js';
 import type { Clock } from '../clock.js';
 import type { Mode } from '../config.js';
@@ -48,15 +56,16 @@ import { searchRoutes } from './searchRoutes.js';
 import type { MemoryService } from '../memory/service.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { ProjectStore } from '../projects/store.js';
-import { authRoutes, readCookie, SESSION_COOKIE } from './authRoutes.js';
+import { authRoutes, localSignIn, readCookie, SESSION_COOKIE } from './authRoutes.js';
 import { dashboardRoutes } from './dashboardRoutes.js';
 import { discussionRoutes } from './discussionRoutes.js';
 import { rateLimitKey, TRUST_CF_SETTING } from './clientIp.js';
-import { html, page, setPageMode } from './html.js';
+import { html, page, setPageMode, setMovedBanner } from './html.js';
 import { createSideStatus, setSideStatus } from './sideStatus.js';
 import { setViewClock } from './when.js';
 import type { GraphService } from '../graph/data.js';
 import { graphRoutes } from './graphRoutes.js';
+import { setComputer } from '../desktop/computer.js';
 
 export interface AppDeps {
   publicUrl: URL;
@@ -113,12 +122,29 @@ export interface AppDeps {
   trustCfConnectingIp?: boolean;
   /** Where the backup runs record their outcome (the data folder); the home page shows it. None: no backup panel. */
   statusDir?: string;
+  /** The desktop app's local mode (Config.localMode): answers only to localhost; signed in until a password exists. */
+  localMode?: boolean;
+  /** The desktop app's key (Config.appSecret): GET /app/open?key=… opens a session for the app's window. */
+  appSecret?: string | null;
+  /** Local mode: the public address (Reach from phone and web, D4). Created by createApp when not given. */
+  reach?: Reach;
+  /** Local mode: the public door Tailscale Funnel forwards to, open only while Reach is in use. Created by createApp. */
+  door?: PublicDoor;
+  /** Local mode: shows a file in Finder (Move to a server). Tests replace it. */
+  reveal?: (path: string) => void;
+  /** Whether BrainAI answers at a public address (Reach through Cloudflare checks before saying On). Tests replace it. */
+  reachCheck?: (url: URL) => Promise<boolean>;
+  /** The database itself, for the moving file's copy (local mode). */
+  db?: DB;
+  /** Local mode: where the owner's coding tools are (their HOME and the PATH to find their commands), for Connect (D3). */
+  tools?: { home: string; path: string; apps?: string; extraEnv?: Record<string, string>; /** Tailscale's app command (tests point it nowhere). */ tailscaleApp?: string; /** The computer's platform (tests pass win32); default process.platform. */ platform?: NodeJS.Platform };
 }
 
 const CSP = "default-src 'self'; frame-ancestors 'none'; form-action 'self' https: http://localhost:* http://127.0.0.1:*";
 const SCOPES = ['memory'];
-/** Called by OAuth/MCP clients without browser cookies, so they carry no Origin to check. */
-const CLIENT_ENDPOINTS = ['/mcp', '/authorize', '/token', '/register', '/revoke', '/api/folder-report', '/api/image-upload', '/api/skills/report', '/api/skills/upload'];
+/** Called by OAuth/MCP clients without browser cookies, so they carry no Origin to check. /app/hello and /app/ticket:
+ * the desktop app's own check and ticket, called by the app itself, never by a page (D2). */
+const CLIENT_ENDPOINTS = ['/mcp', '/authorize', '/token', '/register', '/revoke', '/app/hello', '/app/ticket', '/api/folder-report', '/api/image-upload', '/api/skills/report', '/api/skills/upload'];
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const STATIC_DIR = join(dirname(fileURLToPath(import.meta.url)), 'static');
 
@@ -148,11 +174,13 @@ const markUnrepeatable: RequestHandler = (req, res, next) => {
 };
 
 /** CSRF protection: state-changing browser requests must come from our own pages. */
-function sameOrigin(publicUrl: URL): RequestHandler {
+function sameOrigin(expected: (req: express.Request) => URL): RequestHandler {
   return (req, res, next) => {
     if (SAFE_METHODS.has(req.method)) return next();
     if (CLIENT_ENDPOINTS.some((p) => req.path === p || req.path.startsWith(p + '/'))) return next();
-    if (req.get('origin') === publicUrl.origin) return next();
+    // Each address takes forms only from its own pages; a missing Origin is never a match.
+    const origin = req.get('origin');
+    if (origin !== undefined && origin === expected(req).origin) return next();
     res.status(403).type('html').send(page('Forbidden', html`<h1>Forbidden</h1><p>This form was not sent from this site.</p>`, { tab: null }));
   };
 }
@@ -239,11 +267,31 @@ export function accessOfToken(provider: Pick<MemoryOAuthProvider, 'grantAccess'>
 export function createApp(d: AppDeps): express.Express {
   const app = express();
   app.disable('x-powered-by');
+  // The desktop app: its public address (D4), only in use with a password and an authenticator.
+  if (d.localMode && !d.reach) d.reach = new Reach(d.statusDir, () => d.owner.isConfigured());
+  const reachUrl = () => d.reach?.url() ?? null;
+  d.provider.setExtraResource(() => { const r = reachUrl(); return r ? new URL('/mcp', r) : null; });
+  if (d.localMode && !d.door) d.door = new PublicDoor(app);
+  // Reach turned off (or forgotten): the public door shuts at once.
+  d.reach?.onChange((url) => { if (!url) d.door?.close(); });
+  if (d.localMode) {
+    // The desktop app: the localhost listener answers only to localhost (D1). The public door is the internet,
+    // whatever Host it names: nothing there while Reach is not in use, and never the app window's endpoints (D4).
+    const localOnly = hostGuard(d.publicUrl, CLIENT_ENDPOINTS);
+    app.use((req, res, next) => {
+      if (!viaDoor(req)) return localOnly(req, res, next);
+      if (!reachUrl()) return res.status(421).type('text/plain').send('BrainAI is not reachable from the internet right now.');
+      if (req.path === '/app' || req.path.startsWith('/app/')) return res.status(404).type('text/plain').send('Not found');
+      next();
+    });
+  }
   app.set(TRUST_CF_SETTING, d.trustCfConnectingIp ?? true);
   const mode = d.mode ?? 'personal';
   setPageMode(mode);
   setSideStatus(createSideStatus(d));
   setViewClock(d.now);
+  setMovedBanner(() => (d.localMode && d.statusDir ? movedTo(d.statusDir) : null));
+  setComputer(d.tools?.platform ?? process.platform);
   const mcpUrl = new URL('/mcp', d.publicUrl);
 
   // 1. Security headers.
@@ -253,12 +301,15 @@ export function createApp(d: AppDeps): express.Express {
   // 2. Our authorization server metadata (adds CIMD support); registered first so it wins over the SDK's.
   // Callbacks carry RFC 9207 `iss`, but authorization_response_iss_parameter_supported is not advertised: Grok Build
   // (rmcp) then requires `iss` on every callback and its sign-in failed.
-  const metadata = {
-    ...createOAuthMetadata({ provider: d.provider, issuerUrl: d.publicUrl, scopesSupported: SCOPES }),
+  const metadataFor = (origin: URL) => ({
+    ...createOAuthMetadata({ provider: d.provider, issuerUrl: origin, scopesSupported: SCOPES }),
     client_id_metadata_document_supported: true,
-  };
-  app.get('/.well-known/oauth-authorization-server', (_req, res) => {
-    res.set('Access-Control-Allow-Origin', '*').json(metadata);
+  });
+  const metadata = metadataFor(d.publicUrl);
+  // The address a request came in at: the public one for everything through the public door (D4), never by Host.
+  const onPublic = (req: express.Request) => viaDoor(req) && reachUrl() !== null;
+  app.get('/.well-known/oauth-authorization-server', (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*').json(onPublic(req) ? metadataFor(reachUrl()!) : metadata);
   });
 
   // 3. OAuth endpoints, each with its own per-IP rate limit; registration (it adds rows) gets a stricter one.
@@ -267,26 +318,59 @@ export function createApp(d: AppDeps): express.Express {
   // Parsed here with a small limit (oversize → 413); the SDK's own JSON parser then skips the parsed body.
   const refused = new RefusedRedirects(d.now);
   app.use('/register', express.json({ limit: '8kb' }), logRejectedRegistration(d.now, refused, d.allowlist));
-  app.use(mcpAuthRouter({
-    provider: d.provider,
-    issuerUrl: d.publicUrl,
-    resourceServerUrl: mcpUrl,
-    scopesSupported: SCOPES,
-    resourceName: mode === 'work' ? 'Work memory' : 'Cairn',
-    authorizationOptions: { rateLimit },
-    tokenOptions: { rateLimit },
-    // Secrets never expire: the SDK default (30 days) would silently disconnect confidential clients.
-    clientRegistrationOptions: { rateLimit: registrationRateLimit, clientSecretExpirySeconds: 0 },
-    revocationOptions: { rateLimit },
-  }));
+  // One auth router and one token check per address: each answers with its own issuer and resource, and a token
+  // is accepted only at the address it was issued for.
+  const authFor = (origin: URL) => {
+    const resource = new URL('/mcp', origin);
+    // An app that names no resource gets this address's (the provider alone would give it localhost's).
+    const provider = new Proxy(d.provider, {
+      get(target, key) {
+        if (key === 'authorize') {
+          return (client: Parameters<MemoryOAuthProvider['authorize']>[0], params: Parameters<MemoryOAuthProvider['authorize']>[1], res: Parameters<MemoryOAuthProvider['authorize']>[2]) =>
+            target.authorize(client, { ...params, resource: params.resource ?? resource }, res);
+        }
+        const value: unknown = Reflect.get(target, key, target);
+        return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    return {
+      router: mcpAuthRouter({
+        provider,
+        issuerUrl: origin,
+        resourceServerUrl: resource,
+        scopesSupported: SCOPES,
+        resourceName: mode === 'work' ? 'Work memory' : 'BrainAI',
+        authorizationOptions: { rateLimit },
+        tokenOptions: { rateLimit },
+        // Secrets never expire: the SDK default (30 days) would silently disconnect confidential clients.
+        clientRegistrationOptions: { rateLimit: registrationRateLimit, clientSecretExpirySeconds: 0 },
+        revocationOptions: { rateLimit },
+      }),
+      bearer: requireBearerAuth({ verifier: d.provider, resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resource), expectedResource: resource }),
+    };
+  };
+  const localAuth = authFor(d.publicUrl);
+  // The public address's pieces are built when the address is saved (at start, or when Reach is switched on), never
+  // while answering a request.
+  let publicAuth: { href: string; auth: ReturnType<typeof authFor> } | null = null;
+  const buildPublic = (url: URL | null) => { publicAuth = url ? { href: url.href, auth: authFor(url) } : null; };
+  buildPublic(d.reach?.saved() ?? null);
+  d.reach?.onChange(buildPublic);
+  const pick = (req: express.Request) => (onPublic(req) && publicAuth ? publicAuth.auth : localAuth);
+  app.use((req, res, next) => pick(req).router(req, res, next));
 
   // 4. The MCP endpoint: stateless, one server and transport per request, attributed to the token's client.
-  const bearer = requireBearerAuth({
-    verifier: d.provider,
-    resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(mcpUrl),
-    expectedResource: mcpUrl,
-  });
+  const bearer: RequestHandler = (req, res, next) => pick(req).bearer(req, res, next);
   // Room for a discussion's attachments (up to 1 MB of files, JSON-escaped); the token is checked before parsing.
+  // A brain moved to a server (D5): assistants still pointed here are told where it lives now.
+  if (d.localMode && d.statusDir) {
+    const dir = d.statusDir;
+    app.use('/mcp', (_req, res, next) => {
+      const to = movedTo(dir);
+      if (!to) return next();
+      res.status(410).json({ jsonrpc: '2.0', error: { code: -32000, message: `This brain moved to ${to.origin}. Connect this app there (its Settings has each app's page).` }, id: null });
+    });
+  }
   app.route('/mcp')
     .post(bearer, express.json({ limit: '3mb' }), async (req, res) => {
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -320,7 +404,11 @@ export function createApp(d: AppDeps): express.Express {
     .delete(methodNotAllowed);
 
   // 6. Origin check, placed before the browser routes it protects (it has to run before them to have any effect).
-  app.use(sameOrigin(d.publicUrl));
+  app.use(sameOrigin((req) => (onPublic(req) ? reachUrl()! : d.publicUrl)));
+  // The desktop app's local mode: the owner is signed in until a password is set (D1). After the Origin check.
+  // Nothing signs in by itself through the public door, nor anywhere while a public address is on (D4).
+  const autoSignIn = localSignIn(d, CLIENT_ENDPOINTS);
+  if (d.localMode) app.use(fetchMetadataGuard(CLIENT_ENDPOINTS), (req, res, next) => (viaDoor(req) || reachUrl() ? next() : autoSignIn(req, res, next)));
 
   // 5. Login, logout and consent.
   const pageForms = express.urlencoded({ extended: false, limit: PAGE_FORM_LIMIT });
@@ -352,6 +440,9 @@ export function createApp(d: AppDeps): express.Express {
   app.use(diagramRoutes(d));
   app.use(pictureReviewRoutes(d));
   app.use(setupRoutes(d, refused));
+  app.use(desktopRoutes(d));
+  app.use(reachRoutes(d));
+  app.use(moveRoutes(d));
   app.use(skillRoutes(d));
   app.use(pageRoutes(d));
   // Growth is the personal brain's only (spec section 11): the work memory has no Growth list.

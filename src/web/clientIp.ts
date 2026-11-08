@@ -1,5 +1,6 @@
 import { isIPv4, isIPv6 } from 'node:net';
 import type { Request } from 'express';
+import { viaDoor } from '../desktop/publicDoor.js';
 
 /** Express app setting read by clientIp. */
 export const TRUST_CF_SETTING = 'trust cf-connecting-ip';
@@ -43,7 +44,12 @@ export function ipKey(ip: string): string {
   return `${g.slice(0, 4).map((x) => x.toString(16)).join(':')}::/64`;
 }
 
-/** The key every rate limiter uses for the caller (OAuth endpoints and the login limiter). */
+/**
+ * The key every rate limiter uses for the caller (OAuth endpoints and the login limiter). Everything through the
+ * desktop app's public door shares one key of its own (D4 review): it all arrives from 127.0.0.1, and a stranger
+ * using up the limits must not block the apps on the Mac. X-Forwarded-For is not used: a client can set it.
+ */
 export function rateLimitKey(req: Request): string {
+  if (viaDoor(req)) return 'public-door';
   return ipKey(clientIp(req));
 }

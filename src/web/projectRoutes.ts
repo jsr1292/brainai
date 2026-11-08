@@ -9,6 +9,10 @@ import { requireOwner } from './authRoutes.js';
 import { safeBack, withBackError } from './back.js';
 import { html, page } from './html.js';
 import type { ApprovalSummary } from './forYou.js';
+import { needsWelcome } from './desktopRoutes.js';
+import { disagreementsView, type OpenDisagreement } from './disagreeViews.js';
+import { errorBlock } from './dashboardViews.js';
+import { healthOf } from './healthData.js';
 import { projectList, projectsHomeView, type HomeViewInput, type WeekLine } from './projectsViews.js';
 import { weekRange } from '../review/sentence.js';
 import { deskSideView, projectLately } from './deskSide.js';
@@ -89,6 +93,9 @@ export function projectRoutes(d: AppDeps): Router {
       now: d.now(),
       error,
       connected: d.provider.listGrants().length > 0,
+      disagreements: d.service.openDisagreements().length,
+      // A brain with no memories yet has its own first steps: brain health waits until there is something to judge.
+      health: d.store.countCurrent() > 0 ? healthOf(d, d.now()) : undefined,
       // Stored by key (lowercase, dashes); shown by the folder's own name while the Mac still reports it.
       ignored: (() => {
         const names = new Map((d.devices.latestReport()?.folders ?? []).map((x) => [folderKey(x.name), x.name]));
@@ -127,6 +134,8 @@ export function projectRoutes(d: AppDeps): Router {
   };
 
   router.get('/', owner, (req, res) => {
+    // A new Mac install opens on the welcome (D3); a brain in use, or one past the welcome, never does.
+    if (Object.keys(req.query).length === 0 && needsWelcome(d)) return res.redirect(302, '/welcome');
     // The old memory map's Map / Globe choice used to live on the home page: old links land on the Graph tab in one hop.
     const view = req.query.view;
     if (view === 'map' || view === 'globe') return res.redirect(301, '/graph');
@@ -203,6 +212,33 @@ export function projectRoutes(d: AppDeps): Router {
     if (i === undefined) return home(req, res, 400, 'Bad item number');
     return act(req, res, (name) => d.projects.completeWaiting(name, i, str(req, 'text'), d.now()));
   });
+  // B1: every open disagreement, by project; settling one (owner only) comes back to where it was settled.
+  const disagreementsPage = (res: Response, status = 200, error?: string) => {
+    const groups = new Map<string | null, OpenDisagreement[]>();
+    for (const x of d.service.openDisagreements()) {
+      const raw = x.factA.project ?? x.factB.project;
+      const key = raw === null ? null : d.service.projectNamed(raw);
+      groups.set(key, [...(groups.get(key) ?? []), x]);
+    }
+    const sorted = [...groups].sort(([a], [b]) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b))).map(([project, list]) => ({ project, list }));
+    res.status(status).type('html').send(page('Facts that disagree', html`${errorBlock(error)}${disagreementsView(sorted, d.now())}`, { nav: true, tab: 'projects', back: { href: '/', label: 'Projects' } }));
+  };
+  router.get('/disagreements', owner, (_req, res) => disagreementsPage(res));
+  router.post('/disagreements/:id/settle', owner, (req: Request, res) => {
+    const how = str(req, 'how');
+    if (how !== 'a' && how !== 'b' && how !== 'both') return disagreementsPage(res, 400, 'Choose which fact is right, or both.');
+    try {
+      d.service.settleDisagreement(req.params.id as string, how, { type: 'owner' });
+    } catch (e) {
+      if (!(e instanceof MemoryError)) throw e;
+      return disagreementsPage(res, e.code === 'not_found' ? 404 : 400, e.message);
+    }
+    // Only back to the list or a project's panel (a name as encodeURIComponent writes it): never anywhere else.
+    const back = req.body?.back;
+    const ok = back === '/disagreements' || (typeof back === 'string' && /^\/\?project=[A-Za-z0-9%._~!*'()-]+#panel$/.test(back));
+    res.redirect(303, ok ? back : '/disagreements');
+  });
+
   router.post('/projects/:name/done/:index/undo', owner, (req: Request, res) => {
     const i = index(req);
     if (i === undefined) return home(req, res, 400, 'Bad item number');

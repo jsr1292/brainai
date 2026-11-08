@@ -110,7 +110,7 @@ test('metadata advertises PKCE, DCR and CIMD, but not issuer identification', as
   const prm = await (await get(app, '/.well-known/oauth-protected-resource/mcp')).json() as any;
   assert.equal(prm.resource, `${app.baseUrl}/mcp`);
   assert.deepEqual(prm.authorization_servers, [as.issuer]);
-  assert.equal(prm.resource_name, 'Cairn');
+  assert.equal(prm.resource_name, 'BrainAI');
 });
 
 test('POST /mcp without a token is 401 with resource metadata pointer; GET and DELETE are 405', async (t) => {
@@ -208,12 +208,12 @@ test('end-to-end: register → authorize → login → consent → token → MCP
     jsonrpc: '2.0', id: 1, method: 'initialize',
     params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } },
   });
-  assert.equal(init.result.serverInfo.name, 'cairn');
+  assert.equal(init.result.serverInfo.name, 'brainai');
   const list = await mcp(app, tokens.access_token, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
-  assert.deepEqual(list.result.tools.map((x: any) => x.name).sort(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'note_observation', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
+  assert.deepEqual(list.result.tools.map((x: any) => x.name).sort(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'note_observation', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
   const saved = await mcp(app, tokens.access_token, {
     jsonrpc: '2.0', id: 3, method: 'tools/call',
-    params: { name: 'remember', arguments: { kind: 'decision', content: 'The web app uses Express 5', project: 'cairn' } },
+    params: { name: 'remember', arguments: { kind: 'decision', content: 'The web app uses Express 5', project: 'brainai' } },
   });
   assert.match(saved.result.content[0].text, /^Saved\./);
   // 8. Attributed to the connected client's name.
@@ -518,7 +518,7 @@ test('MCP requests use the grant\'s access level', async (t) => {
   const f = await loggedInFetch(app);
   const { accessToken } = await connectClient(app.baseUrl, f, 'Grok');
   const names = async () => (await mcp(app, accessToken, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })).result.tools.map((x: any) => x.name).sort();
-  assert.deepEqual(await names(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'note_observation', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
+  assert.deepEqual(await names(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'note_observation', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
   app.deps.provider.setGrantAccess(app.deps.provider.listGrants()[0]!.id, 'discussions');
   assert.deepEqual(await names(), ['list_discussions', 'open_discussion', 'read_discussion', 'reply_to_discussion']);
 });
@@ -558,7 +558,7 @@ test('work mode: the MCP server is "work-memory" with the work instructions and 
   assert.equal(init.result.serverInfo.name, 'work-memory');
   assert.equal(init.result.instructions, WORK_INSTRUCTIONS);
   const list = await mcp(app, accessToken, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
-  assert.deepEqual(list.result.tools.map((x: any) => x.name).sort(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
+  assert.deepEqual(list.result.tools.map((x: any) => x.name).sort(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
 });
 
 test('work mode: the dashboard is called "Work brain", with discussions and no access choice at consent', async (t) => {
@@ -589,8 +589,8 @@ test('personal mode keeps discussions and the access choice', async (t) => {
   const app = await start(t);
   const cookie = await loggedIn(app);
   const home = await (await get(app, '/settings', cookie)).text();
-  assert.match(home, /<span>Cairn<\/span>/);
-  assert.doesNotMatch(home, /<span>brain<\/span>/, 'the phone header names Cairn too');
+  assert.match(home, /<span>BrainAI<\/span>/);
+  assert.doesNotMatch(home, /<span>brain<\/span>/, 'the phone header names BrainAI too');
   assert.equal((await get(app, '/discussions', cookie)).status, 200);
   const { id } = await pendingConsent(app);
   assert.match(await (await get(app, `/consent/${id}`, cookie)).text(), /Discussions only/);
@@ -634,7 +634,7 @@ test('the login is one centred mark and form, full height without 100vh', async 
   const body = await (await get(app, '/login')).text();
   assert.match(body, /<header class="top solo">/);
   assert.equal((body.match(/\bprimary\b/g) ?? []).length, 1);
-  assert.match(body, /<h1 class="login-mark"><span class="brand-dot" aria-hidden="true"><\/span>Cairn<\/h1>/);
+  assert.match(body, /<h1 class="login-mark"><span class="brand-dot" aria-hidden="true"><\/span>BrainAI<\/h1>/);
   const css = (await (await get(app, '/static/style.css')).text()).replace(/\/\*[\s\S]*?\*\//g, '');
   assert.match(css, /\n\.auth main \{[^}]*min-height: 100dvh;[^}]*justify-content: center;[^}]*\}/);
   assert.match(css, /\.auth:has\(\.login-mark\) \.top\.solo \{ display: none; \}/, 'one mark: the header brand gives way to the centred one');
@@ -658,10 +658,10 @@ test('two connections of one app keep their own names, and each one\'s saves car
   const work = await connect('WorkCodex');
   const home = await connect('Codex');
   assert.deepEqual(app.deps.provider.listGrants().map((g) => g.clientName).sort(), ['Codex', 'WorkCodex']);
-  const save = (token: string, content: string) => mcp(app, token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'remember', arguments: { kind: 'decision', content, project: 'cairn' } } });
+  const save = (token: string, content: string) => mcp(app, token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'remember', arguments: { kind: 'decision', content, project: 'brainai' } } });
   await save(home, 'The home Codex saved this decision about tide tables');
   await save(work, 'The work Codex saved this decision about rota planning');
-  const by = (content: string) => app.deps.store.list({ project: 'cairn' }).find((m) => m.content === content)?.createdBy;
+  const by = (content: string) => app.deps.store.list({ project: 'brainai' }).find((m) => m.content === content)?.createdBy;
   assert.equal(by('The home Codex saved this decision about tide tables'), 'Codex');
   assert.equal(by('The work Codex saved this decision about rota planning'), 'WorkCodex');
 });

@@ -10,7 +10,7 @@ const setup = () => {
   return { db, store, tick: (ms: number) => { t += ms; } };
 };
 const base = {
-  title: 'Which database?', question: 'SQLite or Postgres?', project: 'cairn',
+  title: 'Which database?', question: 'SQLite or Postgres?', project: 'brainai',
   openedBy: { name: 'Claude Code', model: 'Opus 4' }, ask: ['Claude', 'Grok'], includeLimited: true,
 };
 

@@ -6,9 +6,9 @@ Please report security problems privately, through GitHub's "Report a vulnerabil
 Security tab, not in a public issue. Say what you found, how to reproduce it and what it lets someone do. You should
 hear back within a week.
 
-## How Cairn is meant to be run
+## How BrainAI is meant to be run
 
-Cairn holds a person's memories, so it is built to be reached by its owner and their apps only:
+BrainAI holds a person's memories, so it is built to be reached by its owner and their apps only:
 
 - **One owner, no static keys.** The dashboard needs a password and an authenticator code. Apps connect with OAuth,
   and the owner approves each one; any connection can be cut off from Settings or the command line.

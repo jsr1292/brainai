@@ -522,6 +522,13 @@ CREATE TABLE skill_links(skill_id TEXT NOT NULL REFERENCES skills(id), device_id
   PRIMARY KEY (skill_id, device_id));
 `;
 
+/** B1: two facts an assistant says can't both be true, until the owner settles them (src/memory/disagreements.ts). */
+const MIGRATION_30 = `
+CREATE TABLE disagreements(id TEXT PRIMARY KEY, a TEXT NOT NULL, b TEXT NOT NULL, pair TEXT NOT NULL UNIQUE,
+  why TEXT NOT NULL, flagged_by TEXT NOT NULL, created_at TEXT NOT NULL, settled_at TEXT, settled_by TEXT,
+  settled_how TEXT CHECK (settled_how IN ('a', 'b', 'both', 'gone', 'changed')), CHECK (a <> b));
+`;
+
 const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] = [
   { version: 1, sql: MIGRATION_1 },
   { version: 2, sql: MIGRATION_2 },
@@ -553,6 +560,7 @@ const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] 
   { version: 27, sql: MIGRATION_27 },
   { version: 28, sql: MIGRATION_28 },
   { version: 29, sql: MIGRATION_29 },
+  { version: 30, sql: MIGRATION_30 },
 ];
 
 /** `upTo` stops at that schema version (tests of a migration start from the one before it). */

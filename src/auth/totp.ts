@@ -37,7 +37,7 @@ export function totpAt(secretB32: string, step: number): string {
 }
 
 /** The issuer is the name the authenticator app shows above the code. */
-export function otpauthUri(secretB32: string, label: string, issuer = 'Cairn'): string {
+export function otpauthUri(secretB32: string, label: string, issuer = 'BrainAI'): string {
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(label)}` +
     `?secret=${secretB32}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 }

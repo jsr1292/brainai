@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -178,4 +178,25 @@ test('a failing npm test fails the gate', { skip: !haveGit }, (t) => {
   const r = world(t, npmWorld('node -e "process.exit(1)"')).run();
   assert.equal(r.status, 1, r.out);
   assert.match(r.out, /npm test failed/);
+});
+
+test('an unreadable denylist stops the gate (exit 2) instead of skipping the word check', { skip: !haveGit || process.getuid?.() === 0 }, (t) => {
+  const w = world(t, { ...CLEAN, 'src/b.ts': `// ${WORD}\n` });
+  chmodSync(w.denylist, 0o000);
+  const r = w.run('--no-tests');
+  chmodSync(w.denylist, 0o600);
+  assert.equal(r.status, 2, r.out);
+  assert.match(r.out, /Cannot read the denylist/);
+});
+
+test('a tracked link that points outside the tree is refused, and a link target is checked for denylisted words', { skip: !haveGit }, (t) => {
+  const w = world(t, CLEAN);
+  const target = join(w.dir, `${WORD}-private`);
+  writeFileSync(target, 'x');
+  symlinkSync(target, join(w.repo, 'outside'));
+  spawnSync('git', ['add', '-A'], { cwd: w.repo });
+  const r = w.run('--no-tests');
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /outside: a link that points outside the tree/);
+  assert.doesNotMatch(r.out, new RegExp(WORD));
 });

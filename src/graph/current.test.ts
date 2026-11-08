@@ -55,7 +55,7 @@ test('newest decisions skip statuses and roadmaps and come newest first', async 
   await saved(w, 'decision', 'tagged status', 'wildlog', ['status']);
   await saved(w, 'roadmap', 'Now: release', 'wildlog');
   await saved(w, 'decision', 'second decision', 'wildlog');
-  await saved(w, 'decision', 'other project', 'cairn');
+  await saved(w, 'decision', 'other project', 'brainai');
   const d = newestCurrentDecisions(w.db, ['wildlog'], 5);
   assert.deepEqual(d.map((x) => x.content), ['second decision', 'first decision']);
   assert.equal(newestCurrentDecisions(w.db, ['wildlog'], 1).length, 1);

@@ -1,8 +1,31 @@
 # Changelog
 
 Each release says what changed and whether updating needs anything from you. Updating is always
-`git pull && docker compose up -d --build` in `~/memory`; Cairn copies its database to `data/pre-migrate/` before
+`git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Backups and health shows the version you run.
+
+## 1.0.1 (2026-11-08)
+
+Updating needs nothing from you: the database gains one table (for disagreements).
+
+- **Cairn is now called BrainAI.** Your memories and settings stay as they are.
+- **The Mac app** (`docs/DESKTOP.md`): BrainAI on your own Mac with no server, domain or password; one-click Connect for
+  Claude Code, Codex, OpenCode and Cursor; a first-run welcome.
+- **Reach from phone and web:** a password and an authenticator from the dashboard, then a public address through
+  Tailscale (no domain) or your own domain on Cloudflare, served through a separate door that is open only while
+  Reach is on.
+- **Move to a server:** one moving file with every memory and picture, a tested runbook section to unpack it on a
+  server, and an app that then points its apps to the server and removes itself.
+- **The README** starts with "Where will it live?": your computer, a home server or a cloud server.
+- **Facts that disagree:** when an assistant sees that two saved facts can't both be true, it flags them
+  (`flag_disagreement`); you settle each pair on its project or on Facts that disagree, and until then assistants see
+  both marked.
+- **Brain health:** Settings › Brain health and backups shows how up to date and ready the brain is and what waits on
+  you, each 0–100 with its reasons; For you shows a line when one drops below 70, and the weekly review includes it.
+- **A recall benchmark:** `npm run bench:locomo` measures how often search finds the answer on the public LoCoMo test
+  (`docs/BENCHMARK.md`).
+- **Windows (test build):** the same app for Windows 10/11 x64, installed per user with no admin rights, with a
+  checksum-checked PowerShell install. Reach from phone and web is Mac-only for now.
 
 ## 1.0.0 (2026-11-06)
 

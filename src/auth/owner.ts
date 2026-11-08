@@ -16,6 +16,11 @@ export class OwnerAuth {
     return this.db.prepare('SELECT password_hash, totp_secret, totp_last_step FROM owner WHERE id = 1').get() as OwnerRow | undefined;
   }
 
+  /** Whether the owner has set a password (a desktop install starts without one, D1). */
+  hasPassword(): boolean {
+    return !!this.row()?.password_hash;
+  }
+
   isConfigured(): boolean {
     const r = this.row();
     return !!r?.password_hash && !!r?.totp_secret;

@@ -747,10 +747,11 @@ test('the save that tips a page gets the nudge once, and the next save does not 
     w.at(`2026-10-2${5 + i}T10:00:00Z`);
     const r = await call('remember', { kind: 'decision', content, project: 'wildlog' });
     assert.equal(r.isError, false, r.text);
-    const d = memData(r.text);
+    // The close facts of the same project (B1) may follow the nudge; this test is about the page nudge only.
+    const d = memData(r.text).filter((x: any) => !('close_facts' in x));
     saved.push(d[0].id);
     if (i === 2) {
-      assert.match(r.text, /^Saved\. Page [0-9a-f-]+ of this project may now be out of date: 3 decisions were saved after it was last brought up to date\. If this work changed the whole picture, add the decisions that matter to its Key decisions with edit_page_section, each linked with \[\[fact:id\]\], before you finish\.\n/);
+      assert.match(r.text, /^Saved\. Page [0-9a-f-]+ of this project may now be out of date: 3 decisions were saved after it was last brought up to date\. If this work changed the whole picture, add the decisions that matter to its Key decisions with edit_page_section, each linked with \[\[fact:id\]\], before you finish\.( These facts of the same project are close to it\..*)?\n/);
       assert.ok(r.text.includes(`Page ${main.id} of this project`));
       assert.deepEqual(d[1], { page: main.id, decisions_to_consider: saved });
     } else {

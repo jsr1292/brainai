@@ -16,18 +16,18 @@ const show = (w: ReviewWorld, scope: Scope = owner, kind: ReviewKind = 'last', b
 const roadmap = (w: ReviewWorld, project: string, at: string, content: string) => w.save(at, { kind: 'roadmap', content, project });
 const strength = (w: ReviewWorld, id: string, at: string) => {
   w.db.prepare(`INSERT INTO observations(id, kind, area, project, summary, embedding, created_at, created_by, last_evidence_at)
-    VALUES (?, 'strength', 'reviewing', 'cairn', 'Caught the double count', x'00', ?, 'Claude', ?)`).run(id, at, at);
+    VALUES (?, 'strength', 'reviewing', 'brainai', 'Caught the double count', x'00', ?, 'Claude', ?)`).run(id, at, at);
   w.db.prepare("INSERT INTO observation_evidence(observation_id, what, added_by, added_at) VALUES (?, 'w', 'Claude', ?)").run(id, at);
 };
 
-/** The mockup's week in small: wildlog, cairn, homeassistant, energy going quiet, a Personal finances. */
+/** The mockup's week in small: wildlog, brainai, homeassistant, energy going quiet, a Personal finances. */
 function fullWeek(): ReviewWorld {
   const w = reviewWorld('2026-10-15T10:00:00Z');
   w.save('2026-10-15T10:00:00Z', { content: 'energy compares tariffs', project: 'energy' });
   const wine = roadmap(w, 'wildlog', '2026-10-20T10:00:00Z', 'Done: setup (2026-10-20)\nNow: Release 0.2.2 (4/8)\nNext: release\nWaiting on you: Run release (by 2026-10-25); undated thing');
   w.edit('2026-10-28T10:00:00Z', wine.id, 'Done: TestFlight build (2026-10-28)\nNow: Release 0.2.2 (5/8)\nNext: release\nWaiting on you: Run release (by 2026-10-25); undated thing');
   w.edit('2026-10-31T10:00:00Z', wine.id, 'Done: TestFlight build (2026-10-28); Label scan (2026-10-30); Cellar map sorting (2026-10-31)\nNow: Release 0.2.2 (7/8)\nNext: release\nWaiting on you: Run release (by 2026-10-25); undated thing');
-  const mcp = roadmap(w, 'cairn', '2026-10-20T10:00:00Z', 'Now: round 1');
+  const mcp = roadmap(w, 'brainai', '2026-10-20T10:00:00Z', 'Now: round 1');
   w.edit('2026-10-31T11:00:00Z', mcp.id, 'Done: a (2026-10-27); b (2026-10-28); c (2026-10-29); d (2026-10-30); e (2026-10-31)\nNow: round 1');
   const ha = roadmap(w, 'homeassistant', '2026-10-20T10:00:00Z', 'Now: heating');
   w.edit('2026-10-29T10:00:00Z', ha.id, 'Done: zigbee (2026-10-27); heating (2026-11-01)\nNow: heating');
@@ -36,7 +36,7 @@ function fullWeek(): ReviewWorld {
   w.registry.setInfo('finances', { area: 'personal' }, 'owner');
   w.save('2026-10-28T13:00:00Z', { content: 'Label photos stay on the phone', project: 'wildlog' });
   w.save('2026-10-29T13:00:00Z', { content: 'Budget in a spreadsheet', project: 'finances' });
-  w.save('2026-10-30T13:00:00Z', { content: 'Dark mode is Graphite', project: 'cairn' });
+  w.save('2026-10-30T13:00:00Z', { content: 'Dark mode is Graphite', project: 'brainai' });
   strength(w, 'o1', '2026-10-29T10:00:00.000Z');
   w.grants.push({ clientName: 'Grok Build', createdAt: '2026-10-29T09:00:00.000Z' });
   w.at(NOW);
@@ -75,7 +75,7 @@ test('life areas are never in Went quiet, Back after a while or the sentence, an
 test('a read-only grant on wildlog sees nothing of other projects, counts included', () => {
   const w = fullWeek();
   const view = show(w, { kind: 'read', projects: ['wildlog'] });
-  assert.doesNotMatch(JSON.stringify(view), /cairn|homeassistant|energy|finances|Grok/);
+  assert.doesNotMatch(JSON.stringify(view), /brainai|homeassistant|energy|finances|Grok/);
   assert.equal(view.sentence, '3 steps done, all in wildlog. 1 thing is late.');
   assert.equal(view.growth, null);
   assert.equal(view.digest, null);
@@ -93,11 +93,11 @@ test('Full sees Personal and growth but no assistant table and no safety notes',
   const mine = show(w, owner);
   assert.ok(mine.digest!.writers.length > 0);
   assert.deepEqual(mine.safety.shown.map((s) => s.kind), ['connected']);
-  assert.equal(mine.sentence, 'A good week for cairn and wildlog: 11 steps done across 4 projects. 1 thing is late, and energy went quiet.');
+  assert.equal(mine.sentence, 'A good week for brainai and wildlog: 11 steps done across 4 projects. 1 thing is late, and energy went quiet.');
   const wine = mine.moved.find((m) => m.project === 'wildlog')!;
   assert.deepEqual(wine.progress, { now: 'Release 0.2.2', from: 4, to: 7, total: 8 });
-  assert.deepEqual(mine.moved.map((m) => m.project), ['cairn', 'wildlog', 'homeassistant', 'finances']);
-  assert.deepEqual(mine.decided.shown.map((d) => d.project), ['cairn', 'wildlog', 'finances'], 'newest first, life areas after');
+  assert.deepEqual(mine.moved.map((m) => m.project), ['brainai', 'wildlog', 'homeassistant', 'finances']);
+  assert.deepEqual(mine.decided.shown.map((d) => d.project), ['brainai', 'wildlog', 'finances'], 'newest first, life areas after');
 });
 
 test('waiting items match the live roadmap by itemKey', () => {

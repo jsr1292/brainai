@@ -26,7 +26,7 @@ async function connect(access: 'full' | 'discussions' | 'projects' = 'full') {
   const names = async () => (await client.listTools().then((r) => r.tools.map((t) => t.name), () => [] as string[]));
   return { call, names, skills, pages };
 }
-const deploy = { name: 'brain-deploy', description: 'Use when deploying cairn to the mini PC.', body: '1. Back up.\n2. Tag, merge, push.' };
+const deploy = { name: 'brain-deploy', description: 'Use when deploying brainai to the mini PC.', body: '1. Back up.\n2. Tag, merge, push.' };
 
 test('list_skills lists only skills that are On', async () => {
   const { call, skills } = await connect();
@@ -35,7 +35,7 @@ test('list_skills lists only skills that are On', async () => {
   skills.create({ ...deploy, name: 'release-notes', description: 'Use when writing release notes.' }, 'owner');
   const r = await call('list_skills');
   assert.match(r.text, /brain-deploy/);
-  assert.match(r.text, /Use when deploying cairn to the mini PC\./);
+  assert.match(r.text, /Use when deploying brainai to the mini PC\./);
   assert.doesNotMatch(r.text, /release-notes/);
 });
 

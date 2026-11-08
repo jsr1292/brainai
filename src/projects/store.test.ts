@@ -89,11 +89,11 @@ test('setInfo refuses a secret in the one-liner or the URL', () => {
 test('runs on is stored normalised and placesInUse lists each name once', () => {
   const { registry } = setup();
   registry.create('wildlog', { state: 'open' }, 'owner');
-  registry.create('cairn', { state: 'open' }, 'owner');
+  registry.create('brainai', { state: 'open' }, 'owner');
   assert.deepEqual(registry.get('wildlog')!.runsOn, []);
   assert.deepEqual(registry.placesInUse(), []);
   assert.deepEqual(registry.setInfo('wildlog', { runsOn: ['minipc', 'PI'] }, 'owner').runsOn, ['minipc', 'pi']);
-  registry.setInfo('cairn', { runsOn: 'pi' }, 'owner');
+  registry.setInfo('brainai', { runsOn: 'pi' }, 'owner');
   assert.deepEqual(registry.placesInUse(), ['minipc', 'pi']);
   // Leaving runsOn out keeps it.
   assert.deepEqual(registry.setInfo('wildlog', { oneLiner: 'Wine cellar' }, 'owner').runsOn, ['minipc', 'pi']);

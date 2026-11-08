@@ -9,6 +9,8 @@ const FORCE_CLOSE_MS = 5000;
  */
 export function installShutdown(o: {
   server: Server;
+  /** More servers on the same app (local mode's ::1 listener), closed with the first. */
+  also?: Server[];
   timer: NodeJS.Timeout;
   db: { close(): void };
   proc?: Pick<NodeJS.EventEmitter, 'on'>;
@@ -20,6 +22,7 @@ export function installShutdown(o: {
     if (stopping) return;
     stopping = true;
     clearInterval(o.timer);
+    for (const s of o.also ?? []) { s.close(); s.closeAllConnections(); }
     o.server.close(() => {
       o.db.close();
       exit(0);

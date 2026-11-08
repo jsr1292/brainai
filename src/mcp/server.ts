@@ -1,3 +1,4 @@
+import type { Health } from '../health/health.js';
 import type { ImageStore } from '../images/store.js';
 import type { UploadLinks } from '../images/uploadLinks.js';
 import type { DiagramChecks } from '../pages/diagramChecks.js';
@@ -121,6 +122,10 @@ const EXCERPT = 160;
 const RECENT_DONE = 5;
 /** At most this many page sections in a recall. */
 const PAGE_HITS = 5;
+/** After a save with close facts of the same project and kind (B1): the saving assistant judges them. */
+const CLOSE_FACTS = " These facts of the same project are close to it. If the new fact and one of these can't both be true, call flag_disagreement with both ids and why; if the new one replaces it, use update_memory or supersedes instead.";
+/** Recall and briefings when a fact is in an open disagreement. */
+const NOT_SETTLED = ' Facts with disagrees_with are in a disagreement the owner has not settled yet: do not rely on either one without saying so.';
 const excerpt = (text: string) => (text.length > EXCERPT ? `${text.slice(0, EXCERPT - 1)}…` : text);
 
 const kind = z.enum(KINDS as [string, ...string[]]);
@@ -143,7 +148,7 @@ export function servedToolNames(server: McpServer): string[] {
 export function buildMcpServer(
   service: MemoryService,
   actorName: string,
-  opts: { registry: ProjectStore; growth: GrowthService; pages: PageService; notes: NoteService; discussions?: DiscussionService; reviews?: ReviewService; access?: Access; projects?: string[]; mode?: Mode; askCommands?: Record<string, string>; clientId?: string; images?: ImageStore; diagramChecks?: DiagramChecks; uploadLinks?: UploadLinks; grantId?: string; publicUrl?: URL;
+  opts: { registry: ProjectStore; growth: GrowthService; pages: PageService; notes: NoteService; discussions?: DiscussionService; reviews?: ReviewService; access?: Access; projects?: string[]; mode?: Mode; askCommands?: Record<string, string>; clientId?: string; images?: ImageStore; diagramChecks?: DiagramChecks; uploadLinks?: UploadLinks; grantId?: string; publicUrl?: URL; /** B1: brain health as it is now, for weekly_review on a full connection. */ health?: () => Health;
     /** Guided setup (§17b): the setup number load_profile was given, for the grant to record. */
     onSetup?: (version: number) => void;
     /** Shared skills (§17c): listed, loaded and proposed by Full connections only. */
@@ -161,8 +166,21 @@ export function buildMcpServer(
   const readOnly = readable !== undefined;
   const visible = (project: string | null) => readable === undefined || (project !== null && readable.includes(project));
   const instructions = readOnly ? readOnlyInstructions(readable) : work ? WORK_INSTRUCTIONS : limited ? DISCUSSIONS_ONLY_INSTRUCTIONS : SERVER_INSTRUCTIONS;
-  const server = new McpServer({ name: work ? 'work-memory' : 'cairn', version: '1.0.0' }, { instructions });
+  const server = new McpServer({ name: work ? 'work-memory' : 'brainai', version: '1.0.0' }, { instructions });
   const saveNudge = readOnly ? '' : SAVE_NUDGE;
+  /** The facts each fact disagrees with (open pairs), only those this connection may see. Built once per call. */
+  const disagreeMarks = () => {
+    const index = service.disagreementIndex();
+    return (m: Memory): { disagrees_with?: { id: string; why: string }[] } => {
+      const list = (index.get(m.id) ?? []).filter((o) => readable === undefined || visible(o.project)).map(({ id, why }) => ({ id, why }));
+      return list.length > 0 ? { disagrees_with: list } : {};
+    };
+  };
+  /** After a save: the close facts as one data object, and the sentence that asks the assistant to judge them. */
+  const closeAfter = (saved: Memory): { text: string; data: { close_facts: { id: string; excerpt: string }[] }[] } => {
+    const close = service.closeFacts(saved.id).filter((c) => visible(c.memory.project === null ? null : service.projectNamed(c.memory.project)));
+    return close.length === 0 ? { text: '', data: [] } : { text: CLOSE_FACTS, data: [{ close_facts: close.map((c) => ({ id: c.memory.id, excerpt: excerpt(c.memory.content) })) }] };
+  };
   const pageVisible = pageVisibility(service, readable);
   /** Another fact's excerpt, only when this connection can read its project (a fact moved across projects never leaks). */
   const peek = (m: Memory) => (visible(m.project) ? excerpt(m.content) : null);
@@ -264,12 +282,13 @@ export function buildMcpServer(
     inputSchema: { setup: z.number().int().min(1).max(1000).optional() },
   }, guard('load_profile', (a: { setup?: number }) => {
     if (a.setup !== undefined) opts.onSetup?.(a.setup);
+    const mark = disagreeMarks();
     const profile = wrapData(PROFILE_LABEL, 'memories', service.loadProfile()
       // Sent in every conversation: only what an assistant needs, the oldest (who the owner is) first. The list is
       // newest first, so reversing it keeps entries created in the same millisecond in the order they were added.
       .reverse()
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .map((m) => ({ id: m.id, content: m.content })));
+      .map((m) => ({ id: m.id, content: m.content, ...mark(m) })));
     // Notes on pages without a project have no brief to appear in, so every conversation hears of them here.
     const loose = opts.notes.openWithoutProject();
     if (loose.length === 0) return text(profile);
@@ -300,11 +319,14 @@ export function buildMcpServer(
     // One embedding of the query serves both layers: facts, then page sections.
     const vector = await opts.pages.embedQuery(a.query);
     const results = await service.recall({ query: a.query, kind: a.kind as never, project, projects: readable, limit: a.limit, vector, replaced: a.include_replaced ? 'include' : 'hide' });
-    const facts = withData(saveNudge, results.map((r) => {
+    const mark = disagreeMarks();
+    const rows = results.map((r) => {
       if (r.replaced) return { ...memoryJson(r.memory), ...replacedJson(r.memory) };
       const newer = service.newerStatus(r.memory);
-      return { ...memoryJson(r.memory), ...(newer ? { newer_status: { id: newer.id, updatedAt: newer.updatedAt, excerpt: excerpt(newer.content) } } : {}), ...replacesJson(r.memory) };
-    }));
+      return { ...memoryJson(r.memory), ...(newer ? { newer_status: { id: newer.id, updatedAt: newer.updatedAt, excerpt: excerpt(newer.content) } } : {}), ...replacesJson(r.memory), ...mark(r.memory) };
+    });
+    const unsettled = rows.some((r) => 'disagrees_with' in r);
+    const facts = withData(`${saveNudge}${unsettled ? NOT_SETTLED : ''}`.trim(), rows);
     // Asking for one kind of fact asks for facts only.
     // The grant and the project filter are applied inside the search, before its limit.
     const sections = a.kind !== undefined ? [] : opts.pages.search(a.query, vector, PAGE_HITS, service.recallFloor(),
@@ -355,7 +377,8 @@ export function buildMcpServer(
       );
       if (r.status === 'saved') {
         const nudge = nudgeAfter(before, r.memory);
-        return withData(`${REPLACES(r.replaced.length, 'Saved')}${roadmapToo(r.memory)}${nudge.text}`, [memoryJson(r.memory), ...nudge.data]);
+        const close = closeAfter(r.memory);
+        return withData(`${REPLACES(r.replaced.length, 'Saved')}${roadmapToo(r.memory)}${nudge.text}${close.text}`, [memoryJson(r.memory), ...nudge.data, ...close.data]);
       }
       if (r.status === 'similar_exists') return withData(SIMILAR, r.similar.map((s) => memoryJson(s.memory)));
       if (r.status === 'status_exists') return withData(STATUS_EXISTS(r.statuses), r.statuses.map(memoryJson));
@@ -386,7 +409,8 @@ export function buildMcpServer(
       const r = await service.update(a.id, { content: a.content, project: givenProject(a.project), tags: a.tags, newProject: a.new_project, supersedes: a.supersedes }, actor, { base: a.base_updated_at });
       if (r.status === 'updated') {
         const nudge = nudgeAfter(before, r.memory);
-        return withData(`${REPLACES(r.replaced.length, 'Updated')}${roadmapToo(r.memory)}${nudge.text}`, [memoryJson(r.memory), ...nudge.data]);
+        const close = closeAfter(r.memory);
+        return withData(`${REPLACES(r.replaced.length, 'Updated')}${roadmapToo(r.memory)}${nudge.text}${close.text}`, [memoryJson(r.memory), ...nudge.data, ...close.data]);
       }
       if (r.status === 'new_project') return withData(NEW_PROJECT(r.project), r.candidates);
       return withData(heldText(r.suggestion), [suggestionJson(r.suggestion)]);
@@ -400,6 +424,18 @@ export function buildMcpServer(
       const r = service.forget(a.id, actor);
       if (r.status === 'deleted') return text('Deleted.');
       return withData(DELETE_SUGGESTED, [suggestionJson(r.suggestion)]);
+    }));
+
+    server.registerTool('flag_disagreement', {
+      title: 'Flag a disagreement',
+      description: "Says two facts (by id) can't both be true, when you can't tell which one is right: the owner settles it on the dashboard. "
+        + 'If you know the newer one is right, use update_memory or supersedes instead. why: a few words on what they disagree about (at most 300 characters).',
+      inputSchema: { a: z.string(), b: z.string(), why: z.string() },
+    }, guard('flag_disagreement', (a: { a: string; b: string; why: string }) => {
+      const r = service.flagDisagreement(a.a, a.b, a.why, actor);
+      if (r.status === 'flagged') return text('Flagged: the owner will settle it on the dashboard. Until then, recall marks both facts with disagrees_with.');
+      if (r.status === 'already_flagged') return text('These two facts are already flagged: the owner has not settled them yet.');
+      return text('The owner already said both of these facts are right: nothing was flagged.');
     }));
 
     // Place names may hold - _ and . between words; read as spaces, none that reads like an instruction is ever listed.
@@ -474,11 +510,12 @@ export function buildMcpServer(
     const r = await service.brief(a.project);
     if (r.found) {
       const { project, roadmap, statuses, decisions, omitted } = r.brief;
+      const mark = disagreeMarks();
       const info = registry.get(project);
       const pg = pagesOf(project);
       return withData(`${BRIEFING(project, readOnly)}${pg.open_notes.length > 0 ? NOTES_WAITING : ''}${flagLead(pg)} ${saveNudge}`.trimEnd(), {
-        roadmap: roadmap ? memoryJson(roadmap) : null, statuses: statuses.map((m) => ({ ...memoryJson(m), ...replacesJson(m) })),
-        decisions: decisions.map((m) => ({ ...memoryJson(m), ...replacesJson(m) })), omitted,
+        roadmap: roadmap ? memoryJson(roadmap) : null, statuses: statuses.map((m) => ({ ...memoryJson(m), ...replacesJson(m), ...mark(m) })),
+        decisions: decisions.map((m) => ({ ...memoryJson(m), ...replacesJson(m), ...mark(m) })), omitted,
         project_info: info ? projectInfoJson(info, service.isQuiet(project)) : null, ...pg,
       });
     }
@@ -541,7 +578,7 @@ export function buildMcpServer(
   }));
 
   if (opts.reviews) {
-    registerReviewTools(server, opts.reviews, { actorName, work, scope: readable === undefined ? { kind: 'full' } : { kind: 'read', projects: readable } }, guard);
+    registerReviewTools(server, opts.reviews, { actorName, work, scope: readable === undefined ? { kind: 'full' } : { kind: 'read', projects: readable }, health: opts.health }, guard);
   }
 
   if (opts.skills && !readOnly && access === 'full') registerSkillTools(server, opts.skills, actorName, guard);

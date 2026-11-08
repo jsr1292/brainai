@@ -28,7 +28,7 @@ export function setupStatusLine(app: SetupApp, grants: readonly GrantInfo[], ver
 function allowBlock(app: SetupApp, a: { allowed: boolean; refused: readonly Refused[] }): SafeHtml {
   const own = !app.allow?.length ? html``
     : a.allowed ? html`<p class="ok">${app.name} may sign in ✓</p>`
-    : html`<p>Cairn only accepts sign-ins from apps you allow.</p><form method="post" action="/settings/setup/${app.slug}/allow" class="inline"><button type="submit" class="primary">Allow ${app.name} to sign in</button></form>`;
+    : html`<p>BrainAI only accepts sign-ins from apps you allow.</p><form method="post" action="/settings/setup/${app.slug}/allow" class="inline"><button type="submit" class="primary">Allow ${app.name} to sign in</button></form>`;
   const refused = a.refused.length === 0 ? html``
     : html`<div class="refused"><p><strong>Refused lately.</strong> Allow only an address you recognise from an app you are connecting.</p><ul>${a.refused.map((r) =>
       html`<li>An app calling itself “<bdi>${r.clientName}</bdi>” tried to sign in from <strong>${new URL(r.uri).host}</strong> <code>${r.uri}</code> <form method="post" action="/settings/setup/${app.slug}/allow" class="inline"><input type="hidden" name="uri" value="${r.uri}"><button type="submit" class="secondary">Allow</button></form></li>`)}</ul></div>`;

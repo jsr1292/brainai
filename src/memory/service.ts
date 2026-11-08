@@ -8,6 +8,7 @@ import type { MemoryStore, ReplacedFilter } from './store.js';
 import type { ProjectStateName } from '../projects/types.js';
 import { actorLabel, KINDS, OWNER_LABEL as OWNER, type Actor, type Kind, type Memory, type Suggestion } from './types.js';
 import type { MeaningHook } from '../graph/threads.js';
+import { MAX_WHY, type Disagreement } from './disagreements.js';
 import { MAX_SUPERSEDES, replaceableKind, type Replaceable, type Supersession } from './supersessions.js';
 
 export const MAX_CONTENT = 1000;
@@ -641,6 +642,8 @@ export class MemoryService {
       }
       this.checkKindKept(latest, tags, actor);
       const memory = this.store.update(id, { content, project, tags, embedding, by });
+      // Rewritten, the fact may no longer disagree with anything: its open pairs end (a new flag opens one again).
+      if (content !== latest.content) this.store.disagreements.settleFor(id, 'changed', by);
       replaceIn();
       return memory;
     });
@@ -1071,6 +1074,113 @@ export class MemoryService {
       const ids = this.checkSupersede(oldIds, this.replacingFact(newId), from);
       return this.addSupersessions(ids, newId, actorLabel(actor));
     });
+  }
+
+  /**
+   * An assistant (or the owner) says two live facts can't both be true (B1). Never a roadmap; the pair is stored
+   * once. A pair the owner already called "both right" is not offered again.
+   */
+  flagDisagreement(a: string, b: string, why: string, actor: Actor): { status: 'flagged' | 'already_flagged' | 'dismissed_before'; disagreement: Disagreement } {
+    const reason = why.trim();
+    if (a === b) throw new MemoryError('invalid', 'A fact cannot disagree with itself: give two different ids.');
+    if (reason === '') throw new MemoryError('invalid', 'Say in a few words why the two facts cannot both be true.');
+    if (reason.length > MAX_WHY) throw new MemoryError('invalid', `The reason is too long: at most ${MAX_WHY} characters.`);
+    // The reason reaches every assistant with the two facts: it gets the checks any text an assistant saves gets.
+    const secret = looksLikeSecret(reason);
+    if (secret) throw new MemoryError('secret_detected', `The reason looks like it holds a secret (${secret}): say only what the two facts disagree about.`);
+    const instruction = actor.type === 'ai' ? looksLikeInstruction(reason) : null;
+    if (instruction) throw new MemoryError('invalid', `The reason reads like an instruction to assistants (it ${instruction}): say only what the two facts disagree about.`);
+    for (const id of [a, b]) {
+      const m = this.activeMemory(id);
+      if (m.kind === 'roadmap') throw new MemoryError('invalid', 'A roadmap cannot be flagged: update it instead.');
+      if (this.store.supersessions.liveFor(id)) throw new MemoryError('invalid', `${id} was already replaced by a newer fact.`);
+    }
+    const by = actorLabel(actor);
+    return this.store.atomic(() => {
+      const known = this.store.disagreements.forPair(a, b);
+      if (!known) return { status: 'flagged' as const, disagreement: this.store.disagreements.add(a, b, reason, by) };
+      if (known.settledAt === null) return { status: 'already_flagged' as const, disagreement: known };
+      if (known.settledHow === 'both') return { status: 'dismissed_before' as const, disagreement: known };
+      return { status: 'flagged' as const, disagreement: this.store.disagreements.reopen(known.id, reason, by) };
+    });
+  }
+
+  /** Whether a fact still counts in a disagreement: not deleted and not replaced. */
+  private liveFact(id: string): Memory | undefined {
+    const m = this.store.get(id);
+    return m && m.deletedAt === null && !this.store.supersessions.liveFor(id) ? m : undefined;
+  }
+
+  /** Open pairs, newest first, both facts live (a pair whose fact went away is settled as "gone" here); one project's when given. */
+  openDisagreements(project?: string): (Disagreement & { factA: Memory; factB: Memory })[] {
+    const out: (Disagreement & { factA: Memory; factB: Memory })[] = [];
+    const wanted = project === undefined ? undefined : this.canonical(project);
+    for (const d of this.store.disagreements.open()) {
+      const factA = this.liveFact(d.a);
+      const factB = this.liveFact(d.b);
+      if (!factA || !factB) { this.store.disagreements.settle(d.id, 'gone', 'BrainAI'); continue; }
+      const projects = [factA.project, factB.project].map((p) => (p === null ? null : this.canonical(p)));
+      if (wanted !== undefined && !projects.includes(wanted)) continue;
+      out.push({ ...d, factA, factB });
+    }
+    return out;
+  }
+
+  /** The live facts this one disagrees with, in open pairs. */
+  disagreesWith(id: string): { id: string; memory: Memory; why: string }[] {
+    return this.openDisagreements()
+      .filter((d) => d.a === id || d.b === id)
+      .map((d) => ({ id: d.id, memory: d.a === id ? d.factB : d.factA, why: d.why }));
+  }
+
+  /**
+   * After a save (B1): up to `limit` live facts of the same kind and project that are close to this one but not the
+   * same fact (between the recall-confident floor and the duplicate threshold), closest first. Never statuses or
+   * roadmaps, never a pair already flagged; the saving assistant judges whether one of them disagrees.
+   */
+  closeFacts(id: string, limit = 3): { memory: Memory; similarity: number }[] {
+    const m = this.store.get(id);
+    if (!m || m.deletedAt || m.kind === 'roadmap' || isStatus(m)) return [];
+    const all = this.store.activeEmbeddings({ kind: m.kind });
+    const self = all.find((e) => e.id === id);
+    if (!self) return [];
+    const project = (x: Memory) => (x.project === null ? null : this.canonical(x.project));
+    const mine = project(m);
+    return all
+      .filter((e) => e.id !== id)
+      .map((e) => ({ id: e.id, similarity: cosine(self.embedding, e.embedding) }))
+      .filter((x) => x.similarity >= this.opts.recallConfidentSimilarity && x.similarity < this.opts.duplicateThreshold)
+      .sort((x, y) => y.similarity - x.similarity)
+      .map((x) => ({ memory: this.store.get(x.id)!, similarity: x.similarity }))
+      .filter((x) => x.memory && !isStatus(x.memory) && project(x.memory) === mine && !this.store.disagreements.forPair(id, x.memory.id))
+      .slice(0, limit);
+  }
+
+  /** Every fact in an open disagreement, with the facts it disagrees with (and their projects, to check visibility). */
+  disagreementIndex(): Map<string, { id: string; why: string; project: string | null }[]> {
+    const index = new Map<string, { id: string; why: string; project: string | null }[]>();
+    const add = (id: string, other: Memory, why: string) => index.set(id, [...(index.get(id) ?? []), { id: other.id, why, project: other.project === null ? null : this.canonical(other.project) }]);
+    for (const d of this.openDisagreements()) { add(d.a, d.factB, d.why); add(d.b, d.factA, d.why); }
+    return index;
+  }
+
+  /**
+   * Owner only. 'a' or 'b': that fact is right, and the other is replaced by it (or deleted, when the two can't
+   * replace each other: profile facts, different projects or kinds). 'both': dismissed for good.
+   */
+  settleDisagreement(id: string, how: 'a' | 'b' | 'both', actor: Actor): Disagreement {
+    if (actor.type !== 'owner') throw new MemoryError('invalid', 'Only the owner can settle a disagreement.');
+    const d = this.store.disagreements.get(id);
+    if (!d) throw new MemoryError('not_found', `No disagreement with id ${id}`);
+    const open = this.openDisagreements().find((x) => x.id === id);
+    if (!open) throw new MemoryError('invalid', 'This disagreement was already settled.');
+    if (how !== 'both') {
+      const [right, wrong] = how === 'a' ? [open.factA, open.factB] : [open.factB, open.factA];
+      if (this.canReplacePair(right, wrong)) this.supersede([wrong.id], right.id, actor);
+      else this.store.softDelete(wrong.id, actorLabel(actor));
+    }
+    this.store.disagreements.settle(id, how, actorLabel(actor));
+    return this.store.disagreements.get(id)!;
   }
 
   /** Owner only: the replaced fact comes back (its row gets undone_at). Returns the fact brought back. */

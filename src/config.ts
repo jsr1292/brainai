@@ -33,6 +33,15 @@ export interface Config {
   host: string;
   /** Trust cf-connecting-ip for rate limiting: only safe when the Cloudflare tunnel is the only way in. */
   trustCfConnectingIp: boolean;
+  /**
+   * The desktop app: this computer only (127.0.0.1, http://localhost:<port>), answering only to localhost, and the
+   * owner signed in without a password until one is set (spec 2026-11-06-desktop-app-design).
+   */
+  localMode: boolean;
+  /** The desktop app's key: GET /app/open?key=… opens a session for the app's window (D1). At least 32 characters. */
+  appSecret: string | null;
+  /** The desktop app: the owner's login-shell PATH, where Connect finds claude, codex and opencode (D3). */
+  toolPath: string | null;
   /** When set, a dated copy of the database is written here daily and the newest `backupKeep` are kept. */
   backupDir: string | null;
   backupKeep: number;
@@ -110,6 +119,17 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const mode = env.MEMORY_MODE ?? 'personal';
   if (mode !== 'personal' && mode !== 'work') throw new Error(`MEMORY_MODE must be personal or work, got ${env.MEMORY_MODE}`);
   const work = mode === 'work';
+  const host = env.HOST ?? '127.0.0.1';
+  const trustCfConnectingIp = flag('TRUST_CF_CONNECTING_IP', env.TRUST_CF_CONNECTING_IP, false);
+  const localMode = flag('LOCAL_MODE', env.LOCAL_MODE, false);
+  if (localMode) {
+    // A local install has no password: it must never be reachable from anywhere but this computer.
+    if (host !== '127.0.0.1') throw new Error(`LOCAL_MODE listens on 127.0.0.1 only, not HOST=${host}`);
+    if (publicUrl.origin !== `http://localhost:${port}`) throw new Error(`LOCAL_MODE needs PUBLIC_URL=http://localhost:${port}, not ${env.PUBLIC_URL}`);
+    if (trustCfConnectingIp) throw new Error('LOCAL_MODE never trusts cf-connecting-ip: set TRUST_CF_CONNECTING_IP=false');
+  }
+  const appSecret = env.APP_SECRET || null;
+  if (appSecret !== null && appSecret.length < 32) throw new Error('APP_SECRET must be at least 32 characters');
   const backupKeep = Number(env.BACKUP_KEEP ?? DEFAULT_BACKUP_KEEP);
   if (!Number.isInteger(backupKeep) || backupKeep < 1) throw new Error(`BACKUP_KEEP must be a whole number of at least 1, got ${env.BACKUP_KEEP}`);
   return {
@@ -119,8 +139,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     // This machine only, and no proxy header trusted, unless set: the Docker image sets HOST=0.0.0.0, and a deployment
     // behind a Cloudflare Tunnel (whose origin nothing else can reach) sets TRUST_CF_CONNECTING_IP=true.
     overlayDir: env.OVERLAY_DIR ?? 'overlay',
-    host: env.HOST ?? '127.0.0.1',
-    trustCfConnectingIp: flag('TRUST_CF_CONNECTING_IP', env.TRUST_CF_CONNECTING_IP, false),
+    host,
+    trustCfConnectingIp,
+    localMode,
+    appSecret,
+    toolPath: env.TOOL_PATH || null,
     backupDir: env.BACKUP_DIR || null,
     backupKeep,
     askCommands: askCommands(env.ASK_COMMANDS),

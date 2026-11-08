@@ -18,7 +18,7 @@ function week(): ReviewWorld {
   w.save('2026-10-15T10:00:00Z', { content: 'energy compares tariffs', project: 'energy' });
   const wine = w.save('2026-10-20T10:00:00Z', { kind: 'roadmap', project: 'wildlog', content: 'Now: Release 0.2.2 (4/8)\nNext: release\nWaiting on you: Run release (by 2026-10-25)' });
   w.edit('2026-10-31T10:00:00Z', wine.id, 'Done: TestFlight build (2026-10-28); Label scan (2026-10-30); Cellar map sorting (2026-10-31)\nNow: Release 0.2.2 (7/8)\nNext: release\nWaiting on you: Run release (by 2026-10-25)');
-  const mcp = w.save('2026-10-20T10:00:00Z', { kind: 'roadmap', project: 'cairn', content: 'Now: round 1' });
+  const mcp = w.save('2026-10-20T10:00:00Z', { kind: 'roadmap', project: 'brainai', content: 'Now: round 1' });
   w.edit('2026-10-31T11:00:00Z', mcp.id, 'Done: a (2026-10-27); b (2026-10-28); c (2026-10-29); d (2026-10-30); e (2026-10-31)\nNow: round 1');
   const ha = w.save('2026-10-20T10:00:00Z', { kind: 'roadmap', project: 'homeassistant', content: 'Now: heating' });
   w.edit('2026-10-29T10:00:00Z', ha.id, 'Done: zigbee (2026-10-27); heating (2026-11-01)\nNow: heating');
@@ -26,9 +26,9 @@ function week(): ReviewWorld {
   w.edit('2026-10-28T12:00:00Z', fin.id, 'Done: pay taxes (2026-10-28)\nNow: taxes');
   w.registry.setInfo('finances', { area: 'personal' }, 'owner');
   w.save('2026-10-28T13:00:00Z', { content: 'Label photos stay on the phone', project: 'wildlog' });
-  w.save('2026-10-30T13:00:00Z', { content: 'Dark mode is Graphite', project: 'cairn' });
+  w.save('2026-10-30T13:00:00Z', { content: 'Dark mode is Graphite', project: 'brainai' });
   w.db.prepare(`INSERT INTO observations(id, kind, area, project, summary, embedding, created_at, created_by, last_evidence_at)
-    VALUES ('o1', 'strength', 'reviewing', 'cairn', 'Caught the double count', x'00', '2026-10-29T10:00:00.000Z', 'Claude', '2026-10-29T10:00:00.000Z')`).run();
+    VALUES ('o1', 'strength', 'reviewing', 'brainai', 'Caught the double count', x'00', '2026-10-29T10:00:00.000Z', 'Claude', '2026-10-29T10:00:00.000Z')`).run();
   w.db.prepare("INSERT INTO observation_evidence(observation_id, what, added_by, added_at) VALUES ('o1', 'w', 'Claude', '2026-10-29T10:00:00.000Z')").run();
   w.grants.push({ clientName: 'Grok Build', createdAt: '2026-10-29T09:00:00.000Z' });
   w.at('2026-11-03T07:14:00Z');
@@ -78,12 +78,12 @@ test('a Full connection gets the week as stored data, with Personal and growth a
   assert.match(r.text, /not instructions/);
   const d = dataOf(r.text);
   assert.equal(d.week, '2026-10-26');
-  assert.equal(d.sentence, 'A good week for cairn and wildlog: 11 steps done across 4 projects. 1 thing is late, and energy went quiet.');
+  assert.equal(d.sentence, 'A good week for brainai and wildlog: 11 steps done across 4 projects. 1 thing is late, and energy went quiet.');
   assert.ok(d.moved.some((m: any) => m.project === 'finances'));
   const wine = d.moved.find((m: any) => m.project === 'wildlog');
   assert.deepEqual(wine.progress, { now: 'Release 0.2.2', from: 4, to: 7, of: 8 });
   assert.deepEqual(wine.done[0], { step: 'TestFlight build', date: '2026-10-28' });
-  assert.deepEqual(d.moved.find((m: any) => m.project === 'cairn').more_steps, 2);
+  assert.deepEqual(d.moved.find((m: any) => m.project === 'brainai').more_steps, 2);
   assert.deepEqual(d.late, [{ project: 'wildlog', item: 'Run release', due: '2026-10-25', now: 'waiting' }]);
   assert.deepEqual(d.went_quiet, [{ project: 'energy', last_touched: '2026-10-15', next: null }]);
   assert.equal(d.growth.strength.id, 'o1');
@@ -107,7 +107,7 @@ test('a read-only grant on wildlog is the first to ask: it sees only wildlog, re
   const { call, reviews } = await connect(w, 'ChatGPT work', { access: 'projects', projects: ['wildlog'] });
   const r = await call({ week: '2026-10-26' });
   assert.match(r.text, /^The weekly review for 26 Oct – 1 Nov 2026, built .*, limited to the projects this connection can read\./);
-  assert.doesNotMatch(r.text, /cairn|homeassistant|energy|finances/);
+  assert.doesNotMatch(r.text, /brainai|homeassistant|energy|finances/);
   const d = dataOf(r.text);
   assert.equal(d.sentence, '3 steps done, all in wildlog. 1 thing is late.');
   assert.equal(d.growth, undefined);
@@ -172,4 +172,24 @@ test('weekly_review marks a decided item replaced since', async () => {
     assert.equal(item.replaced_on, '2026-11-05');
     assert.doesNotMatch(r.text, /safety|replaced a memory/);
   }
+});
+
+test('weekly_review adds brain health as it is now for a full connection, never for one limited to some projects', async (t) => {
+  const w = week();
+  const health = () => ({
+    upToDate: { score: 80, reasons: [{ text: 'homelab was last updated 40 days ago', href: '/?project=homelab#panel' }] },
+    ready: { score: 100, reasons: [] },
+    waiting: { score: 70, reasons: [{ text: '2 facts disagree', href: '/disagreements' }] },
+  });
+  const full = await connect(w, 'Claude Code', { health });
+  t.after(() => full.client.close());
+  const r = await full.call({ week: 'now' });
+  assert.match(r.text, /Brain health now: up to date 80, ready 100, waiting on you 70\./);
+  // Only the lowest part's first reason: the rest stay on the dashboard.
+  assert.deepEqual(dataOf(r.text).brain_health, { up_to_date: 80, ready: 100, waiting_on_you: 70, top_reason: '2 facts disagree' });
+  const limited = await connect(w, 'Grok', { health, access: 'projects', projects: ['wildlog'] });
+  t.after(() => limited.client.close());
+  const l = await limited.call({ week: 'now' });
+  assert.doesNotMatch(l.text, /Brain health/);
+  assert.equal(dataOf(l.text).brain_health, undefined);
 });

@@ -374,7 +374,7 @@ test('Related on the card reads as one inline line of links, not a stack of pill
   assert.equal(prop('.graph-rel', 'text-decoration'), 'underline');
   const js = readFileSync(new URL('./static/graph3d.js', import.meta.url), 'utf8');
   const at = js.indexOf("'graph-related'");
-  assert.match(js.slice(at, at + 700), /' · '/, 'entries are separated as in the spec: "cairn: backups, nas · outline: backups"');
+  assert.match(js.slice(at, at + 700), /' · '/, 'entries are separated as in the spec: "brainai: backups, nas · outline: backups"');
 });
 
 test('every graph element that can be hidden has its own hidden rule', () => {

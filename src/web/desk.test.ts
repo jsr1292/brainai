@@ -69,7 +69,7 @@ test('the sidebar comes right after the header, hidden, labelled Main, with ever
   assert.ok(out.indexOf('<nav class="side"') < out.indexOf('<main>'));
   const side = sidebar(out);
   assert.deepEqual(links(side).map(([c, h, t]) => [c, h, t]), [
-    ['brand', '/', 'Cairn'],
+    ['brand', '/', 'BrainAI'],
     ['side-place', '/', 'Projects'],
     ['side-place', '/pages', 'Pages'], ['side-sub', '/pages', 'All pages'], ['side-sub', '/facts', 'Facts'],
     ['side-place', '/review', 'Week'], ['side-sub', '/review', 'Last week'], ['side-sub', '/review/now', 'So far'], ['side-sub', '/growth', 'Growth'],

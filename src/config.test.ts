@@ -78,3 +78,22 @@ test('the compose file, which publishes no port, trusts the tunnel header for th
   assert.doesNotMatch(compose, /^\s*ports:/m);
   assert.match(compose, /- TRUST_CF_CONNECTING_IP=true/);
 });
+
+test('LOCAL_MODE runs on this computer only: 127.0.0.1, http://localhost on the same port, no tunnel header', () => {
+  const base = { PUBLIC_URL: 'http://localhost:3100', PORT: '3100', LOCAL_MODE: 'true' };
+  assert.equal(loadConfig(base).localMode, true);
+  assert.equal(loadConfig({ PUBLIC_URL: 'https://m.example.com' }).localMode, false);
+  for (const [bad, why] of [
+    [{ ...base, HOST: '0.0.0.0' }, /LOCAL_MODE listens on 127\.0\.0\.1 only/],
+    [{ ...base, PUBLIC_URL: 'https://m.example.com' }, /LOCAL_MODE needs PUBLIC_URL=http:\/\/localhost:3100/],
+    [{ ...base, PUBLIC_URL: 'http://localhost:3000' }, /LOCAL_MODE needs PUBLIC_URL=http:\/\/localhost:3100/],
+    [{ ...base, TRUST_CF_CONNECTING_IP: 'true' }, /LOCAL_MODE never trusts cf-connecting-ip/],
+    [{ ...base, LOCAL_MODE: 'yes' }, /LOCAL_MODE must be true or false/],
+  ] as const) assert.throws(() => loadConfig(bad), why);
+});
+
+test('APP_SECRET shorter than 32 characters stops the server', () => {
+  assert.throws(() => loadConfig({ PUBLIC_URL: 'https://m.example.com', APP_SECRET: 'short' }), /APP_SECRET must be at least 32 characters/);
+  assert.equal(loadConfig({ PUBLIC_URL: 'https://m.example.com', APP_SECRET: 'a'.repeat(32) }).appSecret, 'a'.repeat(32));
+  assert.equal(loadConfig({ PUBLIC_URL: 'https://m.example.com' }).appSecret, null);
+});

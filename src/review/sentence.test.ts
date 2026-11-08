@@ -7,8 +7,8 @@ const f = (steps: [string, number, boolean?][], rest: Partial<SentenceFacts> = {
 const page = { lead: true, soFar: false };
 
 test('the sentence follows the fixed patterns, with digits and at most two names in the lead', () => {
-  const four = f([['cairn', 5], ['wildlog', 3], ['homeassistant', 2], ['minipc', 1]], { late: 2, dated: 4, quiet: ['energy'] });
-  assert.equal(weekSentence(four, page), 'A good week for cairn and wildlog: 11 steps done across 4 projects. 2 things are late, and energy went quiet.');
+  const four = f([['brainai', 5], ['wildlog', 3], ['homeassistant', 2], ['minipc', 1]], { late: 2, dated: 4, quiet: ['energy'] });
+  assert.equal(weekSentence(four, page), 'A good week for brainai and wildlog: 11 steps done across 4 projects. 2 things are late, and energy went quiet.');
   assert.equal(weekSentence(four, { lead: false, soFar: false }), '11 steps done across 4 projects. 2 things are late, and energy went quiet.');
   assert.equal(weekSentence(f([['wildlog', 3]], { late: 1, dated: 1 }), page), '3 steps done, all in wildlog. 1 thing is late.');
   assert.equal(weekSentence(f([['finances', 1, false]]), page), '1 step done.');
@@ -19,7 +19,7 @@ test('the sentence follows the fixed patterns, with digits and at most two names
   assert.equal(weekSentence(f([['wildlog', 1]], { quiet: ['energy', 'castle3d'] }), page), '1 step done, in wildlog. energy and castle3d went quiet.');
   assert.equal(weekSentence(f([], { quiet: ['a', 'b', 'c'], somethingElse: true }), page), 'No roadmap steps were done. 3 projects went quiet.');
   assert.equal(weekSentence(f([]), page), 'A quiet week. Nothing moved.');
-  assert.equal(weekSentence(f([['cairn', 2], ['wildlog', 1]], { dated: 1 }), { lead: true, soFar: true }), 'So far: 3 steps done across 2 projects. Nothing is late.');
+  assert.equal(weekSentence(f([['brainai', 2], ['wildlog', 1]], { dated: 1 }), { lead: true, soFar: true }), 'So far: 3 steps done across 2 projects. Nothing is late.');
   assert.equal(weekSentence(f([]), { lead: true, soFar: true }), 'So far: nothing has moved yet.');
   assert.equal(weekSentence(f([['wildlog', 2]], { dated: 2, quiet: ['energy'] }), page), '2 steps done, all in wildlog. Nothing is late, and energy went quiet.');
   assert.equal(weekSentence(f([['a', 4], ['b', 4], ['c', 3]]), page), 'A good week for a and b: 11 steps done across 3 projects.');

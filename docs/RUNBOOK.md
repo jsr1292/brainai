@@ -6,7 +6,7 @@ A single-owner memory server for AI clients (OAuth only, no static keys). It run
 1. Prerequisites on your server (Linux, x86_64 or arm64): Docker + Compose, `sqlite3` (used by the backup script), `git`. Check with `docker compose version`, `sqlite3 --version`, `git --version`. Make sure Docker starts at boot: `sudo systemctl enable docker`. Add yourself to the `docker` group (`sudo usermod -aG docker $USER`, then log out and back in): the nightly scripts below call Docker without sudo, and cron cannot answer a sudo prompt.
 2. Install:
    ```bash
-   git clone https://github.com/jsr1292/cairn.git ~/memory && cd ~/memory
+   git clone https://github.com/jsr1292/brainai.git ~/memory && cd ~/memory
    mkdir -p data backups overlay
    ```
    `overlay/` holds your own settings and texts (see `overlay.example/`); it is never committed.
@@ -98,10 +98,35 @@ Only if `data/memory.db` is damaged or lost. **Done by hand by the owner; nothin
 8. What is lost: everything saved since that backup was taken (03:30 that night). Re-add those memories by hand.
 9. Every AI app has to sign in again, because no tokens are in a backup: reconnect each app when it reports the memory server as disconnected or asks to sign in, as described in `docs/CLIENTS.md`. Their registrations and access levels are kept, except for apps connected after the backup was taken and apps that had a client secret (theirs is replaced in a backup), which register again.
 
-## 4. Remote admin
+## 4. Moving from the app
+For a brain that started in the BrainAI app on a computer and now moves to this server, keeping every memory, page and
+picture. The apps reconnect to the server's address afterwards.
+1. **On the computer:** BrainAI › Settings › Move to a server › **Make the moving file**, then Show in Finder. The file,
+   `brainai-move-<date>.tar.gz`, holds every memory in clear but no password, authenticator or app sign-in.
+2. **The server:** do steps 1-4 of *One-time setup* (Docker, the clone, the tunnel, `.env`), but don't start it yet. If it already runs,
+   stop it first: `docker compose stop app`. Its `data/` must not hold another brain (`data/memory.db`): this replaces it.
+3. **Copy the file** to the server's `~/memory` (for example `scp brainai-move-*.tar.gz you@server:memory/`), then, in
+   `~/memory`:
+   ```bash
+   tar -xzf brainai-move-*.tar.gz -C data
+   chown -R <PUID>:<PGID> data/memory.db data/images
+   ```
+   (the values in `.env`; `data/images` is there only if the brain had pictures).
+4. **Set the sign-in**, which the file does not carry: `docker compose run --rm app node dist/cli.js set-password`, then
+   `docker compose run --rm app node dist/cli.js setup-totp`.
+5. **Start it:** `docker compose up -d --build`. The server brings the database up to its own version (a copy goes to
+   `data/pre-migrate/` first). Sign in at your address: the memories are there. Then steps 7-8 of *One-time setup*
+   (the checks and the nightly backup).
+6. **Reconnect each app** from the server's Settings › Set up an app (`docs/CLIENTS.md`): the coding tools on the
+   computer too, which pointed at the app.
+7. **On the computer:** Settings › Move to a server › **It's moved**, with the server's address. The app then tells any
+   app still pointed at it where the brain lives, and offers **Remove BrainAI from this Mac** (tools disconnected, start
+   at login off; the data folder stays). Delete the moving file once the server works.
+
+## 5. Remote admin
 To reach your server from outside, connect to your home VPN first, then SSH to its local address. **Never open an SSH port, or any other port, to the internet.**
 
-## 5. Recall test
+## 6. Recall test
 
 `~/memory/data/recall-test.json` holds real questions an assistant might ask, each with the ids of the memories that should answer it (`[{ "q": "...", "expect": ["<memory id>"], "project": "optional" }]`). It stays out of git because it is personal data. Run it after changing search settings or adding many memories:
 

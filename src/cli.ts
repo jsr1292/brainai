@@ -72,7 +72,7 @@ async function setPassword({ owner }: CliContext): Promise<void> {
 
 async function setupTotp({ owner }: CliContext): Promise<void> {
   const secret = generateTotpSecret();
-  console.log(await QRCode.toString(otpauthUri(secret, 'owner', process.env.MEMORY_MODE === 'work' ? 'Work memory' : 'Cairn'), { type: 'terminal', small: true }));
+  console.log(await QRCode.toString(otpauthUri(secret, 'owner', process.env.MEMORY_MODE === 'work' ? 'Work memory' : 'BrainAI'), { type: 'terminal', small: true }));
   console.log(`Scan the QR code, or enter this secret manually: ${secret}`);
   const code = (await prompt('Current 6-digit code: ')).trim();
   // Verify against a scratch DB so a wrong code never replaces a working secret.
@@ -148,7 +148,7 @@ async function recallTest({ db, args = [] }: CliContext): Promise<void> {
 
 /** Writes every active memory as Markdown to the given file, or prints it. Changes nothing. */
 async function exportCommand({ db, args = [] }: CliContext): Promise<void> {
-  const title = process.env.MEMORY_MODE === 'work' ? 'Work memory' : 'Cairn';
+  const title = process.env.MEMORY_MODE === 'work' ? 'Work memory' : 'BrainAI';
   const markdown = exportMarkdown(new MemoryStore(db, systemClock), title, systemClock());
   if (args[0]) {
     writeFileSync(args[0], markdown);

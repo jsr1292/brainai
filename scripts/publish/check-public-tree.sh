@@ -22,6 +22,8 @@ for arg in "$@"; do
 done
 [ -n "$DENYLIST" ] || { echo "Usage: check-public-tree.sh <denylist> [out-dir] [--no-tests]" >&2; exit 2; }
 [ -f "$DENYLIST" ] || { echo "No denylist file at the path given" >&2; exit 2; }
+# An unreadable list must stop the gate, not turn into "no words" (an empty file is allowed: forks have no list).
+[ -r "$DENYLIST" ] || { echo "Cannot read the denylist" >&2; exit 2; }
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "Run this inside the git repository to publish" >&2; exit 2; }
 REPO="$(git rev-parse --show-toplevel)"
 
@@ -52,6 +54,17 @@ tr -d '\r' < "$DENYLIST" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | g
 while IFS= read -r f; do [ -f "$REPO/$f" ] && printf '%s\n' "$f" >> "$WORK/files"; done < "$WORK/all"
 
 while IFS= read -r f; do
+  # A tracked link is published as a link, so its target text is published too: it must stay inside the tree.
+  if [ -L "$REPO/$f" ]; then
+    target="$(readlink "$REPO/$f")"
+    case "$target" in /*) outside=1 ;; *) outside=0 ;; esac
+    if [ "$outside" = 0 ]; then
+      resolved="$(cd "$(dirname "$REPO/$f")" && cd "$(dirname "$target")" 2>/dev/null && pwd -P)" || resolved=""
+      case "$resolved/" in "$(cd "$REPO" && pwd -P)/"*) ;; *) outside=1 ;; esac
+    fi
+    [ "$outside" = 0 ] || finding "$(show_path "$f"): a link that points outside the tree"
+    if [ -s "$WORK/terms" ] && printf '%s\n' "$target" | grep -qiF -f "$WORK/terms"; then finding "$(show_path "$f"): a link target holds a denylisted word"; fi
+  fi
   base="${f##*/}"
   case "$base" in
     .env.example) ;;

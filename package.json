@@ -1,6 +1,6 @@
 {
-  "name": "cairn",
-  "version": "1.0.0",
+  "name": "brainai",
+  "version": "1.0.1",
   "scripts": {
     "test": "node --import tsx --test --test-concurrency=1 \"src/**/*.test.ts\"",
     "test:model": "RUN_MODEL_TESTS=1 node --import tsx --test src/memory/embedder.model.test.ts",
@@ -10,7 +10,8 @@
     "cli": "tsx src/cli.ts",
     "demo:seed": "node --import tsx src/scripts/seedDemo.ts",
     "demo:code": "node --import tsx src/scripts/seedDemo.ts --code",
-    "model": "node --import tsx src/scripts/warmModel.ts"
+    "model": "node --import tsx src/scripts/warmModel.ts",
+    "bench:locomo": "node --import tsx src/scripts/benchLocomo.ts"
   },
   "type": "module",
   "private": true,

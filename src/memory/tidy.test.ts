@@ -20,13 +20,13 @@ function setup() {
 
 test('projects with more than one status are listed with their statuses newest first', async () => {
   const { store, add } = setup();
-  const old = await add('summary', 'cairn session: connected Claude', 'cairn');
-  const tagged = await add('decision', 'cairn status: Grok connected', 'cairn', ['status']);
-  await add('decision', 'cairn uses OAuth only', 'cairn');
+  const old = await add('summary', 'brainai session: connected Claude', 'brainai');
+  const tagged = await add('decision', 'brainai status: Grok connected', 'brainai', ['status']);
+  await add('decision', 'brainai uses OAuth only', 'brainai');
   await add('summary', 'wildlog status: v0.2 released', 'wildlog');
 
   assert.deepEqual(statusGroups(store).map((g) => ({ project: g.project, ids: g.statuses.map((m) => m.id) })),
-    [{ project: 'cairn', ids: [tagged.id, old.id] }]);
+    [{ project: 'brainai', ids: [tagged.id, old.id] }]);
 });
 
 test('"all still current" hides a project\'s statuses until a new status arrives', async () => {

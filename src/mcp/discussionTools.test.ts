@@ -12,7 +12,7 @@ import { makeGrowth, makePages, makeService } from '../testing/helpers.js';
 import { DISCUSSIONS_ONLY_INSTRUCTIONS, SERVER_INSTRUCTIONS } from './instructions.js';
 import { buildMcpServer } from './server.js';
 
-const TOOLS = ['close_discussion', 'edit_page_section', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'open_discussion', 'project_brief', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'whats_left', 'write_page'];
+const TOOLS = ['close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'open_discussion', 'project_brief', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'whats_left', 'write_page'];
 
 function setup(opts: { askCommands?: Record<string, string>; mode?: Mode } = {}) {
   const given = makeService();
@@ -40,7 +40,7 @@ test('a full-access connection gets twenty-one tools; a discussions-only one get
   const { connect } = setup();
   const full = await connect('Claude Code');
   assert.equal(full.client.getInstructions(), SERVER_INSTRUCTIONS);
-  assert.deepEqual((await full.client.listTools()).tools.map((t) => t.name).sort(), ['close_discussion', 'edit_page_section', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'open_discussion', 'project_brief', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'whats_left', 'write_page']);
+  assert.deepEqual((await full.client.listTools()).tools.map((t) => t.name).sort(), ['close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'open_discussion', 'project_brief', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'whats_left', 'write_page']);
   const limited = await connect('Grok', 'discussions');
   assert.equal(limited.client.getInstructions(), DISCUSSIONS_ONLY_INSTRUCTIONS);
   assert.deepEqual((await limited.client.listTools()).tools.map((t) => t.name).sort(),
@@ -267,7 +267,7 @@ test('close_discussion says which project the decision went to, and refuses a pr
   const { connect, service } = setup();
   const a = await connect('Claude Code');
   const id = idOf((await a.call('open_discussion', { title: 'Pick a DB', question: 'Q?', model: 'Opus', project: 'wildlog', ask: ['Grok'] })).text);
-  const wrong = await a.call('close_discussion', { id, model: 'Opus', decision: 'Use SQLite', project: 'cairn' });
+  const wrong = await a.call('close_discussion', { id, model: 'Opus', decision: 'Use SQLite', project: 'brainai' });
   assert.equal(wrong.isError, true);
   assert.match(wrong.text, /belongs to project wildlog.*leave project out/i);
   assert.deepEqual(await service.recall({ query: 'Use SQLite', touch: false }), []);

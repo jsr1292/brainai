@@ -21,8 +21,8 @@ test('countCurrent leaves out deleted and replaced facts', () => {
 
 test('update keeps the previous version in history and restore brings it back', () => {
   const { store } = setup();
-  const m = store.insert({ kind: 'decision', content: 'Use OAuth', project: 'cairn', tags: [], embedding: vec(0), by: 'Claude Code' });
-  store.update(m.id, { content: 'Use OAuth only', project: 'cairn', tags: ['auth'], embedding: vec(1), by: 'Claude' });
+  const m = store.insert({ kind: 'decision', content: 'Use OAuth', project: 'brainai', tags: [], embedding: vec(0), by: 'Claude Code' });
+  store.update(m.id, { content: 'Use OAuth only', project: 'brainai', tags: ['auth'], embedding: vec(1), by: 'Claude' });
   const [h] = store.history(m.id);
   assert.equal(h.action, 'update'); assert.equal(h.content, 'Use OAuth'); assert.equal(h.changedBy, 'Claude');
   const r = store.restore(h.id, 'owner', vec(0));

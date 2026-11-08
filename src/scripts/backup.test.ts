@@ -366,8 +366,8 @@ test('overlay values may be quoted or end in CRLF: the quotes and the CR are not
 test('the scripts work from wherever the repo was cloned: with no APP_DIR they use their own repo folder, not ~/memory', { skip: !haveSqlite }, () => {
   const root = mkdtempSync(join(tmpdir(), 'backup-anywhere-'));
   try {
-    // A clone in ~/cairn (the default folder for `git clone …/cairn`), and a home with no ~/memory at all.
-    const repo = join(root, 'home', 'cairn');
+    // A clone in ~/brainai (the default folder for `git clone …/brainai`), and a home with no ~/memory at all.
+    const repo = join(root, 'home', 'brainai');
     mkdirSync(join(repo, 'scripts', 'lib'), { recursive: true });
     mkdirSync(join(repo, 'data'), { recursive: true });
     for (const f of ['backup.sh', 'strip-signin.sh', 'backup-git.sh', 'export-brain.sh', 'offsite.sh', 'lib/overlay.sh']) { writeFileSync(join(repo, 'scripts', f), readFileSync(join('scripts', f))); chmodSync(join(repo, 'scripts', f), 0o755); }

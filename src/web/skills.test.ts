@@ -10,7 +10,7 @@ async function start(t: TestContext) {
   return { app, f: await loggedIn(app), skills: app.deps.skills };
 }
 const post = (pairs: [string, string][]) => ({ method: 'POST', body: new URLSearchParams(pairs), redirect: 'manual' as const });
-const deploy = { name: 'brain-deploy', description: 'Use when deploying cairn to the mini PC.', body: '# Deploy\n\n1. Back up.' };
+const deploy = { name: 'brain-deploy', description: 'Use when deploying brainai to the mini PC.', body: '# Deploy\n\n1. Back up.' };
 
 test('Skills list shows each skill with On/Off, its description, where it came from and when it was last loaded', async (t) => {
   const { f, skills } = await start(t);
@@ -22,7 +22,7 @@ test('Skills list shows each skill with On/Off, its description, where it came f
   assert.match(body, /<h1>Skills<\/h1>/);
   const row = (name: string) => body.slice(body.indexOf(`<b>${name}</b>`), body.indexOf('</a>', body.indexOf(`<b>${name}</b>`)));
   assert.match(row('brain-deploy'), /<span class="chip">On<\/span>/);
-  assert.match(row('brain-deploy'), /Use when deploying cairn to the mini PC\./);
+  assert.match(row('brain-deploy'), /Use when deploying brainai to the mini PC\./);
   assert.match(row('brain-deploy'), /written here/);
   assert.match(row('brain-deploy'), /loaded by Claude Code/);
   assert.match(row('release-notes'), /<span class="chip plain">Off<\/span>/);

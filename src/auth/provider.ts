@@ -96,9 +96,21 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
     return this.clients;
   }
 
-  /** The issuer as the metadata spells it (the server's root URL); sent as `iss` on every callback (RFC 9207). */
-  private get issuer(): string {
-    return new URL('/', this.resourceUrl).href;
+  /** A second MCP endpoint served at the same time (the desktop app's public address, D4), or none. */
+  private extraResource: () => URL | null = () => null;
+  setExtraResource(get: () => URL | null): void {
+    this.extraResource = get;
+  }
+
+  /** The endpoints a grant may be bound to: this server's own, and the public one while it is on. */
+  private resources(): URL[] {
+    const extra = this.extraResource();
+    return extra ? [this.resourceUrl, extra] : [this.resourceUrl];
+  }
+
+  /** The issuer of the address a grant was made at (its root URL); sent as `iss` on every callback (RFC 9207). */
+  private issuerOf(resource: string | undefined): string {
+    return new URL('/', resource ?? this.resourceUrl).href;
   }
 
   private iso(offsetSec = 0): string {
@@ -117,8 +129,8 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
     }
     // Bind every grant to the MCP endpoint, so tokens are only usable there (a missing resource defaults to it).
     const resource = params.resource ?? this.resourceUrl;
-    if (comparableResource(resource) !== comparableResource(this.resourceUrl)) {
-      throw new InvalidRequestError(`Unknown resource ${resource.href}; this server only serves ${this.resourceUrl.href}`);
+    if (!this.resources().some((r) => comparableResource(r) === comparableResource(resource))) {
+      throw new InvalidRequestError(`Unknown resource ${resource.href}; this server only serves ${this.resources().map((r) => r.href).join(' and ')}`);
     }
     const stored: PendingParams = {
       redirectUri: params.redirectUri,
@@ -205,7 +217,7 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
     const url = new URL(redirectUri);
     url.searchParams.set('code', code);
     if (pending.params.state !== undefined) url.searchParams.set('state', pending.params.state);
-    url.searchParams.set('iss', this.issuer);
+    url.searchParams.set('iss', this.issuerOf(pending.params.resource));
     return url.href;
   }
 
@@ -216,7 +228,7 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
     const url = new URL(pending.params.redirectUri);
     url.searchParams.set('error', 'access_denied');
     if (pending.params.state !== undefined) url.searchParams.set('state', pending.params.state);
-    url.searchParams.set('iss', this.issuer);
+    url.searchParams.set('iss', this.issuerOf(pending.params.resource));
     return url.href;
   }
 

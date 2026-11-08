@@ -64,7 +64,7 @@ interface Graph3d {
 const g = await import(new URL('./static/graph3d.js', import.meta.url).href) as Graph3d;
 const graphSaturation = (hex: string) => { const a = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255), hi = Math.max(...a), lo = Math.min(...a), l = (hi + lo) / 2; return hi === lo ? 0 : (hi - lo) / (1 - Math.abs(2 * l - 1)); };
 
-const NAMES = ['dossiers', 'gps-tracklog', 'pine-lodge', 'inflow', 'calypsomods', 'bookshelf-ha', 'wildlog', 'casa-azul-garden', 'castle3d', 'csvmerge', 'odds-and-ends', 'cairn'];
+const NAMES = ['dossiers', 'gps-tracklog', 'pine-lodge', 'inflow', 'calypsomods', 'bookshelf-ha', 'wildlog', 'casa-azul-garden', 'castle3d', 'csvmerge', 'odds-and-ends', 'brainai'];
 const gaps = (lay: { angle: number; lane: number }[], lane: number) => {
   const a = lay.filter((x) => x.lane === lane).map((x) => x.angle).sort((x, y) => x - y);
   return a.map((v, i) => (i + 1 < a.length ? a[i + 1]! - v : a[0]! + 2 * Math.PI - v));
@@ -201,7 +201,7 @@ test('the card announcement reads like a sentence', () => {
 
 test('a related Personal project is never named on another project\'s card', () => {
   assert.equal(g.relatedText({ name: 'finances', words: ['banco'], unlabelled: true }), 'A Personal project');
-  assert.equal(g.relatedText({ name: 'cairn', words: ['backups', 'nas'], unlabelled: false }), 'cairn: backups, nas');
+  assert.equal(g.relatedText({ name: 'brainai', words: ['backups', 'nas'], unlabelled: false }), 'brainai: backups, nas');
   assert.equal(g.relatedText({ name: 'outline', words: [], unlabelled: false }), 'outline');
 });
 
@@ -217,7 +217,7 @@ test('Find lights projects by name, one-liner, page titles, place labels and thr
   const data: GraphOverview = {
     projects: [
       proj({ name: 'lanes', oneLiner: 'Fútbol blocks' }),
-      proj({ name: 'cairn', pages: ['Runbook'], runsOn: ['minipc'] }),
+      proj({ name: 'brainai', pages: ['Runbook'], runsOn: ['minipc'] }),
       proj({ name: 'outline' }),
       proj({ name: 'wildlog' }),
     ],
@@ -241,10 +241,10 @@ test('a stale Find reply is ignored and the earlier request is aborted', async (
   const second = f.ask('backups');
   assert.equal(calls[0]!.signal.aborted, true);
   assert.equal(calls[1]!.url, '/graph/find.json?q=backups');
-  calls[1]!.resolve({ q: 'backups', projects: [{ name: 'cairn', hits: 3 }] });
+  calls[1]!.resolve({ q: 'backups', projects: [{ name: 'brainai', hits: 3 }] });
   calls[0]!.resolve({ q: 'back', projects: [] });
   assert.equal(await first, null);
-  assert.deepEqual((await second)!.projects.map((p) => p.name), ['cairn']);
+  assert.deepEqual((await second)!.projects.map((p) => p.name), ['brainai']);
   const failing = g.createFinder(() => Promise.reject(new DOMException('aborted', 'AbortError')));
   assert.equal(await failing.ask('x'), null);
 });
@@ -259,10 +259,10 @@ test('← and → step through the projects, and do nothing when none are drawn'
 });
 
 test('Enter in Find flies to the first hit that is drawn: the server\'s order, then the local matches', () => {
-  const drawn = new Set(['outline', 'cairn', 'wildlog']);
+  const drawn = new Set(['outline', 'brainai', 'wildlog']);
   assert.equal(g.findTarget(['old-archived', 'outline'], ['wildlog'], drawn), 'outline', 'an undrawn top hit is passed over');
   assert.equal(g.findTarget(['old-archived'], ['wildlog'], drawn), 'wildlog', 'no server hit drawn: the first local match');
-  assert.equal(g.findTarget([], ['cairn', 'wildlog'], drawn), 'cairn');
+  assert.equal(g.findTarget([], ['brainai', 'wildlog'], drawn), 'brainai');
   assert.equal(g.findTarget(['gone'], ['gone-too'], drawn), null);
 });
 
@@ -466,13 +466,13 @@ function noOverlap(shown: Shown[], taken: Box[], W: number, H: number) {
 }
 
 test('a box is free only inside the window and clear of every other box, its own bracket aside', () => {
-  const taken: Box[] = [{ x: 100, y: 100, w: 50, h: 14 }, { x: 300, y: 100, w: 30, h: 30, id: 'cairn' }];
+  const taken: Box[] = [{ x: 100, y: 100, w: 50, h: 14 }, { x: 300, y: 100, w: 30, h: 30, id: 'brainai' }];
   assert.equal(g.boxFree({ x: 10, y: 10, w: 40, h: 14 }, taken, 390, 600), true);
   assert.equal(g.boxFree({ x: 120, y: 105, w: 40, h: 14 }, taken, 390, 600), false, 'overlaps');
   assert.equal(g.boxFree({ x: 152, y: 100, w: 40, h: 14 }, taken, 390, 600), false, 'touching counts as a collision');
   assert.equal(g.boxFree({ x: 360, y: 10, w: 40, h: 14 }, taken, 390, 600), false, 'runs off the right edge');
   assert.equal(g.boxFree({ x: 2, y: 10, w: 40, h: 14 }, taken, 390, 600), false, 'runs off the left edge');
-  assert.equal(g.boxFree({ x: 310, y: 110, w: 20, h: 14, id: 'cairn' }, taken, 390, 600), true, 'a project\'s label may sit on its own brackets');
+  assert.equal(g.boxFree({ x: 310, y: 110, w: 20, h: 14, id: 'brainai' }, taken, 390, 600), true, 'a project\'s label may sit on its own brackets');
   assert.equal(g.boxFree({ x: 310, y: 110, w: 20, h: 14, id: 'outline' }, taken, 390, 600), false);
 });
 

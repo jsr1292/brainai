@@ -19,3 +19,14 @@ __pycache__/
 
 # Sample data from npm run demo:seed
 /demo-data/
+
+# The Mac app (desktop/): build output, the staged server and Node, its own node_modules
+/desktop/node_modules/
+/desktop/src-tauri/target/
+/desktop/src-tauri/resources/server/
+/desktop/src-tauri/resources/server-windows/
+/desktop/src-tauri/binaries/
+/desktop/src-tauri/gen/
+
+# The LoCoMo benchmark (npm run bench:locomo): its downloaded data and results, never in the repo
+/bench-results/

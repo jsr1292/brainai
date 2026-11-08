@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ClientsStore } from './auth/clientsStore.js';
 import { LoginLimiter } from './auth/loginLimiter.js';
@@ -34,7 +35,9 @@ import { ReviewService } from './review/service.js';
 import { ReviewStore } from './review/store.js';
 import { ProjectStore } from './projects/store.js';
 import { installShutdown } from './shutdown.js';
-import { createApp } from './web/app.js';
+import { listenLocal } from './web/listenLocal.js';
+import { watchParent } from './watchParent.js';
+import { createApp, type AppDeps } from './web/app.js';
 import { makeTidyItems, tidySummary } from './web/tidyItems.js';
 import { GraphService } from './graph/data.js';
 import { MeaningIndex, THREAD_FLOOR, THREAD_KINDS } from './graph/threads.js';
@@ -42,6 +45,10 @@ import { MeaningIndex, THREAD_FLOOR, THREAD_KINDS } from './graph/threads.js';
 const CLEANUP_INTERVAL_MS = 60 * 60_000;
 
 const config = loadConfig(process.env);
+// Started by the desktop app: stop when the app is gone, however it went, from the very first moment. Before the
+// shutdown below exists there is nothing to close, so it simply exits (D2 review).
+let stopWhenGone: (() => void) | null = null;
+watchParent(process.env, process.stdin, () => (stopWhenGone ? stopWhenGone() : process.exit(0)));
 mkdirSync(config.dataDir, { recursive: true });
 const db = openDb(join(config.dataDir, 'memory.db'));
 const embedder = await createLocalEmbedder({ modelDir: config.modelDir, allowRemote: false });
@@ -103,15 +110,29 @@ cleanup();
 const timer = setInterval(cleanup, CLEANUP_INTERVAL_MS).unref();
 if (config.backupDir) scheduleBackups(db, config.backupDir, config.backupKeep, now, config.dataDir);
 
-const server = createApp({
-  statusDir: config.dataDir,
+const deps: AppDeps = {
+  statusDir: config.dataDir, db,
   publicUrl: config.publicUrl, allowlist, store, service, registry, projects, discussions, growth, reviews, pages, images, diagramChecks, uploadLinks, setupOverlay: loadSetupOverlay(config.overlayDir), skills, skillSync: new SkillSync(db, now, skills), notes, devices, folders, imports: new ImportLog(db, now), relatedSimilarity: RELATED_SIMILARITY, graph, provider, owner, sessions, limiter, clients, now,
-  mode: config.mode, trustCfConnectingIp: config.trustCfConnectingIp, askCommands: config.askCommands,
-}).listen(config.port, config.host, () => {
-  const name = config.mode === 'work' ? 'Work memory' : 'Cairn';
-  console.log(`${name} listening on ${config.host}:${config.port}, public URL ${config.publicUrl.origin}`);
+  mode: config.mode, trustCfConnectingIp: config.trustCfConnectingIp, askCommands: config.askCommands, localMode: config.localMode, appSecret: config.appSecret,
+  tools: config.localMode ? { home: homedir(), path: config.toolPath ?? `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${homedir()}/.local/bin` } : undefined,
+};
+const app = createApp(deps);
+// The Cloudflare tunnel process (Reach, D5) stops with the server; a saved Reach comes back at the next start.
+process.once('exit', () => deps.reach?.shutdown());
+const listening = (where: string) => {
+  const name = config.mode === 'work' ? 'Work memory' : 'BrainAI';
+  console.log(`${name} listening on ${where}, public URL ${config.publicUrl.origin}`);
   void meaning.catchUp()
     .then((r) => console.log(`meaning index: checked ${r.checked}, indexed ${r.indexed} in ${r.ms} ms`))
     .catch((e) => console.error('meaning index catch-up failed:', e));
-});
-installShutdown({ server, timer, db });
+};
+if (config.localMode) {
+  // The desktop app holds both loopback addresses, so no other account can take ::1 (D1 review).
+  const [server, ...also] = await listenLocal(app, config.port);
+  listening(`127.0.0.1 and ::1, port ${config.port}`);
+  installShutdown({ server: server!, also, timer, db });
+  stopWhenGone = () => process.kill(process.pid, 'SIGTERM');
+} else {
+  const server = app.listen(config.port, config.host, () => listening(`${config.host}:${config.port}`));
+  installShutdown({ server, timer, db });
+}

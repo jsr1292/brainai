@@ -11,7 +11,7 @@ import { MemoryStore } from '../memory/store.js';
 import { DEMO_PASSWORD, DEMO_TOTP_SECRET, seedDemo, setDemoLogin } from './seedDemo.js';
 
 test('the demo brain has every project, a week of facts, two pages, a discussion and a working demo login', async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), 'cairn-demo-'));
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-demo-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const today = Date.parse('2026-11-06T12:00:00Z');
   const r = await seedDemo(dir, createFakeEmbedder(), today);
@@ -35,14 +35,14 @@ test('the demo brain has every project, a week of facts, two pages, a discussion
 });
 
 test('the demo refuses a folder that already holds a database', async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), 'cairn-demo-'));
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-demo-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   await seedDemo(dir, createFakeEmbedder());
   await assert.rejects(seedDemo(dir, createFakeEmbedder()), /refusing: .* is not empty/);
 });
 
 test('the demo only writes into a new or empty folder, never one that holds anything else', async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), 'cairn-demo-'));
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-demo-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, 'notes.txt'), 'mine');
   await assert.rejects(seedDemo(dir, createFakeEmbedder()), /refusing: .* is not empty/);

@@ -7,6 +7,7 @@ import { LIST_CHANGED, MAX_ROADMAP, QUIET_DAYS, type MemoryService } from '../me
 import type { MemoryStore } from '../memory/store.js';
 import type { Supersession } from '../memory/supersessions.js';
 import type { Memory } from '../memory/types.js';
+import type { Disagreement } from '../memory/disagreements.js';
 import { localDay, shortDay } from '../timezone.js';
 import type { ProjectStore } from './store.js';
 import { MAX_PINNED, ProjectError, type Project, type ProjectStateName } from './types.js';
@@ -57,6 +58,8 @@ export interface ProjectDetail {
   pages: { id: string; title: string; mayBeOutOfDate: boolean }[];
   /** The project's folder in the Mac's latest report, if one matched. */
   folder: FolderState | null;
+  /** B1: pairs of its facts an assistant flagged as disagreeing, not settled yet, newest first. */
+  disagreements: (Disagreement & { factA: Memory; factB: Memory })[];
 }
 /** What the panel needs from discussions: the owner's list of every discussion. */
 /** What the panel needs from pages: a project's live pages, and which of them may be out of date. */
@@ -228,6 +231,7 @@ export class ProjectsService {
       discussionsTotal: this.discussionsOf(p.name).length,
       pages: this.panelPages(p.name),
       folder: folders.byProject.get(p.name) ?? null,
+      disagreements: this.memories.openDisagreements(p.name),
     };
   }
 

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "BrainAI",
+  "version": "1.0.1",
+  "identifier": "io.github.jsr1292.brainai",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "category": "Productivity",
+    "shortDescription": "A shared brain for your AI assistants",
+    "copyright": "Copyright (c) 2026 The BrainAI contributors",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns"
+    ],
+    "externalBin": [
+      "binaries/node"
+    ],
+    "resources": {
+      "resources/server": "server"
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "entitlements": "Entitlements.plist",
+      "hardenedRuntime": true
+    }
+  }
+}

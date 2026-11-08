@@ -1,6 +1,6 @@
 {
-  "name": "Cairn",
-  "short_name": "Cairn",
+  "name": "BrainAI",
+  "short_name": "BrainAI",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -46,9 +46,9 @@ let workMode = false;
 export function setPageMode(mode: 'personal' | 'work'): void {
   workMode = mode === 'work';
 }
-export const memoryName = (): string => (workMode ? 'Work brain' : 'Cairn');
+export const memoryName = (): string => (workMode ? 'Work brain' : 'BrainAI');
 /** How a pasted or asked request names this memory. It matches the setup texts' wording ("a shared memory"), on purpose not the
- * MCP server's name (cairn), so assistants set up with those texts recognise it. */
+ * MCP server's name (brainai), so assistants set up with those texts recognise it. */
 export const memoryServerName = (): string => (workMode ? 'work-memory' : 'shared-memory');
 
 /** The main destinations, as in the approved mockups. */
@@ -100,6 +100,12 @@ function sidebar(opts: { tab?: Tab | null; section?: Section; query?: string }):
  * `tab` marks a main tab current whatever the title (a page's title is its own, not "Pages"); `section` marks the part
  * of it in the desktop sidebar (on the Pages tab it defaults to All pages).
  */
+let movedTo: () => URL | null = () => null;
+/** Where this brain lives now, after a move (D5): every dashboard page says so. Set by createApp. */
+export function setMovedBanner(fn: () => URL | null): void {
+  movedTo = fn;
+}
+
 export function page(title: string, body: SafeHtml, opts: { nav?: boolean; query?: string; tab?: Tab | null; section?: Section; back?: Pick<Back, 'href' | 'label'>; crumb?: boolean } = {}): string {
   const brand = html`<a class="brand" href="/"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></a>`;
   const link = (t: { href: string; label: string; tab: string }) =>
@@ -129,7 +135,8 @@ ${settings}
 </head>
 <body class="${opts.nav ? 'app' : 'auth'}"${opts.nav ? html` data-desk="${asset('desk.js')}"` : ''}>
 ${header}${opts.nav ? sidebar(opts) : ''}<main>
-${opts.nav && opts.back && opts.crumb !== false ? html`<p class="crumb back"><a href="${opts.back.href}">‹ ${opts.back.label}</a></p>` : ''}
+${(() => { const to = opts.nav ? movedTo() : null; return to ? html`<p class="notice" role="status">This brain now lives at <a href="${to.origin}">${to.origin}</a>. Changes made here are not copied there.</p>
+` : ''; })()}${opts.nav && opts.back && opts.crumb !== false ? html`<p class="crumb back"><a href="${opts.back.href}">‹ ${opts.back.label}</a></p>` : ''}
 ${body}
 </main>
 </body>

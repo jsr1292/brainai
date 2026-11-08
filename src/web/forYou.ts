@@ -1,5 +1,5 @@
 /**
- * The "For you" card on Projects: one grouped list, in the order approvals, discussions waiting on you, Last week,
+ * The "For you" card on Projects: one grouped list, in the order approvals, facts that disagree (B1), discussions waiting on you, Last week,
  * suggestions. At most three rows show; the rest fold behind one closed row at the end ("3 suggestions", "2 more"),
  * so suggestions fold first and an approval never hides behind one. Only rows that need the owner carry the orange
  * dot; Last week a grey one; suggestions none. No black button: those are the screen's one loud thing elsewhere —
@@ -9,10 +9,13 @@
 import type { Memory, Suggestion } from '../memory/types.js';
 import type { HomeSuggestion } from '../projects/service.js';
 import { suggestionCard, suggestionPhrase } from './dashboardViews.js';
+import { disagreeRow } from './disagreeViews.js';
+import { healthRow } from './healthViews.js';
+import type { Health } from '../health/health.js';
 import { html, type SafeHtml } from './html.js';
 import type { WeekLine } from './projectsViews.js';
 
-export type ForYouKind = 'approval' | 'discussion' | 'week' | 'suggestion';
+export type ForYouKind = 'approval' | 'disagree' | 'discussion' | 'week' | 'health' | 'suggestion';
 export interface ForYouRow { kind: ForYouKind; html: SafeHtml }
 export interface ApprovalSummary {
   count: number;
@@ -51,11 +54,14 @@ function suggestionRow(s: HomeSuggestion): SafeHtml {
   return html`<div class="row nolead fy-sug"><span class="txt">${text}</span><span class="acts">${doIt}<form method="post" action="${action(name, 'snooze')}"><button type="submit" class="ghost sm">Not now</button></form></span></div>`;
 }
 
-export function forYouRows(v: { approvals: ApprovalSummary; discussions: { id: string; title: string }[]; weekLine: WeekLine | null; suggestions: HomeSuggestion[] }): ForYouRow[] {
+export function forYouRows(v: { approvals: ApprovalSummary; disagreements?: number; health?: Health; discussions: { id: string; title: string }[]; weekLine: WeekLine | null; suggestions: HomeSuggestion[] }): ForYouRow[] {
   const rows: ForYouRow[] = [];
   if (v.approvals.count > 0) rows.push({ kind: 'approval', html: approvalRow(v.approvals) });
+  if ((v.disagreements ?? 0) > 0) rows.push({ kind: 'disagree', html: disagreeRow(v.disagreements!) });
   if (v.discussions.length > 0) rows.push({ kind: 'discussion', html: discussionRow(v.discussions) });
   if (v.weekLine) rows.push({ kind: 'week', html: weekRow(v.weekLine) });
+  const health = healthRow(v.health);
+  if (health) rows.push({ kind: 'health', html: health });
   for (const s of v.suggestions) rows.push({ kind: 'suggestion', html: suggestionRow(s) });
   return rows;
 }

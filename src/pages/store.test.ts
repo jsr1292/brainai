@@ -104,7 +104,7 @@ test('migration 15 runs on a database at version 14', (t) => {
     VALUES ('m1', 'decision', 'Use SQLite', 'wildlog', '[]', x'00', '2026-10-01', 'Claude', '2026-10-02', 'Claude')`).run();
   old.close();
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version, 29);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version, 30);
   assert.equal(count(db, 'memories'), 1);
   assert.equal(count(db, 'pages'), 0);
 });

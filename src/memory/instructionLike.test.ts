@@ -25,7 +25,7 @@ test('looksLikeInstruction leaves ordinary memories alone', () => {
     'Decision 2026-10-20: work memory runs as a separate local copy on the Windows laptop.',
     'Sam approves the newsletter drafts for issue 12.',
     'The repo uses pnpm; tests need the VPN.',
-    'cairn holds memories that read like instructions for the owner to approve.',
+    'brainai holds memories that read like instructions for the owner to approve.',
     'The owner asked to always state the model in discussion replies.',
   ]) assert.equal(looksLikeInstruction(text), null, text);
 });

@@ -34,7 +34,7 @@ test('advertises instructions and exactly the seventeen tools', async () => {
   const { client } = await connect();
   assert.equal(client.getInstructions(), SERVER_INSTRUCTIONS);
   assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(),
-    ['edit_page_section', 'forget', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'project_brief', 'read_page', 'recall', 'recent_work', 'remember', 'resolve_note', 'set_project_info', 'update_memory', 'weekly_review', 'whats_left', 'write_page']);
+    ['edit_page_section', 'flag_disagreement', 'forget', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'project_brief', 'read_page', 'recall', 'recent_work', 'remember', 'resolve_note', 'set_project_info', 'update_memory', 'weekly_review', 'whats_left', 'write_page']);
 });
 
 test('save tool listings state content limits and update guidance', async () => {
@@ -913,7 +913,7 @@ test('a read-only connection never sees a profile fact, even one tagged status w
   }
 });
 
-test('assistants see the server as cairn at home and work-memory at work', async () => {
-  assert.equal((await connect('Claude Code')).client.getServerVersion()?.name, 'cairn');
+test('assistants see the server as brainai at home and work-memory at work', async () => {
+  assert.equal((await connect('Claude Code')).client.getServerVersion()?.name, 'brainai');
   assert.equal((await connect('Codex', { mode: 'work' })).client.getServerVersion()?.name, 'work-memory');
 });

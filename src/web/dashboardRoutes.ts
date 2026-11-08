@@ -1,3 +1,4 @@
+import { healthOf } from './healthData.js';
 import { randomBytes } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { InvalidNameError } from '../auth/clientsStore.js';
@@ -109,6 +110,7 @@ export function dashboardRoutes(d: AppDeps): Router {
       sessions: d.sessions.list(),
       currentSessionId: token ? d.sessions.idFor(token) : undefined,
       work: d.mode === 'work',
+      localMode: d.localMode,
       projects: d.service.listProjects().map((p) => p.project),
       version: { brain: BRAIN_VERSION, database: d.store.schemaVersion() },
       brainUrl: d.publicUrl.origin,
@@ -118,6 +120,7 @@ export function dashboardRoutes(d: AppDeps): Router {
       now: d.now(),
       device: deviceLabel(req.get('user-agent') ?? null),
       created,
+      health: healthOf(d, d.now()),
       backups: d.statusDir === undefined ? undefined : (() => {
         const status = readBackupStatus(d.statusDir);
         // The work copy's backups go to OneDrive, outside the house already: no separate off-site copy.

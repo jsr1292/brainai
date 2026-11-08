@@ -17,7 +17,9 @@ export function setupRoutes(d: AppDeps, refused: RefusedRedirects): Router {
   router.get('/settings/setup/:app', owner, (req, res) => {
     const app = appOf(req.params.app as string);
     if (!app) return missing(res);
-    const mcpUrl = new URL('/mcp', d.publicUrl).href;
+    // While Reach is on (D4), apps on the web and the phone use the public address; tools on this Mac keep localhost.
+    const reach = d.reach?.url();
+    const mcpUrl = new URL('/mcp', reach && !app.file ? reach : d.publicUrl).href;
     const v = currentSetupVersion(d.setupOverlay);
     // An address allowed since (here, another page or the terminal) leaves the list.
     const allow = { allowed: (app.allow ?? []).every((e) => d.allowlist.isAllowed(e)), refused: refused.list().filter((r) => !d.allowlist.isAllowed(r.uri)) };

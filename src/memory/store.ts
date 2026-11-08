@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
 import { SupersessionStore } from './supersessions.js';
+import { DisagreementStore } from './disagreements.js';
 import { OWNER_LABEL, type HistoryEntry, type Kind, type Memory, type Suggestion } from './types.js';
 
 export interface MemoryRow {
@@ -73,9 +74,12 @@ export interface ActivityRow { at: string; by: string; action: 'created' | 'upda
 export class MemoryStore {
   /** Which fact replaced which (section 16): the one source of truth for replaced facts. */
   readonly supersessions: SupersessionStore;
+  /** Pairs of facts an assistant flagged as disagreeing (B1). */
+  readonly disagreements: DisagreementStore;
 
   constructor(private db: DB, private now: Clock) {
     this.supersessions = new SupersessionStore(db, now);
+    this.disagreements = new DisagreementStore(db, now);
   }
 
   private ts(): string {

@@ -100,7 +100,7 @@ export async function backupNow(db: DB, dir: string, keep: number, now: Date, da
  * How many live pictures (rows not deleted for good) have no file in `<dataDir>/images`, as scripts/backup.sh checks
  * at home (audit F11); null when there are none to check.
  */
-function missingPictures(db: DB, dataDir: string): number | null {
+export function missingPictures(db: DB, dataDir: string): number | null {
   const hasTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'images'").get() !== undefined;
   if (!hasTable) return null;
   const rows = db.prepare('SELECT id, type FROM images WHERE removed_at IS NULL').all() as { id: string; type: string }[];

@@ -1,3 +1,5 @@
+import type { Health } from '../health/health.js';
+import { healthBlock } from './healthViews.js';
 import type { GrantInfo } from '../auth/provider.js';
 import type { SessionInfo } from '../auth/sessions.js';
 import type { BackupStatus } from '../backupStatus.js';
@@ -11,6 +13,7 @@ import { html, type SafeHtml } from './html.js';
 import { metaLine } from './metaLine.js';
 import { needsLook, type ConnStatus } from './connStatus.js';
 import { setupApps } from '../setup/texts.js';
+import { thisComputer } from '../desktop/computer.js';
 
 /** "This iPhone", "This Mac"… from a deviceLabel ("iPhone · Safari"), for the section round 2 §11 fills. */
 export function thisDevice(label: string): string {
@@ -32,6 +35,8 @@ export function settingsView(v: {
   sessions: SessionInfo[];
   currentSessionId: string | undefined;
   work: boolean;
+  /** The desktop app: Connections links to Settings › Tools on this Mac. */
+  localMode?: boolean;
   projects: string[];
   backups?: { status: BackupStatus; health: { ok: boolean; problems: string[] }; offsite: boolean; jobs?: boolean };
   /** The fact/project/page counts line, kept under Backups and health. */
@@ -50,11 +55,13 @@ export function settingsView(v: {
   /** Just after adding a device: its token, shown this once. */
   created?: { name: string; token: string };
   error?: string;
+  /** B1: brain health, first in Brain health and backups. */
+  health?: Health;
 }): SafeHtml {
   const device = thisDevice(v.device);
   const sections: [string, string][] = v.work
-    ? [['connections', 'Connections'], ['devices', 'Devices'], ['health', 'Backups and health'], ['login', 'Your login']]
-    : [['this-device', device], ['connections', 'Connections'], ['devices', 'Devices'], ['health', 'Backups and health'], ['login', 'Your login']];
+    ? [['connections', 'Connections'], ['devices', 'Devices'], ['health', 'Brain health and backups'], ['login', 'Your login']]
+    : [['this-device', device], ['connections', 'Connections'], ['devices', 'Devices'], ['health', 'Brain health and backups'], ['login', 'Your login']];
   const assistants = v.grants.filter((g) => !g.revokedAt).length;
   const liveDevices = v.devices.filter((x) => x.revokedAt === null).length;
   // Backups: a dot and the nightly's time when all is well; a dot that needs a look otherwise; nothing set up yet.
@@ -86,10 +93,10 @@ export function settingsView(v: {
     ? html`<p class="meta"><span>${plural(pics.unused, 'picture', 'pictures')} no current page shows <a href="/settings/pictures">Review</a></span></p>`
     : '';
   const picturesLine = html`${keptLine}${reviewLine}`;
-  const size = html`<p class="meta">${plural(v.counts.facts, 'fact', 'facts')} · ${plural(v.counts.projects, 'project', 'projects')} · ${plural(v.counts.pages, 'page', 'pages')}</p>${picturesLine}${v.version ? html`<p class="meta">Cairn ${v.version.brain} · database ${v.version.database}</p>` : ''}`;
+  const size = html`<p class="meta">${plural(v.counts.facts, 'fact', 'facts')} · ${plural(v.counts.projects, 'project', 'projects')} · ${plural(v.counts.pages, 'page', 'pages')}</p>${picturesLine}${v.version ? html`<p class="meta">BrainAI ${v.version.brain} · database ${v.version.database}</p>` : ''}`;
   const health = v.backups
-    ? backupsPanel(v.backups, { id: 'health', title: 'Backups and health', extra: size })
-    : html`<section id="health" class="panel"><div class="panel-head"><h2>Backups and health</h2></div>${size}</section>`;
+    ? backupsPanel(v.backups, { id: 'health', title: 'Brain health and backups', extra: html`${healthBlock(v.health)}${size}` })
+    : html`<section id="health" class="panel"><div class="panel-head"><h2>Brain health and backups</h2></div>${healthBlock(v.health)}${size}</section>`;
   return html`<div class="settings wide">
 <nav class="settings-nav" aria-label="Settings">${sections.map(([id, label]) => html`<a href="#${id}">${label}</a>`)}</nav>
 <div class="settings-body">
@@ -105,6 +112,7 @@ ${v.work ? '' : html`<section id="this-device" class="panel">
   <div class="panel-head"><h2>Connections</h2></div>
   <p class="meta">The assistants that can use the brain, and what each may do.</p>
   ${grantCards({ grants: v.grants, work: v.work, projects: v.projects, status: v.connStatus })}
+  ${v.localMode ? html`<ul class="group"><li><a class="row nolead" href="/settings/tools"><span class="txt">Tools on ${thisComputer()}</span><span class="meta">Connect Claude Code, Codex, OpenCode and Cursor in one click</span><span class="chev"></span></a></li><li><a class="row nolead" href="/settings/reach"><span class="txt">Reach from phone and web</span><span class="meta">Use this BrainAI from Claude, ChatGPT and Grok anywhere</span><span class="chev"></span></a></li><li><a class="row nolead" href="/settings/move"><span class="txt">Move to a server</span><span class="meta">Take every memory to a home or rented server</span><span class="chev"></span></a></li></ul>` : ''}
   <h3 id="setup">Set up an app</h3>
   <ul class="group">${setupApps(v.work ? 'work' : 'personal').map((a) => html`<li><a class="row nolead" href="/settings/setup/${a.slug}"><span class="txt">${a.name}</span><span class="chev"></span></a></li>`)}</ul>
 </section>
@@ -130,7 +138,7 @@ function devicesSection(devices: Device[], created?: { name: string; token: stri
   return html`<section id="devices" class="panel">
   <div class="panel-head"><h2>Devices</h2></div>
   <p class="meta">Computers that report which folders are in ~/Projects and their git state, and keep the skills you share in step. A device token can only send those reports and receive the skills that are On.</p>
-  ${created ? html`<div class="token-once"><p><strong>Copy this token now. It is shown once.</strong> On the Mac, in your copy of the Cairn repository, run:</p>
+  ${created ? html`<div class="token-once"><p><strong>Copy this token now. It is shown once.</strong> On the Mac, in your copy of the BrainAI repository, run:</p>
   <pre><code>scripts/mac/install-folder-report.sh --url ${brainUrl} <span class="token-arg">TOKEN</span></code></pre><p>with this token for “${created.name}”:</p><code class="token">${created.token}</code></div>` : ''}
   ${live.length === 0 ? html`<p class="quiet">No devices yet.</p>` : html`<ul class="rows devices">${live.map((x) => html`<li><span class="dev-name">${x.name}</span>
     ${metaLine([html`added ${when(x.createdAt)}`, x.lastReportAt ? html`last report ${when(x.lastReportAt)}` : 'never reported'])}${x.lastReportAt ? late(x.lastReportAt) : ''}
