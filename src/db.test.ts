@@ -21,7 +21,7 @@ test('openDb is idempotent on an existing file', (t) => {
   t.after(() => { for (const s of ['', '-wal', '-shm']) rmSync(path + s, { force: true }); });
   openDb(path).close();
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 30);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 31);
   assert.equal((db.prepare('SELECT count(*) c FROM redirect_allowlist').get() as any).c, 3);
 });
 
@@ -159,7 +159,7 @@ test('migration 13 backfills projects from memories and moves parked/done out of
   old.close();
 
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 30);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 31);
   const rows = db.prepare('SELECT name, state, area, created_by FROM projects ORDER BY name').all().map((r: any) => ({ ...r }));
   assert.deepEqual(rows, [
     { name: 'career', state: 'open', area: 'personal', created_by: 'migration' },
@@ -189,7 +189,7 @@ test('migration 20 adds weekly_reviews and the shared indexes and keeps existing
   old.close();
 
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 30);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 31);
   const names = db.prepare(`SELECT name FROM sqlite_master WHERE type IN ('table', 'index')`).all().map((r: any) => r.name);
   assert.ok(names.includes('weekly_reviews'));
   for (const i of ['memory_history_memory', 'memory_history_changed', 'memory_history_project', 'memories_created',
@@ -208,7 +208,7 @@ test('migration 21 adds runs_on and the meaning tables and keeps existing projec
   old.close();
 
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 30);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 31);
   assert.equal((db.prepare("SELECT runs_on FROM projects WHERE name = 'wildlog'").get() as any).runs_on, '[]');
   const names = db.prepare(`SELECT name FROM sqlite_master WHERE type IN ('table', 'index')`).all().map((r: any) => r.name);
   for (const n of ['meaning_links', 'meaning_indexed', 'meaning_links_b']) assert.ok(names.includes(n), `missing ${n}`);
@@ -227,7 +227,7 @@ test('migration 22 adds supersessions and keeps waiting suggestions', (t) => {
   old.close();
 
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 30);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 31);
   assert.equal((db.prepare("SELECT supersedes FROM profile_suggestions WHERE id = 's'").get() as any).supersedes, '[]');
   const names = db.prepare(`SELECT name FROM sqlite_master WHERE type IN ('table', 'index')`).all().map((r: any) => r.name);
   for (const n of ['supersessions', 'supersessions_live', 'supersessions_by_new']) assert.ok(names.includes(n), `missing ${n}`);
@@ -263,7 +263,7 @@ test('migration 23 starts unsaved Outline imports from Outline\'s date, in milli
   old.close();
 
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 30);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 31);
   const row = (id: string) => ({ ...(db.prepare('SELECT caught_up_at, caught_up_how, caught_up_by FROM pages WHERE id = ?').get(id) as any) });
   assert.deepEqual(row('A'), { caught_up_at: '2026-10-21T09:00:00.000Z', caught_up_how: 'imported', caught_up_by: 'Outline import' });
   assert.deepEqual(row('B'), { caught_up_at: '2026-11-02T08:00:00.000Z', caught_up_how: 'migrated', caught_up_by: 'owner' });
@@ -308,7 +308,7 @@ test('migration 25 adds the picture and diagram tables and keeps existing pages'
     VALUES ('P', 'P', 'p', NULL, 'start', 'Body.', 1, '2026-11-01T08:00:00.000Z', 'owner', '2026-11-01T08:00:00.000Z', 'owner', '2026-11-01T08:00:00.000Z', 'created', 'owner')`).run();
   old.close();
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 30);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 31);
   assert.equal((db.prepare("SELECT title FROM pages WHERE id = 'P'").get() as any).title, 'P');
   assert.deepEqual((db.prepare('PRAGMA table_info(images)').all() as { name: string }[]).map((c) => c.name),
     ['id', 'type', 'bytes', 'width', 'height', 'frames', 'alt', 'created_at', 'created_by', 'page_id', 'removed_at', 'removed_by']);
@@ -384,7 +384,7 @@ test('a pre-migration copy that cannot be written stops the migration', (t) => {
   const path = join(dir, 'memory.db');
   openDb(path, { upTo: 28 }).close();
   writeFileSync(join(dir, 'pre-migrate'), 'a file where the folder should be');
-  assert.throws(() => openDb(path), /Could not back up the database before migrating it \(version 28 to 30\).*Nothing was changed\./);
+  assert.throws(() => openDb(path), /Could not back up the database before migrating it \(version 28 to 31\).*Nothing was changed\./);
   rmSync(join(dir, 'pre-migrate'));
   mkdirSync(join(dir, 'pre-migrate'));
   // A copy that fails its check is removed, never kept as if it were good.
@@ -395,5 +395,17 @@ test('a pre-migration copy that cannot be written stops the migration', (t) => {
   assert.deepEqual(readdirSync(join(dir, 'pre-migrate')), []);
   const db = openDb(path, { upTo: 28 });
   assert.equal((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version, 28);
+  db.close();
+});
+
+test('migration 31 gives every existing project an empty nickname list', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'memtest-m31-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'memory.db');
+  const before = openDb(path, { upTo: 30 });
+  before.prepare("INSERT INTO projects(name, state, state_changed_at, created_at, created_by, updated_at, updated_by) VALUES ('garden', 'open', 'x', 'x', 'owner', 'x', 'owner')").run();
+  before.close();
+  const db = openDb(path);
+  assert.equal((db.prepare("SELECT nicknames FROM projects WHERE name = 'garden'").get() as { nicknames: string }).nicknames, '[]');
   db.close();
 });

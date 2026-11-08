@@ -1,15 +1,18 @@
 import { isStatus, projectBrief, type Brief } from './brief.js';
 import { cosine, type Embedder } from './embedder.js';
-import { findSimilar, hybridSearch } from './search.js';
+import { findSimilar, hybridSearch, type SearchHit } from './search.js';
+import { RERANK_POOL, type Reranker } from './reranker.js';
 import { looksLikeInstruction } from './instructionLike.js';
 import { checkRoadmap, keepTicked, parseRoadmap, type Roadmap, type WaitingItem } from './roadmap.js';
 import { looksLikeSecret } from './secrets.js';
+import { words } from './words.js';
 import type { MemoryStore, ReplacedFilter } from './store.js';
 import type { ProjectStateName } from '../projects/types.js';
 import { actorLabel, KINDS, OWNER_LABEL as OWNER, type Actor, type Kind, type Memory, type Suggestion } from './types.js';
 import type { MeaningHook } from '../graph/threads.js';
 import { MAX_WHY, type Disagreement } from './disagreements.js';
 import { MAX_SUPERSEDES, replaceableKind, type Replaceable, type Supersession } from './supersessions.js';
+import { STOPWORDS } from './stopwords.js';
 
 export const MAX_CONTENT = 1000;
 /** A roadmap lists a whole project's remaining work, so it may be longer than other memories. */
@@ -20,6 +23,49 @@ export const MAX_TAGS = 10;
 export const STALE_DAYS = 180;
 export const DEFAULT_LIMIT = 8;
 const MAX_LIMIT = 20;
+/** Other phrasings recall searches with a question (B4): at most this many, each cut to this many characters. */
+const MAX_PHRASINGS = 2;
+const MAX_PHRASING = 300;
+
+/** Words that say nothing about which part of a project a question is about (B7, widened after review). */
+const GENERIC_WORDS = new Set([
+  'project', 'proyecto', 'app', 'aplicacion', 'thing', 'things', 'cosa', 'cosas', 'hacer', 'falta', 'actual', 'actualmente',
+  'current', 'currently', 'overall', 'general', 'todo', 'all', 'everything', 'now', 'ahora', 'hoy', 'today', 'lately',
+  'ultimamente', 'far', 'week', 'semana', 'give', 'dame', 'show', 'muestrame', 'update', 'summary', 'resumen', 'news',
+  'quick', 'tal', 'so',
+]);
+
+/**
+ * Whether a "how is it going" question is about a whole project (B7): once its how-is-it-going phrases, the project's
+ * `names`, filler words and GENERIC_WORDS are taken out, no word of two or more letters is left. "What's the latest on
+ * X's label printer?" is not: it asks about one part.
+ */
+export function isWholeProjectQuestion(query: string, names: readonly string[]): boolean {
+  let rest = words(query);
+  // The project's names first, longest first ("cove podcast" before "cove"; "roadmap tool" before the phrase "roadmap").
+  for (const n of [...names].sort((a, b) => b.length - a.length)) rest = rest.split(words(n)).join(' ');
+  // "how is X's export going": the words of "how is ... going" go one by one, so what sits between them stays.
+  rest = rest.replace(/ (how|is|are|s|going) /g, '  ').replace(/ (how|is|are|s|going) /g, '  ');
+  const phrases = new RegExp(ASKS_HOW_IT_IS_GOING.source, 'g');
+  for (let before = ''; before !== rest;) { before = rest; rest = rest.replace(phrases, ' '); }
+  return rest.split(' ').every((w) => w.length < 2 || STOPWORDS.has(w) || GENERIC_WORDS.has(w));
+}
+
+/**
+ * The other phrasings recall searches with the question: trimmed, blank ones and ones equal to the question or to
+ * each other dropped, each cut to MAX_PHRASING characters, at most MAX_PHRASINGS. Never an error: recall still answers.
+ */
+function otherPhrasings(query: string, alt: readonly string[] | undefined): string[] {
+  const out: string[] = [];
+  const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  for (const raw of alt ?? []) {
+    const text = String(raw).trim().slice(0, MAX_PHRASING);
+    if (text === '' || same(text, query) || out.some((o) => same(o, text))) continue;
+    if (out.length === MAX_PHRASINGS) break;
+    out.push(text);
+  }
+  return out;
+}
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CLOSEST_PROJECTS = 3;
 /**
@@ -141,8 +187,6 @@ function checkAiLabels(project: string | null, tags: string[]): void {
  */
 // Matched against words(query): lowercase, no accents or punctuation ("¿cómo va?" → " como va ", "what's" → "what s").
 const ASKS_HOW_IT_IS_GOING = / (latest|status|progress|where are we|where did we|what s left|left to do|pending|next steps?|how s it going|how is .* going|how are .* going|roadmap|update on|estado|como va|como van|que queda|pendiente|siguiente|avance|progreso|novedad|novedades|ultimo|ultima|en que punto|donde estamos|donde nos quedamos) /;
-/** Lowercase, without accents, words separated by single spaces and padded, for matching whole words. */
-const words = (text: string): string => ` ${text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
 
 const maxFor = (kind: Kind): number => (kind === 'roadmap' ? MAX_ROADMAP : MAX_CONTENT);
 
@@ -194,7 +238,9 @@ export class MemoryService {
   constructor(
     private store: MemoryStore,
     private embedder: Embedder,
-    private opts: { duplicateThreshold: number; minRecallSimilarity: number; recallConfidentSimilarity: number; recallWindow?: number },
+    private opts: {
+      duplicateThreshold: number; minRecallSimilarity: number; recallConfidentSimilarity: number; recallWindow?: number; reranker?: Reranker;
+    },
   ) {}
 
   get(id: string): Memory | undefined {
@@ -263,24 +309,65 @@ export class MemoryService {
    * `vector` is the query already embedded (the header search and recall embed once for facts and pages).
    * `replaced: 'include'` appends replaced facts after the current ones (see hybridSearch): `limit` applies to the
    * current part only (pinned facts and current hits), so neither the limit nor a pin ever cuts a replaced hit.
+   * With a reranker (and `rerank` not false), the search's first RERANK_POOL current hits are reordered by it and
+   * `limit` of them kept; only those kept are marked recalled. Replaced hits are never reordered; pinned facts only when the question is about one part of the project (B7).
    */
   async recall(q: {
     query: string; kind?: Kind; project?: string; projects?: string[]; limit?: number; touch?: boolean; vector?: Float32Array;
-    replaced?: 'hide' | 'include'; replacedLimit?: number; replacedCut?: 'follow' | 'joint-top';
+    replaced?: 'hide' | 'include'; replacedLimit?: number; replacedCut?: 'follow' | 'joint-top'; rerank?: boolean;
+    /** Other phrasings written by the asking assistant (an English version, the project's real name): see otherPhrasings. */
+    alt?: string[];
+    /** Told once the reranker's best score over all phrasings, or null when it did not run (off, skipped or failed). */
+    report?: (r: { bestScore: number | null }) => void;
   }): Promise<{ memory: Memory; score: number; replaced?: true }[]> {
     const limit = Math.min(Math.max(Math.trunc(q.limit ?? DEFAULT_LIMIT) || DEFAULT_LIMIT, 1), MAX_LIMIT);
     const project = q.project === undefined ? undefined : this.lookup(q.project);
     const projects = q.projects;
     if (projects && ((project !== undefined && !projects.includes(project)) || q.kind === 'profile')) return [];
     const vector = q.vector ?? await this.embedder.embed(q.query, 'query');
+    // A question naming a project by a nickname or alias is also asked with the project's real name (B4), so the
+    // search and the reranker see the name its facts use. A project filter has already chosen the project; a
+    // read-only grant limits the names that count.
+    // It comes first and counts toward the MAX_PHRASINGS, and is left out when the question or a given phrasing
+    // already uses the real name (each phrasing is one more reranker pass).
+    const given = otherPhrasings(q.query, q.alt);
+    const named = project === undefined ? this.namedProjects([q.query, ...given].join(' \n '), projects, false) : [];
+    const unnamed = named.filter((p) => ![q.query, ...given].some((t) => words(t).includes(words(p))));
+    const alt = [...(unnamed.length > 0 ? [`${q.query} (${unnamed.join(', ')})`] : []), ...given].slice(0, MAX_PHRASINGS);
+    const variants = [];
+    for (const text of alt) variants.push({ text, vector: await this.embedder.embed(text, 'query') });
+    const rerank = this.opts.reranker !== undefined && q.rerank !== false;
     const found = hybridSearch(this.store, {
-      vector, text: q.query, kind: q.kind, project, projects, limit, touch: q.touch,
+      vector, text: q.query, kind: q.kind, project, projects, limit, touch: rerank ? false : q.touch, variants,
+      pool: rerank ? RERANK_POOL : undefined,
       minSimilarity: this.opts.minRecallSimilarity, confidentSimilarity: this.opts.recallConfidentSimilarity, window: this.opts.recallWindow,
       replaced: q.replaced, replacedLimit: q.replacedLimit, replacedCut: q.replacedCut,
     });
-    const results = found.filter((r) => !r.replaced);
-    const replaced = found.filter((r) => r.replaced);
-    const pinned = q.kind === undefined ? this.currentWordOn(q.query, project, projects) : [];
+    let current = found.filter((r) => !r.replaced);
+    let bestScore: number | null = null;
+    let pinned = q.kind === undefined ? this.currentWordOn(q.query, project, projects) : [];
+    let competing: Memory[] = [];
+    if (rerank && pinned.length > 0 && !isWholeProjectQuestion(q.query, this.namesOf(project !== undefined ? [project] : this.namedProjects(q.query, projects)))) {
+      // B7: "what's the latest on X's <one thing>?" — the project's roadmap and status join the reranked pool
+      // instead of going on top; the fact about that one thing usually wins.
+      const inPool = new Set(current.map((h) => h.memory.id));
+      current = [...current, ...pinned.filter((m) => !inPool.has(m.id)).map((memory) => ({ memory, score: 0, sure: true }))];
+      competing = pinned;
+      pinned = [];
+    }
+    if (rerank) {
+      const reordered = await this.reordered([q.query, ...alt], current);
+      bestScore = reordered.best;
+      // A reranker that failed leaves the search's order, where the added facts would sit last: pin them as before.
+      if (reordered.best === null && competing.length > 0) pinned = competing;
+      current = reordered.hits.slice(0, limit);
+      if (q.touch !== false) this.store.markRecalled(current.filter((r) => r.sure).map((r) => r.memory.id));
+    }
+    const plain = ({ memory, score, replaced }: SearchHit) => (replaced ? { memory, score, replaced } : { memory, score });
+    const results = current.map(plain);
+    const replaced = found.filter((r) => r.replaced).map(plain);
+    // A question answered by its project's pinned status has no weak match to report (B6 review).
+    q.report?.({ bestScore: pinned.length > 0 ? null : bestScore });
     if (pinned.length === 0) return [...results, ...replaced];
     if (q.touch !== false) this.store.markRecalled(pinned.map((m) => m.id));
     const top = (results[0]?.score ?? 0) + 1;
@@ -289,24 +376,64 @@ export class MemoryService {
   }
 
   /**
+   * The hits in the reranker's order (ties keep the search's order); each phrasing is scored and a hit keeps its best
+   * score; `best` is the highest score (null when the reranker did not run). On any reranker error, the search's order.
+   */
+  private async reordered(queries: string[], hits: SearchHit[]): Promise<{ hits: SearchHit[]; best: number | null }> {
+    // A single hit is scored too (a few milliseconds): only its score tells whether it matches the question at all.
+    if (hits.length === 0 || !this.opts.reranker) return { hits, best: null };
+    try {
+      const best = hits.map(() => -Infinity);
+      for (const query of queries) {
+        const scores = await this.opts.reranker.score(query, hits.map((h) => h.memory.content));
+        if (scores.length !== hits.length || scores.some((x) => !Number.isFinite(x))) throw new Error(`${scores.length} scores for ${hits.length} facts`);
+        scores.forEach((x, i) => { best[i] = Math.max(best[i]!, x); });
+      }
+      return { hits: hits.map((h, i) => ({ h, s: best[i]! })).sort((a, b) => b.s - a.s).map((x) => x.h), best: Math.max(...best) };
+    } catch (e) {
+      console.error(`reranker failed: ${e instanceof Error ? e.message : String(e)}`);
+      return { hits, best: null };
+    }
+  }
+
+  /**
+   * The projects `text` names (at most two): a project counts as named when its name (hyphens as spaces), one of its
+   * aliases or one of its nicknames appears as whole words. The longest names first, so a specific name ("gps
+   * tracklog") wins over common words that are also project names ("work", "career"). Only `allowed` ones, when given.
+   * `byName: false` counts only aliases and nicknames (recall's real-name phrasing: a question that already uses the
+   * project's own name needs none, and plain names are often common words).
+   */
+  namedProjects(text: string, allowed?: readonly string[], byName = true): string[] {
+    const q = words(text);
+    const names = [
+      ...(byName ? this.store.listProjects().map((p) => ({ name: words(p.project), project: p.project })) : []),
+      ...this.store.aliases().map((a) => ({ name: words(a.alias), project: a.project })),
+      ...this.store.nicknames().map((n) => ({ name: words(n.nickname), project: n.project })),
+    ].filter((n) => n.name.trim() !== '' && q.includes(n.name) && (!allowed || allowed.includes(n.project))).sort((a, b) => b.name.length - a.name.length);
+    const named: string[] = [];
+    for (const { project } of names) if (named.length < 2 && !named.includes(project)) named.push(project);
+    return named;
+  }
+
+  /** Every name these projects go by: the project names, their aliases and their nicknames. */
+  private namesOf(named: readonly string[]): string[] {
+    const projects = new Set(named);
+    return [
+      ...projects,
+      ...this.store.aliases().filter((a) => projects.has(a.project)).map((a) => a.alias),
+      ...this.store.nicknames().filter((n) => projects.has(n.project)).map((n) => n.nickname),
+    ];
+  }
+
+  /**
    * For a question asking how a named project is going: that project's roadmap and newest status (at most two
    * projects named). A project counts as named when its name or one of its aliases appears as whole words
    * ("dossier-app" as "dossier app"); a project filter names it too. Only `allowed` projects count, when given.
    */
   private currentWordOn(query: string, filter: string | undefined, allowed?: string[]): Memory[] {
-    const q = words(query);
-    if (!ASKS_HOW_IT_IS_GOING.test(q)) return [];
-    const named = new Set<string>(filter ? [filter] : []);
-    if (!filter) {
-      // The longest names first: a specific name ("gps tracklog") wins over common words that are also project
-      // names ("work", "career"); at most two projects.
-      const names = [
-        ...this.store.listProjects().map((p) => ({ name: words(p.project.replace(/-/g, ' ')), project: p.project })),
-        ...this.store.aliases().map((a) => ({ name: words(a.alias.replace(/-/g, ' ')), project: a.project })),
-      ].filter((n) => q.includes(n.name) && (!allowed || allowed.includes(n.project))).sort((a, b) => b.name.length - a.name.length);
-      for (const { project } of names) if (named.size < 2) named.add(project);
-    }
-    if (named.size === 0) return [];
+    if (!ASKS_HOW_IT_IS_GOING.test(words(query))) return [];
+    const named = filter ? [filter] : this.namedProjects(query, allowed);
+    if (named.length === 0) return [];
     return [...named].flatMap((p) => {
       const roadmap = this.roadmapOf(p);
       const status = this.store.list({ project: p }).find(isStatus);
@@ -1105,20 +1232,17 @@ export class MemoryService {
     });
   }
 
-  /** Whether a fact still counts in a disagreement: not deleted and not replaced. */
-  private liveFact(id: string): Memory | undefined {
-    const m = this.store.get(id);
-    return m && m.deletedAt === null && !this.store.supersessions.liveFor(id) ? m : undefined;
-  }
 
   /** Open pairs, newest first, both facts live (a pair whose fact went away is settled as "gone" here); one project's when given. */
   openDisagreements(project?: string): (Disagreement & { factA: Memory; factB: Memory })[] {
     const out: (Disagreement & { factA: Memory; factB: Memory })[] = [];
     const wanted = project === undefined ? undefined : this.canonical(project);
+    // Pairs whose fact went away are settled in one statement; the rest are open with both facts live.
+    this.store.settleGoneDisagreements();
     for (const d of this.store.disagreements.open()) {
-      const factA = this.liveFact(d.a);
-      const factB = this.liveFact(d.b);
-      if (!factA || !factB) { this.store.disagreements.settle(d.id, 'gone', 'BrainAI'); continue; }
+      const factA = this.store.get(d.a);
+      const factB = this.store.get(d.b);
+      if (!factA || !factB) continue;
       const projects = [factA.project, factB.project].map((p) => (p === null ? null : this.canonical(p)));
       if (wanted !== undefined && !projects.includes(wanted)) continue;
       out.push({ ...d, factA, factB });
@@ -1141,11 +1265,14 @@ export class MemoryService {
   closeFacts(id: string, limit = 3): { memory: Memory; similarity: number }[] {
     const m = this.store.get(id);
     if (!m || m.deletedAt || m.kind === 'roadmap' || isStatus(m)) return [];
-    const all = this.store.activeEmbeddings({ kind: m.kind });
-    const self = all.find((e) => e.id === id);
-    if (!self) return [];
     const project = (x: Memory) => (x.project === null ? null : this.canonical(x.project));
     const mine = project(m);
+    // Only the fact's own project (its aliases included) is read; a fact with no project compares with its kind's.
+    const names = mine === null ? undefined : [mine, ...this.aliases().filter((a) => a.project === mine).map((a) => a.alias)];
+    // The projects filter leaves out profile facts, so a profile fact filed under a project reads its kind and filters below.
+    const all = this.store.activeEmbeddings(names === undefined || m.kind === 'profile' ? { kind: m.kind } : { kind: m.kind, projects: names });
+    const self = all.find((e) => e.id === id);
+    if (!self) return [];
     return all
       .filter((e) => e.id !== id)
       .map((e) => ({ id: e.id, similarity: cosine(self.embedding, e.embedding) }))
@@ -1174,13 +1301,16 @@ export class MemoryService {
     if (!d) throw new MemoryError('not_found', `No disagreement with id ${id}`);
     const open = this.openDisagreements().find((x) => x.id === id);
     if (!open) throw new MemoryError('invalid', 'This disagreement was already settled.');
-    if (how !== 'both') {
-      const [right, wrong] = how === 'a' ? [open.factA, open.factB] : [open.factB, open.factA];
-      if (this.canReplacePair(right, wrong)) this.supersede([wrong.id], right.id, actor);
-      else this.store.softDelete(wrong.id, actorLabel(actor));
-    }
-    this.store.disagreements.settle(id, how, actorLabel(actor));
-    return this.store.disagreements.get(id)!;
+    // One change: the replacement (or deletion) and the settle land together or not at all.
+    return this.store.atomic(() => {
+      if (how !== 'both') {
+        const [right, wrong] = how === 'a' ? [open.factA, open.factB] : [open.factB, open.factA];
+        if (this.canReplacePair(right, wrong)) this.supersede([wrong.id], right.id, actor);
+        else this.store.softDelete(wrong.id, actorLabel(actor));
+      }
+      this.store.disagreements.settle(id, how, actorLabel(actor));
+      return this.store.disagreements.get(id)!;
+    });
   }
 
   /** Owner only: the replaced fact comes back (its row gets undone_at). Returns the fact brought back. */

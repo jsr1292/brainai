@@ -25,6 +25,8 @@ export interface Project {
   url: string | null;
   /** Places it runs on ("Runs on"), normalised short names such as minipc or pi. */
   runsOn: string[];
+  /** Everyday names people use for the project; recall finds its facts by them. */
+  nicknames: string[];
   /** Home-screen suggestions about this project are hidden until then. */
   snoozedUntil: string | null;
   createdAt: string;

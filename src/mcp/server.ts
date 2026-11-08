@@ -26,6 +26,7 @@ import { NEWER_DECISIONS } from '../pages/freshness.js';
 import type { PageService } from '../pages/service.js';
 import { PageError, type PageHeader } from '../pages/types.js';
 import { DISCUSSIONS_ONLY_INSTRUCTIONS, readOnlyInstructions, SERVER_INSTRUCTIONS, WORK_INSTRUCTIONS } from './instructions.js';
+import { WEAK_SCORE } from '../memory/reranker.js';
 
 export type ToolResult = { content: ({ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string })[]; isError?: boolean };
 
@@ -33,7 +34,7 @@ const memoryJson = (m: Memory) => ({
   id: m.id, kind: m.kind, content: m.content, project: m.project, tags: m.tags, updatedAt: m.updatedAt, updatedBy: m.updatedBy,
 });
 const projectInfoJson = (p: Project, quiet: boolean) => ({
-  one_liner: p.oneLiner, area: p.area, state: p.state, pinned: p.pinnedAt !== null, quiet, folder: p.folder, url: p.url, runs_on: p.runsOn,
+  one_liner: p.oneLiner, area: p.area, state: p.state, pinned: p.pinnedAt !== null, quiet, folder: p.folder, url: p.url, runs_on: p.runsOn, nicknames: p.nicknames,
 });
 const suggestionJson = (s: Suggestion) => ({ id: s.id, action: s.action, content: s.content, status: s.status, ...(s.reason ? { held_because: s.reason } : {}) });
 
@@ -167,6 +168,7 @@ export function buildMcpServer(
   const visible = (project: string | null) => readable === undefined || (project !== null && readable.includes(project));
   const instructions = readOnly ? readOnlyInstructions(readable) : work ? WORK_INSTRUCTIONS : limited ? DISCUSSIONS_ONLY_INSTRUCTIONS : SERVER_INSTRUCTIONS;
   const server = new McpServer({ name: work ? 'work-memory' : 'brainai', version: '1.0.0' }, { instructions });
+  const WEAK_MATCH = 'None of these facts matches the question closely: they are the nearest ones and may be unrelated. ';
   const saveNudge = readOnly ? '' : SAVE_NUDGE;
   /** The facts each fact disagrees with (open pairs), only those this connection may see. Built once per call. */
   const disagreeMarks = () => {
@@ -178,7 +180,8 @@ export function buildMcpServer(
   };
   /** After a save: the close facts as one data object, and the sentence that asks the assistant to judge them. */
   const closeAfter = (saved: Memory): { text: string; data: { close_facts: { id: string; excerpt: string }[] }[] } => {
-    const close = service.closeFacts(saved.id).filter((c) => visible(c.memory.project === null ? null : service.projectNamed(c.memory.project)));
+    // Only writers get here (a read-only connection never saves), so every close fact is theirs to see.
+    const close = service.closeFacts(saved.id);
     return close.length === 0 ? { text: '', data: [] } : { text: CLOSE_FACTS, data: [{ close_facts: close.map((c) => ({ id: c.memory.id, excerpt: excerpt(c.memory.content) })) }] };
   };
   const pageVisible = pageVisibility(service, readable);
@@ -290,9 +293,12 @@ export function buildMcpServer(
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .map((m) => ({ id: m.id, content: m.content, ...mark(m) })));
     // Notes on pages without a project have no brief to appear in, so every conversation hears of them here.
+    // B4: the everyday names of open projects, so an assistant searches and saves under the real name.
+    const named = registry.list().filter((p) => p.nicknames.length > 0 && p.state !== 'archived').map((p) => `${p.nicknames.join(', ')} → ${p.name}`);
+    const withNames = named.length === 0 ? profile : `${profile}\n${wrapData("Project nicknames (use the project's name in recall and saves)", 'nicknames', named)}`;
     const loose = opts.notes.openWithoutProject();
-    if (loose.length === 0) return text(profile);
-    return text(`${profile}\nThe owner left notes on pages without a project: fix each page, then call resolve_note.\n${wrapPages(loose.map(({ note, page: p }) => ({
+    if (loose.length === 0) return text(withNames);
+    return text(`${withNames}\nThe owner left notes on pages without a project: fix each page, then call resolve_note.\n${wrapPages(loose.map(({ note, page: p }) => ({
       id: note.id, page_id: p.id, page_title: p.title, ...noteSection(opts.pages, note), text: note.text, created_at: note.createdAt,
     })))}`);
   }));
@@ -306,8 +312,10 @@ export function buildMcpServer(
       project: z.string().optional(),
       limit: z.number().int().min(1).max(20).optional(),
       include_replaced: z.boolean().optional().describe('Also return facts that newer ones replaced (after the current ones, at most 5), each with what replaced it. For questions like "why did we drop X?".'),
+      alt_queries: z.array(z.string()).max(2).optional().describe('Up to 2 other phrasings searched together with query: an English version when the question is in another language, '
+        + "or the question with a project's real name instead of a nickname. Leave it out when query is already in English and uses real names."),
     },
-  }, guard('recall', async (a: { query: string; kind?: string; project?: string; limit?: number; include_replaced?: boolean }) => {
+  }, guard('recall', async (a: { query: string; kind?: string; project?: string; limit?: number; include_replaced?: boolean; alt_queries?: string[] }) => {
     const project = givenProject(a.project);
     const real = project === undefined ? undefined : service.projectNamed(project);
     // A read-only connection asking for a project it is not granted is told which ones it can read (as project_brief
@@ -318,7 +326,10 @@ export function buildMcpServer(
     if (unknown) return unknown;
     // One embedding of the query serves both layers: facts, then page sections.
     const vector = await opts.pages.embedQuery(a.query);
-    const results = await service.recall({ query: a.query, kind: a.kind as never, project, projects: readable, limit: a.limit, vector, replaced: a.include_replaced ? 'include' : 'hide' });
+    let best: number | null = null;
+    const results = await service.recall({ query: a.query, kind: a.kind as never, project, projects: readable, limit: a.limit, vector, replaced: a.include_replaced ? 'include' : 'hide', alt: a.alt_queries, report: (r) => { best = r.bestScore; } });
+    // B6: no answer is hidden on the reranker's score (real and unrelated questions overlap); a low one is only said.
+    const weak = results.length > 0 && best !== null && best < WEAK_SCORE;
     const mark = disagreeMarks();
     const rows = results.map((r) => {
       if (r.replaced) return { ...memoryJson(r.memory), ...replacedJson(r.memory) };
@@ -326,7 +337,7 @@ export function buildMcpServer(
       return { ...memoryJson(r.memory), ...(newer ? { newer_status: { id: newer.id, updatedAt: newer.updatedAt, excerpt: excerpt(newer.content) } } : {}), ...replacesJson(r.memory), ...mark(r.memory) };
     });
     const unsettled = rows.some((r) => 'disagrees_with' in r);
-    const facts = withData(`${saveNudge}${unsettled ? NOT_SETTLED : ''}`.trim(), rows);
+    const facts = withData(`${weak ? WEAK_MATCH : ''}${saveNudge}${unsettled ? NOT_SETTLED : ''}`.trim(), rows);
     // Asking for one kind of fact asks for facts only.
     // The grant and the project filter are applied inside the search, before its limit.
     const sections = a.kind !== undefined ? [] : opts.pages.search(a.query, vector, PAGE_HITS, service.recallFloor(),
@@ -443,7 +454,7 @@ export function buildMcpServer(
     const places = registry.placesInUse().filter((p) => looksLikeInstruction(placeWords(p)) === null);
     server.registerTool('set_project_info', {
       title: 'Set project info',
-      description: "Sets a project's one-liner (what it is, in one plain line), area, folder (its folder name in ~/Projects), URL and where it runs. "
+      description: "Sets a project's one-liner (what it is, in one plain line), area, folder (its folder name in ~/Projects), URL, where it runs and its nicknames. "
         + 'Use it when a project has no one-liner yet, or its info is wrong. Fields left out stay as they are. '
         + 'Only the owner changes a project\'s state or pins it. '
         + `Places already in use: ${places.length > 0 ? places.join(', ') : 'none yet'}.`,
@@ -455,8 +466,10 @@ export function buildMcpServer(
         url: z.string().optional(),
         runs_on: z.array(z.string()).optional().describe('Up to 4 short place names where the project runs, such as minipc, pi, iphone, mac, cloudflare. '
           + `Places already in use: ${places.length > 0 ? places.join(', ') : 'none yet'}. Reuse them.`),
+        nicknames: z.array(z.string()).max(8).optional().describe('Everyday names people use for the project, such as a product name or a description ("the wine app"); '
+          + 'recall uses them to find its facts. Replaces the list; at most 8.'),
       },
-    }, guard('set_project_info', (a: { project: string; one_liner?: string; area?: string; folder?: string; url?: string; runs_on?: string[] }) => {
+    }, guard('set_project_info', (a: { project: string; one_liner?: string; area?: string; folder?: string; url?: string; runs_on?: string[]; nicknames?: string[] }) => {
       const project = service.projectNamed(a.project);
       if (!registry.get(project)) {
         throw new ProjectError('not_found', `There is no project ${JSON.stringify(a.project)}. Call list_projects to see the project names.`);
@@ -470,7 +483,7 @@ export function buildMcpServer(
         const reason = looksLikeInstruction(placeWords(place));
         if (reason) throw new ProjectError('invalid', `The place ${JSON.stringify(place)} reads like an instruction to AI assistants (${reason}). Use a short place name such as minipc.`);
       }
-      const p = registry.setInfo(project, { oneLiner: a.one_liner, area: a.area as Area | undefined, folder: a.folder, url: a.url, runsOn: a.runs_on }, actorName);
+      const p = registry.setInfo(project, { oneLiner: a.one_liner, area: a.area as Area | undefined, folder: a.folder, url: a.url, runsOn: a.runs_on, nicknames: a.nicknames }, actorName);
       return withData(`Saved the info for project ${project}.`, projectInfoJson(p, service.isQuiet(project)));
     }));
 
@@ -543,7 +556,8 @@ export function buildMcpServer(
     const known = new Set(withMemories.map((p) => p.project));
     // Projects that exist only in the registry so far (ideas the owner added on the home screen) are listed too.
     const registryOnly = registry.list().filter((p) => !known.has(p.name)).map((p) => ({ project: p.name, count: 0, aliases: [] as string[], state: p.state }));
-    return text(wrap([...withMemories, ...registryOnly].filter((p) => visible(p.project))));
+    const nicknames = new Map(registry.list().map((p) => [p.name, p.nicknames]));
+    return text(wrap([...withMemories, ...registryOnly].filter((p) => visible(p.project)).map((p) => ({ ...p, nicknames: nicknames.get(p.project) ?? [] }))));
   }));
 
   server.registerTool('recent_work', {

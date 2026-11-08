@@ -24,7 +24,7 @@ services:
       - ./data:/app/data
       # Your own texts and settings (overlay.example/ shows what goes there). Optional.
       - ./overlay:/app/overlay:ro
-    mem_limit: 1g
+    mem_limit: 1536m
     restart: unless-stopped
     logging: &logging
       driver: json-file

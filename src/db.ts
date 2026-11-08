@@ -529,6 +529,11 @@ CREATE TABLE disagreements(id TEXT PRIMARY KEY, a TEXT NOT NULL, b TEXT NOT NULL
   settled_how TEXT CHECK (settled_how IN ('a', 'b', 'both', 'gone', 'changed')), CHECK (a <> b));
 `;
 
+/** B4: a project's everyday names, which recall uses to find its facts (src/projects/store.ts checkNicknames). */
+const MIGRATION_31 = `
+ALTER TABLE projects ADD COLUMN nicknames TEXT NOT NULL DEFAULT '[]';
+`;
+
 const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] = [
   { version: 1, sql: MIGRATION_1 },
   { version: 2, sql: MIGRATION_2 },
@@ -561,6 +566,7 @@ const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] 
   { version: 28, sql: MIGRATION_28 },
   { version: 29, sql: MIGRATION_29 },
   { version: 30, sql: MIGRATION_30 },
+  { version: 31, sql: MIGRATION_31 },
 ];
 
 /** `upTo` stops at that schema version (tests of a migration start from the one before it). */

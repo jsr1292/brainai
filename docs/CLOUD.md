@@ -4,7 +4,7 @@ The same BrainAI as on a home server (`docs/RUNBOOK.md`), on a small rented Linu
 
 ## What you need
 
-- A Linux server (x86_64 or arm64) with about 2 GB of memory, from any provider. BrainAI itself uses about 1 GB;
+- A Linux server (x86_64 or arm64) with about 2 GB of memory, from any provider. BrainAI itself uses up to about 1.5 GB;
   building the image needs a little more.
 - A domain on Cloudflare, for the tunnel.
 - SSH access with a key.

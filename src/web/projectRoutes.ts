@@ -203,7 +203,7 @@ export function projectRoutes(d: AppDeps): Router {
     const orNull = (v: string) => (v.trim() === '' ? null : v);
     return act(req, res, (name) => d.registry.setInfo(name, {
       oneLiner: orNull(str(req, 'oneLiner')), area: area === '' ? null : (area as Area), folder: orNull(str(req, 'folder')), url: orNull(str(req, 'url')),
-      runsOn: str(req, 'runsOn'),
+      runsOn: str(req, 'runsOn'), nicknames: str(req, 'nicknames'),
     }, 'owner'));
   });
 

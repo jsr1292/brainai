@@ -141,7 +141,7 @@ desktop/scripts/stage-server.sh          # the server, its darwin-arm64 dependen
 cd desktop && npm install && npx tauri build --bundles app
 ```
 
-The app is in `desktop/src-tauri/target/release/bundle/macos/BrainAI.app` (about 400 MB, most of it the search model,
+The app is in `desktop/src-tauri/target/release/bundle/macos/BrainAI.app` (about 550 MB, most of it the search models,
 its runtime and Node). `cd desktop/src-tauri && cargo test` runs the shell's tests; the server's are `npm test` at the
 top of the repo.
 

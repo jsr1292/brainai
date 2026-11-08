@@ -28,6 +28,8 @@ export interface Config {
   /** The owner's own texts and settings (setup.json); a missing folder or file means the defaults. */
   overlayDir: string;
   minRecallSimilarity: number; recallConfidentSimilarity: number; recallWindow: number;
+  /** Recall's results reordered by the local reranker (B3); RERANK=off keeps the search's own order. */
+  rerank: boolean;
   mode: Mode;
   /** Address to listen on. Work mode defaults to 127.0.0.1 so nothing else on the network can reach it. */
   host: string;
@@ -116,6 +118,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   if (recallConfidentSimilarity < minRecallSimilarity) {
     throw new Error(`RECALL_CONFIDENT_SIMILARITY (${recallConfidentSimilarity}) must not be below MIN_RECALL_SIMILARITY (${minRecallSimilarity})`);
   }
+  const rerankSetting = env.RERANK ?? 'on';
+  if (rerankSetting !== 'on' && rerankSetting !== 'off') throw new Error(`RERANK must be on or off, got ${env.RERANK}`);
   const mode = env.MEMORY_MODE ?? 'personal';
   if (mode !== 'personal' && mode !== 'work') throw new Error(`MEMORY_MODE must be personal or work, got ${env.MEMORY_MODE}`);
   const work = mode === 'work';
@@ -134,7 +138,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   if (!Number.isInteger(backupKeep) || backupKeep < 1) throw new Error(`BACKUP_KEEP must be a whole number of at least 1, got ${env.BACKUP_KEEP}`);
   return {
     publicUrl, dataDir: env.DATA_DIR ?? './data', modelDir: env.MODEL_DIR ?? './models', port,
-    duplicateThreshold, minRecallSimilarity, recallConfidentSimilarity, recallWindow,
+    duplicateThreshold, minRecallSimilarity, recallConfidentSimilarity, recallWindow, rerank: rerankSetting === 'on',
     mode,
     // This machine only, and no proxy header trusted, unless set: the Docker image sets HOST=0.0.0.0, and a deployment
     // behind a Cloudflare Tunnel (whose origin nothing else can reach) sets TRUST_CF_CONNECTING_IP=true.

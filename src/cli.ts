@@ -13,8 +13,9 @@ import { ClientsStore } from './auth/clientsStore.js';
 import { MemoryOAuthProvider } from './auth/provider.js';
 import { generateTotpSecret, otpauthUri } from './auth/totp.js';
 import { createLocalEmbedder } from './memory/embedder.js';
+import { startReranker, type Reranker } from './memory/reranker.js';
 import { exportMarkdown } from './memory/exportMarkdown.js';
-import { formatReport, parseCases, runRecallTest } from './memory/recallTest.js';
+import { comparePaired, formatReport, parseCases, runRecallTest } from './memory/recallTest.js';
 import { DEFAULT_LIMIT, MemoryService } from './memory/service.js';
 import { MemoryStore } from './memory/store.js';
 import { exportTree, writeTree } from './pages/exportTree.js';
@@ -60,7 +61,7 @@ export async function prompt(question: string, opts: { hidden?: boolean } = {}):
   return line;
 }
 
-export interface CliContext { db: DB; owner: OwnerAuth; args?: string[]; embedder?: Embedder }
+export interface CliContext { db: DB; owner: OwnerAuth; args?: string[]; embedder?: Embedder; reranker?: Reranker }
 
 async function setPassword({ owner }: CliContext): Promise<void> {
   const pw = await prompt('New password (min 12 characters): ', { hidden: true });
@@ -132,18 +133,46 @@ async function clients({ db, args = [] }: CliContext): Promise<void> {
   } else throw new Error('Usage: clients list | revoke <grantId> | purge-unused');
 }
 
-/** Scores recall against a file of questions (default: recall-test.json in the data folder). Changes nothing. */
-async function recallTest({ db, args = [] }: CliContext): Promise<void> {
+/**
+ * Scores recall against a file of questions (default: recall-test.json in the data folder). Changes nothing.
+ * `--json <file>` writes the scores and each question's rank; `--against <file>` (an earlier --json) lists the
+ * questions gained and lost within the first result and within the limit. `--no-alt` leaves out each question's other
+ * phrasings (`alt`), to measure what they add.
+ */
+async function recallTest({ db, args = [], embedder: given, reranker }: CliContext): Promise<void> {
   const config = loadConfig(process.env);
-  const cases = parseCases(readFileSync(args[0] ?? join(config.dataDir, 'recall-test.json'), 'utf8'));
-  const embedder = await createLocalEmbedder({ modelDir: config.modelDir, allowRemote: false });
+  const flag = (name: string): string | undefined => {
+    const i = args.indexOf(name);
+    if (i < 0) return undefined;
+    const v = args[i + 1];
+    if (v === undefined || v.startsWith('--')) throw new Error(`Usage: cli recall-test [file] [--json <out>] [--against <earlier json>] [--no-alt]`);
+    return v;
+  };
+  const jsonOut = flag('--json');
+  const against = flag('--against');
+  const file = args.find((a, i) => !a.startsWith('--') && !['--json', '--against'].includes(args[i - 1] ?? ''));
+  const cases = parseCases(readFileSync(file ?? join(config.dataDir, 'recall-test.json'), 'utf8'));
+  const embedder = given ?? await createLocalEmbedder({ modelDir: config.modelDir, allowRemote: false });
   const service = new MemoryService(new MemoryStore(db, systemClock), embedder, {
     duplicateThreshold: config.duplicateThreshold,
     minRecallSimilarity: config.minRecallSimilarity,
     recallConfidentSimilarity: config.recallConfidentSimilarity,
     recallWindow: config.recallWindow,
+    // What assistants get: the server's reranker setting.
+    reranker: reranker ?? await startReranker(config),
   });
-  console.log(formatReport(await runRecallTest(service, cases, DEFAULT_LIMIT)));
+  const report = await runRecallTest(service, cases, DEFAULT_LIMIT, { alt: !args.includes('--no-alt') });
+  console.log(formatReport(report));
+  const perQuestion = report.results.map((r) => ({ id: r.q, rank: r.rank }));
+  if (jsonOut) writeFileSync(jsonOut, JSON.stringify({ limit: report.limit, summary: report.summary, byTag: report.byTag, perQuestion }, null, 2));
+  if (against) {
+    const before = (JSON.parse(readFileSync(against, 'utf8')) as { perQuestion: { id: string; rank: number | null }[] }).perQuestion;
+    for (const k of [1, report.limit]) {
+      const { gained, lost } = comparePaired(before, perQuestion, k);
+      console.log(`\nGained within ${k}: ${gained.length}${gained.map((q) => `\n  "${q}"`).join('')}`);
+      console.log(`Lost within ${k}: ${lost.length}${lost.map((q) => `\n  "${q}"`).join('')}`);
+    }
+  }
 }
 
 /** Writes every active memory as Markdown to the given file, or prints it. Changes nothing. */
@@ -173,6 +202,7 @@ async function exportBrain({ db, args = [] }: CliContext): Promise<void> {
   const pageFiles = [...tree.keys()].filter((k) => k.startsWith('pages/')).length;
   const factFiles = [...tree.keys()].filter((k) => k.startsWith('facts/')).length;
   console.log(`export-brain: ${pageFiles} pages, ${factFiles} fact files (written ${r.written}, removed ${r.removed})`);
+  if (r.skipped.length > 0) console.log(`export-brain: left alone because of a link on the way: ${r.skipped.slice(0, 10).join(', ')}${r.skipped.length > 10 ? ` and ${r.skipped.length - 10} more` : ''}`);
 }
 
 /**
@@ -216,8 +246,8 @@ export const COMMANDS: Record<string, (ctx: CliContext) => Promise<void>> = {
   export: exportCommand,
 };
 
-/** `deps.embedder` replaces the local model (tests). */
-export async function main(argv: string[], deps: { embedder?: Embedder } = {}): Promise<number> {
+/** `deps.embedder` and `deps.reranker` replace the local models (tests). */
+export async function main(argv: string[], deps: { embedder?: Embedder; reranker?: Reranker } = {}): Promise<number> {
   const handler = COMMANDS[argv[0] ?? ''];
   if (!handler) {
     console.error(`Usage: cli <${Object.keys(COMMANDS).join('|')}>`);
@@ -227,7 +257,7 @@ export async function main(argv: string[], deps: { embedder?: Embedder } = {}): 
   mkdirSync(dir, { recursive: true });
   const db = openDb(`${dir}/memory.db`);
   try {
-    await handler({ db, owner: new OwnerAuth(db, systemClock), args: argv.slice(1), embedder: deps.embedder });
+    await handler({ db, owner: new OwnerAuth(db, systemClock), args: argv.slice(1), embedder: deps.embedder, reranker: deps.reranker });
     return 0;
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));

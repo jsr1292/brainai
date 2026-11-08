@@ -11,6 +11,7 @@ const RRF_K = 60;
  */
 const KEYWORD_WEIGHT = 0.5;
 
+
 /** Builds a safe FTS5 query: every non-filler token quoted, OR-joined. Null when nothing usable remains. */
 export function toFtsQuery(text: string): string | null {
   const tokens = text
@@ -35,27 +36,38 @@ export function toFtsQuery(text: string): string | null {
  * candidates whose relative floor comes from the best current candidate only. `replacedCut` 'follow' (recall) returns
  * every qualifying replaced candidate in joint order, at most `replacedLimit` (default 5); 'joint-top' (the header
  * search and All facts) only those ranked within the joint top `limit`. Replaced facts are never marked recalled.
+ *
+ * `pool` (default `limit`): how many current results to return, for a caller that reorders them and keeps `limit`
+ * itself (recall's reranker). Each current result says whether it is `sure` (a keyword hit or a match reaching
+ * `confidentSimilarity`): the ones marking recalled would mark, for a caller that marks after reordering.
  */
 export function hybridSearch(
   store: MemoryStore,
   q: {
-    vector: Float32Array; text: string; kind?: Kind; project?: string; projects?: string[]; limit: number; minSimilarity: number; confidentSimilarity: number; window?: number; touch?: boolean;
+    vector: Float32Array; text: string; kind?: Kind; project?: string; projects?: string[]; limit: number; pool?: number; minSimilarity: number; confidentSimilarity: number; window?: number; touch?: boolean;
+    variants?: { vector: Float32Array; text: string }[];
     replaced?: 'hide' | 'include'; replacedLimit?: number; replacedCut?: 'follow' | 'joint-top';
   },
-): { memory: Memory; score: number; replaced?: true }[] {
+): SearchHit[] {
   const filter = { kind: q.kind, project: q.project, projects: q.projects };
   const ftsQuery = toFtsQuery(q.text);
-  const current = rank(store.activeEmbeddings(filter), ftsQuery ? store.ftsSearch(ftsQuery, filter, CANDIDATES) : [], q);
-  const top = current.ranked.slice(0, q.limit);
-  const results: { memory: Memory; score: number; replaced?: true }[] = [];
+  const live = store.activeEmbeddings(filter);
+  // The question and each other phrasing (B4) are ranked on their own, each with its own keywords and floor; their
+  // fused scores add up, and a fact is sure when any of them would call it sure.
+  const current = merge([
+    rank(live, ftsQuery ? store.ftsSearch(ftsQuery, filter, CANDIDATES) : [], q),
+    ...(q.variants ?? []).map((v) => {
+      const fts = toFtsQuery(v.text);
+      return rank(live, fts ? store.ftsSearch(fts, filter, CANDIDATES) : [], { ...q, vector: v.vector });
+    }),
+  ]);
+  const top = current.ranked.slice(0, Math.max(q.pool ?? q.limit, q.limit));
+  const results: SearchHit[] = [];
   for (const [id, score] of top) {
     const memory = store.get(id);
-    if (memory) results.push({ memory, score });
+    if (memory) results.push({ memory, score, sure: current.ftsIds.has(id) || (current.sims.get(id) ?? 0) >= q.confidentSimilarity });
   }
-  if (q.touch !== false) {
-    store.markRecalled(results.map((r) => r.memory.id)
-      .filter((id) => current.ftsIds.has(id) || (current.sims.get(id) ?? 0) >= q.confidentSimilarity));
-  }
+  if (q.touch !== false) store.markRecalled(results.filter((r) => r.sure).map((r) => r.memory.id));
   if (q.replaced !== 'include') return results;
 
   // One joint ranking of current and replaced candidates; the floor is the best current candidate's.
@@ -69,13 +81,32 @@ export function hybridSearch(
     if (results.length - top.length >= max) break;
     if (!replacedIds.has(id)) continue;
     const memory = store.get(id);
-    if (memory) results.push({ memory, score, replaced: true });
+    if (memory) results.push({ memory, score, sure: false, replaced: true });
   }
   return results;
 }
 
+/** A search result; `sure` is false for replaced hits, which are never marked recalled. */
+export interface SearchHit { memory: Memory; score: number; sure: boolean; replaced?: true }
+
 /** Replaced hits that follow recall's current ones, at most. */
 const DEFAULT_REPLACED = 5;
+
+type Ranking = { ranked: [string, number][]; ftsIds: Set<string>; sims: Map<string, number>; best: number };
+
+/** Several rankings as one: scores added, keyword hits joined, each fact's best similarity; `best` is the first's. */
+function merge(parts: Ranking[]): Ranking {
+  if (parts.length === 1) return parts[0]!;
+  const scores = new Map<string, number>();
+  const ftsIds = new Set<string>();
+  const sims = new Map<string, number>();
+  for (const p of parts) {
+    for (const [id, score] of p.ranked) scores.set(id, (scores.get(id) ?? 0) + score);
+    for (const id of p.ftsIds) ftsIds.add(id);
+    for (const [id, sim] of p.sims) sims.set(id, Math.max(sims.get(id) ?? -Infinity, sim));
+  }
+  return { ranked: [...scores.entries()].sort((a, b) => b[1] - a[1]), ftsIds, sims, best: parts[0]!.best };
+}
 
 /**
  * Fuses vector and keyword ranks. `best` is the similarity the relative floor is measured from (default: the best
@@ -86,7 +117,7 @@ function rank(
   ftsRanked: string[],
   q: { vector: Float32Array; minSimilarity: number; window?: number },
   best?: number,
-): { ranked: [string, number][]; ftsIds: Set<string>; sims: Map<string, number>; best: number } {
+): Ranking {
   const vectorRanked = embeddings
     .map((e) => ({ id: e.id, sim: cosine(q.vector, e.embedding) }))
     .sort((a, b) => b.sim - a.sim)

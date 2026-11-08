@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import type { MemoryService } from '../memory/service.js';
 import type { MemoryStore } from '../memory/store.js';
@@ -134,12 +134,27 @@ function folders(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).flatMap((e) => [...folders(join(dir, e.name)), join(dir, e.name)]);
 }
 
-/** Writes the tree into `dir`: only files whose content changed, and removes .md files under pages/ and facts/ that are gone. */
-export function writeTree(dir: string, tree: Map<string, string>): { written: number; removed: number } {
+const isLink = (p: string): boolean => { try { return lstatSync(p).isSymbolicLink(); } catch { return false; } };
+
+/**
+ * Writes the tree into `dir`: only files whose content changed, and removes .md files under pages/ and facts/ that are
+ * gone. Never through a link (audit F05): a top folder that is a link is left alone, a file whose path has a link on
+ * the way is not written, and a file that is itself a link is replaced by a real file. `skipped` names what was left.
+ */
+export function writeTree(dir: string, tree: Map<string, string>): { written: number; removed: number; skipped: string[] } {
   let written = 0;
   let removed = 0;
+  const skipped: string[] = [];
+  const linkedTops = new Set(['pages', 'facts', 'skills'].filter((top) => isLink(join(dir, top))));
+  /** Whether a folder between `dir` and this file is a link. */
+  const linkOnTheWay = (path: string): boolean => {
+    let at = dir;
+    for (const part of path.split('/').slice(0, -1)) { at = join(at, part); if (isLink(at)) return true; }
+    return false;
+  };
+  skipped.push(...linkedTops);
   // Remove first, then write: a skill's folder can become a file of the same name (ref/b.md, then ref).
-  for (const top of ['pages', 'facts', 'skills']) {
+  for (const top of ['pages', 'facts', 'skills'].filter((t) => !linkedTops.has(t))) {
     for (const file of walk(join(dir, top))) {
       // A skill's folder holds any text file (scripts/run.sh, palette.json): under skills/ every file not exported goes.
       if ((top === 'skills' || file.endsWith('.md')) && !tree.has(relative(dir, file).split('\\').join('/'))) {
@@ -151,11 +166,14 @@ export function writeTree(dir: string, tree: Map<string, string>): { written: nu
     for (const f of folders(join(dir, top))) if (readdirSync(f).length === 0) rmdirSync(f);
   }
   for (const [path, content] of tree) {
+    if (linkedTops.has(path.split('/')[0]!)) continue;
+    if (linkOnTheWay(path)) { skipped.push(path); continue; }
     const full = join(dir, path);
-    if (existsSync(full) && readFileSync(full, 'utf8') === content) continue;
+    if (isLink(full)) unlinkSync(full);
+    else if (existsSync(full) && readFileSync(full, 'utf8') === content) continue;
     mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, content);
     written++;
   }
-  return { written, removed };
+  return { written, removed, skipped };
 }

@@ -1,4 +1,5 @@
 import { env, pipeline } from '@huggingface/transformers';
+import { modelSessionOptions } from './onnxOptions.js';
 
 export const EMBEDDING_DIM = 384;
 
@@ -13,10 +14,15 @@ export function cosine(a: Float32Array, b: Float32Array): number {
   return sum;
 }
 
+/** How the embedding model loads: 8-bit, with the shared thread settings (onnxOptions.ts). */
+export function embedderOptions(cores?: number): { dtype: 'q8'; session_options: ReturnType<typeof modelSessionOptions> } {
+  return { dtype: 'q8', session_options: modelSessionOptions(cores) };
+}
+
 export async function createLocalEmbedder(opts: { modelDir: string; allowRemote: boolean }): Promise<Embedder> {
   env.cacheDir = opts.modelDir;
   env.allowRemoteModels = opts.allowRemote;
-  const extractor = await pipeline('feature-extraction', 'Xenova/multilingual-e5-small', { dtype: 'q8' });
+  const extractor = await pipeline('feature-extraction', 'Xenova/multilingual-e5-small', embedderOptions() as never);
   return {
     async embed(text, purpose) {
       const output = await extractor(`${purpose}: ${text}`, { pooling: 'mean', normalize: true });

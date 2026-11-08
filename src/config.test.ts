@@ -97,3 +97,11 @@ test('APP_SECRET shorter than 32 characters stops the server', () => {
   assert.equal(loadConfig({ PUBLIC_URL: 'https://m.example.com', APP_SECRET: 'a'.repeat(32) }).appSecret, 'a'.repeat(32));
   assert.equal(loadConfig({ PUBLIC_URL: 'https://m.example.com' }).appSecret, null);
 });
+
+test('loadConfig: recall reranks unless RERANK=off; any other value is refused', () => {
+  const base = { PUBLIC_URL: 'https://memory.example.com' };
+  assert.equal(loadConfig(base).rerank, true);
+  assert.equal(loadConfig({ ...base, RERANK: 'on' }).rerank, true);
+  assert.equal(loadConfig({ ...base, RERANK: 'off' }).rerank, false);
+  assert.throws(() => loadConfig({ ...base, RERANK: 'maybe' }), /RERANK/);
+});

@@ -385,3 +385,69 @@ test('the scripts work from wherever the repo was cloned: with no APP_DIR they u
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('F10: a backup started while another runs leaves it alone: no snapshot, no status, exit 0', { skip: !haveSqlite }, () => {
+  const { root, appDir } = setup();
+  try {
+    const lock = join(appDir, 'backups', '.backup.lock');
+    mkdirSync(lock, { recursive: true });
+    writeFileSync(join(lock, 'pid'), String(process.pid)); // this test's own process: alive
+    const r = spawnSync('bash', ['scripts/backup.sh'], { env: { ...process.env, APP_DIR: appDir, SKIP_MOUNT_CHECK: '1' }, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout + r.stderr, /another backup is running/);
+    assert.deepEqual(readdirSync(join(appDir, 'backups')).sort(), ['.backup.lock']);
+    assert.ok(!existsSync(join(appDir, 'data', 'backup-status.json')));
+    assert.ok(existsSync(lock), 'the other run\'s lock stays');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('F10: a lock left by a run that died is taken over, and every run cleans up its lock and temporary files', { skip: !haveSqlite }, () => {
+  const { root, appDir } = setup();
+  try {
+    const lock = join(appDir, 'backups', '.backup.lock');
+    mkdirSync(lock, { recursive: true });
+    writeFileSync(join(lock, 'pid'), '999999'); // no such process
+    const r = spawnSync('bash', ['scripts/backup.sh'], { env: { ...process.env, APP_DIR: appDir, SKIP_MOUNT_CHECK: '1' }, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(readdirSync(join(appDir, 'backups')), [`memory-${today()}.db`]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('F10 review: a lock that cannot be taken because backups/ is not writable is a failed backup, not "another is running"', { skip: !haveSqlite || process.getuid?.() === 0 }, () => {
+  const { root, appDir } = setup();
+  try {
+    mkdirSync(join(appDir, 'backups'), { recursive: true });
+    chmodSync(join(appDir, 'backups'), 0o555);
+    const r = spawnSync('bash', ['scripts/backup.sh'], { env: { ...process.env, APP_DIR: appDir, SKIP_MOUNT_CHECK: '1' }, encoding: 'utf8' });
+    chmodSync(join(appDir, 'backups'), 0o755);
+    assert.notEqual(r.status, 0);
+    assert.doesNotMatch(r.stdout + r.stderr, /another backup is running/);
+    assert.match(r.stderr, /could not take the backup lock/);
+    assert.equal(JSON.parse(readFileSync(join(appDir, 'data', 'backup-status.json'), 'utf8')).ok, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('F10 review: a lock being taken right now (no pid yet) is busy; leftovers of a killed run are swept', { skip: !haveSqlite }, () => {
+  const { root, appDir } = setup();
+  try {
+    const lock = join(appDir, 'backups', '.backup.lock');
+    mkdirSync(lock, { recursive: true });
+    const busy = spawnSync('bash', ['scripts/backup.sh'], { env: { ...process.env, APP_DIR: appDir, SKIP_MOUNT_CHECK: '1' }, encoding: 'utf8' });
+    assert.equal(busy.status, 0);
+    assert.match(busy.stderr, /another backup is running/);
+    rmSync(lock, { recursive: true });
+    writeFileSync(join(appDir, 'backups', '.memory-AbC123'), 'an unstripped snapshot of a killed run');
+    mkdirSync(join(appDir, 'backups', '.backup.lock.stale.4242'));
+    const r = spawnSync('bash', ['scripts/backup.sh'], { env: { ...process.env, APP_DIR: appDir, SKIP_MOUNT_CHECK: '1' }, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(readdirSync(join(appDir, 'backups')), [`memory-${today()}.db`]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

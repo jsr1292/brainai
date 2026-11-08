@@ -1,6 +1,6 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProjectStore } from '../projects/store.js';
@@ -112,6 +112,47 @@ test('writeTree never follows a symlink out of the export folder', async (t) => 
   symlinkSync(outside, join(dir, 'pages', 'link'));
   writeTree(dir, exportTree(deps, new Date()));
   assert.equal(readFileSync(join(outside, 'precious.md'), 'utf8'), 'keep');
+});
+
+test('F05: a top folder that is a link is neither cleaned nor written through, and is reported', async (t) => {
+  const { deps, pages } = await setup();
+  await pages.create({ title: 'Keep me', area: 'tools', body: 'a' }, 'owner');
+  const dir = tmp(t);
+  const outside = tmp(t);
+  writeFileSync(join(outside, 'precious.md'), 'keep');
+  symlinkSync(outside, join(dir, 'pages'));
+  const r = writeTree(dir, exportTree(deps, new Date()));
+  assert.equal(readFileSync(join(outside, 'precious.md'), 'utf8'), 'keep');
+  assert.ok(!existsSync(join(outside, 'tools')), 'nothing written through the link');
+  assert.ok(r.skipped.includes('pages'));
+});
+
+test('F05: a path with a link on the way is skipped, never written through', async (t) => {
+  const { deps, pages } = await setup();
+  await pages.create({ title: 'Keep me', area: 'tools', body: 'a' }, 'owner');
+  const dir = tmp(t);
+  const outside = tmp(t);
+  mkdirSync(join(dir, 'pages'), { recursive: true });
+  symlinkSync(outside, join(dir, 'pages', 'tools'));
+  const r = writeTree(dir, exportTree(deps, new Date()));
+  assert.deepEqual(readdirSync(outside), []);
+  assert.ok(r.skipped.some((p) => p.startsWith('pages/tools/')));
+});
+
+test('F05: a file that is itself a link is replaced by a real file, and its target is untouched', async (t) => {
+  const { deps, pages } = await setup();
+  await pages.create({ title: 'Keep me', area: 'tools', body: 'a' }, 'owner');
+  const dir = tmp(t);
+  const outside = tmp(t);
+  writeFileSync(join(outside, 'target.md'), 'keep');
+  const tree = exportTree(deps, new Date());
+  const path = [...tree.keys()].find((k) => k.startsWith('pages/tools/'))!;
+  mkdirSync(join(dir, path, '..'), { recursive: true });
+  symlinkSync(join(outside, 'target.md'), join(dir, path));
+  writeTree(dir, tree);
+  assert.equal(readFileSync(join(outside, 'target.md'), 'utf8'), 'keep');
+  assert.ok(!lstatSync(join(dir, path)).isSymbolicLink());
+  assert.equal(readFileSync(join(dir, path), 'utf8'), tree.get(path));
 });
 
 test('a page under a merged project\'s old name is exported under the real project, and names are quoted', async () => {

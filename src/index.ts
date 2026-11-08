@@ -28,6 +28,7 @@ import { PageStore } from './pages/store.js';
 import { DiscussionStore } from './discussions/store.js';
 import { openDb, purgeExpired } from './db.js';
 import { createLocalEmbedder } from './memory/embedder.js';
+import { startReranker } from './memory/reranker.js';
 import { MemoryService } from './memory/service.js';
 import { MemoryStore } from './memory/store.js';
 import { ProjectsService } from './projects/service.js';
@@ -52,6 +53,7 @@ watchParent(process.env, process.stdin, () => (stopWhenGone ? stopWhenGone() : p
 mkdirSync(config.dataDir, { recursive: true });
 const db = openDb(join(config.dataDir, 'memory.db'));
 const embedder = await createLocalEmbedder({ modelDir: config.modelDir, allowRemote: false });
+const reranker = await startReranker(config);
 
 const now = systemClock;
 /**
@@ -66,6 +68,7 @@ const service = new MemoryService(store, embedder, {
   minRecallSimilarity: config.minRecallSimilarity,
   recallConfidentSimilarity: config.recallConfidentSimilarity,
   recallWindow: config.recallWindow,
+  reranker,
 });
 const registry = new ProjectStore(db, now);
 const allowlist = new RedirectAllowlist(db);

@@ -38,7 +38,9 @@ server later without losing a memory.
 - **Every assistant, one memory.** Claude, ChatGPT and Grok (web and phone), and Claude Code, Codex, Grok Build and
   OpenCode on your computer. Each connects with OAuth, and you choose what it may do.
 - **Recall by meaning,** in several languages, with a briefing per project: its statuses, decisions and roadmap in
-  one call. How well it finds things is measured on the public LoCoMo test (`docs/BENCHMARK.md`).
+  one call. A small local model reorders each search's first matches so the best answer comes first. Projects can
+  have nicknames, and an assistant can send an English version of a question asked in another language. How well it
+  finds things is measured on the public LoCoMo test (`docs/BENCHMARK.md`).
 - **You approve what matters.** Changes to your profile, and memories that read like instructions to an assistant,
   wait for you. What you delete stays deleted. Passwords and keys are refused.
 - **Disagreements come to you.** When an assistant sees two saved facts that can't both be true, it flags them and
@@ -67,7 +69,7 @@ The screenshots show a sample brain with made-up projects (`npm run demo:seed`, 
 
 ## On a server: quick start
 
-You need a Linux server (x86_64 or arm64, about 1 GB of memory for the app) with Docker, and a domain on Cloudflare.
+You need a Linux server (x86_64 or arm64, about 1.5 GB of memory for the app) with Docker, and a domain on Cloudflare.
 `docs/RUNBOOK.md` walks through every step in detail, including backups and monitoring.
 
 1. **Let your user run Docker** (the nightly backup scripts call it without sudo), then log out and back in:
@@ -83,7 +85,7 @@ You need a Linux server (x86_64 or arm64, about 1 GB of memory for the app) with
    mkdir -p data backups overlay
    cp .env.example .env        # set PUBLIC_URL, TUNNEL_TOKEN, and PUID / PGID (the output of `id -u` / `id -g`)
    ```
-4. **Start it.** The first build downloads the search model, so it takes a few minutes:
+4. **Start it.** The first build downloads the search models, so it takes a few minutes:
    ```bash
    docker compose up -d --build
    ```
@@ -143,7 +145,7 @@ Node 22 or newer.
 npm ci
 npm run typecheck
 npm test
-npm run model        # once: downloads the search model into ./models (about 130 MB)
+npm run model        # once: downloads the search models into ./models (about 275 MB)
 PUBLIC_URL=http://localhost:3000 npm run dev
 ```
 

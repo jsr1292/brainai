@@ -21,7 +21,9 @@ export function disagreeGroup(project: string, list: OpenDisagreement[], now: Da
 function pairs(list: OpenDisagreement[], now: Date, back: string, project: string | null): SafeHtml {
   const settle = (d: OpenDisagreement, how: 'a' | 'b' | 'both', label: string, cls: string) =>
     html`<form method="post" action="/disagreements/${d.id}/settle"><input type="hidden" name="how" value="${how}"><input type="hidden" name="back" value="${back}"><button type="submit" class="${cls}">${label}</button></form>`;
-  const side = (d: OpenDisagreement, m: Memory, how: 'a' | 'b') => html`<div class="dg-fact"><a href="/memories/${m.id}">${project === null ? m.content : stripProjectPrefix(m.content, project)}</a>${metaLine([writer(m.updatedBy), timeAgo(m.updatedAt, now)])}${settle(d, how, 'This one is right', 'sm')}</div>`;
+  // On a project's page, a fact from elsewhere says where it is: settling may replace or delete it.
+  const elsewhere = (m: Memory) => project !== null && m.project !== project ? (m.project === null ? 'About you' : `in ${m.project}`) : null;
+  const side = (d: OpenDisagreement, m: Memory, how: 'a' | 'b') => html`<div class="dg-fact"><a href="/memories/${m.id}">${project === null ? m.content : stripProjectPrefix(m.content, project)}</a>${metaLine([writer(m.updatedBy), timeAgo(m.updatedAt, now), elsewhere(m)])}${settle(d, how, 'This one is right', 'sm')}</div>`;
   return html`<ul class="disagree plain-list">${list.map((d) => html`<li><p class="dg-why">${d.why} <span class="quiet">· flagged by ${writerName(d.flaggedBy)}</span></p>
     <div class="dg-pair">${side(d, d.factA, 'a')}${side(d, d.factB, 'b')}</div>${settle(d, 'both', 'Both are right', 'ghost sm')}</li>`)}</ul>`;
 }

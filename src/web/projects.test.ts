@@ -664,3 +664,17 @@ test('the home folds open as shelves on a very wide screen; "Not in the brain ye
   assert.doesNotMatch(open, /data-desk-open="xl"/);
   assert.match(open, /<details class="fold"><summary class="row nolead">Ideas</);
 });
+
+test("the panel's Edit details sets nicknames, comma-separated, and shows a clash", async (t) => {
+  const { app, f } = await start(t);
+  app.deps.registry.create('vino-db', { state: 'open' }, 'owner');
+  app.deps.registry.create('garden', { state: 'open' }, 'owner');
+  const fields = { oneLiner: 'Wine stock', area: 'apps', folder: '', url: '', runsOn: '' };
+  assert.equal((await post(f, '/projects/vino-db/info', { ...fields, nicknames: 'cellar app, the cellar' })).status, 303);
+  assert.deepEqual(app.deps.registry.get('vino-db')!.nicknames, ['cellar app', 'the cellar']);
+  assert.match(await (await f('/?project=vino-db')).text(), /<input name="nicknames" maxlength="340" placeholder="comma-separated" value="cellar app, the cellar">/);
+  const bad = await post(f, '/projects/vino-db/info', { ...fields, nicknames: 'Garden' });
+  assert.equal(bad.status, 400);
+  assert.match(await bad.text(), /already garden&#39;s name or nickname|already garden's name or nickname/);
+  assert.deepEqual(app.deps.registry.get('vino-db')!.nicknames, ['cellar app', 'the cellar']);
+});

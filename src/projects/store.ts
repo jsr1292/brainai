@@ -1,18 +1,21 @@
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
+import { looksLikeInstruction } from '../memory/instructionLike.js';
 import { looksLikeSecret } from '../memory/secrets.js';
+import { STOPWORDS } from '../memory/stopwords.js';
+import { words } from '../memory/words.js';
 import { normalizePlaces } from './places.js';
 import { AREAS, MAX_PINNED, ProjectError, STATES, type Area, type Project, type ProjectStateName } from './types.js';
 
 interface ProjectRow {
   name: string; one_liner: string | null; area: Area | null; state: ProjectStateName; state_changed_at: string;
-  pinned_at: string | null; folder: string | null; remotes: string; url: string | null; runs_on: string; snoozed_until: string | null;
+  pinned_at: string | null; folder: string | null; remotes: string; url: string | null; runs_on: string; nicknames: string; snoozed_until: string | null;
   created_at: string; created_by: string; updated_at: string; updated_by: string;
 }
 
 const toProject = (r: ProjectRow): Project => ({
   name: r.name, oneLiner: r.one_liner, area: r.area, state: r.state, stateChangedAt: r.state_changed_at,
-  pinnedAt: r.pinned_at, folder: r.folder, remotes: JSON.parse(r.remotes) as string[], url: r.url, runsOn: JSON.parse(r.runs_on) as string[],
+  pinnedAt: r.pinned_at, folder: r.folder, remotes: JSON.parse(r.remotes) as string[], url: r.url, runsOn: JSON.parse(r.runs_on) as string[], nicknames: JSON.parse(r.nicknames) as string[],
   snoozedUntil: r.snoozed_until, createdAt: r.created_at, createdBy: r.created_by, updatedAt: r.updated_at, updatedBy: r.updated_by,
 });
 
@@ -20,6 +23,8 @@ export const MAX_ONE_LINER = 140;
 const MAX_FOLDER = 120;
 const MAX_URL = 300;
 const MAX_REMOTES = 5;
+export const MAX_NICKNAMES = 8;
+const NICKNAME_CHARS = [2, 40] as const;
 
 const invalid = (message: string) => new ProjectError('invalid', message);
 
@@ -116,7 +121,7 @@ export class ProjectStore {
   }
 
   /** Fields left out stay as they are; null clears one. */
-  setInfo(name: string, info: { oneLiner?: string | null; area?: Area | null; folder?: string | null; remotes?: string[]; url?: string | null; runsOn?: string | readonly string[] }, by: string): Project {
+  setInfo(name: string, info: { oneLiner?: string | null; area?: Area | null; folder?: string | null; remotes?: string[]; url?: string | null; runsOn?: string | readonly string[]; nicknames?: string | readonly string[] }, by: string): Project {
     const p = this.mustGet(name);
     if (info.area !== undefined && info.area !== null && !AREAS.includes(info.area)) throw invalid(`area must be one of: ${AREAS.join(', ')}`);
     const next = {
@@ -126,10 +131,56 @@ export class ProjectStore {
       remotes: info.remotes === undefined ? p.remotes : checkRemotes(info.remotes),
       url: info.url === undefined ? p.url : checkUrl(info.url),
       runsOn: info.runsOn === undefined ? p.runsOn : checkPlaces(info.runsOn),
+      nicknames: info.nicknames === undefined ? p.nicknames : this.checkNicknames(name, info.nicknames),
     };
-    this.db.prepare('UPDATE projects SET one_liner = ?, area = ?, folder = ?, remotes = ?, url = ?, runs_on = ?, updated_at = ?, updated_by = ? WHERE name = ?')
-      .run(next.oneLiner, next.area, next.folder, JSON.stringify(next.remotes), next.url, JSON.stringify(next.runsOn), this.ts(), by, name);
+    this.db.prepare('UPDATE projects SET one_liner = ?, area = ?, folder = ?, remotes = ?, url = ?, runs_on = ?, nicknames = ?, updated_at = ?, updated_by = ? WHERE name = ?')
+      .run(next.oneLiner, next.area, next.folder, JSON.stringify(next.remotes), next.url, JSON.stringify(next.runsOn), JSON.stringify(next.nicknames), this.ts(), by, name);
     return this.mustGet(name);
+  }
+
+  /**
+   * A comma-separated string or a list as `project`'s nicknames: trimmed, repeats (as words) dropped, at most 8, each
+   * 2 to 40 characters, none reading like an instruction or holding a secret, and none naming another project: its
+   * name, an alias of it or one of its nicknames, compared as words. Recall matches nicknames as whole words of a
+   * question, so one must keep all its letters in that form (Latin letters and digits, accents allowed), have at least
+   * 4 letters besides filler words ("it", "the app" would match unrelated questions), and hold no comma (the
+   * dashboard's list is comma-separated).
+   */
+  private checkNicknames(project: string, input: string | readonly string[]): string[] {
+    const raw = typeof input === 'string' ? input.split(',') : input;
+    const out: string[] = [];
+    for (const entry of raw) {
+      const n = String(entry).trim().replace(/\s+/g, ' ');
+      if (n === '' || out.some((o) => words(o) === words(n))) continue;
+      if (n.length < NICKNAME_CHARS[0] || n.length > NICKNAME_CHARS[1] || words(n).trim() === '') throw invalid(`Each nickname is ${NICKNAME_CHARS[0]} to ${NICKNAME_CHARS[1]} characters`);
+      if (n.includes(',')) throw invalid(`A nickname holds no comma: ${JSON.stringify(n)}`);
+      const kept = words(n).replace(/ /g, '');
+      if (kept.length !== n.normalize('NFD').replace(/\p{M}/gu, '').replace(/[^\p{L}\p{N}]/gu, '').length) {
+        throw invalid(`A nickname has only letters and digits (accents allowed) besides spaces and punctuation: ${JSON.stringify(n)}`);
+      }
+      if (words(n).trim().split(' ').filter((w) => !STOPWORDS.has(w)).join('').length < 4) {
+        throw invalid(`The nickname ${JSON.stringify(n)} is too generic: it would match questions about anything. Use a name only this project goes by.`);
+      }
+      const reason = looksLikeInstruction(n);
+      if (reason) throw invalid(`The nickname ${JSON.stringify(n)} reads like an instruction to AI assistants (${reason}). Use the name people call the project.`);
+      checkNoSecret('nickname', n);
+      out.push(n);
+    }
+    if (out.length > MAX_NICKNAMES) throw invalid(`At most ${MAX_NICKNAMES} nicknames`);
+    const taken = new Map<string, string>();
+    for (const p of this.list()) {
+      if (p.name === project) continue;
+      taken.set(words(p.name.replace(/-/g, ' ')), p.name);
+      for (const n of p.nicknames) taken.set(words(n), p.name);
+    }
+    for (const a of this.db.prepare('SELECT alias, project FROM project_aliases').all() as { alias: string; project: string }[]) {
+      if (a.project !== project) taken.set(words(a.alias.replace(/-/g, ' ')), a.project);
+    }
+    for (const n of out) {
+      const other = taken.get(words(n));
+      if (other !== undefined) throw invalid(`The nickname ${JSON.stringify(n)} is already ${other}'s name or nickname: each nickname names one project.`);
+    }
+    return out;
   }
 
   /** Every place some project runs on, each once, sorted (the tool description lists them so assistants reuse them). */

@@ -35,7 +35,9 @@ record_copy() { # where result [detail]
   COPIES="${COPIES:+$COPIES,}$entry"
 }
 finish() {
-  rm -f "$TMP" "$TMP-wal" "$TMP-shm" "$TMP-journal"
+  if [ -n "$TMP" ]; then rm -f -- "$TMP" "$TMP-wal" "$TMP-shm" "$TMP-journal"; fi
+  # Only this run's own lock goes.
+  if [ "$(cat "$LOCK/pid" 2>/dev/null || true)" = "$$" ]; then rm -rf "$LOCK"; fi
   if [ -d "$APP_DIR/data" ]; then
     if [ "$SNAPSHOT_OK" = "1" ]; then
       printf '{"at":"%s","ok":true,"copies":[%s]%s%s}' "$STARTED" "$COPIES" "$COUNTS" "$PICTURES" > "$STATUS_FILE.tmp"
@@ -47,11 +49,46 @@ finish() {
 }
 
 mkdir -p "$BACKUP_DIR"
-# Built under a temporary name and moved into place only once stripped and checked, so a failed run never leaves
-# a half-stripped file that looks like a backup.
-TMP="$BACKUP.tmp"
+# One backup at a time (audit F10): a lock folder made atomically, holding the running backup's pid. take_lock
+# returns 0 (taken), 2 (another backup holds it: this run does nothing) or 1 (it could not be taken: a failed backup).
+# A lock whose pid is gone is moved aside atomically, so two runs can never both take it over; one with no pid yet is
+# being taken right now unless it has been empty for a minute.
+LOCK="$BACKUP_DIR/.backup.lock"
+take_lock() {
+  [ -w "$BACKUP_DIR" ] || return 1
+  if mkdir "$LOCK" 2>/dev/null; then echo "$$" > "$LOCK/pid" || return 1; return 0; fi
+  [ -d "$LOCK" ] || return 1
+  local pid
+  pid="$(cat "$LOCK/pid" 2>/dev/null || true)"
+  if [ -z "$pid" ]; then
+    [ -n "$(find "$LOCK" -maxdepth 0 -mmin -1 2>/dev/null)" ] && return 2
+  elif kill -0 "$pid" 2>/dev/null || kill -0 "$pid" 2>&1 | grep -qi 'not permitted'; then
+    return 2
+  fi
+  mv "$LOCK" "$LOCK.stale.$$" 2>/dev/null || return 2
+  rm -rf "$LOCK.stale.$$"
+  mkdir "$LOCK" 2>/dev/null || return 2
+  echo "$$" > "$LOCK/pid" || return 1
+}
+TMP=""
 trap finish EXIT
-rm -f "$TMP" "$TMP-wal" "$TMP-shm" "$TMP-journal"
+lock=0
+take_lock || lock=$?
+if [ "$lock" = 2 ]; then
+  echo "backup: another backup is running; this one does nothing" >&2
+  trap - EXIT
+  exit 0
+fi
+if [ "$lock" != 0 ]; then
+  echo "backup: could not take the backup lock in $BACKUP_DIR (is it writable?)" >&2
+  exit 1
+fi
+# Holding the lock, nothing else is using these: what a killed run left (its snapshot may not be stripped yet).
+find "$BACKUP_DIR" -maxdepth 1 \( -name '.memory-*' -o -name '.backup.lock.stale.*' \) -exec rm -rf -- {} + 2>/dev/null || true
+# Built under a temporary name of its own (mktemp) and moved into place only once stripped and checked, so a failed
+# run never leaves a half-stripped file that looks like a backup.
+TMP="$(mktemp "$BACKUP_DIR/.memory-XXXXXX")"
+rm -f -- "$TMP" "$TMP-wal" "$TMP-shm" "$TMP-journal"
 sqlite3 "$APP_DIR/data/memory.db" ".backup '$TMP'"
 # No sign-in data in a backup (scripts/strip-signin.sh).
 "$(dirname "$0")/strip-signin.sh" "$TMP"

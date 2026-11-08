@@ -206,3 +206,18 @@ test('replaced facts are never marked recalled', () => {
   assert.equal(store.get(r)!.lastRecalledAt, null);
   assert.notEqual(store.get(c)!.lastRecalledAt, null);
 });
+
+test('hybridSearch: pool returns more current results than limit, and sure says which would be marked recalled', () => {
+  const db = openDb(':memory:'); const store = new MemoryStore(db, () => new Date());
+  const add = (content: string, embedding: Float32Array) =>
+    store.insert({ kind: 'decision', content, project: null, tags: [], embedding, by: 'x' });
+  const confident = add('confident match', at(0.9));
+  const between = add('plausible match', at(0.82));
+  const keyword = add('zebra keyword only', at(0));
+  const q = { vector: at(1), text: 'zebra', limit: 1, minSimilarity: 0.8, confidentSimilarity: 0.86, touch: false };
+  assert.equal(hybridSearch(store, q).length, 1);
+  const r = hybridSearch(store, { ...q, pool: 3 });
+  assert.equal(r.length, 3);
+  const sure = new Map(r.map((x) => [x.memory.id, x.sure]));
+  assert.deepEqual([sure.get(confident.id), sure.get(keyword.id), sure.get(between.id)], [true, true, false]);
+});

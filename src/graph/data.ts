@@ -146,7 +146,7 @@ export class GraphService {
       if (!this.d.registry.get(real)) return;
       hits.set(real, (hits.get(real) ?? 0) + 1);
     };
-    for (const r of await this.d.service.recall({ query: q, limit: 20, touch: false, vector })) count(r.memory.project);
+    for (const r of await this.d.service.recall({ query: q, limit: 20, touch: false, vector, rerank: false })) count(r.memory.project);
     for (const s of this.d.pages.search(q, vector, 10, this.d.service.recallFloor())) count(s.page.project);
     const projects = [...hits.entries()].map(([name, n]) => ({ name, hits: n }))
       .sort((a, b) => b.hits - a.hits || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)).slice(0, FIND_PROJECTS);

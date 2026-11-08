@@ -87,3 +87,14 @@ test('with nothing to settle the list says so', async (t) => {
   for (const d of app.deps.service.openDisagreements()) app.deps.service.settleDisagreement(d.id, 'both', { type: 'owner' });
   assert.match(await (await f('/disagreements')).text(), /Nothing to settle/);
 });
+
+test('on a project page, a fact from another project says which one, so settling never deletes it unseen', async (t) => {
+  const { app, f, a } = await start(t);
+  const other = ((await app.deps.service.remember({ kind: 'profile', content: 'Prefers port 3100 for everything' }, { type: 'owner' })) as { memory: Memory }).memory;
+  app.deps.service.flagDisagreement(a.id, other.id, 'Which port', ai);
+  const panel = await (await f('/?project=homelab')).text();
+  assert.match(panel, /Prefers port 3100 for everything[\s\S]*?About you/);
+  const p2 = ((await app.deps.service.remember({ kind: 'decision', content: 'Everything listens on 3200', project: 'wildlog', newProject: true }, ai)) as { memory: Memory }).memory;
+  app.deps.service.flagDisagreement(a.id, p2.id, 'Which port again', ai);
+  assert.match(await (await f('/?project=homelab')).text(), /Everything listens on 3200[\s\S]*?in wildlog/);
+});

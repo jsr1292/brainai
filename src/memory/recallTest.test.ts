@@ -75,3 +75,39 @@ test('the question file is a list of questions with expected memory ids, checked
   assert.throws(() => parseCases('[{"q":"","expect":["a"]}]'), /Question 1 .*"q"/);
   assert.throws(() => parseCases('not json'), /not valid JSON/);
 });
+
+test('parseCases accepts tags and alternative phrasings as lists of text, and refuses other shapes', async () => {
+  const { parseCases } = await import('./recallTest.js');
+  assert.deepEqual(parseCases('[{"q":"¿dónde?","expect":["a"],"tags":["spanish"],"alt":["where?"]}]'),
+    [{ q: '¿dónde?', expect: ['a'], tags: ['spanish'], alt: ['where?'] }]);
+  assert.throws(() => parseCases('[{"q":"x","expect":["a"],"tags":"spanish"}]'), /tags/);
+  assert.throws(() => parseCases('[{"q":"x","expect":["a"],"alt":[1]}]'), /alt/);
+});
+
+test('the report counts each tag separately', async () => {
+  const { service, solar, wine, tunnel } = await setup();
+  const r = await runRecallTest(service, [
+    { q: 'solar panels batteries', expect: [solar], tags: ['home'] },
+    { q: 'wine cellar', expect: [wine], tags: ['home', 'apps'] },
+    { q: 'quantum chromodynamics', expect: [tunnel], tags: ['apps'] },
+  ], 8);
+  assert.deepEqual(r.byTag.home, { cases: 2, first: 2, top3: 2, found: 2, missed: 0, mrr: 1 });
+  assert.equal(r.byTag.apps!.cases, 2);
+  assert.equal(r.byTag.apps!.missed, 1);
+  assert.match(formatReport(r), /home: 2 questions/);
+});
+
+test('comparePaired lists the questions gained and lost within k', async () => {
+  const { comparePaired } = await import('./recallTest.js');
+  const before = [{ id: 'a', rank: 9 }, { id: 'b', rank: 1 }, { id: 'c', rank: null }, { id: 'gone', rank: 1 }];
+  const after = [{ id: 'a', rank: 2 }, { id: 'b', rank: 4 }, { id: 'c', rank: null }, { id: 'new', rank: 1 }];
+  assert.deepEqual(comparePaired(before, after, 8), { gained: ['a'], lost: [] });
+  assert.deepEqual(comparePaired(before, after, 1), { gained: [], lost: ['b'] });
+});
+
+test("each case's other phrasings go to recall, unless the run is told to leave them out", async () => {
+  const { service, solar } = await setup();
+  const cases = [{ q: '¿qué placas tenemos?', expect: [solar], alt: ['solar panels batteries'] }];
+  assert.equal((await runRecallTest(service, cases, 8)).results[0]!.rank, 1);
+  assert.equal((await runRecallTest(service, cases, 8, { alt: false })).results[0]!.rank, null);
+});

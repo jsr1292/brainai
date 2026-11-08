@@ -15,6 +15,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 [ -f "$ROOT/models/Xenova/multilingual-e5-small/onnx/model_quantized.onnx" ] || {
   echo "The search model is missing: run  npm run model  first." >&2; exit 1; }
+[ -f "$ROOT/models/cross-encoder/mmarco-mMiniLMv2-L12-H384-v1/onnx/model_qint8_arm64.onnx" ] || {
+  echo "The reranker model is missing: run  npm run model  first." >&2; exit 1; }
 # The app must contain exactly a commit, so nothing uncommitted ships.
 if [ -n "$(cd "$ROOT" && git status --porcelain -- src package.json package-lock.json)" ] && [ "${ALLOW_DIRTY:-0}" != "1" ]; then
   echo "Uncommitted changes in the server: commit them first (or set ALLOW_DIRTY=1 for a throwaway build)." >&2; exit 1

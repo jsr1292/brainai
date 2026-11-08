@@ -18,6 +18,7 @@ codes: 0 sent, 1 network or server error, 2 the brain refused the token, 3 no BR
 import hashlib
 import json
 import shutil
+import tempfile
 import time
 import os
 import re
@@ -235,23 +236,40 @@ def apply_action(root, a):
         return f"skipped write {name}: paths that collide on this Mac (case, or a file and a folder)"
     if "SKILL.md" not in [p for p, _ in checked]:
         return f"skipped write {name}: no SKILL.md"
-    tmp = os.path.join(root, f".brain-tmp-{name}")
-    shutil.rmtree(tmp, ignore_errors=True)
-    for path, text in checked:
-        full = os.path.join(tmp, *path.split("/"))
-        os.makedirs(os.path.dirname(full), exist_ok=True)
-        with open(full, "w", encoding="utf-8", newline="") as out:
-            out.write(text)
-    if os.path.exists(target):
-        move_aside(root, name)
-    os.rename(tmp, target)
+    # A staging folder of its own, made new (audit F12): a leftover name, or a link planted there, is never reused.
+    tmp = tempfile.mkdtemp(prefix=f".brain-tmp-{name}-", dir=root)
+    os.chmod(tmp, 0o755)  # mkdtemp makes it 0700; the skill folder it becomes keeps the usual mode
+    try:
+        for path, text in checked:
+            full = os.path.join(tmp, *path.split("/"))
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w", encoding="utf-8", newline="") as out:
+                out.write(text)
+        if os.path.lexists(target):
+            move_aside(root, name)
+        os.rename(tmp, target)
+    except Exception as e:  # noqa: BLE001 - any failure (an OSError, text that cannot be encoded) leaves no staging folder
+        if os.path.isdir(tmp) and not os.path.islink(tmp):
+            shutil.rmtree(tmp, ignore_errors=True)
+        return f"skipped write {name}: {getattr(e, 'strerror', None) or e}"
     return f"wrote {name}"
+
+
+def sweep_staging(root):
+    """Staging folders an interrupted run left (.brain-tmp-*): real folders go; a link is never followed or touched."""
+    try:
+        for entry in os.scandir(root):
+            if entry.name.startswith(".brain-tmp-") and entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(entry.path, ignore_errors=True)
+    except OSError as e:
+        log(f"skills: could not tidy staging folders: {e}")
 
 
 def skills_step(url, token, root):
     """Report the skills, upload what the brain wants, apply its actions. Errors are logged, never raised."""
     if not os.path.isdir(root):
         return
+    sweep_staging(root)
     try:
         found = []
         for name, path in skill_folders(root):

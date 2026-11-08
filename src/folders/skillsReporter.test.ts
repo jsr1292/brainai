@@ -3,7 +3,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startTestApp } from '../testing/helpers.js';
@@ -187,4 +187,37 @@ test('a write whose paths collide when case is ignored is skipped (audit F08)', 
   assert.equal(r.status, 0, r.stderr);
   assert.equal(existsSync(join(f.skills, 'case-clash')), false);
   assert.match(r.stderr, /skipped write case-clash/);
+});
+
+test('F12: a leftover staging name that is a link is never written through; the skill lands as a real folder', async (t) => {
+  const { app, token } = await withApp(t);
+  const f = folders(t);
+  const env = envFor(f.base, app.baseUrl, token, f.skills, f.projects);
+  const outside = mkdtempSync(join(tmpdir(), 'brain-outside-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  symlinkSync(outside, join(f.skills, '.brain-tmp-brain-deploy'));
+  const s = app.deps.skills.create({ name: 'brain-deploy', description: 'Use when deploying.', body: 'Back up.' }, 'owner');
+  app.deps.skills.setEnabled(s.id, true, 'owner');
+  assert.equal((await run(env)).status, 0);
+  assert.deepEqual(readdirSync(outside), []);
+  assert.ok(!lstatSync(join(f.skills, 'brain-deploy')).isSymbolicLink());
+  assert.ok(existsSync(join(f.skills, 'brain-deploy', 'SKILL.md')));
+  assert.deepEqual(readdirSync(f.skills).filter((n) => n.startsWith('.brain-tmp-') && n !== '.brain-tmp-brain-deploy'), []);
+});
+
+test('F12 review: staging folders left by an earlier run are swept (never a link), and a write that fails for any reason leaves none', async (t) => {
+  const { app, token } = await withApp(t);
+  const f = folders(t);
+  const env = envFor(f.base, app.baseUrl, token, f.skills, f.projects);
+  mkdirSync(join(f.skills, '.brain-tmp-old-abc123', 'x'), { recursive: true });
+  const outside = mkdtempSync(join(tmpdir(), 'brain-outside-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  writeFileSync(join(outside, 'keep.md'), 'keep');
+  symlinkSync(outside, join(f.skills, '.brain-tmp-linked-abc123'));
+  const s = app.deps.skills.create({ name: 'brain-deploy', description: 'Use when deploying.', body: 'Back up.' }, 'owner');
+  app.deps.skills.setEnabled(s.id, true, 'owner');
+  assert.equal((await run(env)).status, 0);
+  assert.ok(!existsSync(join(f.skills, '.brain-tmp-old-abc123')));
+  assert.equal(readFileSync(join(outside, 'keep.md'), 'utf8'), 'keep');
+  assert.deepEqual(readdirSync(f.skills).filter((n) => n.startsWith('.brain-tmp-')).sort(), ['.brain-tmp-linked-abc123']);
 });

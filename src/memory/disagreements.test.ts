@@ -118,3 +118,21 @@ test('a pair settled one way and then undone can be flagged again; only "both ar
   assert.equal(again.disagreement.why, 'ports again');
   assert.equal(service.openDisagreements().length, 1);
 });
+
+test('settling is one change: if recording the settle fails, the replacement is undone too', async (t) => {
+  const { service, store, a, b } = await two();
+  const d = service.flagDisagreement(a.id, b.id, 'ports', ai).disagreement;
+  t.mock.method(store.disagreements, 'settle', () => { throw new Error('disk full'); });
+  assert.throws(() => service.settleDisagreement(d.id, 'a', owner), /disk full/);
+  assert.equal(service.replacement(b.id), null);
+  t.mock.restoreAll();
+  assert.equal(service.openDisagreements().length, 1);
+});
+
+test('close facts work for profile facts filed under a project too', async () => {
+  const w = makeService();
+  const save = async (content: string) => ((await w.service.remember({ kind: 'profile', content, project: 'fitness', allowDuplicate: true }, owner)) as { memory: Memory }).memory;
+  const a = await save('Runs three times a week in the morning');
+  const b = await save('Runs twice a week in the evening');
+  assert.deepEqual(w.service.closeFacts(b.id).map((c) => c.memory.id), [a.id]);
+});

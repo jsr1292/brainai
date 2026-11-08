@@ -4,6 +4,8 @@ import type { DB } from '../db.js';
 import { SupersessionStore } from './supersessions.js';
 import { DisagreementStore } from './disagreements.js';
 import { OWNER_LABEL, type HistoryEntry, type Kind, type Memory, type Suggestion } from './types.js';
+import { words } from './words.js';
+import { MAX_NICKNAMES } from '../projects/store.js';
 
 export interface MemoryRow {
   id: string; kind: Kind; content: string; project: string | null; tags: string;
@@ -76,6 +78,29 @@ export class MemoryStore {
   readonly supersessions: SupersessionStore;
   /** Pairs of facts an assistant flagged as disagreeing (B1). */
   readonly disagreements: DisagreementStore;
+
+  /**
+   * B1: every open disagreement with a fact that is deleted or replaced is settled as 'gone', in one statement.
+   * Returns how many pairs it settled.
+   */
+  settleGoneDisagreements(): number {
+    const live = (col: string) => `EXISTS (SELECT 1 FROM memories m WHERE m.id = disagreements.${col} AND m.deleted_at IS NULL AND NOT ${replacedSql('m')})`;
+    return this.db.prepare(`UPDATE disagreements SET settled_at = ?, settled_how = 'gone', settled_by = 'BrainAI'
+      WHERE settled_at IS NULL AND NOT (${live('a')} AND ${live('b')})`).run(this.ts()).changes;
+  }
+
+  /** Brain health: each project's newest live, current status (kind summary, or decision tagged status), in one query. */
+  statusTimes(): Map<string, string> {
+    const rows = this.db.prepare(`SELECT m.project AS project, m.kind AS kind, m.tags AS tags, m.updated_at AS at FROM memories m
+      WHERE m.deleted_at IS NULL AND m.project IS NOT NULL AND m.kind IN ('summary', 'decision') AND NOT ${replacedSql('m')}`)
+      .all() as { project: string; kind: string; tags: string; at: string }[];
+    const times = new Map<string, string>();
+    for (const r of rows) {
+      if (r.kind === 'decision' && !(JSON.parse(r.tags) as string[]).includes('status')) continue;
+      if ((times.get(r.project) ?? '') < r.at) times.set(r.project, r.at);
+    }
+    return times;
+  }
 
   constructor(private db: DB, private now: Clock) {
     this.supersessions = new SupersessionStore(db, now);
@@ -161,6 +186,11 @@ export class MemoryStore {
             url = COALESCE(url, (SELECT url FROM projects WHERE name = ?)),
             runs_on = CASE WHEN runs_on = '[]' THEN COALESCE((SELECT runs_on FROM projects WHERE name = ?), '[]') ELSE runs_on END
           WHERE name = ?`).run(from, from, from, from, from, to);
+        // Nicknames of both: the target's first, repeats (as words) once, at most MAX_NICKNAMES.
+        const nicknamesOf = (name: string) => JSON.parse((this.db.prepare('SELECT nicknames FROM projects WHERE name = ?').get(name) as { nicknames: string } | undefined)?.nicknames ?? '[]') as string[];
+        const both: string[] = [];
+        for (const n of [...nicknamesOf(to), ...nicknamesOf(from)]) if (!both.some((b) => words(b) === words(n))) both.push(n);
+        this.db.prepare('UPDATE projects SET nicknames = ? WHERE name = ?').run(JSON.stringify(both.slice(0, MAX_NICKNAMES)), to);
         this.db.prepare('DELETE FROM projects WHERE name = ?').run(from);
       } else this.db.prepare('UPDATE projects SET name = ? WHERE name = ?').run(to, from);
     })();
@@ -322,6 +352,11 @@ export class MemoryStore {
   }
 
   /** Every project in the registry, with the folder it lives in on the Mac (null when none is set). */
+  /** Every project nickname with its project (projects.nicknames, B4). */
+  nicknames(): { nickname: string; project: string }[] {
+    return (this.db.prepare('SELECT j.value AS nickname, p.name AS project FROM projects p, json_each(p.nicknames) j').all() as { nickname: string; project: string }[]);
+  }
+
   registryProjects(): { name: string; folder: string | null }[] {
     return this.db.prepare('SELECT name, folder FROM projects ORDER BY name').all() as { name: string; folder: string | null }[];
   }

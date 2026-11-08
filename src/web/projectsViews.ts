@@ -166,6 +166,7 @@ function panel(d: ProjectDetail, now: Date, error?: string): SafeHtml {
       <label>Folder in ~/Projects <input name="folder" maxlength="120" value="${p.folder ?? ''}"></label>
       <label>URL <input name="url" type="url" maxlength="300" value="${p.url ?? ''}"></label>
       <label>Runs on <input name="runsOn" maxlength="120" placeholder="minipc, pi" value="${p.runsOn.join(', ')}"></label>
+      <label>Nicknames <input name="nicknames" maxlength="340" placeholder="comma-separated" value="${p.nicknames.join(', ')}"></label>
       <button type="submit">Save</button>
     </form>
   </details>

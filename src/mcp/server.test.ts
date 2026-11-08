@@ -5,7 +5,10 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { NoteService } from '../pages/notes.js';
 import { makeGrowth, makePages, makeService } from '../testing/helpers.js';
 import { EMBEDDING_DIM } from '../memory/embedder.js';
-import { MAX_CONTENT, MAX_RECENT_DECISIONS, MAX_ROADMAP } from '../memory/service.js';
+import { MAX_CONTENT, MAX_RECENT_DECISIONS, MAX_ROADMAP, MemoryService } from '../memory/service.js';
+import { MemoryStore } from '../memory/store.js';
+import { createFakeEmbedder } from '../memory/fakeEmbedder.js';
+import { openDb } from '../db.js';
 import { ProjectStore } from '../projects/store.js';
 import { readOnlyInstructions, SERVER_INSTRUCTIONS, WORK_INSTRUCTIONS } from './instructions.js';
 import { buildMcpServer } from './server.js';
@@ -211,7 +214,7 @@ test('list_projects is wrapped as data and shows each project\'s other names', a
   await call('remember', { kind: 'decision', content: 'Coyote plays from Jellyfin', project: 'inflow' });
   service.addAlias('coyote', 'inflow', { type: 'owner' });
   const r = await call('list_projects');
-  assert.deepEqual(dataOf(r.text), [{ project: 'inflow', count: 1, aliases: ['coyote'] }]);
+  assert.deepEqual(dataOf(r.text), [{ project: 'inflow', count: 1, aliases: ['coyote'], nicknames: [] }]);
 });
 
 test('recall marks a status that is not its project\'s newest with the newer one', async () => {
@@ -392,7 +395,7 @@ test('a read-only connection is not told about profile memories filed under its 
   assert.doesNotMatch((await call('recall', { query: 'leave trellis club' })).text, /plans to leave/);
   assert.doesNotMatch((await call('recall', { query: 'leave trellis club', kind: 'profile' })).text, /plans to leave/);
   assert.doesNotMatch((await call('project_brief', { project: 'trellis' })).text, /plans to leave/);
-  assert.deepEqual(dataOf((await call('list_projects')).text), [{ project: 'trellis', count: 1, aliases: [] }]);
+  assert.deepEqual(dataOf((await call('list_projects')).text), [{ project: 'trellis', count: 1, aliases: [], nicknames: [] }]);
 });
 
 test('a read-only connection in work mode gets the read-only instructions', async () => {
@@ -408,7 +411,7 @@ test('project_brief includes the project\'s state, area and one-liner', async ()
   registry.setInfo('wildlog', { oneLiner: 'Wine cellar app for the iPhone', area: 'apps', folder: 'wildlog', url: 'https://wildlog.example' }, 'owner');
   registry.pin('wildlog', 'owner');
   assert.deepEqual(dataOf((await call('project_brief', { project: 'wildlog' })).text).project_info, {
-    one_liner: 'Wine cellar app for the iPhone', area: 'apps', state: 'open', pinned: true, quiet: false, folder: 'wildlog', url: 'https://wildlog.example', runs_on: [],
+    one_liner: 'Wine cellar app for the iPhone', area: 'apps', state: 'open', pinned: true, quiet: false, folder: 'wildlog', url: 'https://wildlog.example', runs_on: [], nicknames: [],
   });
   // The existing fields stay as they were.
   assert.deepEqual(dataOf((await call('project_brief', { project: 'wildlog' })).text).decisions.map((m: any) => m.content), ['wildlog uses SwiftUI']);
@@ -916,4 +919,49 @@ test('a read-only connection never sees a profile fact, even one tagged status w
 test('assistants see the server as brainai at home and work-memory at work', async () => {
   assert.equal((await connect('Claude Code')).client.getServerVersion()?.name, 'brainai');
   assert.equal((await connect('Codex', { mode: 'work' })).client.getServerVersion()?.name, 'work-memory');
+});
+
+test('set_project_info saves nicknames; load_profile lists them for open projects, and says nothing when there are none', async () => {
+  const { call, registry } = await connect('Grok');
+  assert.doesNotMatch((await call('load_profile')).text, /nicknames/i);
+  await call('remember', { kind: 'decision', content: 'Bottle labels print in two sizes', project: 'vino-db' });
+  await call('remember', { kind: 'decision', content: 'Old notes', project: 'attic' });
+  const ok = await call('set_project_info', { project: 'vino-db', nicknames: ['cellar app', 'the cellar'] });
+  assert.equal(ok.isError, false, ok.text);
+  assert.deepEqual(registry.get('vino-db')!.nicknames, ['cellar app', 'the cellar']);
+  registry.setInfo('attic', { nicknames: ['the loft'] }, 'owner');
+  registry.setState('attic', 'archived', 'owner');
+  const profile = (await call('load_profile')).text;
+  assert.match(profile, /Project nicknames \(use the project's name in recall and saves\):[\s\S]*cellar app, the cellar → vino-db/);
+  assert.doesNotMatch(profile, /the loft/);
+  const listed = (await call('list_projects')).text;
+  assert.match(listed, /"nicknames":\["cellar app","the cellar"\]/);
+  const clash = await call('set_project_info', { project: 'attic', nicknames: ['the cellar'] });
+  assert.equal(clash.isError, true);
+  assert.match(clash.text, /vino-db/);
+});
+
+test('recall searches the alt_queries too, at most two', async () => {
+  const { call } = await connect('Claude Code');
+  await call('remember', { kind: 'decision', content: 'The NAS is mounted at /mnt/storage on the small server', project: 'home' });
+  assert.doesNotMatch((await call('recall', { query: '¿dónde está montado?' })).text, /mnt\/storage/);
+  assert.match((await call('recall', { query: '¿dónde está montado?', alt_queries: ['where is the NAS mounted?'] })).text, /mnt\/storage/);
+  const tooMany = await call('recall', { query: 'x', alt_queries: ['a', 'b', 'c'] });
+  assert.equal(tooMany.isError, true);
+});
+
+test('recall says plainly when nothing matches the question closely', async () => {
+  let score = -5;
+  const db = openDb(':memory:');
+  const store = new MemoryStore(db, () => new Date());
+  const service = new MemoryService(store, createFakeEmbedder(), {
+    duplicateThreshold: 0.9, minRecallSimilarity: 0.2, recallConfidentSimilarity: 0.2,
+    reranker: { async score(_q, texts) { return texts.map(() => score); } },
+  });
+  const { call } = await connect('Claude Code', {}, { service, store, db });
+  await call('remember', { kind: 'decision', content: 'The garden shed gets a new roof in spring', project: 'garden' });
+  await call('remember', { kind: 'decision', content: 'The garden pond pump is serviced in autumn', project: 'garden' });
+  assert.match((await call('recall', { query: 'garden shed pond' })).text, /^None of these facts matches the question closely/);
+  score = -1;
+  assert.doesNotMatch((await call('recall', { query: 'garden shed pond' })).text, /None of these matches/);
 });
