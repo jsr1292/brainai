@@ -31,6 +31,7 @@ function world(t: TestContext) {
   write('src/a.ts', 'export const a = 1;\n');
   write('docs/superpowers/plans/p.md', 'a private plan\n');
   write('CHANGELOG.md', '# Changelog\n\n## 1.0.1 (2026-11-07)\n\n- A fix.\n\n## 1.0.0 (2026-11-06)\n\nThe first.\n');
+  write('package.json', '{ "name": "brain", "version": "1.0.1" }\n');
   git(priv, 'add', '-A');
   git(priv, 'commit', '-qm', 'private history');
   // The public repo: one commit already, as on GitHub.
@@ -64,7 +65,7 @@ test('a release puts exactly the checked tree on the public repo as one commit, 
   writeFileSync(join(w.priv, 'uncommitted.txt'), 'not committed, never published');
   const r = w.run('1.0.1');
   assert.equal(r.status, 0, r.out);
-  assert.deepEqual(w.pubFiles(), ['CHANGELOG.md', 'README.md', 'src/a.ts']);
+  assert.deepEqual(w.pubFiles(), ['CHANGELOG.md', 'README.md', 'package.json', 'src/a.ts']);
   assert.deepEqual(w.pubLog(), ['BrainAI 1.0.1|publisher|publisher@users.noreply.example', 'BrainAI 1.0.0|t|t@example.com']);
   assert.equal(w.git(w.pub, 'rev-parse', 'v1.0.1^{commit}'), w.git(w.pub, 'rev-parse', 'main'));
 });
@@ -115,7 +116,7 @@ test('a force-tracked file that .gitignore matches still reaches the public comm
   w.git(w.priv, 'commit', '-qm', 'tracked build file');
   const r = w.run('1.0.1');
   assert.equal(r.status, 0, r.out);
-  assert.deepEqual(w.pubFiles(), ['.gitignore', 'CHANGELOG.md', 'README.md', 'dist/keep.js', 'src/a.ts']);
+  assert.deepEqual(w.pubFiles(), ['.gitignore', 'CHANGELOG.md', 'README.md', 'dist/keep.js', 'package.json', 'src/a.ts']);
 });
 
 test('a relative denylist path is the one beside the caller, never a file inside the cloned tree', { skip: !haveGit }, (t) => {
@@ -160,4 +161,22 @@ test('a release needs a denylist with words in it: an empty one (as on a fork) i
   const r = w.run('1.0.1');
   assert.equal(r.status, 2, r.out);
   assert.match(r.out, /The denylist has no words/);
+});
+
+test("a release is refused when package.json (or the desktop app's tauri.conf.json) names another version", { skip: !haveGit }, (t) => {
+  const w = world(t);
+  const before = w.git(w.pub, 'rev-parse', 'main');
+  w.write('package.json', '{ "name": "brain", "version": "1.0.0" }\n');
+  w.git(w.priv, 'commit', '-qam', 'forgot the bump');
+  const r = w.run('1.0.1', AUTHOR);
+  assert.equal(r.status, 2, r.out);
+  assert.match(r.out, /package\.json says 1\.0\.0, not 1\.0\.1/);
+  w.write('package.json', '{ "name": "brain", "version": "1.0.1" }\n');
+  w.write('desktop/src-tauri/tauri.conf.json', '{ "productName": "Brain", "version": "1.0.0" }\n');
+  w.git(w.priv, 'add', '-A');
+  w.git(w.priv, 'commit', '-qm', 'forgot the desktop bump');
+  const d = w.run('1.0.1', AUTHOR);
+  assert.equal(d.status, 2, d.out);
+  assert.match(d.out, /desktop\/src-tauri\/tauri\.conf\.json says 1\.0\.0, not 1\.0\.1/);
+  assert.equal(w.git(w.pub, 'rev-parse', 'main'), before);
 });

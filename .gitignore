@@ -30,3 +30,5 @@ __pycache__/
 
 # The LoCoMo benchmark (npm run bench:locomo): its downloaded data and results, never in the repo
 /bench-results/
+# Never commit Windows DLLs (Microsoft's runtime is fetched and checked at build time: scripts/windows/vcruntime.sh).
+*.dll

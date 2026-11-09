@@ -4,6 +4,18 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Backups and health shows the version you run.
 
+## 1.1.1 (2026-11-09)
+
+Updating needs nothing from you.
+
+- **Version number:** the server and the desktop app report their real version (1.1.0 was published still saying
+  1.0.1 in Settings); a release is now refused unless both name the version being released.
+- **Windows:** the app carries the five Microsoft Visual C++ runtime files it needs (version 14.44), in the folders of
+  the two modules that load them, so it starts on a PC without the runtime or with an older one, without an
+  administrator. They come
+  from Microsoft's official redistributable and are checked against pinned fingerprints when the app is built. If
+  they are ever missing and the PC lacks the runtime, the app still says so with Microsoft's download link.
+
 ## 1.1.0 (2026-11-08)
 
 Updating needs nothing from you: the database updates itself when the server starts (a copy is kept first), and the

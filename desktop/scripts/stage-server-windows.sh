@@ -61,3 +61,9 @@ cp "$WORK/node/LICENSE" "$SERVER/NODE-LICENSE"
 file "$SIDECAR" | grep -q 'PE32+ executable.*x86-64' || { echo "node.exe is not a Windows x64 binary" >&2; exit 1; }
 
 echo "Staged the server ($(du -sh "$SERVER" | cut -f1)) and Node $VERSION for the Windows app."
+# B8: Microsoft's Visual C++ runtime in the folder of each native module that loads it (Windows looks there first, then
+# System32; never next to node.exe). The app checks the same folders (server.rs runtime_dirs).
+for dir in "node_modules/onnxruntime-node/bin/napi-v6/win32/x64" "node_modules/@node-rs/argon2-win32-x64-msvc"; do
+  [ -d "$SERVER/$dir" ] || { echo "Missing $dir in the staged server: the runtime has nowhere to go" >&2; exit 1; }
+  "$ROOT/scripts/windows/vcruntime.sh" "$SERVER/$dir"
+done

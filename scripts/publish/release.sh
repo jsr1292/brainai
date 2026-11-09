@@ -48,6 +48,11 @@ case $? in
   2) ;;
   *) echo "Could not reach the public repo" >&2; exit 2 ;;
 esac
+# The version the app reports (Settings, the desktop app) must be the one released.
+for f in package.json desktop/src-tauri/tauri.conf.json; do
+  v="$(git -C "$REPO" show "$HEAD:$f" 2>/dev/null | node -e 'let s="";process.stdin.on("data",(d)=>{s+=d}).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).version??""))}catch{}})' || true)"
+  [ -z "$v" ] || [ "$v" = "$VERSION" ] || { echo "$f says $v, not $VERSION: bump it and commit first" >&2; exit 2; }
+done
 
 WORK="$(mktemp -d)" && [ -n "$WORK" ] || { echo "Could not make a temporary folder" >&2; exit 2; }
 trap 'rm -rf "$WORK"' EXIT

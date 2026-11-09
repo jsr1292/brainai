@@ -107,6 +107,13 @@ The same app, with the tray icon (by the clock) instead of the menu bar. What di
   `powershell -ExecutionPolicy Bypass -File install-app.ps1 -Installer .\BrainAI_<version>_x64-setup.exe` (with
   `SHA256SUMS` next to it). Once a release carries the Windows installer, one line will do:
   `irm https://github.com/jsr1292/brainai/releases/latest/download/install-app.ps1 | iex`.
+- **Microsoft's Visual C++ runtime** comes with the app: the five files its search engine and password hashing need
+  (`vcruntime140*.dll`, `msvcp140*.dll`, version 14.44) sit in the folders of the two modules that load them
+  (onnxruntime's and argon2's, under `server\node_modules`), where Windows looks first, so it runs on a PC without
+  the runtime, or with an older one, and needs no administrator. They are Microsoft's own files, taken from Microsoft's
+  official redistributable and checked against pinned fingerprints when the app is built; each BrainAI release
+  carries the version it was built with. They remain Microsoft's, redistributed under the distributable-code terms of
+  Microsoft's Visual Studio licence, not BrainAI's MIT licence.
 - **Where things are:** your memories, backups and log are in `%LOCALAPPDATA%\io.github.jsr1292.brainai\` (`data\`,
   `backups\`, `logs\server.log`). Updates and reinstalls keep that folder.
 - **Connect** finds Claude Code, Codex, OpenCode and Cursor as on the Mac (including npm's `claude.cmd` and the like).
@@ -149,13 +156,16 @@ top of the repo.
 downloads Microsoft's Windows SDK and C runtime, which means accepting Microsoft's licence for them):
 
 ```bash
-brew install nsis llvm lld
+brew install nsis llvm lld cabextract
 cargo install --locked cargo-xwin
 rustup target add x86_64-pc-windows-msvc
 ```
 
 Then `desktop/scripts/build-windows.sh` stages the server for Windows and writes
-`dist-windows/BrainAI_<version>_x64-setup.exe` and its `SHA256SUMS`.
+`dist-windows/BrainAI_<version>_x64-setup.exe` and its `SHA256SUMS`. It also stages Microsoft's Visual C++ runtime
+(`scripts/windows/vcruntime.sh`): it downloads Microsoft's `VC_redist.x64.exe` once (kept in `~/.cache/brainai`),
+refuses it unless its fingerprint matches the pinned one, unpacks the five files with cabextract and checks each
+one's fingerprint too. A newer runtime (Microsoft's security fixes) means updating those pins.
 
 ## A signed build for other Macs
 

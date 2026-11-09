@@ -51,9 +51,24 @@ pub fn creation_flags(windows: bool) -> u32 {
 /// Microsoft's Visual C++ runtime files that the search engine (onnxruntime) and the password hashing (argon2) load.
 pub const RUNTIME_DLLS: [&str; 5] = ["VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "MSVCP140.dll", "MSVCP140_1.dll", "MSVCP140_ATOMIC_WAIT.dll"];
 
-/// The runtime files this Windows computer lacks (looked for with `exists`, in System32).
+/// The runtime files this Windows computer lacks (`exists` says whether one can be loaded).
 pub fn missing_runtime(exists: impl Fn(&str) -> bool) -> Vec<&'static str> {
     RUNTIME_DLLS.iter().copied().filter(|f| !exists(f)).collect()
+}
+
+/// The folders of the native modules that load the runtime, inside the server folder (B8). Node loads a module with
+/// LoadLibraryEx(LOAD_WITH_ALTERED_SEARCH_PATH), so Windows looks for its DLLs in the module's own folder, then
+/// System32 — never next to node.exe. The app ships a copy of the runtime in each of these folders.
+pub fn runtime_dirs(server: &std::path::Path) -> Vec<std::path::PathBuf> {
+    vec![
+        server.join("node_modules\\onnxruntime-node\\bin\\napi-v6\\win32\\x64"),
+        server.join("node_modules\\@node-rs\\argon2-win32-x64-msvc"),
+    ]
+}
+
+/// Whether a runtime file can be loaded by every native module: it is in System32, or in each module's own folder.
+pub fn runtime_found(file: &str, dirs: &[std::path::PathBuf], system32: &std::path::Path, exists: impl Fn(&std::path::Path) -> bool) -> bool {
+    exists(&system32.join(file)) || dirs.iter().all(|d| exists(&d.join(file)))
 }
 
 /// The system variables a Windows server and its tools need, in this order; each only if it is set.
@@ -241,6 +256,25 @@ mod tests {
         assert!(missing_runtime(|_| true).is_empty());
         let missing = missing_runtime(|f| f != "MSVCP140.dll" && f != "VCRUNTIME140_1.dll");
         assert_eq!(missing, vec!["VCRUNTIME140_1.dll", "MSVCP140.dll"]);
+    }
+
+    #[test]
+    fn the_runtime_counts_when_every_native_module_folder_has_it_or_system32_does() {
+        use std::path::{Path, PathBuf};
+        let server = PathBuf::from("C:\\Users\\Ana\\AppData\\Local\\BrainAI\\server");
+        let system32 = PathBuf::from("C:\\Windows\\System32");
+        let dirs = runtime_dirs(&server);
+        assert_eq!(dirs.len(), 2);
+        assert!(dirs[0].ends_with("node_modules\\onnxruntime-node\\bin\\napi-v6\\win32\\x64"));
+        assert!(dirs[1].ends_with("node_modules\\@node-rs\\argon2-win32-x64-msvc"));
+        let in_both_modules = |p: &Path| dirs.iter().any(|d| p.starts_with(d));
+        assert!(missing_runtime(|f| runtime_found(f, &dirs, &system32, in_both_modules)).is_empty());
+        let only_onnx = |p: &Path| p.starts_with(&dirs[0]);
+        assert_eq!(missing_runtime(|f| runtime_found(f, &dirs, &system32, only_onnx)).len(), 5, "argon2's folder lacks them");
+        let only_system32 = |p: &Path| p.starts_with(&system32);
+        assert!(missing_runtime(|f| runtime_found(f, &dirs, &system32, only_system32)).is_empty());
+        let next_to_node_exe = |p: &Path| p.starts_with("C:\\Users\\Ana\\AppData\\Local\\BrainAI") && !p.starts_with(&server);
+        assert_eq!(missing_runtime(|f| runtime_found(f, &dirs, &system32, next_to_node_exe)).len(), 5, "Node never looks there");
     }
 
     #[test]

@@ -41,6 +41,11 @@ for f in \
   file "$STAGE/app/node_modules/$f" | grep -q 'PE32+ executable.*x86-64' || { echo "Missing or not a Windows x64 binary: $f" >&2; exit 1; }
 done
 ls "$STAGE/app/node_modules/@img/sharp-win32-x64/lib/"*.node >/dev/null
+# B8: Microsoft's Visual C++ runtime in the folder of each native module that loads it (Windows looks there first,
+# then System32; never next to node.exe), so the laptop needs no runtime installed.
+for dir in onnxruntime-node/bin/napi-v6/win32/x64 @node-rs/argon2-win32-x64-msvc; do
+  "$ROOT/scripts/windows/vcruntime.sh" "$STAGE/app/node_modules/$dir"
+done
 
 echo "Downloading Node $NODE_MAJOR for Windows ..."
 VERSION="$(curl -fsSL --retry 3 --http1.1 https://nodejs.org/dist/index.json | node -e "

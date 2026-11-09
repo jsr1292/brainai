@@ -7,8 +7,8 @@ const owner = { type: 'owner' } as const;
 const DAY = 86_400_000;
 const XSS = '"><img src=x onerror=alert(1)>';
 
-async function start(t: TestContext) {
-  const app = await startTestApp();
+async function start(t: TestContext, startAt?: Date) {
+  const app = await startTestApp({ startAt });
   t.after(() => app.close());
   return app;
 }
@@ -305,7 +305,8 @@ test('one project under two names: move it into the other, or say they are diffe
 });
 
 test('the old weekly digest address sends you to the review', async (t) => {
-  const app = await start(t);
+  // A Wednesday at noon: just after midnight on a Monday, today's UTC date still falls in last week.
+  const app = await start(t, new Date('2026-11-04T12:00:00Z'));
   const anon = await fetch(app.baseUrl + '/week', { redirect: 'manual' });
   assert.equal(anon.status, 302);
   assert.match(anon.headers.get('location')!, /^\/login/);

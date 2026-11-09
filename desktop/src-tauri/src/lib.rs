@@ -205,10 +205,12 @@ fn launch(app: AppHandle) {
 /// The key is never sent to anything that has not proved it is ours. A new port is saved only once it worked.
 fn start_and_open(app: &AppHandle) {
     // Windows: the search engine and the password hashing need Microsoft's Visual C++ runtime, which Windows itself
-    // does not include. Say so plainly rather than "the server did not start".
+    // does not include. The app ships its own copy in the folder of each native module that loads it (B8); should one
+    // be gone and the PC lack the runtime too, say so plainly rather than "the server did not start".
     if cfg!(windows) {
         let system32 = PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into())).join("System32");
-        let missing = server::missing_runtime(|f| system32.join(f).exists());
+        let dirs = server::runtime_dirs(&app.path().resource_dir().expect("the app's resources").join("server"));
+        let missing = server::missing_runtime(|f| server::runtime_found(f, &dirs, &system32, |p| p.exists()));
         if !missing.is_empty() {
             return give_up(app, &format!(
                 "BrainAI needs Microsoft's Visual C++ Redistributable (x64), which this computer does not have yet (missing: {}).\n\nInstall it from https://aka.ms/vs/17/release/vc_redist.x64.exe (it asks for an administrator), then open BrainAI again.",
