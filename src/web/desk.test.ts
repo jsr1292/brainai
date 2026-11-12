@@ -71,7 +71,9 @@ test('the sidebar comes right after the header, hidden, labelled Main, with ever
   assert.deepEqual(links(side).map(([c, h, t]) => [c, h, t]), [
     ['brand', '/', 'BrainAI'],
     ['side-place', '/', 'Projects'],
-    ['side-place', '/pages', 'Pages'], ['side-sub', '/pages', 'All pages'], ['side-sub', '/facts', 'Facts'],
+    ['side-place', '/pages', 'Pages'],
+    ['side-place', '/facts', 'Facts'],
+    ['side-place', '/approvals', 'Inbox'],
     ['side-place', '/review', 'Week'], ['side-sub', '/review', 'Last week'], ['side-sub', '/review/now', 'So far'], ['side-sub', '/growth', 'Growth'],
     ['side-place', '/graph', 'Graph'],
     ['side-place side-settings', '/settings', 'Settings'],
@@ -85,9 +87,10 @@ test('the sidebar lights the place and the section in view', async (t) => {
   const m = (await a.deps.service.remember({ kind: 'decision', content: 'wildlog uses SwiftUI', project: 'wildlog' }, { type: 'owner' }) as any).memory;
   const lit = async (path: string) => links(sidebar(await (await f(path)).text())).filter((l) => l[3] !== null).map(([c, , text, cur]) => `${c.replace('side-', '')}:${text}:${cur}`);
   assert.deepEqual(await lit('/'), ['place:Projects:page']);
-  assert.deepEqual(await lit('/pages'), ['place:Pages:true', 'sub:All pages:page']);
-  assert.deepEqual(await lit('/facts'), ['place:Pages:true', 'sub:Facts:page']);
-  assert.deepEqual(await lit('/facts/tidy'), ['place:Pages:true', 'sub:Facts:page']);
+  assert.deepEqual(await lit('/pages'), ['place:Pages:page']);
+  assert.deepEqual(await lit('/facts'), ['place:Facts:page']);
+  assert.deepEqual(await lit('/facts/tidy'), ['place:Facts:page']);
+  assert.deepEqual(await lit('/approvals'), ['place:Inbox:page']);
   assert.deepEqual(await lit('/review'), ['place:Week:true', 'sub:Last week:page']);
   assert.deepEqual(await lit('/review/now'), ['place:Week:true', 'sub:So far:page']);
   assert.deepEqual(await lit('/growth'), ['place:Week:true', 'sub:Growth:page']);
@@ -96,7 +99,7 @@ test('the sidebar lights the place and the section in view', async (t) => {
   assert.deepEqual(await lit('/settings'), ['place side-settings:Settings:page']);
   assert.deepEqual(await lit('/search?q=x'), []);
   const p = (await a.deps.service.remember({ kind: 'profile', content: 'Prefers short answers' }, { type: 'owner' }) as any).memory;
-  assert.deepEqual(await lit(`/memories/${p.id}`), ['place:Pages:true', 'sub:Facts:page']);
+  assert.deepEqual(await lit(`/memories/${p.id}`), ['place:Facts:page']);
   // A section lights only under its own place: a project's fact goes back to its project, so Projects is lit, alone.
   assert.deepEqual(await lit(`/memories/${m.id}`), ['place:Projects:page']);
 });
@@ -116,20 +119,30 @@ test('work mode: "Work brain", no Growth, no needs-you dot, no number anywhere i
   assert.doesNotMatch(side, />\d+</);
 });
 
-test('the needs-you dot shows with one waiting approval, and "Backup late" only when the backup check fails', async (t) => {
+test('the Inbox counts what waits for you, and "Backup late" only when the backup check fails', async (t) => {
   const quiet = await app(t);
   const none = sidebar(await (await quiet.f('/')).text());
-  assert.doesNotMatch(none, /side-need|side-warn|Backup late/);
+  assert.doesNotMatch(none, /side-count|side-need|side-warn|Backup late/);
   assert.doesNotMatch(none, />\d+</, 'never a number');
   await quiet.a.deps.service.remember({ kind: 'profile', content: 'Prefers short answers' }, { type: 'ai', name: 'Grok' });
+  await quiet.a.deps.service.remember({ kind: 'profile', content: 'Lives in Berlin' }, { type: 'ai', name: 'Grok' });
   quiet.a.advance(30_001);
   const one = sidebar(await (await quiet.f('/review')).text());
-  assert.match(one, /<a class="side-place" href="\/">Projects<span class="side-need" aria-hidden="true"><\/span><span class="visually-hidden">, something needs you<\/span><\/a>/);
-  assert.doesNotMatch(one, />\d+</, 'never a number');
+  assert.match(one, /<a class="side-place" href="\/approvals">Inbox<span class="side-count" aria-label="2 waiting">2<\/span><\/a>/);
+  assert.doesNotMatch(one, /side-need/, 'the dot on Projects is gone');
   const dir = mkdtempSync(join(tmpdir(), 'desk-late-'));
   writeBackupStatus(dir, 'nightly', { at: new Date(START.getTime() - 3 * 86_400_000).toISOString(), ok: true, copies: [] } as never);
   const late = await app(t, { statusDir: dir });
   assert.match(sidebar(await (await late.f('/')).text()), /<a class="side-place side-settings" href="\/settings">Settings<span class="side-warn"><span class="dot attention" aria-hidden="true"><\/span>Backup late<\/span><\/a>/);
+});
+
+test('the Inbox count is readable in both themes', () => {
+  const p = palettes(styleCss);
+  for (const [name, c] of Object.entries(p)) {
+    assert.ok(contrast(rgb(c.accent!), rgb(c['primary-fg']!)) >= 4.5, `${name}: the count on the orange pill`);
+    // On the active pill the count turns inside out: ink on the pill's own paper.
+    assert.ok(contrast(rgb(c.primary!), rgb(c['primary-fg']!)) >= 4.5, `${name}: the count on the active pill`);
+  }
 });
 
 test('no style.css rule could show a hidden sidebar part on the phone', () => {
@@ -191,8 +204,9 @@ test('sidebar text and dots keep their contrast on the sidebar paper and navy', 
   }
 });
 
-test('on the active pill the needs-you dot is ringed, and "Backup late" turns pill-coloured with a ringed amber dot', () => {
-  assert.equal(propIn(deskRules, '.side-place[aria-current] .side-need', 'box-shadow', D), '0 0 0 2px var(--primary-fg)');
+test('on the active pill the Inbox count turns inside out, and "Backup late" turns pill-coloured with a ringed amber dot', () => {
+  assert.equal(propIn(deskRules, '.side-place[aria-current] .side-count', 'background', D), 'var(--primary-fg)');
+  assert.equal(propIn(deskRules, '.side-place[aria-current] .side-count', 'color', D), 'var(--primary)');
   assert.equal(propIn(deskRules, '.side-place[aria-current] .side-warn', 'color', D), 'var(--primary-fg)');
   assert.equal(propIn(deskRules, '.side-place[aria-current] .side-warn .dot', 'box-shadow', D), '0 0 0 2px var(--primary-fg)');
   assert.equal(propIn(deskRules, '.side-place[aria-current]', 'background', D), 'var(--primary)');
@@ -215,25 +229,6 @@ test('desk.css keeps the one-hand rules: tokens only, three radii, hover for a r
 
 const P = '.phome:not(.has-panel) > .plist';
 
-test('the desktop home is two columns: the main column, and Also open in the right column', () => {
-  assert.equal(propIn(deskRules, P, 'display', D), 'grid');
-  assert.equal(propIn(deskRules, P, 'grid-template-columns', D), 'minmax(0, 1fr) var(--desk-right)');
-  assert.equal(propIn(deskRules, P, 'grid-template-rows', D), 'repeat(8, auto) 1fr auto auto');
-  assert.equal(propIn(deskRules, `${P} > section:has(> #alsoopen)`, 'grid-column', D), '2');
-  assert.equal(propIn(deskRules, `${P} > section:has(> #alsoopen)`, 'grid-row', D), '4 / span 6');
-  assert.equal(propIn(deskRules, `${P} > section:has(> #ongo)`, 'grid-row', D), '7');
-  assert.equal(propIn(deskRules, `${P} > .fy-h`, 'grid-row', D), '4');
-  assert.equal(propIn(deskRules, `${P} > .foryou`, 'grid-row', D), '5');
-  assert.equal(propIn(deskRules, `${P} > form.idea`, 'grid-column', D), '1 / -1');
-  assert.equal(propIn(deskRules, '.phome:not(.has-panel)', 'max-width', D), 'none');
-});
-
-test('with On the go or Also open missing, the home is one column and a lone Open section takes On the go\'s place', () => {
-  for (const sel of [`${P}:not(:has(#ongo))`, `${P}:not(:has(#alsoopen))`]) assert.equal(propIn(deskRules, sel, 'grid-template-columns', D), 'minmax(0, 1fr)', sel);
-  assert.equal(propIn(deskRules, `${P}:not(:has(#ongo)) > section:has(> #alsoopen)`, 'grid-column', D), '1');
-  assert.equal(propIn(deskRules, `${P}:not(:has(#ongo)) > section:has(> #alsoopen)`, 'grid-row', D), '7');
-});
-
 test('Add idea is a plain white pill until the field holds text, then the one black pill', () => {
   const Q = '.phome .idea button.primary';
   const T = '.phome .idea:has(input:not(:placeholder-shown)) button.primary';
@@ -254,32 +249,6 @@ test('the idea form sits at the right of the h1 at its own width', () => {
   assert.equal(propIn(deskRules, '.phome:not(.has-panel) .idea input', 'width', `${D} @media (min-width: 1920px)`), '380px');
 });
 
-test('the date and the Everything else heading stay on the plain home; For you becomes the list eyebrow', () => {
-  assert.equal(propIn(deskRules, '.phome:not(.has-panel) .phome-date[hidden]', 'display', D), 'inline');
-  assert.equal(propIn(deskRules, '.phome-date[hidden]', 'display', D), undefined);
-  assert.equal(propIn(deskRules, '.phome:not(.has-panel) .pf-h[hidden]', 'display', D), 'block');
-  assert.equal(propIn(deskRules, '.phome:not(.has-panel) .fy-h[hidden]', 'display', D), 'block');
-  assert.equal(propIn(deskRules, '.phome.has-panel .fy-h[hidden]', 'display', D), 'block');
-  assert.equal(propIn(deskRules, '.fy-h[hidden]', 'display', D), undefined);
-});
-
-test('Also open shows every row, on the desktop home and in the list pane: the "N more" summary goes once its fold is open', () => {
-  assert.equal(propIn(deskRules, '.prows details.more[data-desk-open][open] > summary', 'display', D), 'none');
-  assert.equal(propIn(deskRules, '.prows .row.prow', 'min-height', D), '39px');
-});
-
-test('an Also open row on the desktop home is the ring, the bold name and the one-liner with an ellipsis; no Next, no chip; when at XL', () => {
-  const R = '.phome:not(.has-panel) .prows';
-  assert.equal(propIn(deskRules, `${R} .row.prow`, 'grid-template-columns', D), '8px minmax(0, max-content) minmax(0, 1fr)');
-  assert.equal(propIn(deskRules, `${R} .row.prow`, 'grid-template-columns', `${D} @media (min-width: 1920px)`), '8px minmax(0, max-content) minmax(0, 1fr) auto');
-  assert.equal(propIn(deskRules, `${R} :is(.prow-next, .prow-chip)`, 'display', D), 'none');
-  const one = `${R} .prow-one[hidden]`;
-  assert.deepEqual(['display', 'overflow', 'text-overflow', 'white-space', 'color', 'font-size'].map((p) => propIn(deskRules, one, p, D)),
-    ['block', 'hidden', 'ellipsis', 'nowrap', 'var(--muted)', 'var(--t-sub)']);
-  // Beside an open project the list keeps today's rows: no rule there shows the one-liner or hides Next.
-  for (const r of deskRules) for (const sel of r.selectors) if (/prow-one|prow-next|prow-chip/.test(sel) && /\.prows/.test(sel)) assert.match(sel, /\.phome:not\(\.has-panel\)/, sel);
-});
-
 test('no style.css rule could show an Also open row\'s hidden one-liner on the phone', () => {
   for (const r of styleRules) for (const s of r.selectors) assert.doesNotMatch(s, /\.prow-one\b/, s);
 });
@@ -288,82 +257,12 @@ test('no style.css rule could show the home\'s hidden hooks on the phone', () =>
   for (const r of styleRules) for (const s of r.selectors) assert.doesNotMatch(s, /\.phome-date|\.fy-h\b/, s);
 });
 
-test('On the go on the desktop home is one card of rows: ring, name and one-liner, Next, one chip, when, chevron', () => {
-  const S = '.phome:not(.has-panel) .pcards';
-  assert.equal(propIn(deskRules, S, 'display', D), 'block');
-  assert.equal(propIn(deskRules, `${S} .pcard`, 'display', D), 'grid');
-  assert.equal(propIn(deskRules, `${S} :is(.pcard-head, .pcard-foot)`, 'display', D), 'contents');
-  assert.equal(propIn(deskRules, `${S} .pcard`, 'grid-template-columns', D), '10px minmax(0, 10.5rem) minmax(0, 1fr) auto 8px');
-  assert.equal(propIn(deskRules, `${S} .pcard`, 'grid-template-columns', `${D} @media (min-width: 1440px)`), '10px minmax(0, 12.5rem) minmax(0, 1fr) auto 5.75rem 8px');
-  assert.equal(propIn(deskRules, `${S} .pcard`, 'grid-template-columns', `${D} @media (min-width: 1920px)`), '10px minmax(0, 15rem) minmax(0, 1fr) auto 6.5rem 8px');
-  // "when" only from L, and only the when: the area is the ring's job.
-  assert.equal(propIn(deskRules, `${S} .meta-line`, 'display', D), 'none');
-  assert.equal(propIn(deskRules, `${S} .meta-line`, 'display', `${D} @media (min-width: 1440px)`), 'flex');
-  assert.equal(propIn(deskRules, `${S} .meta-line > li:first-child`, 'display', D), 'none');
-  // A row presses to raised and does not shrink like a card.
-  assert.equal(propIn(deskRules, `${S} .pcard:active`, 'background', D), 'var(--raised)');
-  assert.equal(propIn(deskRules, `${S} .pcard:active`, 'transform', MOTION), 'none');
-});
-
-test('Everything else is one strip; "Not in the brain yet" is always its last cell, an opened fold takes a full row below', () => {
-  const F = '.phome:not(.has-panel) .pfolds';
-  assert.equal(propIn(deskRules, F, 'display', D), 'flex');
-  assert.equal(propIn(deskRules, F, 'flex-wrap', D), 'wrap');
-  assert.equal(propIn(deskRules, `${F} > li:has(> #notyet)`, 'order', D), '1');
-  assert.equal(propIn(deskRules, `${F} > li:has(> details[open])`, 'flex-basis', D), '100%');
-  assert.equal(propIn(deskRules, `${F} > li:has(> details[open])`, 'order', D), '2');
-  const XL = `${D} @media (min-width: 1920px)`;
-  assert.equal(propIn(deskRules, `${F} > li:has(> details[open]:not([data-desk-open]))`, 'flex-basis', XL), '100%');
-  assert.equal(propIn(deskRules, `${F} > li:has(> details[open]:not([data-desk-open]))`, 'order', XL), '2');
-  // At 1920 the shelves are cards of their own, and their rows show only the ring and the name.
-  assert.equal(propIn(deskRules, F, 'background', XL), 'none');
-  assert.equal(propIn(deskRules, `${F} .row.prow`, 'grid-template-columns', XL), '8px minmax(0, 1fr)');
-});
-
-test('at S and M the strip sits in the main column three to a line; from L it runs under both columns', () => {
-  assert.equal(propIn(deskRules, `${P} > .pf-h`, 'grid-row', D), '8');
-  assert.equal(propIn(deskRules, `${P} > .pfolds`, 'grid-row', D), '9');
-  assert.equal(propIn(deskRules, `${P} > .pfolds`, 'grid-column', D), '1');
-  assert.equal(propIn(deskRules, `${P} > .pf-h`, 'grid-row', `${D} @media (min-width: 1440px)`), '10');
-  assert.equal(propIn(deskRules, `${P} > .pfolds`, 'grid-row', `${D} @media (min-width: 1440px)`), '11');
-  assert.equal(propIn(deskRules, `${P} > .pfolds`, 'grid-column', `${D} @media (min-width: 1440px)`), '1 / -1');
-  assert.equal(propIn(deskRules, '.phome:not(.has-panel) .pfolds > li', 'flex', D), '1 1 30%');
-  assert.equal(propIn(deskRules, '.phome:not(.has-panel) .pfolds > li', 'flex', `${D} @media (min-width: 1440px)`), '1 1 auto');
-  assert.equal(propIn(deskRules, '.phome:not(.has-panel) .pf-h[hidden]', 'display', D), 'block');
-});
-
-test('at 1920 a shelf shows its title, its count, three names and "N more" or "Open"; Not in the brain yet its folders and "Ignored N"', () => {
-  const F = '.phome:not(.has-panel) .pfolds';
-  const XL = `${D} @media (min-width: 1920px)`;
-  // Three names: the rows after the third stay in the fold, reached by "N more".
-  assert.equal(propIn(deskRules, `${F} > li > details[data-desk-open] > .fold-list > li:nth-child(n+4)`, 'display', XL), 'none');
-  assert.equal(propIn(deskRules, `${F} > li > details[data-desk-open][open] > .shelf-more[hidden]`, 'display', XL), 'flex');
-  // All discussions: its count from S up (as in the strip of the mockup), its names and "N more" at XL.
-  assert.equal(propIn(deskRules, `${F} > li > a.row .n[hidden]`, 'display', D), 'inline');
-  assert.equal(propIn(deskRules, `${F} > li > .shelf-names[hidden]`, 'display', XL), 'block');
-  assert.equal(propIn(deskRules, `${F} > li > .shelf-more[hidden]`, 'display', XL), 'flex');
-  assert.equal(propIn(deskRules, `${F} > li > a.row .chev`, 'display', XL), 'none');
-  // Not in the brain yet: the peek sits in its summary, under the title, only while closed.
-  assert.equal(propIn(deskRules, `${F} #notyet:not([open]) > summary`, 'flex-wrap', XL), 'wrap');
-  assert.equal(propIn(deskRules, `${F} #notyet:not([open]) .nib-peek[hidden]`, 'display', XL), 'flex');
-  assert.equal(propIn(deskRules, `${F} #notyet:not([open]) .nib-peek[hidden]`, 'flex-basis', XL), '100%');
-  // Below 1920 none of it shows: every rule that shows these hooks sits in the XL media (the count aside).
-  for (const r of deskRules) for (const sel of r.selectors)
-    if (/shelf-more|shelf-names|nib-peek/.test(sel) && r.decls.display && r.decls.display !== 'none') assert.equal(r.media, XL, sel);
-});
-
 test('no style.css rule could show the shelves\' hidden hooks on the phone', () => {
   for (const r of styleRules) for (const s of r.selectors) assert.doesNotMatch(s, /\.shelf-more|\.shelf-names|\.nib-peek/, s);
 });
 
 test('no style.css rule could show the Everything else heading on the phone', () => {
   for (const r of styleRules) for (const s of r.selectors) assert.doesNotMatch(s, /\.pf-h\b/, s);
-});
-
-test('in the strip, as in the mockup, a closed fold cell is its name and count; only All discussions and Not in the brain yet point on, at one weight', () => {
-  const F = '.phome:not(.has-panel) .pfolds';
-  assert.equal(propIn(deskRules, `${F} > li > details.fold:not(#notyet):not([open]) > summary .chev`, 'display', D), 'none');
-  assert.equal(propIn(deskRules, `${F} > li > a.row b`, 'font-weight', D), 'inherit');
 });
 
 test('the Settings index sticks near the top too', () => {
@@ -695,7 +594,9 @@ test('the facts list pane: rows, not cards; the filter open and compact', () => 
   assert.equal(propIn(deskRules, '.desk-list .cards.list > li.card', 'border-color', D), 'transparent');
   assert.equal(propIn(deskRules, '.desk-list .cards.list > li.card:has(> .is-selected)', 'background', D), 'var(--surface)');
   assert.equal(propIn(deskRules, '.desk-list .cards.list > li.card:has(> .is-selected)', 'border-color', D), 'var(--line)');
-  assert.equal(propIn(deskRules, '.desk-list details.filter-fold > summary', 'display', D), 'none');
+  // The grouped page in the list pane: the filters wrap, the open fact's row sits on the surface.
+  assert.equal(propIn(deskRules, '.desk-list form.frow-filters', 'flex-wrap', D), 'wrap');
+  assert.equal(propIn(deskRules, '.desk-list .frow > a.is-selected', 'background', D), 'var(--surface)');
 });
 test('the fact sheet: the fact at the section size; Delete only through Delete…', () => {
   assert.equal(propIn(deskRules, '.desk-sheet[data-kind="fact"] h1.fact-text', 'font-size', D), 'var(--t-section)');
@@ -828,4 +729,30 @@ test('the docked graph card names its project at the title size', () => {
 test('no desk.css selector nests :has() (a nested one is invalid, and the browser drops the whole rule)', () => {
   const nested = (s: string) => { let depth = 0; for (let i = 0; i < s.length; i++) { if (s.startsWith(':has(', i)) { if (depth > 0) return true; depth = 1; i += 4; continue; } if (depth > 0 && s[i] === '(') depth++; else if (depth > 0 && s[i] === ')') depth--; } return false; };
   for (const r of deskRules) for (const s of r.selectors) assert.ok(!nested(s), s);
+});
+
+test('the desktop home: the areas in the main column, For you and the extras in the right column (spec 2026-11-11)', () => {
+  assert.equal(propIn(deskRules, P, 'display', D), 'grid');
+  assert.equal(propIn(deskRules, P, 'grid-template-columns', D), 'minmax(0, 1fr) var(--desk-right)');
+  assert.equal(propIn(deskRules, P, 'grid-template-rows', D), 'repeat(6, auto) 1fr');
+  assert.equal(propIn(deskRules, `${P} > .pareas`, 'grid-column', D), '1');
+  assert.equal(propIn(deskRules, `${P} > .pareas`, 'grid-row', D), '4 / span 4');
+  for (const [sel, row] of [['.fy-h', '4'], ['.foryou', '5'], ['.pextra', '6']] as const) {
+    assert.equal(propIn(deskRules, `${P} > ${sel}`, 'grid-column', D), '2', sel);
+    assert.equal(propIn(deskRules, `${P} > ${sel}`, 'grid-row', D), row, sel);
+  }
+  assert.equal(propIn(deskRules, `${P}:not(:has(> .foryou)) > .pextra`, 'grid-row', D), '4');
+  assert.equal(propIn(deskRules, '.phome:not(.has-panel) .phome-date[hidden]', 'display', D), 'inline');
+  assert.doesNotMatch(deskCss, /#ongo\)|#alsoopen|\.pf-h|shelf-names/, 'nothing of the old layout is left but the On the go hint');
+});
+
+test('beside an open project the rows keep only the "work not safe" mark of the chips', () => {
+  assert.equal(propIn(deskRules, '.phome.has-panel > .plist .row.prow .prow-chip > :not(.pwarn)', 'display', D), 'none');
+  assert.equal(propIn(deskRules, '.phome.has-panel > .plist .row.prow :is(.prow-when, .row-note)', 'display', D), 'none');
+});
+
+test('review I7: on the overview only the extras\' folds open the list pane; an area\'s fold line opens in place', () => {
+  const js = readFileSync(new URL('./static/desk.js', import.meta.url), 'utf8');
+  const fn = js.slice(js.indexOf('function foldFromOverview'), js.indexOf('\n}\n', js.indexOf('function foldFromOverview')));
+  assert.match(fn, /fold\.matches\('\.pextra details\.fold'\)/);
 });

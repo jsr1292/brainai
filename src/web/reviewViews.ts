@@ -89,10 +89,10 @@ function card(c: MovedCard): SafeHtml {
     c.pagesUpdated > 0 ? html`<a href="${panelHref(c.project)}">${plural(c.pagesUpdated, 'page updated', 'pages updated')}</a>` : null,
   ].filter((x): x is SafeHtml => x !== null);
   const np = c.notPushed;
-  return html`<li><div class="mv-top">${areaDot(c.area)}<a class="mv-name" href="${panelHref(c.project)}">${c.project}</a>${total > 0 ? html`<span class="mv-count">${total} done</span>` : ''}${np ? html`<span class="chip plain">${plural(np.count, 'commit', 'commits')} not pushed</span>` : ''}${progress}</div>
+  return html`<li><div class="mv-top">${areaDot(c.area)}<a class="mv-name" href="${panelHref(c.project)}">${c.project}</a>${total > 0 ? html`<span class="mv-count">${total} done</span>` : ''}${np ? html`<span class="chip plain">${np.count > 0 ? html`${plural(np.count, 'commit', 'commits')} not pushed` : html`${plural(np.uncommitted ?? 0, 'file', 'files')} not committed`}</span>` : ''}${progress}</div>
   ${c.done.length > 0 ? html`<ul class="steps">${c.done.map((d) => html`<li>${d.text.replace(/\s*\(by \d{4}-\d{2}-\d{2}\)\s*$/, '')}<span class="d">${dayOf(d.date)}</span></li>`)}</ul>` : ''}
   ${also.length > 0 ? html`<p class="also">${also.map((a, i) => html`${i > 0 ? ' · ' : ''}${a}`)}</p>` : ''}
-  ${np ? html`<p class="also">The Mac's report from ${localParts(np.receivedAt).weekday} ${timeOfDay(np.receivedAt)} shows ${plural(np.count, 'commit', 'commits')} only on the Mac.</p>` : ''}
+  ${np ? html`<p class="also">The Mac's report from ${localParts(np.receivedAt).weekday} ${timeOfDay(np.receivedAt)} shows ${np.count > 0 ? plural(np.count, 'commit', 'commits') : html`${plural(np.uncommitted ?? 0, 'changed file', 'changed files')}, not committed,`} only on the Mac.</p>` : ''}
 </li>`;
 }
 

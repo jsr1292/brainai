@@ -52,20 +52,28 @@ export const memoryName = (): string => (workMode ? 'Work brain' : 'BrainAI');
 export const memoryServerName = (): string => (workMode ? 'work-memory' : 'shared-memory');
 
 /** The main destinations, as in the approved mockups. */
-const TABS = [
+const TABS: { href: string; label: string; tab: Tab }[] = [
   { href: '/', label: 'Projects', tab: 'projects' },
   { href: '/pages', label: 'Pages', tab: 'pages' },
   { href: '/review', label: 'Week', tab: 'week' },
   { href: '/graph', label: 'Graph', tab: 'graph' },
 ];
 
-/** A part of a place, lit in the desktop sidebar under its place: Pages has All pages and Facts, Week has three. */
-export type Section = 'pages' | 'facts' | 'last' | 'now' | 'growth';
+/**
+ * The phone bar keeps its four places; the desktop's Facts and Inbox are their own places, so on a phone they sit under
+ * Pages and Projects, as they did before they became places.
+ */
+const PHONE_PLACE: Partial<Record<Tab, Tab>> = { facts: 'pages', inbox: 'projects' };
+
+/** A part of a place, lit in the desktop sidebar under its place: Week has three. */
+export type Section = 'last' | 'now' | 'growth';
 
 /** The desktop sidebar's places, each with its sections (desktop design §3). Growth is not in work mode. */
 const PLACES: { href: string; label: string; tab: Tab; subs: { href: string; label: string; section: Section }[] }[] = [
   { href: '/', label: 'Projects', tab: 'projects', subs: [] },
-  { href: '/pages', label: 'Pages', tab: 'pages', subs: [{ href: '/pages', label: 'All pages', section: 'pages' }, { href: '/facts', label: 'Facts', section: 'facts' }] },
+  { href: '/pages', label: 'Pages', tab: 'pages', subs: [] },
+  { href: '/facts', label: 'Facts', tab: 'facts', subs: [] },
+  { href: '/approvals', label: 'Inbox', tab: 'inbox', subs: [] },
   { href: '/review', label: 'Week', tab: 'week', subs: [{ href: '/review', label: 'Last week', section: 'last' }, { href: '/review/now', label: 'So far', section: 'now' }, { href: '/growth', label: 'Growth', section: 'growth' }] },
   { href: '/graph', label: 'Graph', tab: 'graph', subs: [] },
 ];
@@ -73,18 +81,17 @@ const PLACES: { href: string; label: string; tab: Tab; subs: { href: string; lab
 /**
  * The desktop sidebar: brand, search, the places with their sections, Settings at the foot. It keeps `hidden` at every
  * width: below 1100 px the browser hides it and no style.css rule touches it; desk.css displays it on wide screens (and
- * so exposes it). It never shows a number: Projects gets one orange dot when something needs the owner, and Settings
- * an amber "Backup late" only when the backup check fails.
+ * so exposes it). Inbox counts what waits for the owner, and Settings warns only when the backup check fails.
  */
 function sidebar(opts: { tab?: Tab | null; section?: Section; query?: string }): SafeHtml {
   const status = sideStatus();
-  const section = opts.tab === 'pages' ? opts.section ?? 'pages' : opts.section;
+  const section = opts.section;
   const place = (p: (typeof PLACES)[number]) => {
     const here = opts.tab === p.tab;
     const subs = workMode ? p.subs.filter((x) => x.section !== 'growth') : p.subs;
     const lit = here ? subs.find((x) => x.section === section) : undefined;
-    const need = p.tab === 'projects' && status.needsYou ? html`<span class="side-need" aria-hidden="true"></span><span class="visually-hidden">, something needs you</span>` : '';
-    return html`<li><a class="side-place" href="${p.href}"${here ? raw(` aria-current="${lit ? 'true' : 'page'}"`) : ''}>${p.label}${need}</a>${subs.length > 0 ? html`<ul class="side-subs">${subs.map((x) => html`<li><a class="side-sub" href="${x.href}"${x === lit ? raw(' aria-current="page"') : ''}>${x.label}</a></li>`)}</ul>` : ''}</li>`;
+    const count = p.tab === 'inbox' && status.needsYouCount > 0 ? html`<span class="side-count" aria-label="${status.needsYouCount} waiting">${status.needsYouCount}</span>` : '';
+    return html`<li><a class="side-place" href="${p.href}"${here ? raw(` aria-current="${lit ? 'true' : 'page'}"`) : ''}>${p.label}${count}</a>${subs.length > 0 ? html`<ul class="side-subs">${subs.map((x) => html`<li><a class="side-sub" href="${x.href}"${x === lit ? raw(' aria-current="page"') : ''}>${x.label}</a></li>`)}</ul>` : ''}</li>`;
   };
   const warn = status.backupLate ? html`<span class="side-warn"><span class="dot attention" aria-hidden="true"></span>Backup late</span>` : '';
   return html`<nav class="side" hidden aria-label="Main">
@@ -108,8 +115,8 @@ export function setMovedBanner(fn: () => URL | null): void {
 
 export function page(title: string, body: SafeHtml, opts: { nav?: boolean; query?: string; tab?: Tab | null; section?: Section; back?: Pick<Back, 'href' | 'label'>; crumb?: boolean } = {}): string {
   const brand = html`<a class="brand" href="/"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></a>`;
-  const link = (t: { href: string; label: string; tab: string }) =>
-    html`<a href="${t.href}"${opts.tab === t.tab ? raw(' aria-current="page"') : ''}>${t.label}</a>`;
+  const link = (t: { href: string; label: string; tab: Tab }) =>
+    html`<a href="${t.href}"${opts.tab === t.tab || PHONE_PLACE[opts.tab ?? 'projects'] === t.tab ? raw(' aria-current="page"') : ''}>${t.label}</a>`;
   const settings = html`<a class="settings-link" href="/settings"${opts.tab === 'settings' ? raw(' aria-current="page"') : ''}><span class="settings-word">Settings</span><svg class="cog" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></a>`;
   const header = opts.nav
     ? html`<header class="top">${brand}${opts.back ? html`<a class="top-back" href="${opts.back.href}"><span>${opts.back.label}</span></a>` : ''}

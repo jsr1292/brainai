@@ -254,6 +254,7 @@ p { overflow-wrap: anywhere; margin: 0 0 0.75rem; }
 /* On a reading column the back link starts where the column starts. */
 .crumb.back:has(+ .narrow) { max-width: 46rem; margin-inline: auto; }
 .crumb.back:has(+ .wide-narrow) { max-width: 58rem; margin-inline: auto; }
+.crumb.back:has(+ .pages-wrap.edit) { max-width: 38rem; margin-inline: auto; }
 .tidy-line { margin: 0.75rem 0 1rem; color: var(--ink2); font-size: var(--t-sub); }
 .tidy-line a { font-weight: 600; color: var(--fg); }
 .settings-nav .badge { min-width: 1.25rem; padding: 0 0.375rem; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-fg); font-size: var(--t-meta); font-weight: 700; text-align: center; }
@@ -476,6 +477,14 @@ summary > .chev { margin-left: 0.5rem; vertical-align: 0.125em; }
 .card > form { margin-top: 0.75rem; }
 .card.revoked { opacity: 0.6; }
 
+/* The Inbox: what waits for the owner, above the cards. */
+.inbox-lines { list-style: none; margin: 14px 0 26px; padding: 0; border-top: 1px solid var(--line); }
+.inbox-lines li { display: grid; grid-template-columns: 6.5rem 1fr; gap: 2px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.il-k { grid-row: span 2; color: var(--muted); font-size: var(--t-label); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 3px; }
+.inbox-lines a { color: var(--fg); font-weight: 600; }
+.il-m { color: var(--muted); font-size: var(--t-meta); }
+.ib-h { font-size: var(--t-section); margin: 0 0 10px; }
+
 /* ---- Backups (home page) ---- */
 
 .backup-runs, .backups .problems { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.375rem; }
@@ -650,6 +659,38 @@ button.danger { min-height: 36px; padding: 0 14px; background: transparent; bord
 
 .filters { display: grid; grid-template-columns: 1fr; gap: 0.75rem; margin-bottom: 1.25rem; }
 .filters .actions { align-self: end; }
+
+/* ---- The Facts page by project (UI round, task 6) ---- */
+
+.fhead { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.fhead h1 { margin-bottom: 0; }
+.frow-filters { display: flex; gap: 8px; align-items: center; margin: 16px 0 10px; flex-wrap: wrap; }
+.frow-filters input { flex: 1 1 14rem; min-height: 36px; }
+.frow-filters select { min-height: 36px; width: auto; }
+/* The app's own rules stack every form's fields; the mockup's filter row is one line (the segment a track of its own). */
+form.frow-filters { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
+form.frow-filters > input[type=search] { flex: 1 1 8rem; min-width: 0; width: auto; height: 38px; min-height: 0; max-height: 38px; margin: 0; box-sizing: border-box; }
+form.frow-filters > select { flex: 0 1 auto; min-width: 0; max-width: 12rem; width: auto; height: 38px; margin: 0; padding-block: 0; line-height: normal; }
+form.frow-filters > .seg { flex: none; display: inline-flex; flex-wrap: nowrap; gap: 0; padding: 3px; border-radius: var(--r-pill); background: var(--raised); }
+form.frow-filters > .seg a { min-height: 0; padding: 5px 12px; border-radius: var(--r-pill); color: var(--muted); font-size: var(--t-meta); font-weight: 600; }
+form.frow-filters > .seg a.on, form.frow-filters > .seg a[aria-current] { background: var(--surface); color: var(--fg); }
+form.frow-filters > .filter-show { min-height: 38px; }
+form.frow-filters > .filter-show[hidden], .js form.frow-filters > .filter-show { display: none; }
+.fgroup { margin-bottom: 28px; }
+.fgroup h2 { font-size: var(--t-section); margin: 0 0 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.fgroup h2 a { color: inherit; }
+.flist { list-style: none; margin: 0; padding: 0; }
+.frow { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.frow > a { margin: 0; color: var(--fg); font-size: var(--t-body); line-height: 1.5; }
+.fmeta { margin: 4px 0 0; color: var(--muted); font-size: var(--t-meta); }
+/* B9: a fact's search words, under its meta line. */
+.fact-keys, .sg-keys { margin: 4px 0 0; color: var(--muted); font-size: var(--t-meta); overflow-wrap: anywhere; }
+.fkind { color: var(--muted); font-size: var(--t-label); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+.rmap { display: grid; grid-template-columns: 4rem 1fr; gap: 3px 10px; margin: 6px 0 0; font-size: var(--t-body); }
+.rmap dt { color: var(--muted); font-size: var(--t-meta); font-weight: 600; padding-top: 2px; }
+.rmap dd { margin: 0; }
+.fall { display: inline-block; margin-top: 10px; font-size: var(--t-sub); font-weight: 600; }
+@media (min-width: 720px) { form.frow-filters { flex-wrap: nowrap; } }
 .editor .two { display: grid; gap: 1rem; }
 form.danger, section.danger { margin-top: 0.75rem; }
 .danger + section, .editor + section { margin-top: 2.5rem; }
@@ -881,6 +922,89 @@ details.fold.fy-more > summary { color: var(--muted); font-weight: 400; }
 .pcard-label { color: var(--muted); font-size: var(--t-label); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 0.375rem; }
 .pcard-foot { margin-top: auto; display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: var(--t-meta); }
 .pcard-foot .meta-line { flex-wrap: nowrap; min-width: 0; }
+/* The Projects page by area (2026-11-11): a section per area, live projects as calm tiles, the rest folded under it.
+   The dot is the project's state (green: being worked on, amber: waiting on you, grey: quiet); the round "!" is the
+   one learning mark the home page shows: work that exists only on the Mac. */
+.pareas { display: flex; flex-direction: column; gap: 2rem; margin-top: 0.5rem; }
+.pareas > .parea { margin: 0; }
+.parea > h2 { display: flex; align-items: center; gap: 8px; }
+.parea > .pfolds { margin-top: 0.75rem; }
+.ptiles { grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 10px; }
+.ptile { min-height: 0; gap: 4px; padding: 12px 14px; }
+.ptile-head { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+/* With a name on two lines, the dot sits on the first. */
+.ptile-head > .pdot { margin-top: 0.55em; }
+.ptile .pcard-name { flex: 1; font-size: var(--t-body); }
+.ptile .pcard-one { margin-top: 0; }
+.ptile .pcard-line { -webkit-line-clamp: 1; line-clamp: 1; }
+.pdot { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); }
+.pdot.d-on { background: var(--added); }
+.pdot.d-wait { background: var(--attention); }
+.pwarn { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: color-mix(in srgb, var(--attention) 14%, var(--surface)); color: var(--attention); font-size: var(--t-meta); font-weight: 800; line-height: 1; }
+@media (max-width: 599px) { .ptiles { grid-template-columns: 1fr; } }
+/* The project's five areas (2026-11-11): a row each, its dot (green done, amber worth a look, grey not started, a hollow
+   ring unknown, a dash not needed), the plain name, the developer term as a quiet hook, the note, and Why under a fold. */
+.areas { display: flex; flex-direction: column; gap: 10px; margin: 0 0 1.25rem; }
+.area-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
+.area-head > .pdot { align-self: center; }
+.pdot.a-st-done { background: var(--added); }
+.pdot.a-st-look { background: var(--attention); }
+.pdot.a-st-unknown { background: transparent; box-shadow: inset 0 0 0 1.5px var(--line-strong); }
+.adash { flex: none; width: 8px; color: var(--muted); text-align: center; line-height: 1; }
+.area-term { color: var(--muted); font-size: var(--t-meta); }
+.area-st { margin-left: auto; color: var(--muted); font-size: var(--t-meta); }
+.area-note { margin: 2px 0 0 16px; font-size: var(--t-sub); overflow-wrap: anywhere; }
+.area-why { margin: 2px 0 0 16px; font-size: var(--t-sub); }
+.area-why > summary { width: fit-content; color: var(--muted); font-size: var(--t-meta); cursor: pointer; }
+.area-why > p { margin: 6px 0 8px; color: var(--ink2); }
+.area-set { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-bottom: 6px; }
+.area-set label { display: flex; flex-direction: column; gap: 4px; font-size: var(--t-meta); color: var(--muted); }
+.area-set label:has(input) { flex: 1 1 14rem; }
+.handbook { margin: 0 0 1.25rem; }
+/* The Map (2026-11-11): a table per area, the project column fixed while the five areas scroll on a phone; a cell's
+   note and date show on hover or when tapped (focused). */
+.mapv { max-width: 64rem; }
+.map-lead { color: var(--ink2); margin: 0.25rem 0 1.5rem; }
+.map-lead a { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 719px) { .map-table { min-width: 40rem; } .map-table th:first-child { width: 8.5rem; } .map-table th:last-child { width: 9rem; } }
+.map-area { margin: 0 0 1.75rem; }
+.map-area > h2 { display: flex; align-items: center; gap: 8px; }
+.map-scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); }
+.map-table { width: 100%; min-width: 50rem; table-layout: fixed; border-collapse: collapse; font-size: var(--t-sub); }
+/* The same columns in every area's table, so they line up down the page. */
+.map-table th:first-child { width: 13rem; }
+.map-table th:last-child { width: 12rem; }
+.map-table tbody th, .mnext { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-table th, .map-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+.map-table tr:last-child > * { border-bottom: 0; }
+.map-table thead th { color: var(--muted); font-size: var(--t-meta); font-weight: 600; line-height: 1.3; }
+.map-table thead th:not(:first-child):not(:last-child) { text-align: center; }
+.map-table tbody th { position: sticky; left: 0; background: var(--surface); font-weight: 600; white-space: nowrap; }
+.map-table tbody th a { color: var(--fg); }
+.map-table .mcell { position: relative; text-align: center; }
+.mlink { display: inline-flex; padding: 6px; border-radius: var(--r-inset); outline-offset: 0; }
+.mcell > .pdot, .mcell > .adash { display: inline-block; }
+.mnote { display: none; }
+.mcell:focus-within > .mnote { display: block; position: absolute; z-index: 2; top: calc(100% - 4px); left: 50%; transform: translateX(-50%); width: max-content; max-width: 16rem; padding: 6px 10px; border-radius: var(--r-inset); background: var(--fg); color: var(--bg); font-size: var(--t-meta); text-align: left; white-space: normal; }
+@media (hover: hover) and (pointer: fine) { .mcell:hover > .mnote { display: block; position: absolute; z-index: 2; top: calc(100% - 4px); left: 50%; transform: translateX(-50%); width: max-content; max-width: 16rem; padding: 6px 10px; border-radius: var(--r-inset); background: var(--fg); color: var(--bg); font-size: var(--t-meta); text-align: left; white-space: normal; } }
+.mnext { color: var(--muted); }
+.mhist-h { margin-top: 0.5rem; }
+.mhist li { display: grid; grid-template-columns: minmax(9rem, 14rem) 1fr 2rem; align-items: end; gap: 12px; padding: 6px 0; }
+.mhist-name { font-size: var(--t-sub); }
+.mhist-n { color: var(--muted); font-size: var(--t-meta); text-align: right; }
+.bars { display: flex; align-items: flex-end; gap: 4px; height: 24px; }
+.bars > i { flex: 1; max-width: 18px; border-radius: 0; background: var(--added); opacity: 0.85; }
+.bars > i.h0 { height: 2%; }
+.bars > i.h1 { height: 10%; }
+.bars > i.h2 { height: 20%; }
+.bars > i.h3 { height: 30%; }
+.bars > i.h4 { height: 40%; }
+.bars > i.h5 { height: 50%; }
+.bars > i.h6 { height: 60%; }
+.bars > i.h7 { height: 70%; }
+.bars > i.h8 { height: 80%; }
+.bars > i.h9 { height: 90%; }
+.bars > i.h10 { height: 100%; }
 /* Areas are a hollow ring (writers are a filled dot), so the two never read alike. Unsorted: a grey ring. */
 .ring { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; --a: var(--line-strong); box-shadow: inset 0 0 0 1.75px var(--a); }
 .a-apps { --a: var(--a-apps); }
@@ -972,7 +1096,6 @@ button.check::after { content: ""; position: absolute; inset: 0; }
   .row.rv-quiet { grid-template-columns: 8px minmax(0, 1fr); row-gap: 8px; }
   .row.rv-quiet > :last-child { grid-column: 2; }
   .rv-sec .panel-head .hint { flex-basis: 100%; text-align: left; }
-  .pfields { align-items: end; }
   /* The top row's back link covers the panel's own, and Continue in Claude Code is a Mac thing. */
   .ppanel-back { display: none; }
   .continue { display: none; }
@@ -1097,6 +1220,8 @@ ul.pfacts > li { display: flex; flex-direction: column; gap: 2px; font-size: var
 
 /* ---- Pages (mockups page-view.html and pages-home.html) ---- */
 .pages-wrap { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 48px; align-items: start; }
+/* The editor's own column: no tree beside it, just the reading column's width, centred like it (UI round, task 2). */
+.pages-wrap.edit { display: block; max-width: 38rem; margin-inline: auto; }
 .by-area { display: none; }
 .foot-link { margin: 1.5rem 0 0; font-size: var(--t-sub); color: var(--muted); }
 .foot-link a { color: var(--muted); }
@@ -1330,19 +1455,34 @@ summary.link { display: inline-flex; align-items: center; min-height: 44px; }
 .toc .hintn { margin-left: 6px; color: var(--attention); font-size: var(--t-meta); font-weight: 600; }
 
 /* ---- Page editor, conflicts and history (mockups pages-edit.html and pages-history.html) ---- */
-.pfields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); gap: 0.75rem; margin: 1rem 0; }
-.pfields label { display: flex; flex-direction: column; gap: 0.25rem; font-size: var(--t-sub); font-weight: 600; }
+/* The title input is the editor's heading: the reading h1's type, on a borderless field (a rule under it on focus). */
+.ptitle-input { display: block; width: 100%; margin: 6px 0; padding: 4px 0; border: 0; border-bottom: 1px solid transparent; border-radius: 0; background: transparent; color: var(--fg); font: 700 var(--t-display)/1.15 var(--display, var(--text)); letter-spacing: -0.02em; box-shadow: none; }
+.ptitle-input:focus { outline: none; border-bottom-color: var(--line-strong); box-shadow: none; }
+.ptitle-input::placeholder { color: var(--muted); opacity: 1; }
+@media (max-width: 719px) { .ptitle-input { font-size: var(--t-title); line-height: 1.15; letter-spacing: -0.025em; } }
+/* Project and Area are Details: quiet, folded away once the page has them. */
+.pdetails { margin: 0 0 18px; }
+.pdetails > summary { display: inline-flex; gap: 10px; align-items: baseline; color: var(--muted); font-size: var(--t-sub); }
+.pdetails-body { display: flex; flex-wrap: wrap; gap: 12px; padding: 8px 0 4px; }
+.pdetails-body label { display: flex; flex-direction: column; gap: 4px; flex: 1 1 12rem; font-size: var(--t-sub); font-weight: 600; }
 .panel.ed { padding: 0; overflow: hidden; }
-.edtabs { display: flex; align-items: center; gap: 0.25rem; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--line); background: var(--raised); }
-.edtabs .tab { min-height: 2rem; padding: 0 0.75rem; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--muted); font-size: var(--t-sub); font-weight: 600; }
-.edtabs .tab.on { background: var(--surface); color: var(--fg); }
-.edtabs .hint { margin-left: auto; color: var(--muted); font-size: var(--t-meta); }
-.peditor textarea { display: block; width: 100%; min-height: 14rem; border: 0; border-radius: 0; padding: 1rem 1.125rem; background: var(--surface); color: var(--fg); font: var(--t-sub)/1.6 ui-monospace, "SF Mono", Menlo, monospace; resize: vertical; }
+/* The toolbar: Write, Preview, the picture button and the hint, in one quiet row above the text. */
+.ptools { display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.ptool { min-height: 2rem; padding: 5px 12px; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--muted); font-size: var(--t-sub); font-weight: 600; }
+.ptool.on { background: var(--raised); color: var(--fg); }
+.phint { margin-left: auto; color: var(--muted); font-size: var(--t-meta); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* The text is written in the page's own font and size, so the box reads like the page from the first keystroke. */
+.peditor textarea { display: block; width: 100%; min-height: 14rem; border: 0; border-radius: 0; padding: 1rem 1.125rem; background: var(--surface); color: var(--fg); font: var(--t-prose)/1.65 var(--text); resize: vertical; }
 .peditor textarea:focus { outline: 2px solid var(--focus); outline-offset: -2px; }
 .preview { padding: 1rem 1.125rem; border-bottom: 1px dashed var(--line-strong); max-width: none; }
-.edfoot { display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid var(--line); }
-.edfoot .meta { margin-right: auto; }
-.edfoot .button, .edfoot button { flex: 0 0 auto; }
+/* The save bar stays in reach: it says which version saving makes, and Cancel is always there. */
+/* The live editor (editor-cm.js) hides the box it replaces; display: block on textarea would otherwise beat [hidden]. */
+textarea[data-editor][hidden] { display: none; }
+.psavebar { position: sticky; bottom: calc(var(--tabbar) + env(safe-area-inset-bottom)); z-index: 1; display: flex; align-items: center; gap: 14px; margin-top: 18px; padding: 12px 0 14px; border-top: 1px solid var(--line); background: var(--bg); }
+.psavebar button { flex: 0 0 auto; }
+.psavebar kbd { margin-left: 6px; padding: 0 5px; border: 1px solid color-mix(in srgb, var(--primary-fg) 40%, transparent); border-radius: var(--r-inset); font: 600 var(--t-label) var(--text); opacity: 0.8; }
+.quiet-btn { color: var(--ink2); font-weight: 600; font-size: var(--t-sub); }
+.psave-note { margin-left: auto; color: var(--muted); font-size: var(--t-meta); }
 details.pg-danger { margin-top: 1.5rem; color: var(--muted); }
 details.pg-danger summary { cursor: pointer; font-size: var(--t-sub); }
 details.pg-danger form { margin-top: 0.5rem; }
@@ -1372,8 +1512,8 @@ h2.state { margin: 1.75rem 0 0.5rem; }
 .dl.d { background: color-mix(in srgb, var(--error) 12%, transparent); }
 .dl.d i, .dl.d span { color: var(--error); }
 @media (max-width: 760px) {
-  .pfields, .conflict .two, .hist { grid-template-columns: minmax(0, 1fr); }
-  .edtabs .hint { display: none; }
+  .conflict .two, .hist { grid-template-columns: minmax(0, 1fr); }
+  .phint { display: none; }
 }
 
 /* ---- Notes for the AIs (plan 4) ---- */
@@ -1395,7 +1535,8 @@ h2.state { margin: 1.75rem 0 0.5rem; }
 /* iPhone and iPad: Safari zooms the page in on a focused field under 16px and stays zoomed, so the smaller fields
    (header and Graph search, page editor, note box) are 16px there. Only iOS knows -webkit-touch-callout. */
 @supports (-webkit-touch-callout: none) {
-  .find input, .peditor textarea, .asknote textarea, .graph-find input { font-size: var(--t-body); }
+  /* The page editor's textarea is var(--t-prose) now, already past 16px, so it keeps its size. */
+  .find input, .asknote textarea, .graph-find input { font-size: var(--t-body); }
 }
 
 /* ---- Settings › Devices (plan 5) ---- */
@@ -1542,7 +1683,8 @@ code.token { display: block; padding: 0.5rem 0.625rem; border-radius: var(--r-in
   .primary:hover { background: color-mix(in srgb, var(--primary) 86%, var(--bg)); }
   a:hover { text-decoration: underline; }
   .brand:hover { text-decoration: none; }
-  .tabs a:hover { color: var(--fg); text-decoration: none; }
+  .tabs a:hover { text-decoration: none; }
+  .tabs a:not([aria-current]):hover { color: var(--fg); }
   .settings-link:hover { color: var(--fg); background: var(--raised); text-decoration: none; }
   .graph-btn:hover { color: var(--g-ink); border-color: var(--g-line-strong); text-decoration: none; filter: none; }
   .project:hover { text-decoration: none; border-color: var(--line-strong); }

@@ -52,7 +52,7 @@ export function rerankerDir(modelDir: string): string {
 }
 
 /** A file's SHA-256, read 1 MB at a time: the 119 MB model is never held in memory twice. */
-function sha256Of(path: string): string {
+export function sha256Of(path: string): string {
   const hash = createHash('sha256');
   const buf = Buffer.alloc(1 << 20);
   const fd = openSync(path, 'r');

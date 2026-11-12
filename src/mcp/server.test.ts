@@ -950,6 +950,16 @@ test('recall searches the alt_queries too, at most two', async () => {
   assert.equal(tooMany.isError, true);
 });
 
+test('recall asks for a guessed answer as the usual other phrasing (measured: LoCoMo 57.0 → 60.2% first with Gemma)', async () => {
+  const { client } = await connect('Claude Code');
+  const recall = (await client.listTools()).tools.find((t) => t.name === 'recall')!;
+  const alt = (recall.inputSchema.properties as Record<string, { description?: string }>).alt_queries!.description!;
+  assert.match(alt, /one sentence written as the stored fact would read if it exists/);
+  assert.match(alt, /without looking anything up/);
+  assert.match(alt, /an English version.* when the question is in another language/);
+  assert.match(alt, /never saved or shown/);
+});
+
 test('recall says plainly when nothing matches the question closely', async () => {
   let score = -5;
   const db = openDb(':memory:');
@@ -964,4 +974,173 @@ test('recall says plainly when nothing matches the question closely', async () =
   assert.match((await call('recall', { query: 'garden shed pond' })).text, /^None of these facts matches the question closely/);
   score = -1;
   assert.doesNotMatch((await call('recall', { query: 'garden shed pond' })).text, /None of these matches/);
+});
+
+// ---- B9: search words (keys) ----
+const KEYS_DESCRIBE = 'Optional search words for this fact, up to 15, that someone might search for but the text doesn\'t say: other names and nicknames, the tools, people or places involved, the same idea in English and Spanish, the absolute date of an event ("2026-11-03"). Never shown in results. Don\'t repeat the text.';
+
+test('remember and update_memory take keys, described as agreed, and remember asks for one topic per fact', async () => {
+  const { client } = await connect();
+  const tools = (await client.listTools()).tools;
+  for (const name of ['remember', 'update_memory']) {
+    const keys = tools.find((t) => t.name === name)!.inputSchema.properties?.keys as { description?: string } | undefined;
+    assert.equal(keys?.description, KEYS_DESCRIBE, name);
+  }
+  assert.match(tools.find((t) => t.name === 'remember')!.description ?? '', /One topic per fact: if what you want to save covers two things, save two facts\./);
+  assert.match(SERVER_INSTRUCTIONS, /update_memory with keys/);
+});
+
+test('remember stores keys; too many words is a tool error; recall never shows them', async () => {
+  const { call, store } = await connect();
+  const saved = await call('remember', { kind: 'decision', content: 'vino-db prints two label sizes', project: 'vino-db', new_project: true, keys: 'Grapevine cellar' });
+  assert.equal(saved.isError, false, saved.text);
+  assert.equal(store.list({ project: 'vino-db' })[0]!.keys, 'Grapevine cellar');
+  assert.doesNotMatch(saved.text, /Grapevine/);
+  const tooMany = await call('remember', { kind: 'decision', content: 'vino-db exports a csv', project: 'vino-db', keys: Array.from({ length: 19 }, (_, i) => `w${i}`).join(' ') });
+  assert.equal(tooMany.isError, true);
+  assert.match(tooMany.text, /keys: at most 15 words; you sent 19/);
+  // Found by a word only the keys hold, and the keys stay out of the answer: plain, weak-match and with replaced facts.
+  const found = await call('recall', { query: 'Grapevine cellar' });
+  assert.match(found.text, /vino-db prints two label sizes/);
+  assert.doesNotMatch(found.text, /Grapevine/);
+  const weak = await call('recall', { query: 'cellar' });
+  assert.doesNotMatch(weak.text, /Grapevine/);
+  const id = store.list({ project: 'vino-db' })[0]!.id;
+  await call('remember', { kind: 'decision', content: 'vino-db prints three label sizes', project: 'vino-db', supersedes: [id], allow_duplicate: true });
+  const withReplaced = await call('recall', { query: 'Grapevine cellar label sizes', include_replaced: true });
+  assert.match(withReplaced.text, /two label sizes/);
+  assert.doesNotMatch(withReplaced.text, /Grapevine/);
+});
+
+test('update_memory can change only the keys (content left out), which keeps the date', async () => {
+  const { call, store } = await connect();
+  await call('remember', { kind: 'decision', content: 'vino-db prints two label sizes', project: 'vino-db', new_project: true });
+  const m = store.list({ project: 'vino-db' })[0]!;
+  const r = await call('update_memory', { id: m.id, keys: 'Grapevine cellar' });
+  assert.equal(r.isError, false, r.text);
+  assert.equal(store.get(m.id)!.keys, 'Grapevine cellar');
+  assert.equal(store.get(m.id)!.updatedAt, m.updatedAt);
+  assert.equal(store.get(m.id)!.content, m.content);
+  const neither = await call('update_memory', { id: m.id });
+  assert.equal(neither.isError, true);
+  assert.match(neither.text, /Give content, keys or both/);
+});
+
+test('project_brief shows keys only on the facts that have them', async () => {
+  const { call } = await connect();
+  await call('remember', { kind: 'decision', content: 'vino-db prints two label sizes', project: 'vino-db', new_project: true, keys: 'Grapevine cellar' });
+  await call('remember', { kind: 'decision', content: 'vino-db exports a csv every night', project: 'vino-db' });
+  const brief = await call('project_brief', { project: 'vino-db' });
+  assert.equal(brief.text.match(/"keys":/g)?.length, 1);
+  assert.match(brief.text, /"keys":"Grapevine cellar"/);
+});
+
+test('a profile fact with keys is a suggestion that carries them; approving applies them, rejecting saves nothing', async () => {
+  const { call, service, store } = await connect();
+  await call('remember', { kind: 'profile', content: 'Owner drinks tea in the morning', keys: 'té mañana' });
+  const [s] = service.pendingSuggestions();
+  assert.equal(s!.keys, 'té mañana');
+  const m = await service.approveSuggestion(s!.id);
+  assert.equal(m!.keys, 'té mañana');
+  await call('remember', { kind: 'profile', content: 'Owner walks the dog at noon', keys: 'perro' });
+  const [s2] = service.pendingSuggestions();
+  service.rejectSuggestion(s2!.id);
+  assert.equal(store.list({ kind: 'profile' }).some((f) => f.keys === 'perro'), false);
+});
+
+// ---- B9: recall gives assistants 12 results, within a size budget ----
+const factIds = (t: string) => (t.match(/"id":"[0-9a-f-]{36}","kind"/g) ?? []).length;
+
+test('recall without limit returns 12 short facts, fewer long ones (about 8,000 characters), and an explicit limit is a plain count', async () => {
+  const { call, service } = await connect();
+  for (let i = 0; i < 15; i++) await service.remember({ kind: 'decision', content: `orchard fact number ${i} about apple trees`, project: 'orchard', allowDuplicate: true, newProject: true }, { type: 'owner' });
+  assert.equal(factIds((await call('recall', { query: 'orchard apple trees' })).text), 12);
+  assert.equal(factIds((await call('recall', { query: 'orchard apple trees', limit: 5 })).text), 5);
+});
+
+test('recall without limit stops near 8,000 characters of facts; limit 15 still gives 15', async () => {
+  const { call, service } = await connect();
+  for (let i = 0; i < 15; i++) {
+    await service.remember({ kind: 'decision', content: `orchard long fact ${i} about apple trees ${'and the pruning plan for the winter '.repeat(24)}`.slice(0, 900), project: 'orchard', allowDuplicate: true, newProject: true }, { type: 'owner' });
+  }
+  assert.equal(factIds((await call('recall', { query: 'orchard apple trees pruning' })).text), 8);
+  assert.equal(factIds((await call('recall', { query: 'orchard apple trees pruning', limit: 15 })).text), 15);
+});
+
+test('recall describes its limit with the default of 12 within about 1,500 words', async () => {
+  const { client } = await connect();
+  const limit = (await client.listTools()).tools.find((t) => t.name === 'recall')!.inputSchema.properties?.limit as { description?: string };
+  assert.equal(limit.description, 'How many results, 1–20; when left out, up to 12 within about 1,500 words.');
+});
+test('remember\'s description reads as whole sentences around "One topic per fact"', async () => {
+  const { client } = await connect();
+  const d = (await client.listTools()).tools.find((t) => t.name === 'remember')!.description ?? '';
+  assert.match(d, /and a date on anything that will change\. One topic per fact: if what you want to save covers two things, save two facts\. /);
+});
+
+// ---- B10: since/until, the time the question was read as, page-hit context ----
+async function timedWorld() {
+  let t = Date.parse('2026-09-15T10:00:00Z');
+  const given = makeService({ now: () => new Date(t) });
+  const c = await connect('Claude Code', {}, given);
+  const save = async (content: string) => { await given.service.remember({ kind: 'decision', content, project: 'homelab', allowDuplicate: true, newProject: true }, { type: 'owner' }); };
+  await save('homelab backups run weekly to the NAS');
+  t = Date.parse('2026-11-04T10:00:00Z');
+  await save('homelab backups run nightly to the NAS');
+  t = Date.parse('2026-11-10T10:00:00Z');
+  return { ...c, save, at: (iso: string) => { t = Date.parse(iso); } };
+}
+
+test('recall takes since alone or until alone, and says how it read the time', async () => {
+  const { call } = await timedWorld();
+  const since = await call('recall', { query: 'homelab backups', since: '2026-11-03' });
+  assert.equal(since.isError, false, since.text);
+  assert.match(since.text, /time_range: \{"from":"2026-11-03","to":"2026-11-10","source":"given"\}/);
+  const until = await call('recall', { query: 'homelab backups', until: '2026-10-01' });
+  assert.match(until.text, /time_range: \{"from":"1970-01-01","to":"2026-10-01","source":"given"\}/);
+  const asked = await call('recall', { query: 'what did we decide last week about homelab backups' });
+  assert.match(asked.text, /time_range: \{"from":"2026-11-02","to":"2026-11-08","source":"question"\}/);
+  assert.match(asked.text, /"content":"homelab backups run nightly to the NAS"[^}]*"in_range":true/);
+  const none = await call('recall', { query: 'homelab backups' });
+  assert.doesNotMatch(none.text, /time_range|in_range/);
+});
+
+test('since after until is a clear tool error; a date that is not YYYY-MM-DD too', async () => {
+  const { call } = await timedWorld();
+  const r = await call('recall', { query: 'backups', since: '2026-11-05', until: '2026-11-01' });
+  assert.equal(r.isError, true);
+  assert.match(r.text, /since is after until/);
+  const bad = await call('recall', { query: 'backups', since: '2026-02-30' });
+  assert.equal(bad.isError, true);
+  assert.match(bad.text, /since: a date as YYYY-MM-DD/);
+});
+
+test('explicit dates that find fewer than three facts say so and give the nearest overall', async () => {
+  const { call } = await timedWorld();
+  const r = await call('recall', { query: 'homelab backups', since: '2026-11-01' });
+  assert.match(r.text, /No facts saved or dated in that range matched closely; these are the nearest overall\./);
+  assert.match(r.text, /run weekly/);
+});
+
+test('since and until are described for the assistant', async () => {
+  const { client } = await connect();
+  const props = (await client.listTools()).tools.find((t) => t.name === 'recall')!.inputSchema.properties as Record<string, { description?: string }>;
+  const want = 'Optional dates (YYYY-MM-DD) when the question is about a time ("last week", "in October"): only facts saved or dated then are searched. Leave out otherwise; recall also reads common time words itself.';
+  assert.equal(props.since?.description, want);
+  assert.equal(props.until?.description, want);
+});
+
+test('a page hit in recall shows its heading path and the passage that matched', async () => {
+  const given = makeService();
+  const { call } = await connect('Claude Code', {}, given);
+  const filler = Array.from({ length: 90 }, (_, i) => `word${i}`).join(' ');
+  await makePages(given).create({ title: 'homelab — the mini PC', area: 'start', body: `## Stack and where it lives\n\nDocker.\n\n### Backups\n\n${filler} The restic retention keeps 7 daily snapshots. ${filler}\n` }, 'owner');
+  const r = await call('recall', { query: 'restic retention' });
+  assert.match(r.text, /"heading":"Backups","heading_path":"Stack and where it lives › Backups","snippet":"…[^"]*restic retention keeps 7 daily/);
+});
+test('blank since and until are left out, as other optional fields are', async () => {
+  const { call } = await timedWorld();
+  const r = await call('recall', { query: 'homelab backups', since: '', until: '  ' });
+  assert.equal(r.isError, false, r.text);
+  assert.doesNotMatch(r.text, /time_range/);
 });

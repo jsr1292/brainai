@@ -11,7 +11,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DEFAULT_DUPLICATE_THRESHOLD, DEFAULT_MIN_RECALL_SIMILARITY, DEFAULT_RECALL_CONFIDENT_SIMILARITY, DEFAULT_RECALL_WINDOW } from '../config.js';
+import { profileFor } from '../memory/embeddingProfile.js';
 import { openDb } from '../db.js';
 import { createLocalEmbedder } from '../memory/embedder.js';
 import { createLocalReranker, RERANK_MODEL } from '../memory/reranker.js';
@@ -33,6 +33,8 @@ if (evidence !== 'audited' && evidence !== 'original') throw new Error('--eviden
 const againstFile = arg('--against', '');
 /** --pack <chars> saves runs of turns of one session as long facts, up to that many characters (0: one turn per fact). */
 const pack = Math.max(0, Math.min(1000, Number(arg('--pack', '0')) || 0));
+/** --dated (B10): each turn saved on its session's day, the questions asked the day after the last session. */
+const dated = process.argv.includes('--dated');
 
 /** The cached copy of a pinned download, fetched once and checked every time. */
 async function pinned(name: string, url: string, sha256: string, what: string): Promise<Buffer> {
@@ -56,19 +58,23 @@ const audit = evidence === 'audited'
   ? applyAudit(conversations, (await pinned('locomo-audit-errors.json', LOCOMO_AUDIT_URL, LOCOMO_AUDIT_SHA256, `the LoCoMo audit (dial481/locomo-audit at ${LOCOMO_AUDIT_COMMIT.slice(0, 7)}, CC BY-NC 4.0)`)).toString('utf8'))
   : null;
 
-const embedder = await createLocalEmbedder({ modelDir: process.env.MODEL_DIR ?? './models', allowRemote: false });
+// EMBED_MODEL picks the model and every cut-off tuned for it, as the server does.
+const profile = profileFor(process.env.EMBED_MODEL);
+const embedder = await createLocalEmbedder({ modelDir: process.env.MODEL_DIR ?? './models', allowRemote: false, model: profile });
 const reranker = rerank ? await createLocalReranker({ modelDir: process.env.MODEL_DIR ?? './models', allowRemote: false }) : undefined;
 const all: { id: string; category: number; rank: number | null }[] = [];
 const skipped = { adversarial: 0, noEvidence: 0, unsaved: 0 };
 let turns = 0;
 const started = Date.now();
 for (const c of conversations) {
-  const store = new MemoryStore(openDb(':memory:'), () => new Date());
+  let at: Date | null = null;
+  const store = new MemoryStore(openDb(':memory:'), () => at ?? new Date());
   const service = new MemoryService(store, embedder, {
-    duplicateThreshold: DEFAULT_DUPLICATE_THRESHOLD, minRecallSimilarity: DEFAULT_MIN_RECALL_SIMILARITY,
-    recallConfidentSimilarity: DEFAULT_RECALL_CONFIDENT_SIMILARITY, recallWindow: DEFAULT_RECALL_WINDOW, reranker,
+    duplicateThreshold: profile.duplicate, minRecallSimilarity: profile.minRecall,
+    recallConfidentSimilarity: profile.confident, recallWindow: profile.window, reranker,
+    keywordWeight: profile.keywordWeight, rerankPrior: profile.rerankPrior, closeFacts: profile.closeFacts,
   });
-  const r = await benchConversation(c, service, { limit, pack });
+  const r = await benchConversation(c, service, { limit, pack, dated: dated ? (d) => { at = d; } : undefined });
   all.push(...r.results);
   turns += r.saved;
   for (const k of ['adversarial', 'noEvidence', 'unsaved'] as const) skipped[k] += r.skipped[k];
@@ -95,9 +101,9 @@ if (againstFile) {
     console.log(`Against ${againstFile}, within ${k}: ${gained.length} gained, ${lost.length} lost (net ${gained.length - lost.length >= 0 ? '+' : ''}${gained.length - lost.length})`);
   }
 }
-const variant = `${rerank ? '' : '-norerank'}${audit ? '' : '-original'}${pack ? `-pack${pack}` : ''}`;
+const variant = `${rerank ? '' : '-norerank'}${audit ? '' : '-original'}${pack ? `-pack${pack}` : ''}${dated ? '-dated' : ''}`;
 writeFileSync(join(out, `locomo-${day}-top${limit}${variant}.json`), JSON.stringify({
-  date: day, data: { commit: LOCOMO_COMMIT, sha256: LOCOMO_SHA256 }, evidence: audit ? { audit: LOCOMO_AUDIT_COMMIT, sha256: LOCOMO_AUDIT_SHA256, corrected: audit.fixed } : 'original', model: 'Xenova/multilingual-e5-small (q8)', reranker: rerank ? RERANK_MODEL : null,
-  settings: { duplicateThreshold: DEFAULT_DUPLICATE_THRESHOLD, minRecallSimilarity: DEFAULT_MIN_RECALL_SIMILARITY, recallConfidentSimilarity: DEFAULT_RECALL_CONFIDENT_SIMILARITY, recallWindow: DEFAULT_RECALL_WINDOW, limit, pack },
+  date: day, data: { commit: LOCOMO_COMMIT, sha256: LOCOMO_SHA256 }, evidence: audit ? { audit: LOCOMO_AUDIT_COMMIT, sha256: LOCOMO_AUDIT_SHA256, corrected: audit.fixed } : 'original', model: profile.id, reranker: rerank ? RERANK_MODEL : null,
+  settings: { ...profile, limit, pack },
   turns, skipped, scores, perQuestion,
 }, null, 2));

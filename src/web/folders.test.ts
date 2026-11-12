@@ -17,12 +17,12 @@ function report(app: Awaited<ReturnType<typeof start>>['app'], folders: Record<s
   app.deps.devices.storeReport(device.id, folders.map((x) => ({ git: true, branch: 'main', uncommitted: 0, unpushed: 0, lastCommit: null, remotes: [], ...x })) as never);
 }
 
-test('the panel shows the folder\'s git state, and the row shows not pushed', async (t) => {
+test('the panel shows the folder\'s git state, and the row shows the "work not safe" mark', async (t) => {
   const { app, f } = await start(t);
   report(app, [{ name: 'wildlog', uncommitted: 3, unpushed: 2, lastCommit: new Date(Date.now() - 2 * 86_400_000).toISOString() }]);
   const body = await (await f('/?project=wildlog')).text();
   assert.match(body, /<li class="gitline">Folder <code>~\/Projects\/wildlog<\/code> · main · 3 uncommitted · 2 not pushed · last commit <time[^>]*>/);
-  assert.match(body, /<span class="prow-name">wildlog<\/span>[\s\S]{0,400}<span class="chip plain">not pushed<\/span>/);
+  assert.match(body, /<span class="prow-name">wildlog<\/span>[\s\S]{0,400}<span class="pwarn" role="img" aria-label="Work not safe: not pushed"/);
 });
 
 test('a folder whose git state is unknown says so instead of 0 uncommitted and 0 not pushed', async (t) => {
@@ -132,11 +132,12 @@ test('a done project still shows not pushed, and git activity counts as the last
   report(app, [{ name: 'oldapp', unpushed: 3 }, { name: 'wildlog', lastCommit: app.deps.now().toISOString() }]);
   const f = await loggedIn(app);
   const body = await (await f('/')).text();
-  const done = body.slice(body.indexOf('<summary class="row nolead">Done'));
-  assert.match(done, /<span class="prow-name">oldapp<\/span>[\s\S]{0,400}<span class="chip plain">not pushed<\/span>/);
-  const wine = body.slice(body.indexOf('<span class="prow-name">wildlog</span>'), body.indexOf('</a>', body.indexOf('<span class="prow-name">wildlog</span>')));
-  assert.doesNotMatch(wine, /row-note">quiet/);
-  assert.match(wine, /<span class="prow-when">just now<\/span>/);
+  // Done projects have no five areas, but unpushed work on one still gets the mark (it lives in its area's fold).
+  const done = body.slice(body.indexOf('<summary class="row nolead">1 done'));
+  assert.match(done, /<span class="prow-name">oldapp<\/span>[\s\S]{0,400}<span class="pwarn" role="img" aria-label="Work not safe: not pushed"/);
+  // A commit just now keeps wildlog awake: a live tile with the green dot, though its facts are 60 days old.
+  const wine = body.slice(body.lastIndexOf('<a class="pcard ptile', body.indexOf('<span class="pcard-name">wildlog</span>')), body.indexOf('</a>', body.indexOf('<span class="pcard-name">wildlog</span>')));
+  assert.match(wine, /<span class="pdot d-on"/);
   assert.doesNotMatch(body, /wildlog has been quiet/);
 });
 

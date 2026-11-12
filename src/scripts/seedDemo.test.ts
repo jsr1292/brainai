@@ -26,7 +26,7 @@ test('the demo brain has every project, a week of facts, two pages, a discussion
   const roadmap = store.list({ project: 'garden-club-site', kind: 'roadmap' })[0]!;
   assert.match(roadmap.content, /^Done: plot booking form \(2026-10-25\); sign-in links by email \(2026-10-31\); members page \(2026-11-04\)/);
   const projects = db.prepare('SELECT name, state FROM projects ORDER BY name').all() as { name: string; state: string }[];
-  assert.equal(projects.length, 9);
+  assert.equal(projects.length, 10, 'the nine demo projects and developer-handbook');
   assert.deepEqual(projects.filter((p) => p.state !== 'open').map((p) => `${p.name}:${p.state}`), ['photo-archive:parked', 'recipe-box:idea']);
   assert.equal((db.prepare('SELECT count(*) AS n FROM discussions').get() as { n: number }).n, 1);
   const auth = new OwnerAuth(db, () => new Date());
@@ -47,4 +47,18 @@ test('the demo only writes into a new or empty folder, never one that holds anyt
   writeFileSync(join(dir, 'notes.txt'), 'mine');
   await assert.rejects(seedDemo(dir, createFakeEmbedder()), /refusing: .* is not empty/);
   await seedDemo(join(dir, 'new-demo'), createFakeEmbedder());
+});
+
+test('the demo brain has five-area statuses and a handbook topic', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-demo-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  await seedDemo(dir, createFakeEmbedder(), Date.parse('2026-11-06T12:00:00Z'));
+  const db = openDb(join(dir, 'memory.db'));
+  t.after(() => db.close());
+  const checks = db.prepare('SELECT project, area, status FROM project_checks ORDER BY project, area').all() as { project: string; area: string; status: string }[];
+  assert.ok(checks.length >= 4, String(checks.length));
+  assert.ok(checks.some((c) => c.status === 'not_needed'), 'one area shows the dash');
+  const topics = db.prepare('SELECT title, level FROM handbook_topics').all() as { title: string; level: string }[];
+  assert.deepEqual(topics, [{ title: 'What a commit and a push are', level: 'helped' }]);
+  assert.equal((db.prepare("SELECT state FROM projects WHERE name = 'developer-handbook'").get() as { state: string }).state, 'open');
 });

@@ -136,3 +136,19 @@ test('close facts work for profile facts filed under a project too', async () =>
   const b = await save('Runs twice a week in the evening');
   assert.deepEqual(w.service.closeFacts(b.id).map((c) => c.memory.id), [a.id]);
 });
+
+test('close facts have their own floor (the search model\'s closeFacts), not recall\'s confident level', async () => {
+  const { MemoryService } = await import('./service.js');
+  const { MemoryStore } = await import('./store.js');
+  const { openDb } = await import('../db.js');
+  const { createFakeEmbedder } = await import('./fakeEmbedder.js');
+  const brain = (closeFacts?: number) => new MemoryService(new MemoryStore(openDb(':memory:'), () => new Date()), createFakeEmbedder(),
+    { duplicateThreshold: 0.99, minRecallSimilarity: 0.2, recallConfidentSimilarity: 0.2, closeFacts });
+  for (const [floor, expected] of [[undefined, 1], [0.95, 0]] as const) {
+    const service = brain(floor);
+    const save = async (content: string) => ((await service.remember({ kind: 'profile', content, project: 'fitness', allowDuplicate: true }, owner)) as { memory: Memory }).memory;
+    await save('Runs three times a week in the morning');
+    const b = await save('Runs twice a week in the evening');
+    assert.equal(service.closeFacts(b.id).length, expected, `closeFacts ${floor}`);
+  }
+});

@@ -1,3 +1,5 @@
+import { LearningError, type LearningService } from '../learning/service.js';
+import { CHECK_AREAS, CHECK_LABELS, CHECK_STATUSES, LESSON_LEVELS, MAX_NOTE, MAX_TOPIC, STATUS_LABELS, type AreaState, type CheckArea, type CheckStatus, type LessonLevel } from '../learning/types.js';
 import type { Health } from '../health/health.js';
 import type { ImageStore } from '../images/store.js';
 import type { UploadLinks } from '../images/uploadLinks.js';
@@ -25,6 +27,8 @@ import { NoteError, type NoteService } from '../pages/notes.js';
 import { NEWER_DECISIONS } from '../pages/freshness.js';
 import type { PageService } from '../pages/service.js';
 import { PageError, type PageHeader } from '../pages/types.js';
+import { packByBudget } from './budget.js';
+import { isDay } from '../memory/timeRange.js';
 import { DISCUSSIONS_ONLY_INSTRUCTIONS, readOnlyInstructions, SERVER_INSTRUCTIONS, WORK_INSTRUCTIONS } from './instructions.js';
 import { WEAK_SCORE } from '../memory/reranker.js';
 
@@ -36,6 +40,16 @@ const memoryJson = (m: Memory) => ({
 const projectInfoJson = (p: Project, quiet: boolean) => ({
   one_liner: p.oneLiner, area: p.area, state: p.state, pinned: p.pinnedAt !== null, quiet, folder: p.folder, url: p.url, runs_on: p.runsOn, nicknames: p.nicknames,
 });
+/** B9: a fact's search words, in a briefing only (never in recall): an assistant sees which facts still lack them. */
+/** B9: recall's answer to an assistant when it gives no limit: up to 12 facts within about 1,500 words, never fewer than 5. */
+export const MCP_RECALL_DEFAULT = 12;
+const RECALL_BUDGET = { budget: 8000, min: 5 };
+/** B10: the since/until fields of recall. */
+const timeArg = z.string().optional().describe('Optional dates (YYYY-MM-DD) when the question is about a time ("last week", "in October"): only facts saved or dated then are searched. Leave out otherwise; recall also reads common time words itself.');
+const FELL_BACK = 'No facts saved or dated in that range matched closely; these are the nearest overall.';
+const keysJson = (m: Memory) => (m.keys === '' ? {} : { keys: m.keys });
+/** The `keys` field of remember and update_memory (B9). */
+const keysArg = z.string().optional().describe('Optional search words for this fact, up to 15, that someone might search for but the text doesn\'t say: other names and nicknames, the tools, people or places involved, the same idea in English and Spanish, the absolute date of an event ("2026-11-03"). Never shown in results. Don\'t repeat the text.');
 const suggestionJson = (s: Suggestion) => ({ id: s.id, action: s.action, content: s.content, status: s.status, ...(s.reason ? { held_because: s.reason } : {}) });
 
 /** Wraps data as labelled information. `<` is escaped (still valid JSON) so stored text can never close the wrapper with its own closing tag. */
@@ -146,10 +160,16 @@ export function servedToolNames(server: McpServer): string[] {
   return Object.keys((server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools).sort();
 }
 
+const HANDBOOK_PROJECT = 'developer-handbook';
+const areaJson = (a: AreaState) => ({
+  area: a.area, name: CHECK_LABELS[a.area].name, status: a.status, note: a.note, automatic: a.automatic,
+  set_by: a.setBy, set_at: a.setAt, source: a.source, snoozed_until: a.snoozedUntil,
+});
+
 export function buildMcpServer(
   service: MemoryService,
   actorName: string,
-  opts: { registry: ProjectStore; growth: GrowthService; pages: PageService; notes: NoteService; discussions?: DiscussionService; reviews?: ReviewService; access?: Access; projects?: string[]; mode?: Mode; askCommands?: Record<string, string>; clientId?: string; images?: ImageStore; diagramChecks?: DiagramChecks; uploadLinks?: UploadLinks; grantId?: string; publicUrl?: URL; /** B1: brain health as it is now, for weekly_review on a full connection. */ health?: () => Health;
+  opts: { registry: ProjectStore; growth: GrowthService; /** The five areas and the handbook; without it the two tools and the brief's five_areas are left out. */ learning?: LearningService; pages: PageService; notes: NoteService; discussions?: DiscussionService; reviews?: ReviewService; access?: Access; projects?: string[]; mode?: Mode; askCommands?: Record<string, string>; clientId?: string; images?: ImageStore; diagramChecks?: DiagramChecks; uploadLinks?: UploadLinks; grantId?: string; publicUrl?: URL; /** B1: brain health as it is now, for weekly_review on a full connection. */ health?: () => Health;
     /** Guided setup (§17b): the setup number load_profile was given, for the grant to record. */
     onSetup?: (version: number) => void;
     /** Shared skills (§17c): listed, loaded and proposed by Full connections only. */
@@ -268,9 +288,25 @@ export function buildMcpServer(
     } catch (e) {
       // A save from an older copy: the current memory comes back as data, to merge the change into.
       if (e instanceof MemoryError && e.code === 'changed' && e.current) return { ...withData(e.message, [memoryJson(e.current)]), isError: true };
-      if (e instanceof MemoryError || e instanceof ProjectError || e instanceof GrowthError || e instanceof PageError || e instanceof NoteError || e instanceof SkillError) return { content: [{ type: 'text', text: e.message }], isError: true };
+      if (e instanceof MemoryError || e instanceof ProjectError || e instanceof GrowthError || e instanceof PageError || e instanceof NoteError || e instanceof SkillError || e instanceof LearningError) return { content: [{ type: 'text', text: e.message }], isError: true };
       throw e;
     }
+  };
+
+  /** The brief's learning part: the five areas, the next one to bring up, and the handbook topics applied on the project. */
+  const learningJson = (project: string): Record<string, unknown> => {
+    if (!opts.learning) return {};
+    const areas = opts.learning.areas(project);
+    return {
+      five_areas: areas ? areas.map(areaJson) : null,
+      next_area: areas ? opts.learning.nextArea(project) : null,
+      // A full connection sees the whole handbook (so nothing the owner learned on another project is explained from zero);
+      // a read-only one only the topics of the project it reads.
+      handbook: (readOnly ? opts.learning.topics(project) : opts.learning.topics()).map((t) => ({
+        title: t.title, level: t.level, page_id: t.pageId,
+        projects: readOnly ? t.projects.filter((p) => visible(p)) : t.projects, here: t.projects.includes(service.projectNamed(project)),
+      })),
+    };
   };
 
   if (opts.discussions && !readOnly) {
@@ -310,12 +346,26 @@ export function buildMcpServer(
       query: z.string(),
       kind: kind.optional(),
       project: z.string().optional(),
-      limit: z.number().int().min(1).max(20).optional(),
+      limit: z.number().int().min(1).max(20).optional().describe('How many results, 1–20; when left out, up to 12 within about 1,500 words.'),
       include_replaced: z.boolean().optional().describe('Also return facts that newer ones replaced (after the current ones, at most 5), each with what replaced it. For questions like "why did we drop X?".'),
-      alt_queries: z.array(z.string()).max(2).optional().describe('Up to 2 other phrasings searched together with query: an English version when the question is in another language, '
-        + "or the question with a project's real name instead of a nickname. Leave it out when query is already in English and uses real names."),
+      since: timeArg,
+      until: timeArg,
+      // Measured on LoCoMo with EmbeddingGemma (research 2026-11-10): a blind one-sentence guess took found first from
+      // 57.0% to 60.2% and the top 8 from 86.6% to 88.9%, at one more reranker pass a search.
+      alt_queries: z.array(z.string()).max(2).optional().describe('Up to 2 other phrasings searched together with query. Usually send one: '
+        + 'one sentence written as the stored fact would read if it exists, a guess written without looking anything up '
+        + '(for "what database does casa use?": "casa stores its data in SQLite"). Add an English version, with the project\'s real name instead of a nickname, '
+        + 'when the question is in another language or uses a nickname. These phrasings only steer the search: they are never saved or shown.'),
     },
-  }, guard('recall', async (a: { query: string; kind?: string; project?: string; limit?: number; include_replaced?: boolean; alt_queries?: string[] }) => {
+  }, guard('recall', async (a: { query: string; kind?: string; project?: string; limit?: number; include_replaced?: boolean; alt_queries?: string[]; since?: string; until?: string }) => {
+    // B10: dates the assistant gives narrow the search; they are checked before anything is embedded. A blank one is
+    // left out, as some clients fill optional fields with "".
+    a = { ...a, since: a.since?.trim() || undefined, until: a.until?.trim() || undefined };
+    for (const [name, v] of [['since', a.since], ['until', a.until]] as const) {
+      if (v !== undefined && !isDay(v)) throw new MemoryError('invalid', `${name}: a date as YYYY-MM-DD, such as 2026-11-03; you sent ${JSON.stringify(v)}`);
+    }
+    if (a.since !== undefined && a.until !== undefined && a.since > a.until) throw new MemoryError('invalid', `since is after until (${a.since} > ${a.until}).`);
+    const given = a.since !== undefined || a.until !== undefined ? { from: a.since, to: a.until, strict: true } : undefined;
     const project = givenProject(a.project);
     const real = project === undefined ? undefined : service.projectNamed(project);
     // A read-only connection asking for a project it is not granted is told which ones it can read (as project_brief
@@ -327,17 +377,24 @@ export function buildMcpServer(
     // One embedding of the query serves both layers: facts, then page sections.
     const vector = await opts.pages.embedQuery(a.query);
     let best: number | null = null;
-    const results = await service.recall({ query: a.query, kind: a.kind as never, project, projects: readable, limit: a.limit, vector, replaced: a.include_replaced ? 'include' : 'hide', alt: a.alt_queries, report: (r) => { best = r.bestScore; } });
+    let time: { timeRange?: { from: string; to: string; source: 'question' | 'given' }; fellBack?: boolean } = {};
+    const found = await service.recall({ query: a.query, kind: a.kind as never, project, projects: readable, limit: a.limit ?? MCP_RECALL_DEFAULT, vector, replaced: a.include_replaced ? 'include' : 'hide', alt: a.alt_queries, range: given, readTime: true,
+      report: (r) => { best = r.bestScore; time = { timeRange: r.timeRange, fellBack: r.fellBack }; } });
+    // An explicit limit is a plain count; the default stops at the size budget. Replaced facts don't count toward it.
+    const results = a.limit !== undefined ? found
+      : [...packByBudget(found.filter((r) => !r.replaced), (r) => r.memory.content.length, RECALL_BUDGET), ...found.filter((r) => r.replaced)];
     // B6: no answer is hidden on the reranker's score (real and unrelated questions overlap); a low one is only said.
     const weak = results.length > 0 && best !== null && best < WEAK_SCORE;
     const mark = disagreeMarks();
     const rows = results.map((r) => {
       if (r.replaced) return { ...memoryJson(r.memory), ...replacedJson(r.memory) };
       const newer = service.newerStatus(r.memory);
-      return { ...memoryJson(r.memory), ...(newer ? { newer_status: { id: newer.id, updatedAt: newer.updatedAt, excerpt: excerpt(newer.content) } } : {}), ...replacesJson(r.memory), ...mark(r.memory) };
+      return { ...memoryJson(r.memory), ...(newer ? { newer_status: { id: newer.id, updatedAt: newer.updatedAt, excerpt: excerpt(newer.content) } } : {}), ...replacesJson(r.memory), ...mark(r.memory), ...(r.inRange ? { in_range: true } : {}) };
     });
     const unsettled = rows.some((r) => 'disagrees_with' in r);
-    const facts = withData(`${weak ? WEAK_MATCH : ''}${saveNudge}${unsettled ? NOT_SETTLED : ''}`.trim(), rows);
+    // B10: how the time was read (dates only, never stored text), and the fall-back when given dates found too few facts.
+    const timeLine = time.timeRange ? `time_range: ${JSON.stringify(time.timeRange)}\n${time.fellBack ? `${FELL_BACK}\n` : ''}` : '';
+    const facts = withData(`${timeLine}${weak ? WEAK_MATCH : ''}${saveNudge}${unsettled ? NOT_SETTLED : ''}`.trim(), rows);
     // Asking for one kind of fact asks for facts only.
     // The grant and the project filter are applied inside the search, before its limit.
     const sections = a.kind !== undefined ? [] : opts.pages.search(a.query, vector, PAGE_HITS, service.recallFloor(),
@@ -346,7 +403,7 @@ export function buildMcpServer(
     // Worked out at this connection's scope, once for the hits' pages.
     const flags = opts.pages.freshness.forPages([...new Map(sections.map((h) => [h.page.id, h.page])).values()], scopeFor(service, readable, false));
     return text(`${(facts.content[0] as { text: string }).text}\nPage sections that match: open one with read_page (id and section).\n${wrapPages(sections.map((h) => ({
-      page_id: h.page.id, title: h.page.title, project: h.page.project, section: h.anchor, heading: h.heading, snippet: h.snippet, contains_instructions: h.instructionLike || titleInstructionLike(h.page), version: h.page.version,
+      page_id: h.page.id, title: h.page.title, project: h.page.project, section: h.anchor, heading: h.heading, heading_path: h.headingPath, snippet: h.snippet, contains_instructions: h.instructionLike || titleInstructionLike(h.page), version: h.page.version,
       ...(flags.get(h.page.id) ? { page_may_be_out_of_date: true } : {}),
     })))}`);
   }));
@@ -365,7 +422,7 @@ export function buildMcpServer(
       description: 'Saves a memory: a decision, a lasting fact, the status of ongoing work (one status per project: update it rather than adding another), '
         + 'or a project\'s roadmap (kind "roadmap", one per project, saving it again replaces it: lines "Done: step (YYYY-MM-DD); …", "Now: … (8/15)", "Next: step; step", "Later: step; step", "Waiting on you: item; item (by YYYY-MM-DD)"). '
         + 'Not for one-off questions and answers, discussion posts, or what is already in the project\'s files. One self-contained fact, with the project name, '
-        + 'and a date on anything that will change. Profile is only for facts useful in most conversations; other personal facts go under their area of life as the project. '
+        + 'and a date on anything that will change. One topic per fact: if what you want to save covers two things, save two facts. Profile is only for facts useful in most conversations; other personal facts go under their area of life as the project. '
         + `Profile facts are sent to the owner for approval. similar_exists, status_exists, was_replaced and new_project results explain what to do instead. ${contentLimit} ${SUPERSEDES_RULE}`,
       inputSchema: {
         kind,
@@ -377,13 +434,14 @@ export function buildMcpServer(
         separate_work: z.boolean().optional(),
         base_updated_at: baseUpdatedAt.describe(`For a roadmap: the updatedAt of the project's roadmap as you read it. ${baseUpdatedAt.description}`),
         supersedes: supersedesArg,
+        keys: keysArg,
       },
-    }, guard('remember', async (a: { kind: string; content: string; project?: string; tags?: string[]; allow_duplicate?: boolean; new_project?: boolean; separate_work?: boolean; base_updated_at?: string; supersedes?: string[] }) => {
+    }, guard('remember', async (a: { kind: string; content: string; project?: string; tags?: string[]; allow_duplicate?: boolean; new_project?: boolean; separate_work?: boolean; base_updated_at?: string; supersedes?: string[]; keys?: string }) => {
       // Only a decision, or a save that replaces facts, can tip a page; statuses, roadmaps and profile facts never do.
       const tips = (a.kind === 'decision' && !(a.tags ?? []).includes('status')) || (a.supersedes ?? []).length > 0;
       const before = tips ? flagsBefore(givenProject(a.project) ?? null, a.supersedes ?? []) : undefined;
       const r = await service.remember(
-        { kind: a.kind as never, content: a.content, project: givenProject(a.project), tags: a.tags, allowDuplicate: a.allow_duplicate, newProject: a.new_project, separateWork: a.separate_work, base: a.base_updated_at, supersedes: a.supersedes },
+        { kind: a.kind as never, content: a.content, project: givenProject(a.project), tags: a.tags, keys: a.keys, allowDuplicate: a.allow_duplicate, newProject: a.new_project, separateWork: a.separate_work, base: a.base_updated_at, supersedes: a.supersedes },
         actor,
       );
       if (r.status === 'saved') {
@@ -404,20 +462,22 @@ export function buildMcpServer(
 
     server.registerTool('update_memory', {
       title: 'Update memory',
-      description: `Replaces the content of an existing memory. Changes to profile memories are sent to the owner for approval. ${contentLimit} When a memory has grown, drop finished or outdated detail instead of appending. ${SUPERSEDES_RULE}`,
+      description: `Replaces the content of an existing memory, or only its search words (keys, with content left out). Changes to profile memories are sent to the owner for approval. ${contentLimit} When a memory has grown, drop finished or outdated detail instead of appending. ${SUPERSEDES_RULE}`,
       inputSchema: {
         id: z.string(),
-        content: z.string().describe(contentLimit),
+        content: z.string().optional().describe(`${contentLimit} Leave it out to change only the keys.`),
         project: z.string().optional(),
         tags: z.array(z.string()).optional(),
         new_project: z.boolean().optional(),
         base_updated_at: baseUpdatedAt,
         supersedes: supersedesArg,
+        keys: keysArg,
       },
-    }, guard('update_memory', async (a: { id: string; content: string; project?: string; tags?: string[]; new_project?: boolean; base_updated_at?: string; supersedes?: string[] }) => {
+    }, guard('update_memory', async (a: { id: string; content?: string; project?: string; tags?: string[]; new_project?: boolean; base_updated_at?: string; supersedes?: string[]; keys?: string }) => {
+      if (a.content === undefined && a.keys === undefined) throw new MemoryError('invalid', 'Give content, keys or both.');
       const was = service.get(a.id);
       const before = was && was.kind !== 'profile' && was.kind !== 'roadmap' ? flagsBefore(was.project, [a.id, ...(a.supersedes ?? [])], givenProject(a.project)) : undefined;
-      const r = await service.update(a.id, { content: a.content, project: givenProject(a.project), tags: a.tags, newProject: a.new_project, supersedes: a.supersedes }, actor, { base: a.base_updated_at });
+      const r = await service.update(a.id, { content: a.content, project: givenProject(a.project), tags: a.tags, keys: a.keys, newProject: a.new_project, supersedes: a.supersedes }, actor, { base: a.base_updated_at });
       if (r.status === 'updated') {
         const nudge = nudgeAfter(before, r.memory);
         const close = closeAfter(r.memory);
@@ -508,6 +568,56 @@ export function buildMcpServer(
         ? text(`Noted: ${r.observation.kind} in ${GROWTH_AREA_LABELS[r.observation.area as GrowthArea]}.`)
         : text(`Already noted: added as more evidence to an earlier observation (now ${r.observation.evidenceCount}).`);
     }));
+
+    if (opts.learning) {
+      const learning = opts.learning;
+      server.registerTool('set_project_area', {
+        title: 'Set a project area',
+        description: "Sets where a project stands in one of its five areas (safe: work is safe, finish: clear finish line, auto: runs by itself, alerts: you'd know if it broke, "
+          + 'upkeep: kept up to date), with a short note of what was done and why. Call it after working on an area with the owner, or with not_now when the owner says "not now".',
+        inputSchema: {
+          project: z.string(),
+          area: z.enum(CHECK_AREAS),
+          status: z.enum(CHECK_STATUSES).optional().describe('done, look (worth a look), todo (not started) or not_needed (needs a reason in the note). Required unless not_now.'),
+          note: z.string().optional().describe(`What was done and why, or why the area is not needed. Maximum ${MAX_NOTE} characters.`),
+          automatic: z.boolean().optional().describe('For upkeep: the update routine runs by itself (Dependabot, a scheduled job), so it never goes stale.'),
+          not_now: z.boolean().optional().describe('The owner said "not now": the area is not suggested again for two weeks.'),
+        },
+      }, guard('set_project_area', (a: { project: string; area: CheckArea; status?: CheckStatus; note?: string; automatic?: boolean; not_now?: boolean }) => {
+        const project = service.projectNamed(a.project);
+        if (!registry.get(project)) throw new ProjectError('not_found', `There is no project ${JSON.stringify(a.project)}. Call list_projects to see the project names.`);
+        if (a.not_now && a.status === undefined) {
+          const until = learning.notNow(project, a.area, actorName);
+          return text(`Not now: ${CHECK_LABELS[a.area].name} for ${project} won't be suggested again until ${until.slice(0, 10)}.`);
+        }
+        if (a.status === undefined) throw new LearningError('invalid', 'Give a status (done, look, todo or not_needed), or not_now: true.');
+        const st = learning.set(project, a.area, { status: a.status, note: a.note, automatic: a.automatic }, actorName);
+        return withData(`Saved: ${CHECK_LABELS[a.area].name} for ${project} is ${STATUS_LABELS[st.status]}.`, areaJson(st));
+      }));
+
+      server.registerTool('record_lesson', {
+        title: 'Record a lesson',
+        description: "Records what the owner learned about building software, as one topic of their developer handbook (one page per topic in project developer-handbook), "
+          + 'how far they got (seen: you explained it; helped: they did it with you; alone: they did it themselves), and the project where it was applied.',
+        inputSchema: {
+          title: z.string().describe(`The topic, plainly ("What a commit and a push are"). Maximum ${MAX_TOPIC} characters.`),
+          level: z.enum(LESSON_LEVELS),
+          project: z.string().optional().describe('The project it was applied on.'),
+          page_id: z.string().optional().describe("The topic's page in developer-handbook, once written."),
+        },
+      }, guard('record_lesson', (a: { title: string; level: LessonLevel; project?: string; page_id?: string }) => {
+        const project = givenProject(a.project);
+        if (project !== undefined && !registry.get(service.projectNamed(project))) {
+          throw new ProjectError('not_found', `There is no project ${JSON.stringify(a.project)}. Call list_projects to see the project names.`);
+        }
+        const t = learning.recordLesson({ title: a.title, level: a.level, project, pageId: a.page_id }, actorName);
+        // Only after the lesson is saved: a refused call leaves nothing behind.
+        if (!registry.get(HANDBOOK_PROJECT)) {
+          registry.create(HANDBOOK_PROJECT, { state: 'open', area: 'tools', oneLiner: 'What the owner has learned about building software, one topic per page' }, actorName);
+        }
+        return withData(`Recorded in the handbook: ${t.title} (${t.level}).`, { title: t.title, level: t.level, page_id: t.pageId, projects: t.projects });
+      }));
+    }
   }
 
   server.registerTool('project_brief', {
@@ -527,9 +637,9 @@ export function buildMcpServer(
       const info = registry.get(project);
       const pg = pagesOf(project);
       return withData(`${BRIEFING(project, readOnly)}${pg.open_notes.length > 0 ? NOTES_WAITING : ''}${flagLead(pg)} ${saveNudge}`.trimEnd(), {
-        roadmap: roadmap ? memoryJson(roadmap) : null, statuses: statuses.map((m) => ({ ...memoryJson(m), ...replacesJson(m), ...mark(m) })),
-        decisions: decisions.map((m) => ({ ...memoryJson(m), ...replacesJson(m), ...mark(m) })), omitted,
-        project_info: info ? projectInfoJson(info, service.isQuiet(project)) : null, ...pg,
+        roadmap: roadmap ? { ...memoryJson(roadmap), ...keysJson(roadmap) } : null, statuses: statuses.map((m) => ({ ...memoryJson(m), ...keysJson(m), ...replacesJson(m), ...mark(m) })),
+        decisions: decisions.map((m) => ({ ...memoryJson(m), ...keysJson(m), ...replacesJson(m), ...mark(m) })), omitted,
+        project_info: info ? projectInfoJson(info, service.isQuiet(project)) : null, ...pg, ...learningJson(project),
       });
     }
     // A project in the registry with no memories yet (an idea the owner jotted down) still has its info.
@@ -537,7 +647,7 @@ export function buildMcpServer(
     if (bare) {
       const pg = pagesOf(bare.name);
       return withData(`${BRIEFING(bare.name, readOnly)} It has no memories yet.${pg.open_notes.length > 0 ? NOTES_WAITING : ''}${flagLead(pg)}`, {
-        roadmap: null, statuses: [], decisions: [], omitted: 0, project_info: projectInfoJson(bare, false), ...pg,
+        roadmap: null, statuses: [], decisions: [], omitted: 0, project_info: projectInfoJson(bare, false), ...pg, ...learningJson(bare.name),
       });
     }
     // A read-only connection is never told other projects' names.

@@ -101,6 +101,68 @@ and the one about that part usually comes first. The author's recall test has th
 aside and 100 drafted from the author's facts in November 2026 (kept aside too). On the 100 the right fact came first
 for 89% of questions instead of 86%; the 52 and the 20 did not change.
 
+### Search words and 12 results (B9)
+
+Since B9 a saving assistant can add `keys` to a fact: up to 15 search words the text doesn't say (other names, the
+other language, an event's date). They are embedded with the fact and put in the keyword index, and never shown. The
+gain depends on assistants writing them, so it was simulated, not measured on real use: on 742 LoCoMo questions with a
+simulated saving assistant, keys in the keyword index alone took the top 8 from 73.5% to 76.0%, and fact and keys
+embedded as one text took it to 76.8% (both on today's e5-small; with a better embedder the second reached 87.7% from
+84.4%). Details are in the research report "Recall precision beyond B4" (§3.6). The two together were not measured.
+
+Assistants now get up to 12 facts per recall instead of 8, within about 8,000 characters. On LoCoMo the evidence was in
+the top 8 for 73.4% of questions, the top 10 for 74.6% and the top 20 for 76.6%, so 12 adds a point or two; the
+dashboard is unchanged.
+
+### Time questions (B10)
+
+Since B10, recall reads time words in a question ("last week", "in July 2023", "hace 3 días", "recently") as a range of
+days. The facts saved or dated in that range (a date like "2026-11-03" written in the fact counts) that the search
+would match anyway get one more ranked list in the fusion: a boost, not a filter. A range that holds more than half the
+facts adds nothing, the dashboard's own searches don't read time words, and an assistant can pass exact `since`/`until`
+dates to narrow the search. 244 of LoCoMo's 1,986 questions hold time words.
+
+As the bench normally runs, every turn is saved on the day of the run, so no time word can pick out a session.
+`--dated` saves each turn on its session's day and asks the questions the day after the last session. Top 20, reranker
+on, audited evidence, run on 2026-11-11:
+
+| All 1,536 questions | @1 | @5 | @8 | @10 | @20 | MRR |
+|---|---:|---:|---:|---:|---:|---:|
+| Undated (as before B10) | 51.9 | 70.9 | 73.5 | 74.7 | 76.6 | 0.604 |
+| Dated | 52.7 | 71.7 | 74.3 | 75.5 | 77.6 | 0.611 |
+
+Paired: 15 questions gained and 3 lost within the first result (net +12), 16 gained and 4 lost within 8 (net +12). Only
+questions with time words can move; the undated run matches the run before B10 exactly. On the author's own recall test
+(170 questions, almost none about a time) nothing changed. The reranker reads only the
+text, so the boost mostly decides which facts reach it: with the reranker on, the gain is small.
+
+### EmbeddingGemma as the search model
+
+Since the switch to EmbeddingGemma-300m (4-bit ONNX, 768 dimensions; `EMBED_MODEL=e5` keeps the old model), every
+cut-off has a value tuned for it (`src/memory/embeddingProfile.ts`, calibrated with `src/scripts/calibrateEmbedder.ts`):
+a recall floor of 0.3 with no window, keyword ranks weighted 0 (meaning alone orders the candidates; keyword-only
+matches still reach the reranker), and the search order blended into the reranker's (rerankPrior 1). Top 20, reranker
+on, audited evidence, run on 2026-11-11:
+
+| All 1,536 questions | @1 | @5 | @8 | @10 | @20 | MRR |
+|---|---:|---:|---:|---:|---:|---:|
+| e5-small (before) | 51.9 | 70.9 | 73.5 | 74.7 | 76.6 | 0.604 |
+| EmbeddingGemma | 57.0 | 81.6 | 86.6 | 88.3 | 91.7 | 0.678 |
+
+Paired: 124 questions gained and 46 lost within the first result (net +78), 226 gained and 25 lost within 8 (net +201).
+The search now finds the right turn among its first 20 for 92% of questions, so the reranker has it to work with far
+more often. On the author's own recall test (168 questions, on the mini PC that serves it, the same backup copy for
+both): found first 149 instead of 143, in the top 3 162 instead of 160, in the top 8 165 instead of 166 (the one fact
+that left the top 8 is within the 12 results an assistant gets). The 20 held-out questions alone: first 16 instead of
+15, top 8 19 of 19 for both. Caveat: the keyword weight and rank prior were chosen on all three question files, the
+held-out ones included, so those are not an untouched check. On a Mac the same settings gave 150 / 162 / 166 (ONNX
+kernels differ slightly between ARM and x86).
+
+Remote models were tried on the same bench before choosing (OpenRouter, 2026-11-11): OpenAI text-embedding-3-small
+reached 87.2% at 20, Gemini embedding 87.1%, bge-m3 83.1%, Qwen3-Embedding-8B 80.7%; all below the local model. A paid
+reranker (Voyage rerank-2.5) on top of EmbeddingGemma reached 72.3% first on LoCoMo but changed nothing on the author's
+own questions, so it was not adopted.
+
 ### Without the reranker
 
 The same data, BrainAI 1.0.1's search alone (`npm run bench:locomo -- --limit 20 --rerank off`); 31 seconds.

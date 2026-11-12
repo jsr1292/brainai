@@ -50,9 +50,9 @@
   .side-place[aria-current] { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
   .side-sub { display: flex; align-items: center; height: 30px; margin-left: 12px; padding: 0 12px; border-radius: var(--r-pill); color: var(--muted); font-size: var(--t-sub); font-weight: 500; line-height: 1; }
   .side-sub[aria-current="page"] { background: var(--raised); color: var(--fg); font-weight: 600; }
-  /* The one orange dot: something needs you. On the black pill it is ringed so it still reads. */
-  .side-need { flex: none; width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--accent); }
-  .side-place[aria-current] .side-need { box-shadow: 0 0 0 2px var(--primary-fg); }
+  /* The Inbox counts what waits for the owner. On the black pill it inverts, so the number still reads. */
+  .side-count { flex: none; margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box; border-radius: var(--r-pill); background: var(--accent); color: var(--primary-fg); font-size: var(--t-label); font-weight: 700; line-height: 20px; text-align: center; }
+  .side-place[aria-current] .side-count { background: var(--primary-fg); color: var(--primary); }
   /* Settings sits at the foot, under a hairline, and speaks only when the backup is late. */
   .side-settings { position: relative; margin-top: auto; }
   .side-settings::before { content: ""; position: absolute; left: 0; right: 0; top: -11px; height: 1px; background: var(--line); }
@@ -87,169 +87,49 @@
   @media (min-width: 1440px) { .toc-fold { display: none; } }
 }
 
-/* ---- The desktop Projects home (design §4.1): the main column and a right column for Also open ---- */
+/* ---- The desktop Projects home (spec 2026-11-11): the areas in the main column; For you, Not in the brain yet and All
+   discussions in a right column. Tiles keep the phone's look, in a wider grid. ---- */
 @media (min-width: 1100px) {
   .phome:not(.has-panel) { max-width: none; }
-  /* Rows: 1 title and idea, 2 error, 3 banner, 4 For you heading, 5 For you, 6 empty line, 7 On the go, 8 and 9 the
-     Everything else heading and strip at S and M (9 is the 1fr row Also open's span crosses, so Also open's height never
-     stretches the left rows), 10 and 11 the heading and strip from L, under both columns. */
-  .phome:not(.has-panel) > .plist { display: grid; grid-template-columns: minmax(0, 1fr) var(--desk-right); grid-template-rows: repeat(8, auto) 1fr auto auto; column-gap: 28px; row-gap: 0; align-items: start; }
-  /* A column would be empty (nothing pinned, every open project pinned, or an empty brain): one column, no hole. */
-  .phome:not(.has-panel) > .plist:not(:has(#ongo)), .phome:not(.has-panel) > .plist:not(:has(#alsoopen)) { grid-template-columns: minmax(0, 1fr); }
+  /* Rows: 1 title and idea, 2 error, 3 banner, 4–6 the right column (For you heading, For you, the extras), 7 the 1fr
+     row the areas' span crosses, so a long areas column never stretches the right column's rows. */
+  .phome:not(.has-panel) > .plist { display: grid; grid-template-columns: minmax(0, 1fr) var(--desk-right); grid-template-rows: repeat(6, auto) 1fr; column-gap: 28px; row-gap: 0; align-items: start; }
   .phome:not(.has-panel) > .plist > h1 { grid-row: 1; grid-column: 1; justify-self: start; margin-bottom: 22px; }
   .phome:not(.has-panel) > .plist > form.idea { grid-row: 1; grid-column: 1 / -1; justify-self: end; margin-bottom: 22px; }
   .phome:not(.has-panel) > .plist > .error { grid-row: 2; grid-column: 1 / -1; margin-bottom: 22px; }
   .phome:not(.has-panel) > .plist > .banner { grid-row: 3; grid-column: 1 / -1; margin-bottom: 22px; }
-  .phome:not(.has-panel) > .plist > .fy-h { grid-row: 4; grid-column: 1; }
-  .phome:not(.has-panel) > .plist > .foryou { grid-row: 5; grid-column: 1; }
-  .phome:not(.has-panel) > .plist > .empty { grid-row: 6; grid-column: 1; }
-  .phome:not(.has-panel) > .plist > section:has(> #ongo) { grid-row: 7; grid-column: 1; }
-  .phome:not(.has-panel) > .plist > section:has(> #alsoopen) { grid-row: 4 / span 6; grid-column: 2; }
-  .phome:not(.has-panel) > .plist:not(:has(#ongo)) > section:has(> #alsoopen) { grid-column: 1; grid-row: 7; }
-  .phome:not(.has-panel) > .plist > .pf-h { grid-row: 8; grid-column: 1; margin-top: 28px; }
-  .phome:not(.has-panel) > .plist > .pfolds { grid-row: 9; grid-column: 1; margin-top: 0; }
-  /* The first heading of each column shares row 4's top edge; a left block after another is 28px below it. */
-  .phome:not(.has-panel) > .plist > section { margin: 0; }
+  .phome:not(.has-panel) > .plist > .fy-h { grid-row: 4; grid-column: 2; }
+  .phome:not(.has-panel) > .plist > .foryou { grid-row: 5; grid-column: 2; }
+  .phome:not(.has-panel) > .plist > .pextra { grid-row: 6; grid-column: 2; margin-top: 28px; }
+  .phome:not(.has-panel) > .plist:not(:has(> .foryou)) > .pextra { grid-row: 4; margin-top: 0; }
+  .phome:not(.has-panel) > .plist > .empty { grid-row: 4; grid-column: 1; }
+  .phome:not(.has-panel) > .plist > .pareas { grid-row: 4 / span 4; grid-column: 1; gap: 28px; }
   .phome:not(.has-panel) > .plist h2 { margin-bottom: 12px; }
-  .phome:not(.has-panel) > .plist > .foryou ~ .empty, .phome:not(.has-panel) > .plist > .foryou ~ section:has(> #ongo) { margin-top: 28px; }
-  .phome:not(.has-panel) > .plist:not(:has(#ongo)) > .foryou ~ section:has(> #alsoopen) { margin-top: 28px; }
   /* The date after the title, and a For you heading (desktop only) so both columns start on one line. */
   .phome:not(.has-panel) .phome-date[hidden] { display: inline; margin-left: 14px; font-size: var(--t-sub); font-weight: 400; color: var(--muted); letter-spacing: 0; }
   .phome:not(.has-panel) .fy-h[hidden] { display: block; }
-  .phome:not(.has-panel) .pf-h[hidden] { display: block; }
   /* The idea field sits right of the title at its own width (style.css's 100% would cover the title). */
   .phome:not(.has-panel) .idea { width: auto; justify-self: end; }
   .phome:not(.has-panel) .idea input { flex: none; width: 320px; }
   /* One loud thing per screen: Add idea is a white pill until the field holds text, then the black one. */
   .phome .idea button.primary { background: var(--surface); border-color: var(--line-strong); color: var(--fg); }
   .phome .idea:has(input:not(:placeholder-shown)) button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
-  /* Also open, every row shown (design §4.1, §4.2): the "N more" fold app.js opens loses its summary, on the plain home
-     and in the list pane beside an open project. */
-  .prows details.more[data-desk-open][open] > summary { display: none; }
-  .prows .row.prow { min-height: 39px; padding: 0 16px; gap: 10px; grid-template-columns: 8px minmax(0, 9rem) minmax(0, 1fr) auto; }
-  .prows .prow-when { display: none; }
-  /* On the plain home a row is the ring, the bold name and its one-liner with an ellipsis (design §4.1, the mockup's
-     .also rows): no Next and no chip, which squeezed the text to nothing in the narrow right column. */
-  .phome:not(.has-panel) .prows .row.prow { grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr); }
-  .phome:not(.has-panel) .prows :is(.prow-next, .prow-chip) { display: none; }
-  .phome:not(.has-panel) .prows .prow-one[hidden] { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--t-sub); }
+  .phome:not(.has-panel) .ptiles { grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }
+  /* The compact rows (beside an open project, in the list pane, inside a fold): dot, name, next, the one chip. */
+  .prows .row.prow, .pfolds .row.prow { min-height: 39px; padding: 0 16px; gap: 10px; grid-template-columns: 8px minmax(0, 9rem) minmax(0, 1fr) auto; }
+  .prows .prow-when, .pfolds .prow-when { display: none; }
   @media (min-width: 1920px) {
     .phome:not(.has-panel) > .plist { column-gap: 40px; }
     .phome:not(.has-panel) .idea input { width: 380px; }
-    .prows .row.prow { grid-template-columns: 8px minmax(0, 11rem) minmax(0, 1fr) auto auto; }
-    .prows .prow-when { display: block; }
-    .phome:not(.has-panel) .prows .row.prow { grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr) auto; }
+    .prows .row.prow, .pfolds .row.prow { grid-template-columns: 8px minmax(0, 11rem) minmax(0, 1fr) auto auto; }
+    .prows .prow-when, .pfolds .prow-when { display: block; }
   }
 }
 @media (min-width: 1100px) {
   @media (hover: hover) and (pointer: fine) {
     .phome .idea button.primary:hover { border-color: var(--fg); }
     .phome .idea:has(input:not(:placeholder-shown)) button.primary:hover { border-color: var(--primary); }
-  }
-}
-
-/* ---- On the go as rows (design §4.1, approved): one card, a row per project, CSS grid on the phone's .pcard markup ---- */
-@media (min-width: 1100px) {
-  .phome:not(.has-panel) .pcards { display: block; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); overflow: hidden; }
-  .phome:not(.has-panel) .pcards > li { position: relative; }
-  .phome:not(.has-panel) .pcards > li + li::before { content: ""; position: absolute; top: 0; left: 42px; right: 0; height: 1px; background: var(--line); pointer-events: none; }
-  .phome:not(.has-panel) .pcards .pcard {
-    display: grid; grid-template-columns: 10px minmax(0, 10.5rem) minmax(0, 1fr) auto 8px; align-items: center; row-gap: 0; column-gap: 14px;
-    min-height: 58px; height: auto; padding: 9px 18px; border: 0; border-radius: 0; background: transparent; box-sizing: border-box;
-  }
-  .phome:not(.has-panel) .pcards :is(.pcard-head, .pcard-foot) { display: contents; }
-  .phome:not(.has-panel) .pcards .ring { grid-column: 1; grid-row: 1 / span 2; }
-  .phome:not(.has-panel) .pcards .pcard-name { grid-column: 2; grid-row: 1; }
-  .phome:not(.has-panel) .pcards .pcard-one { grid-column: 2; grid-row: 2; margin-top: 0; font-size: var(--t-meta); }
-  .phome:not(.has-panel) .pcards .pcard-line { grid-column: 3; grid-row: 1 / span 2; }
-  .phome:not(.has-panel) .pcards .pcard-head .chip { grid-column: 4; grid-row: 1 / span 2; margin-top: 0; }
-  .phome:not(.has-panel) .pcards .meta-line { display: none; }
-  .phome:not(.has-panel) .pcards .meta-line > li:first-child { display: none; }
-  /* The chevron, drawn like .chev, in the last column. */
-  .phome:not(.has-panel) .pcards .pcard::after { content: ""; grid-column: -2; grid-row: 1 / span 2; justify-self: end; width: 7px; height: 7px; margin-right: 3px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); }
-  .phome:not(.has-panel) .pcards .pcard:active { background: var(--raised); }
-  @media (min-width: 1440px) {
-    .phome:not(.has-panel) .pcards .pcard { grid-template-columns: 10px minmax(0, 12.5rem) minmax(0, 1fr) auto 5.75rem 8px; }
-    .phome:not(.has-panel) .pcards .meta-line { display: flex; grid-column: 5; grid-row: 1 / span 2; justify-content: flex-end; margin: 0; clip-path: none; }
-    .phome:not(.has-panel) .pcards .meta-line > li::before { display: none; }
-  }
-  @media (min-width: 1920px) {
-    .phome:not(.has-panel) .pcards .pcard { grid-template-columns: 10px minmax(0, 15rem) minmax(0, 1fr) auto 6.5rem 8px; }
-  }
-}
-@media (min-width: 1100px) {
-  @media (prefers-reduced-motion: no-preference) {
-    .phome:not(.has-panel) .pcards .pcard:active { transform: none; }
-  }
-  @media (hover: hover) and (pointer: fine) {
-    .phome:not(.has-panel) .pcards .pcard:hover { background: color-mix(in srgb, var(--raised) 50%, transparent); }
-  }
-}
-
-/* ---- Everything else (design §4.1): one strip of cells, Not in the brain yet always last; named shelves at 1920 ---- */
-@media (min-width: 1100px) {
-  .phome:not(.has-panel) .pfolds { display: flex; flex-wrap: wrap; }
-  .phome:not(.has-panel) .pfolds > li { flex: 1 1 30%; min-width: 0; box-shadow: -1px 0 0 var(--line), 0 -1px 0 var(--line); }
-  .phome:not(.has-panel) .pfolds > li + li::before { content: none; }
-  .phome:not(.has-panel) .pfolds > li > details.fold > summary, .phome:not(.has-panel) .pfolds > li > a.row {
-    min-height: 46px; padding: 0 14px; border-radius: 0; font-size: var(--t-sub); font-weight: 600; white-space: nowrap;
-  }
-  .phome:not(.has-panel) .pfolds > li > details.fold > summary .n { margin-right: 0.5rem; }
-  /* As in the mockup: a closed fold cell is its name and count; All discussions and Not in the brain yet keep their chevron. */
-  .phome:not(.has-panel) .pfolds > li > details.fold:not(#notyet):not([open]) > summary .chev { display: none; }
-  .phome:not(.has-panel) .pfolds > li > a.row b { font-weight: inherit; }
-  /* "All discussions 9 ›", as in the mockup's strip (the phone's row has no count). */
-  .phome:not(.has-panel) .pfolds > li > a.row .n[hidden] { display: inline; }
-  /* Last, so the regular cells never move when it comes and goes; at S and M on a line of its own. */
-  .phome:not(.has-panel) .pfolds > li:has(> #notyet) { order: 1; flex-basis: 100%; }
-  /* A fold opened by hand (or by /#notyet) shows its rows on a full line under the strip. */
-  .phome:not(.has-panel) .pfolds > li:has(> details[open]) { flex-basis: 100%; order: 2; }
-  .phome:not(.has-panel) .pfolds > li:has(> #notyet[open]) { flex-basis: 100%; order: 2; }
-  .pfolds .row.prow { min-height: 39px; padding: 0 16px; gap: 10px; grid-template-columns: 8px minmax(0, 9rem) minmax(0, 1fr) auto; }
-  .pfolds .prow-when { display: none; }
-  @media (min-width: 1440px) {
-    .phome:not(.has-panel) > .plist > .pf-h { grid-row: 10; grid-column: 1 / -1; }
-    .phome:not(.has-panel) > .plist > .pfolds { grid-row: 11; grid-column: 1 / -1; }
-    .phome:not(.has-panel) .pfolds > li { flex: 1 1 auto; }
-    .phome:not(.has-panel) .pfolds > li:has(> #notyet) { flex-basis: auto; }
-    .phome:not(.has-panel) .pfolds > li:has(> details[open]), .phome:not(.has-panel) .pfolds > li:has(> #notyet[open]) { flex-basis: 100%; }
-  }
-  @media (min-width: 1920px) {
-    /* Shelves: each cell its own card, the summary its title, the rows only the ring and the name. */
-    .phome:not(.has-panel) .pfolds { gap: 12px; background: none; border: 0; border-radius: 0; overflow: visible; }
-    .phome:not(.has-panel) .pfolds > li { flex: 1 1 0; padding: 13px 16px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: none; }
-    .phome:not(.has-panel) .pfolds > li:has(> #notyet) { flex: 1.3 1 0; }
-    .phome:not(.has-panel) .pfolds > li:has(> details[open]) { flex: 1 1 0; order: 0; }
-    .phome:not(.has-panel) .pfolds > li:has(> #notyet) { order: 1; }
-    .phome:not(.has-panel) .pfolds > li:has(> details[open]:not([data-desk-open])), .phome:not(.has-panel) .pfolds > li:has(> #notyet[open]) { flex-basis: 100%; order: 2; }
-    .phome:not(.has-panel) .pfolds > li > details.fold > summary, .phome:not(.has-panel) .pfolds > li > a.row {
-      min-height: 0; padding: 0; background: none; font-family: var(--display); font-size: var(--t-headline); font-weight: 650;
-    }
-    .phome:not(.has-panel) .pfolds > li > details.fold > summary .chev { display: none; }
-    .phome:not(.has-panel) .pfolds > li > details[open] > .fold-list { margin-top: 8px; }
-    .phome:not(.has-panel) .pfolds .fold-list > li::before { content: none; }
-    .phome:not(.has-panel) .pfolds .row.prow { grid-template-columns: 8px minmax(0, 1fr); min-height: 27px; padding: 0; gap: 8px; color: var(--ink2); font-size: var(--t-sub); background: none; }
-    .phome:not(.has-panel) .pfolds .prow-name { font-weight: 400; }
-    .phome:not(.has-panel) .pfolds :is(.prow-next, .prow-chip, .prow-when, .row-note) { display: none; }
-    /* Not in the brain yet opened by hand keeps its full row and its padded rows. */
-    .phome:not(.has-panel) .pfolds > li:has(> details[open]:not([data-desk-open])) .row.prow { grid-template-columns: 8px minmax(0, 9rem) minmax(0, 1fr) auto; padding: 0 16px; }
-    /* Each shelf: its title and count, the first three names, then "N more ›" (or "Open ›"), so the row stays short. */
-    .phome:not(.has-panel) .pfolds > li > details[data-desk-open] > .fold-list > li:nth-child(n+4) { display: none; }
-    .phome:not(.has-panel) .pfolds > li > details[data-desk-open][open] > .shelf-more[hidden], .phome:not(.has-panel) .pfolds > li > .shelf-more[hidden] {
-      display: flex; align-items: center; gap: 8px; width: fit-content; margin-top: 6px; color: var(--muted); font-size: var(--t-meta); font-weight: 600;
-    }
-    /* All discussions: the title is its link (no chevron), then three titles, each opening its discussion. */
-    .phome:not(.has-panel) .pfolds > li > a.row .chev { display: none; }
-    .phome:not(.has-panel) .pfolds > li > .shelf-names[hidden] { display: block; margin: 8px 0 0; padding: 0; list-style: none; }
-    .phome:not(.has-panel) .pfolds > li > .shelf-names a { display: block; height: 27px; line-height: 27px; color: var(--ink2); font-size: var(--t-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .phome:not(.has-panel) .pfolds > li > .shelf-names a::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 8px; vertical-align: 0.1em; border-radius: 50%; background: var(--line-strong); }
-    /* Not in the brain yet, closed: under its title the first folders and "Ignored N ›"; a click anywhere opens it. */
-    .phome:not(.has-panel) .pfolds #notyet:not([open]) > summary { flex-wrap: wrap; }
-    .phome:not(.has-panel) .pfolds #notyet:not([open]) .nib-peek[hidden] { display: flex; flex-direction: column; flex-basis: 100%; min-width: 0; margin-top: 8px; font-family: var(--text); font-size: var(--t-sub); font-weight: 400; color: var(--ink2); }
-    .phome:not(.has-panel) .pfolds .nib-peek > span { display: block; height: 27px; line-height: 27px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-    .phome:not(.has-panel) .pfolds .nib-peek > span:not(.nib-peek-more)::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 8px; vertical-align: 0.1em; border-radius: 50%; background: var(--line-strong); }
-    .phome:not(.has-panel) .pfolds .nib-peek > .nib-peek-more { display: flex; align-items: center; gap: 8px; height: auto; line-height: normal; margin-top: 6px; color: var(--muted); font-size: var(--t-meta); font-weight: 600; }
-    .phome:not(.has-panel) .pfolds > li > details.fold > summary .nib-peek .chev { display: inline-block; margin-left: 0; }
+    .phome:not(.has-panel) .ptile:hover { border-color: var(--line-strong); }
   }
 }
 
@@ -333,10 +213,14 @@
   .phome.has-panel > .plist :is(.pcard-one, .pcard-foot) { display: none; }
 
   /* Also open and the fold rows: one line, the ring, the name and Next with an ellipsis. */
-  .phome.has-panel > .plist .row.prow { grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr); min-height: 0; gap: 8px; }
+  .phome.has-panel > .plist .row.prow { grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr) auto; min-height: 0; gap: 8px; }
   .phome.has-panel > .plist .prow-name { font-weight: 600; }
   .phome.has-panel > .plist .prow-next { font-size: var(--t-sub); }
-  .phome.has-panel > .plist .row.prow :is(.prow-chip, .prow-when, .row-note) { display: none; }
+  .phome.has-panel > .plist .row.prow :is(.prow-when, .row-note) { display: none; }
+  /* Of the chips, only the "work not safe" mark stays in the narrow list (spec 2026-11-11: the one mark the list shows). */
+  .phome.has-panel > .plist .row.prow .prow-chip > :not(.pwarn) { display: none; }
+  /* The areas sit closer in the narrow list than on the home. */
+  .phome.has-panel > .plist .pareas { gap: 18px; }
 
   /* The folds: closed shelf rows under a hairline (36 px), opening in place; All discussions with its count. */
   .phome.has-panel > .plist .pfolds { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
@@ -676,12 +560,22 @@
   .desk-list .seg { flex-wrap: wrap; gap: 2px; }
   .desk-list .seg a { min-height: 30px; padding: 0 10px; font-size: var(--t-meta); }
   .desk-list.narrow > .tidy-line { margin: 4px 8px 8px; font-size: var(--t-meta); }
-  .desk-list details.filter-fold > summary { display: none; }
-  .desk-list details.filter-fold { margin: 0 6px 6px; border: 0; background: none; }
-  .desk-list .filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin: 0 0 8px; font-size: var(--t-meta); }
-  .desk-list .filters > :is(.grow, .seg-field, .actions) { grid-column: 1 / -1; }
-  .desk-list .filters :is(input, select) { min-height: 36px; font-size: var(--t-sub); }
-  .desk-list .filters .actions button { min-height: 36px; width: 100%; }
+  /* The grouped Facts page as the list pane: its head on one line, the filters wrapped, the groups compact. */
+  .desk-list.narrow > .fhead { align-items: baseline; gap: 10px; padding: 6px 8px 8px; }
+  .desk-list.narrow > .fhead > h1 { margin: 0; font-size: var(--t-section); font-weight: 700; line-height: 1.25; letter-spacing: -0.015em; }
+  .desk-list.narrow > .fhead > h1 .n { margin-left: 8px; color: var(--muted); font-size: var(--t-sub); font-weight: 500; letter-spacing: 0; }
+  .desk-list.narrow > .fhead > .new-fact { min-height: 0; padding: 0; border: 0; background: none; color: var(--ink2); font-size: var(--t-sub); font-weight: 600; white-space: nowrap; }
+  .desk-list form.frow-filters { flex-wrap: wrap; margin: 0 6px 10px; }
+  .desk-list form.frow-filters > input[type=search] { flex: 1 1 100%; height: 34px; font-size: var(--t-sub); }
+  .desk-list form.frow-filters > select { flex: 1 1 0; max-width: none; height: 34px; font-size: var(--t-sub); }
+  .desk-list .fgroup { margin: 0 0 18px; padding: 0 8px; }
+  .desk-list .fgroup h2 { font-size: var(--t-sub); }
+  .desk-list .frow { padding: 8px 0; }
+  .desk-list .frow > a.card-link { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; font-size: var(--t-sub); line-height: 1.35; }
+  .desk-list .frow > a.card-link:has(> .rmap) { display: block; }
+  .desk-list .frow > a.is-selected { border-radius: var(--r-inset); background: var(--surface); box-shadow: 0 0 0 6px var(--surface); }
+  .desk-list .frow > a.card-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: var(--r-inset); }
+  .desk-list .rmap { font-size: var(--t-sub); grid-template-columns: 3rem 1fr; }
   .desk-list .cards.list { gap: 0; }
   .desk-list .cards.list > li.card { position: relative; padding: 9px 12px; border: 1px solid; border-color: transparent; border-radius: var(--r-inset); background: transparent; box-shadow: none; font-size: var(--t-sub); }
   .desk-list .cards.list > li.card + li.card::before { content: ""; position: absolute; top: -1px; left: 12px; right: 12px; height: 1px; background: var(--line); pointer-events: none; }

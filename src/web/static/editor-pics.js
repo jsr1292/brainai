@@ -186,14 +186,19 @@ export function setUpEditor(form) {
         const r = await prepareAndSend(file);
         lines.push(r.text);
         if (r.line) {
-          // The owner may have typed meanwhile (over the last description): then their cursor is where it goes.
-          cursor = nextCursor(expected, area.value, cursor, { start: area.selectionStart, end: area.selectionEnd });
-          const ins = insertPicture(area.value, cursor.start, cursor.end, r.line);
-          area.value = ins.text;
-          area.focus();
-          area.setSelectionRange(ins.selStart, ins.selEnd);
-          area.dispatchEvent(new Event('input', { bubbles: true }));
-          cursor = { start: ins.end, end: ins.end };
+          if (area.editorApi) {
+            // The editor is up (UI round, task 3): the picture goes in at its own cursor.
+            area.editorApi.insert(r.line);
+          } else {
+            // The owner may have typed meanwhile (over the last description): then their cursor is where it goes.
+            cursor = nextCursor(expected, area.value, cursor, { start: area.selectionStart, end: area.selectionEnd });
+            const ins = insertPicture(area.value, cursor.start, cursor.end, r.line);
+            area.value = ins.text;
+            area.focus();
+            area.setSelectionRange(ins.selStart, ins.selEnd);
+            area.dispatchEvent(new Event('input', { bubbles: true }));
+            cursor = { start: ins.end, end: ins.end };
+          }
           expected = area.value;
         }
         strip.textContent = lines.join('\n');
@@ -207,14 +212,15 @@ export function setUpEditor(form) {
     add(input.files);
     input.value = '';
   });
-  area.addEventListener('paste', (e) => {
+  // The text is written in the editor when it is mounted (UI round, task 3): the pictures then go into the editor.
+  const onPaste = (e) => {
     const cd = e.clipboardData;
     if (cd && pasteTakesFiles({ files: cd.files.length, text: cd.getData('text/plain') }) && add(cd.files)) e.preventDefault();
-  });
-  area.addEventListener('dragover', (e) => {
+  };
+  const onDragOver = (e) => {
     if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault();
-  });
-  area.addEventListener('drop', (e) => {
+  };
+  const onDrop = (e) => {
     const files = e.dataTransfer ? [...e.dataTransfer.files] : [];
     const action = dropAction({ files: files.length, pictures: files.filter(isPicture).length });
     if (action === 'none') return;
@@ -224,5 +230,16 @@ export function setUpEditor(form) {
       strip.hidden = false;
       strip.textContent = `${files[0].name} · Only pictures can be added here (JPEG, PNG, WebP or GIF).`;
     }
+  };
+  area.addEventListener('paste', onPaste);
+  area.addEventListener('dragover', onDragOver);
+  area.addEventListener('drop', onDrop);
+  // The editor, once it is up, takes the paste and the drop instead of the hidden box.
+  area.addEventListener('cm:ready', () => {
+    const dom = area.editorApi && area.editorApi.dom;
+    if (!dom) return;
+    dom.addEventListener('paste', onPaste);
+    dom.addEventListener('dragover', onDragOver);
+    dom.addEventListener('drop', onDrop);
   });
 }

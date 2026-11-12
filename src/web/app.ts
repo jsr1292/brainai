@@ -1,3 +1,4 @@
+import type { LearningService } from '../learning/service.js';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
@@ -42,6 +43,7 @@ import type { SetupOverlay } from '../setup/texts.js';
 import { MAX_SKILL_BYTES, MAX_SKILL_DESCRIPTION } from '../skills/types.js';
 import type { ProjectsService } from '../projects/service.js';
 import { projectRoutes } from './projectRoutes.js';
+import { mapRoutes } from './mapRoutes.js';
 import { reviewRoutes } from './reviewRoutes.js';
 import { growthRoutes } from './growthRoutes.js';
 import { deviceRoutes } from './deviceRoutes.js';
@@ -51,6 +53,7 @@ import { pictureReviewRoutes } from './pictureReviewRoutes.js';
 import { setupRoutes } from './setupRoutes.js';
 import { skillRoutes } from './skillRoutes.js';
 import { pageRoutes } from './pageRoutes.js';
+import { linkRoutes } from './linkTargets.js';
 import { importRoutes } from './importRoutes.js';
 import { searchRoutes } from './searchRoutes.js';
 import type { MemoryService } from '../memory/service.js';
@@ -104,6 +107,10 @@ export interface AppDeps {
   imports: ImportLog;
   /** How close another project's decision must be by meaning to show as related to a page (index.ts: RELATED_SIMILARITY). */
   relatedSimilarity: number;
+  /** The five areas and the owner's handbook (src/learning/). */
+  learning: LearningService;
+  /** How closely two projects' facts must match to be offered as one project (the embedding model's profile). */
+  sameProjectFloor: number;
   /** The Graph tab's data: project cards from the home, threads from the stored meaning links (spec section 15). */
   graph: GraphService;
   provider: MemoryOAuthProvider;
@@ -432,6 +439,7 @@ export function createApp(d: AppDeps): express.Express {
 
   // 8. The dashboard; every route in it is guarded by requireOwner.
   app.use(projectRoutes(d));
+  app.use(mapRoutes(d));
   app.use(reviewRoutes(d));
   app.use(deviceRoutes(d));
   app.use(searchRoutes(d));
@@ -444,6 +452,8 @@ export function createApp(d: AppDeps): express.Express {
   app.use(reachRoutes(d));
   app.use(moveRoutes(d));
   app.use(skillRoutes(d));
+  // Before the pages: /pages/:id would otherwise catch the picker's own address.
+  app.use(linkRoutes(d));
   app.use(pageRoutes(d));
   // Growth is the personal brain's only (spec section 11): the work memory has no Growth list.
   if (mode !== 'work') app.use(growthRoutes(d));

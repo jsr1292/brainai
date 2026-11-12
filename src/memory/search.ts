@@ -10,6 +10,7 @@ const RRF_K = 60;
  * otherwise lift keyword-only matches above the best match by meaning. Tuned with the recall test (2026-10-18).
  */
 const KEYWORD_WEIGHT = 0.5;
+export const DEFAULT_KEYWORD_WEIGHT = KEYWORD_WEIGHT;
 
 
 /** Builds a safe FTS5 query: every non-filler token quoted, OR-joined. Null when nothing usable remains. */
@@ -45,22 +46,29 @@ export function hybridSearch(
   store: MemoryStore,
   q: {
     vector: Float32Array; text: string; kind?: Kind; project?: string; projects?: string[]; limit: number; pool?: number; minSimilarity: number; confidentSimilarity: number; window?: number; touch?: boolean;
+    /** How much a keyword rank counts against a by-meaning rank (the embedding model's profile); default 0.5. */
+    keywordWeight?: number;
     variants?: { vector: Float32Array; text: string }[];
     replaced?: 'hide' | 'include'; replacedLimit?: number; replacedCut?: 'follow' | 'joint-top';
+    /** B10: the facts dated in the time the question asks about; `strict` searches only them (see timeLane). */
+    time?: { ids: ReadonlySet<string>; strict: boolean };
   },
 ): SearchHit[] {
   const filter = { kind: q.kind, project: q.project, projects: q.projects };
   const ftsQuery = toFtsQuery(q.text);
-  const live = store.activeEmbeddings(filter);
+  const strict = q.time?.strict ? q.time.ids : undefined;
+  const fts = (query: string) => { const hits = store.ftsSearch(query, filter, CANDIDATES); return strict ? hits.filter((id) => strict.has(id)) : hits; };
+  const live = strict ? store.activeEmbeddings(filter).filter((e) => strict.has(e.id)) : store.activeEmbeddings(filter);
   // The question and each other phrasing (B4) are ranked on their own, each with its own keywords and floor; their
   // fused scores add up, and a fact is sure when any of them would call it sure.
-  const current = merge([
-    rank(live, ftsQuery ? store.ftsSearch(ftsQuery, filter, CANDIDATES) : [], q),
+  const merged = merge([
+    rank(live, ftsQuery ? fts(ftsQuery) : [], q),
     ...(q.variants ?? []).map((v) => {
-      const fts = toFtsQuery(v.text);
-      return rank(live, fts ? store.ftsSearch(fts, filter, CANDIDATES) : [], { ...q, vector: v.vector });
+      const vq = toFtsQuery(v.text);
+      return rank(live, vq ? fts(vq) : [], { ...q, vector: v.vector });
     }),
   ]);
+  const current = q.time ? timeLane(merged, live, q.time.ids, q.vector, Math.max(q.minSimilarity, q.window === undefined ? -Infinity : merged.best - q.window)) : merged;
   const top = current.ranked.slice(0, Math.max(q.pool ?? q.limit, q.limit));
   const results: SearchHit[] = [];
   for (const [id, score] of top) {
@@ -94,6 +102,28 @@ const DEFAULT_REPLACED = 5;
 
 type Ranking = { ranked: [string, number][]; ftsIds: Set<string>; sims: Map<string, number>; best: number };
 
+/** How many in-range facts the time lane takes by meaning alone, beyond those already among the candidates. */
+const TIME_BY_MEANING = 20;
+
+/**
+ * B10: one more ranked list in the fusion, with a vector rank's weight: the in-range facts among the fused candidates
+ * and the in-range facts closest in meaning, ordered by similarity. A soft boost: nothing is hidden, and with no range
+ * nothing changes.
+ */
+function timeLane(r: Ranking, live: { id: string; embedding: Float32Array }[], ids: ReadonlySet<string>, vector: Float32Array, floor: number): Ranking {
+  const sim = new Map(live.filter((e) => ids.has(e.id)).map((e) => [e.id, cosine(vector, e.embedding)]));
+  // A range holding most of the facts (a young brain asked about "this week") tells nothing apart: it would only
+  // repeat the ranking by meaning. With strict dates the candidates are all in range already.
+  if (sim.size === 0 || sim.size * 2 > live.length) return r;
+  const inPool = r.ranked.slice(0, CANDIDATES).map(([id]) => id).filter((id) => sim.has(id));
+  // By meaning, only facts the search's own floor would let in: the lane boosts matches, it never adds unrelated ones.
+  const byMeaning = [...sim.entries()].filter(([, s]) => s >= floor).sort((a, b) => b[1] - a[1]).slice(0, TIME_BY_MEANING).map(([id]) => id);
+  const lane = [...new Set([...inPool, ...byMeaning])].sort((a, b) => sim.get(b)! - sim.get(a)!);
+  const scores = new Map(r.ranked);
+  lane.forEach((id, i) => scores.set(id, (scores.get(id) ?? 0) + 1 / (RRF_K + i + 1)));
+  return { ...r, ranked: [...scores.entries()].sort((a, b) => b[1] - a[1]) };
+}
+
 /** Several rankings as one: scores added, keyword hits joined, each fact's best similarity; `best` is the first's. */
 function merge(parts: Ranking[]): Ranking {
   if (parts.length === 1) return parts[0]!;
@@ -115,7 +145,7 @@ function merge(parts: Ranking[]): Ranking {
 function rank(
   embeddings: { id: string; embedding: Float32Array }[],
   ftsRanked: string[],
-  q: { vector: Float32Array; minSimilarity: number; window?: number },
+  q: { vector: Float32Array; minSimilarity: number; window?: number; keywordWeight?: number },
   best?: number,
 ): Ranking {
   const vectorRanked = embeddings
@@ -126,7 +156,7 @@ function rank(
   const sims = new Map(vectorRanked.map((v) => [v.id, v.sim]));
   const scores = new Map<string, number>();
   const add = (id: string, weight: number, r: number) => scores.set(id, (scores.get(id) ?? 0) + weight / (RRF_K + r));
-  ftsRanked.forEach((id, i) => add(id, KEYWORD_WEIGHT, i + 1));
+  ftsRanked.forEach((id, i) => add(id, q.keywordWeight ?? KEYWORD_WEIGHT, i + 1));
   const from = best ?? vectorRanked[0]?.sim ?? 0;
   const floor = Math.max(q.minSimilarity, q.window === undefined ? -Infinity : from - q.window);
   vectorRanked.forEach((v, i) => {

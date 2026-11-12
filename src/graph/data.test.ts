@@ -60,7 +60,7 @@ test('cards agree with the home: waiting, late and next come from the same card,
   const home = w.projects.home(w.now()).open.find((c) => c.project.name === 'wildlog')!;
   const g = w.graph.overview().projects.find((p) => p.name === 'wildlog')!;
   assert.deepEqual([g.waiting, g.late, g.next], [home.waiting, home.late, home.next]);
-  assert.deepEqual([g.waiting, g.late, g.next], [2, 1, 'write notes']);
+  assert.deepEqual([g.waiting, g.late, g.next], [2, 1, 'release'], "the roadmap's Now comes first (spec 2026-11-11)");
   w.registry.create('quiet', { state: 'open', oneLiner: 'Registry only' }, 'owner');
   const touched = (iso: string) => {
     w.db.prepare("UPDATE projects SET updated_at = ? WHERE name = 'quiet'").run(iso);

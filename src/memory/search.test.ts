@@ -35,6 +35,18 @@ test('hybridSearch finds by keyword (accent-insensitive) and by vector, and neve
   }
 });
 
+test('hybridSearch: the keyword weight comes from the caller; 0 orders by meaning alone', () => {
+  const db = openDb(':memory:'); const store = new MemoryStore(db, () => new Date());
+  const v = (...xs: number[]) => { const a = Float32Array.from(xs); const n = Math.hypot(...xs); return a.map((x) => x / n); };
+  // "alpha" is the closest by meaning but shares no word with the query; "zebra" is second by meaning and a keyword hit.
+  const alpha = store.insert({ kind: 'decision', content: 'alpha note', project: null, tags: [], embedding: v(1, 0, 0), by: 'x' });
+  const zebra = store.insert({ kind: 'decision', content: 'zebra note', project: null, tags: [], embedding: v(0.9, 0.43, 0), by: 'x' });
+  const q = { vector: v(1, 0, 0), text: 'zebra', limit: 5, minSimilarity: 0.5, confidentSimilarity: 0.5 };
+  assert.deepEqual(hybridSearch(store, { ...q, keywordWeight: 0.5 }).map((h) => h.memory.id), [zebra.id, alpha.id]);
+  assert.deepEqual(hybridSearch(store, q).map((h) => h.memory.id), [zebra.id, alpha.id], 'default stays 0.5');
+  assert.deepEqual(hybridSearch(store, { ...q, keywordWeight: 0 }).map((h) => h.memory.id), [alpha.id, zebra.id]);
+});
+
 test('findSimilar returns only matches at or above threshold, same kind', async () => {
   const e = createFakeEmbedder(); const db = openDb(':memory:'); const store = new MemoryStore(db, () => new Date());
   const embedding = await e.embed('Has a NAS', 'passage');

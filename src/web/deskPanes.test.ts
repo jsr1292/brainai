@@ -65,7 +65,8 @@ test('the plain home keeps its desktop hooks; the list beside a project has none
   const { f } = await app(t);
   const home = await (await f('/')).text();
   assert.match(home, /phome-date/);
-  assert.match(home, /data-desk-open="xl"/);
+  // The 1920 px shelves went with the old folds (spec 2026-11-11): each area's "+N quiet" line opens in place instead.
+  assert.doesNotMatch(home, /data-desk-open="xl"/);
   const beside = await (await f('/?project=wildlog')).text();
   assert.doesNotMatch(beside, /phome-date|data-desk-open="xl"|shelf-more|nib-peek|prow-one/);
 });

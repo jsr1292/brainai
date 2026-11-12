@@ -32,3 +32,6 @@ __pycache__/
 /bench-results/
 # Never commit Windows DLLs (Microsoft's runtime is fetched and checked at build time: scripts/windows/vcruntime.sh).
 *.dll
+
+# Design-review snapshots (Impeccable), local only
+.impeccable/

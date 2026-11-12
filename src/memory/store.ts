@@ -8,7 +8,7 @@ import { words } from './words.js';
 import { MAX_NICKNAMES } from '../projects/store.js';
 
 export interface MemoryRow {
-  id: string; kind: Kind; content: string; project: string | null; tags: string;
+  id: string; kind: Kind; content: string; project: string | null; tags: string; keys: string;
   created_at: string; created_by: string; updated_at: string; updated_by: string;
   last_recalled_at: string | null; deleted_at: string | null;
 }
@@ -19,14 +19,14 @@ export interface HistoryRow {
 interface SuggestionRow {
   id: string; action: Suggestion['action']; memory_id: string | null; content: string | null; tags: string;
   kind: Kind; project: string | null; reason: string | null;
-  suggested_at: string; suggested_by: string; status: Suggestion['status']; supersedes: string; deleted_match: string | null;
+  suggested_at: string; suggested_by: string; status: Suggestion['status']; supersedes: string; deleted_match: string | null; keys: string | null;
 }
 
 const toBlob = (v: Float32Array) => Buffer.from(v.buffer, v.byteOffset, v.byteLength);
 const fromBlob = (b: Buffer) => new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
 
 export const toMemory = (r: MemoryRow): Memory => ({
-  id: r.id, kind: r.kind, content: r.content, project: r.project, tags: JSON.parse(r.tags) as string[],
+  id: r.id, kind: r.kind, content: r.content, project: r.project, tags: JSON.parse(r.tags) as string[], keys: r.keys ?? '',
   createdAt: r.created_at, createdBy: r.created_by, updatedAt: r.updated_at, updatedBy: r.updated_by,
   lastRecalledAt: r.last_recalled_at, deletedAt: r.deleted_at,
 });
@@ -37,7 +37,7 @@ export const toHistory = (r: HistoryRow): HistoryEntry => ({
 const toSuggestion = (r: SuggestionRow): Suggestion => ({
   id: r.id, action: r.action, memoryId: r.memory_id, content: r.content, tags: JSON.parse(r.tags) as string[],
   kind: r.kind, project: r.project, reason: r.reason, suggestedAt: r.suggested_at, suggestedBy: r.suggested_by, status: r.status,
-  supersedes: JSON.parse(r.supersedes ?? '[]') as string[], deletedMatch: r.deleted_match ?? null,
+  supersedes: JSON.parse(r.supersedes ?? '[]') as string[], deletedMatch: r.deleted_match ?? null, keys: r.keys ?? null,
 });
 
 /**
@@ -115,10 +115,12 @@ export class MemoryStore {
     return this.now();
   }
 
+  /** The fact's keyword row; its search words (B9) are read from the fact and go in the tags column. */
   private ftsReplace(id: string, content: string, project: string | null, tags: string[]): void {
+    const keys = (this.db.prepare('SELECT keys FROM memories WHERE id = ?').get(id) as { keys: string } | undefined)?.keys ?? '';
     this.db.prepare('DELETE FROM memories_fts WHERE memory_id = ?').run(id);
     this.db.prepare('INSERT INTO memories_fts(memory_id, content, project, tags) VALUES (?, ?, ?, ?)')
-      .run(id, content, project ?? '', tags.join(' '));
+      .run(id, content, project ?? '', [...tags, ...(keys === '' ? [] : [keys])].join(' '));
   }
 
   private ftsRemove(id: string): void {
@@ -209,15 +211,15 @@ export class MemoryStore {
     return project === null ? null : this.aliasTarget(project) ?? project;
   }
 
-  insert(m: { kind: Kind; content: string; project: string | null; tags: string[]; embedding: Float32Array; by: string }): Memory {
+  insert(m: { kind: Kind; content: string; project: string | null; tags: string[]; keys?: string; embedding: Float32Array; by: string }): Memory {
     const id = randomUUID();
     const t = this.ts();
     this.db.transaction(() => {
       const project = this.real(m.project);
       this.db.prepare(
-        `INSERT INTO memories(id, kind, content, project, tags, embedding, created_at, created_by, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(id, m.kind, m.content, project, JSON.stringify(m.tags), toBlob(m.embedding), t, m.by, t, m.by);
+        `INSERT INTO memories(id, kind, content, project, tags, keys, embedding, created_at, created_by, updated_at, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(id, m.kind, m.content, project, JSON.stringify(m.tags), m.keys ?? '', toBlob(m.embedding), t, m.by, t, m.by);
       this.ftsReplace(id, m.content, project, m.tags);
       this.ensureProject(project, m.kind, m.by);
     })();
@@ -229,7 +231,8 @@ export class MemoryStore {
     return r && toMemory(r);
   }
 
-  update(id: string, f: { content: string; project: string | null; tags: string[]; embedding: Float32Array; by: string }): Memory {
+  /** `keys` left out keeps the fact's search words. */
+  update(id: string, f: { content: string; project: string | null; tags: string[]; keys?: string; embedding: Float32Array; by: string }): Memory {
     this.db.transaction(() => {
       const prev = this.mustGet(id);
       if (prev.deletedAt) throw new Error(`memory is deleted: ${id}`);
@@ -255,13 +258,26 @@ export class MemoryStore {
     return this.mustGet(id);
   }
 
-  private applyContent(id: string, f: { content: string; project: string | null; tags: string[]; embedding: Float32Array }, by: string): void {
+  private applyContent(id: string, f: { content: string; project: string | null; tags: string[]; keys?: string; embedding: Float32Array }, by: string): void {
     const project = this.real(f.project);
     this.db.prepare(
-      'UPDATE memories SET content = ?, project = ?, tags = ?, embedding = ?, updated_at = ?, updated_by = ? WHERE id = ?',
-    ).run(f.content, project, JSON.stringify(f.tags), toBlob(f.embedding), this.ts(), by, id);
+      'UPDATE memories SET content = ?, project = ?, tags = ?, keys = COALESCE(?, keys), embedding = ?, updated_at = ?, updated_by = ? WHERE id = ?',
+    ).run(f.content, project, JSON.stringify(f.tags), f.keys ?? null, toBlob(f.embedding), this.ts(), by, id);
     this.ftsReplace(id, f.content, project, f.tags);
     this.ensureProject(project, this.mustGet(id).kind, by);
+  }
+
+  /**
+   * B9: new search words and the vector made with them. Not a version and not an edit: no history, and updated_at stays
+   * (statuses are ordered by it, and staleness and "what's new" read it).
+   */
+  setKeys(id: string, keys: string, embedding: Float32Array): Memory {
+    this.db.transaction(() => {
+      const m = this.mustGet(id);
+      this.db.prepare('UPDATE memories SET keys = ?, embedding = ? WHERE id = ?').run(keys, toBlob(embedding), id);
+      if (!m.deletedAt) this.ftsReplace(id, m.content, m.project, m.tags);
+    })();
+    return this.mustGet(id);
   }
 
   softDelete(id: string, by: string): void {
@@ -412,6 +428,22 @@ export class MemoryStore {
     const rows = this.db.prepare(`SELECT * FROM memory_history WHERE memory_id IN (SELECT value FROM json_each(?)) AND changed_at > ?
       ORDER BY changed_at, id`).all(JSON.stringify(ids), since) as HistoryRow[];
     return rows.map(toHistory);
+  }
+
+  /**
+   * B10: the live facts that can be dated in a range: saved within a day of it (the owner's day may differ from UTC's),
+   * or holding a written date. Only the columns factDates reads, no embeddings and no order: this runs on every time
+   * question.
+   */
+  datedCandidates(range: { from: string; to: string }): { id: string; createdAt: string; content: string; keys: string }[] {
+    const day = 86_400_000;
+    const from = new Date(Date.parse(`${range.from}T00:00:00Z`) - day).toISOString();
+    const to = new Date(Date.parse(`${range.to}T00:00:00Z`) + 2 * day).toISOString();
+    const dated = "'*[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'";
+    return (this.db.prepare(`SELECT id, created_at, content, keys FROM memories WHERE deleted_at IS NULL
+      AND ((created_at >= ? AND created_at < ?) OR content GLOB ${dated} OR keys GLOB ${dated})`)
+      .all(from, to) as { id: string; created_at: string; content: string; keys: string }[])
+      .map((r) => ({ id: r.id, createdAt: r.created_at, content: r.content, keys: r.keys }));
   }
 
   /** The embeddings of these live memories only, by id. */
@@ -613,11 +645,11 @@ export class MemoryStore {
   }
 
   /** Kind, project and reason default to a profile change. */
-  addSuggestion(s: Omit<Suggestion, 'id' | 'suggestedAt' | 'status' | 'kind' | 'project' | 'reason' | 'supersedes' | 'deletedMatch'> & Partial<Pick<Suggestion, 'kind' | 'project' | 'reason' | 'supersedes' | 'deletedMatch'>>): Suggestion {
+  addSuggestion(s: Omit<Suggestion, 'id' | 'suggestedAt' | 'status' | 'kind' | 'project' | 'reason' | 'supersedes' | 'deletedMatch' | 'keys'> & Partial<Pick<Suggestion, 'kind' | 'project' | 'reason' | 'supersedes' | 'deletedMatch' | 'keys'>>): Suggestion {
     const id = randomUUID();
     this.db.prepare(
-      'INSERT INTO profile_suggestions(id, action, memory_id, content, tags, kind, project, reason, suggested_at, suggested_by, supersedes, deleted_match) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).run(id, s.action, s.memoryId, s.content, JSON.stringify(s.tags), s.kind ?? 'profile', s.project ?? null, s.reason ?? null, this.ts(), s.suggestedBy, JSON.stringify(s.supersedes ?? []), s.deletedMatch ?? null);
+      'INSERT INTO profile_suggestions(id, action, memory_id, content, tags, kind, project, reason, suggested_at, suggested_by, supersedes, deleted_match, keys) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(id, s.action, s.memoryId, s.content, JSON.stringify(s.tags), s.kind ?? 'profile', s.project ?? null, s.reason ?? null, this.ts(), s.suggestedBy, JSON.stringify(s.supersedes ?? []), s.deletedMatch ?? null, s.keys ?? null);
     return this.getSuggestion(id)!;
   }
 

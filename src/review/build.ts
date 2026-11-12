@@ -1,3 +1,4 @@
+import { notPushed } from '../folders/match.js';
 import { isStatus } from '../memory/brief.js';
 import { shiftWeek, weekContaining, weekOf, weeklyDigest } from '../memory/digest.js';
 import { itemKey, parseRoadmap, type Roadmap } from '../memory/roadmap.js';
@@ -195,10 +196,13 @@ export function buildReview(src: BuildSources, w: ReviewWindow): ReviewBody {
     if (!p.pages.includes(s.pageId)) p.pages.push(s.pageId);
   }
 
-  // Commits only on the Mac, from this week's report.
+  // Work only on the Mac, from this week's report: the same rule as the project chip and "work is safe" (notPushed),
+  // judged at the time of the report.
   if (reportFits) {
     for (const [name, f] of match.byProject) {
-      if (f.git && f.unpushed !== null && f.unpushed > 0) of(name).notPushed = { count: f.unpushed, receivedAt: match.receivedAt! };
+      if (!notPushed(f, new Date(match.receivedAt!))) continue;
+      const count = f.unpushed ?? 0;
+      of(name).notPushed = count > 0 ? { count, receivedAt: match.receivedAt! } : { count: 0, uncommitted: f.uncommitted ?? 0, receivedAt: match.receivedAt! };
     }
   }
 

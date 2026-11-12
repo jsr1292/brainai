@@ -25,7 +25,7 @@ test('work mode and an empty brain look right', async (t) => {
     ['/pages', /No pages yet\./],
     ['/facts', /No facts yet\./],
     ['/discussions', /No discussions yet\. Ask an assistant to open one when you want several opinions\./],
-    ['/approvals', /Nothing waits for your approval\./],
+    ['/approvals', /Nothing waits for you\. Suggestions from assistants, discussions that need your answer and possible tidy-ups land here\./],
     ['/review', /There is no finished week yet\./],
     ['/review/now', /No changes yet this week\./],
     ['/growth', /Nothing noticed yet\./],

@@ -49,3 +49,14 @@ If something goes wrong
   (on an existing install, also change PORT and PUBLIC_URL in %LOCALAPPDATA%\WorkMemory\work.env)
 - Codex in WSL: WSL cannot reach the laptop's localhost by default. Set networkingMode=mirrored under [wsl2]
   in %USERPROFILE%\.wslconfig, then run  wsl --shutdown.
+
+Licences and terms of use
+-------------------------
+Work memory's own code is free software under the MIT licence (app\LICENSE).
+
+Its search model, EmbeddingGemma-300m (app\models\onnx-community\embeddinggemma-300m-ONNX), is Gemma. Gemma is
+provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms. By installing or using
+Work memory you agree to use the model only as those terms allow, and never for anything the Gemma Prohibited Use
+Policy forbids (Section 3.2 of the terms; ai.google.dev/gemma/prohibited_use_policy). If you give this zip or the
+model to anyone else, you must give them these terms with it. Full copies of the terms and the policy are in
+app\licenses (GEMMA-TERMS.md and GEMMA-PROHIBITED-USE-POLICY.md).

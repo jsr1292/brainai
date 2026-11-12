@@ -5,7 +5,7 @@ import { liveDuring, versionAt, versionsOf } from './history.js';
 
 const mem = (o: Partial<Memory> = {}): Memory => ({
   id: 'm', kind: 'roadmap', content: 'now', project: 'p', tags: [], createdAt: '2026-10-01T00:00:00.000Z', createdBy: 'c',
-  updatedAt: 'x', updatedBy: 'c', lastRecalledAt: null, deletedAt: null, ...o,
+  updatedAt: 'x', updatedBy: 'c', lastRecalledAt: null, deletedAt: null, keys: '', ...o,
 });
 let n = 0;
 const h = (action: HistoryEntry['action'], content: string, changedAt: string, project = 'p'): HistoryEntry =>

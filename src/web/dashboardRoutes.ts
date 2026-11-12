@@ -15,7 +15,7 @@ import { KINDS, type Kind, type Memory } from '../memory/types.js';
 import type { AppDeps } from './app.js';
 import { PICK_A_PROJECT, pickedProjects, readCookie, requireOwner, SESSION_COOKIE, sessionCookieOptions } from './authRoutes.js';
 import {
-  detailView, listView, newView, PAGE_SIZE, tidyView, valuesOf,
+  detailView, groupFacts, listView, newView, NO_PROJECT, PAGE_SIZE, tidyView, valuesOf,
   type FactsShow, type MemoryFormValues, type ReplacedItem,
 } from './dashboardViews.js';
 import { deviceLabel } from './deviceLabel.js';
@@ -40,8 +40,13 @@ const query = (req: Request, name: string): string | undefined => {
   const v = req.query[name];
   return typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined;
 };
+/** A field the form did not send at all (an older form): undefined, so the save keeps what is stored. */
+const optStr = (req: Request, name: string): string | undefined => {
+  const v = (req.body as Record<string, unknown> | undefined)?.[name];
+  return typeof v === 'string' ? v : undefined;
+};
 const formValues = (req: Request, kind: string): MemoryFormValues =>
-  ({ kind, content: str(req, 'content'), project: str(req, 'project').trim(), tags: str(req, 'tags'), base: str(req, 'base') || undefined });
+  ({ kind, content: str(req, 'content'), project: str(req, 'project').trim(), tags: str(req, 'tags'), keys: optStr(req, 'keys'), base: str(req, 'base') || undefined });
 const tagList = (raw: string): string[] => raw.split(/[\s,]+/).filter((t) => t !== '');
 
 export function dashboardRoutes(d: AppDeps): Router {
@@ -50,10 +55,9 @@ export function dashboardRoutes(d: AppDeps): Router {
   const owner = requireOwner(d.sessions);
 
   const send = (res: Response, status: number, title: string, body: SafeHtml, back?: Back) => {
-    const tab = title === 'Settings' ? 'settings' : title === 'Not found' || title === 'Bad request' ? null : 'pages';
+    const tab = title === 'Settings' ? 'settings' : title === 'Inbox' ? 'inbox' : ['Facts', 'Fact', 'Tidy up', 'New fact'].includes(title) ? 'facts' : title === 'Not found' || title === 'Bad request' ? null : 'pages';
     const fixed = title === 'Tidy up' ? { href: '/facts', label: 'Facts' } : title === 'Moved from Outline' ? { href: '/pages', label: 'Pages' } : title === 'New fact' ? { href: '/facts', label: 'Facts' } : title === 'Settings' ? { href: '/', label: 'Projects' } : undefined;
-    const section = ['Facts', 'Fact', 'Tidy up', 'New fact'].includes(title) ? 'facts' as const : undefined;
-    res.status(status).type('html').send(page(title, body, { nav: true, tab: back?.tab ?? tab, section, back: back ?? fixed, crumb: title === 'Settings' ? false : undefined }));
+    res.status(status).type('html').send(page(title, body, { nav: true, tab: back?.tab ?? tab, back: back ?? fixed, crumb: title === 'Settings' ? false : undefined }));
   };
   const notFound = (res: Response) => send(res, 404, 'Not found', html`<h1>Not found</h1>`);
   const badRequest = (res: Response) => send(res, 400, 'Bad request', html`<h1>Bad request</h1>`);
@@ -96,9 +100,9 @@ export function dashboardRoutes(d: AppDeps): Router {
     deleted: suggestion.deletedMatch ? d.store.get(suggestion.deletedMatch) : undefined,
   }));
 
-  /** Approvals (lit Projects): the list, or its message when an approval was refused or answered elsewhere. */
+  /** The Inbox (its own place): what waits for the owner, and the held suggestions as cards. */
   const approvals = (res: Response, status = 200, error?: string, notice?: string) =>
-    send(res, status, 'Approvals', approvalsView({ pending: pendingCards(), proposals: d.skills.pendingProposals().map((proposal) => ({ proposal, current: proposal.skillId ? d.skills.get(proposal.skillId) : undefined })), error, notice }), { href: '/', label: 'Projects', tab: 'projects' });
+    send(res, status, 'Inbox', approvalsView({ pending: pendingCards(), proposals: d.skills.pendingProposals().map((proposal) => ({ proposal, current: proposal.skillId ? d.skills.get(proposal.skillId) : undefined })), waiting: d.discussions.waitingOnOwner(), tidy: tidySentence(tidySummary(tidyItems())), error, notice }), { href: '/', label: 'Projects', tab: null });
 
   /** Settings: the owner's device, connections, devices, backups and health, and their login. */
   const settings = (req: Request, res: Response, status = 200, error?: string, created?: { name: string; token: string }) => {
@@ -216,8 +220,12 @@ export function dashboardRoutes(d: AppDeps): Router {
     const pageNo = Math.max(1, Math.trunc(Number(query(req, 'page'))) || 1);
     const showParam = query(req, 'show');
     const show: FactsShow = showParam === 'replaced' || showParam === 'everything' ? showParam : 'current';
-    const filter = { kind, project, q };
-    const factsBack: Back | undefined = project ? { href: `/?project=${encodeURIComponent(d.service.projectNamed(project))}#panel`, label: d.service.projectNamed(project), tab: 'pages' } : kind || q || show !== 'current' || pageNo > 1 ? { href: '/facts', label: 'Facts', tab: 'pages' } : undefined;
+    // The facts with no project: the leftover group of the grouped view has no project of its own.
+    const noneProject = project === NO_PROJECT && d.service.projectNamed(NO_PROJECT) === undefined;
+    const filter = { kind, project: noneProject ? NO_PROJECT : project, q };
+    // The grouped view is the plain page: a filter at all (an empty one is no filter) asks for the flat list.
+    const grouped = q === undefined && kind === undefined && project === undefined && show === 'current' && pageNo === 1;
+    const factsBack: Back | undefined = project && !noneProject ? { href: `/?project=${encodeURIComponent(d.service.projectNamed(project))}#panel`, label: d.service.projectNamed(project), tab: 'facts' } : kind || q || show !== 'current' || pageNo > 1 || noneProject ? { href: '/facts', label: 'Facts', tab: 'facts' } : undefined;
     const factsSend = (body: SafeHtml) => send(res, 200, 'Facts', body, factsBack);
     const now = d.now();
     const counts = { all: d.store.countCurrent(), profile: d.store.countCurrent({ kind: 'profile' }), replaced: d.store.supersessions.replacedCount({}) };
@@ -240,12 +248,19 @@ export function dashboardRoutes(d: AppDeps): Router {
       const items = show === 'everything' ? found.filter((f) => !f.replaced).map((f) => f.memory) : [];
       return factsSend(listView({ items, replaced, filter, page: 1, hasNext: false, show, now, ...common }));
     }
+    if (grouped) {
+      // The plain page: every current fact, grouped by project, each group showing its newest few.
+      const groups = groupFacts(d.store.list({ limit: -1 }), 5);
+      return factsSend(listView({ items: [], groups, projects: d.service.listProjects().map((p) => p.project), filter, page: 1, hasNext: false, show, now, ...common }));
+    }
     if (show === 'replaced') {
       const replaced = d.store.supersessions.replacedList({ kind, project, limit: PAGE_SIZE, offset: (pageNo - 1) * PAGE_SIZE });
       const total = d.store.supersessions.replacedCount({ kind, project });
       return factsSend(listView({ items: [], replaced, replacedTotal: total, filter, page: pageNo, hasNext: pageNo * PAGE_SIZE < total, show, now, ...common }));
     }
-    const rows = d.store.list({ kind, project, limit: PAGE_SIZE + 1, offset: (pageNo - 1) * PAGE_SIZE, replaced: show === 'everything' ? 'include' : 'hide' });
+    const rows = noneProject
+      ? d.store.list({ kind, limit: -1, replaced: show === 'everything' ? 'include' : 'hide' }).filter((m) => m.project === null).slice((pageNo - 1) * PAGE_SIZE, pageNo * PAGE_SIZE + 1)
+      : d.store.list({ kind, project, limit: PAGE_SIZE + 1, offset: (pageNo - 1) * PAGE_SIZE, replaced: show === 'everything' ? 'include' : 'hide' });
     const items = rows.slice(0, PAGE_SIZE);
     const replacedIds = show === 'everything' ? new Set(items.filter((m) => d.store.supersessions.liveFor(m.id)).map((m) => m.id)) : undefined;
     factsSend(listView({ items, filter, page: pageNo, hasNext: rows.length > PAGE_SIZE, show, replacedIds, now, ...common }));
@@ -259,7 +274,7 @@ export function dashboardRoutes(d: AppDeps): Router {
     let id = '';
     const ok = await attempt(res, async () => {
       const r = await d.service.remember({
-        kind: values.kind as Kind, content: values.content, project: values.project || undefined, tags: tagList(values.tags),
+        kind: values.kind as Kind, content: values.content, project: values.project || undefined, tags: tagList(values.tags), keys: values.keys,
       }, OWNER);
       if (r.status === 'saved' || r.status === 'roadmap_updated') id = r.memory.id;
     }, (m) => send(res, 400, 'New fact', newView(values, m)));
@@ -331,7 +346,7 @@ export function dashboardRoutes(d: AppDeps): Router {
     if (!m) return notFound(res);
     const values = formValues(req, m.kind);
     const o = origin(req);
-    if (await attempt(res, () => d.service.update(id, { content: values.content, project: values.project || null, tags: tagList(values.tags) }, OWNER, { base: values.base }),
+    if (await attempt(res, () => d.service.update(id, { content: values.content, project: values.project || null, tags: tagList(values.tags), keys: values.keys }, OWNER, { base: values.base }),
       (msg) => {
         // Saved by someone else since this page was opened: show what it says now, keep the draft, and let a second
         // Save (from this page, with the current text in view) go through.

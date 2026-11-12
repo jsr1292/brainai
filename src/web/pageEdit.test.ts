@@ -45,8 +45,8 @@ test('editing one section saves only that section and returns to its anchor', as
   assert.match(now.body, /## Stack\nSwiftUI\.\n\n## Gotchas\nThe simulator needs iOS 18\./);
   assert.equal((await f(`/pages/${page.id}/edit?section=nope`)).status, 404);
   const whole = await (await f(`/pages/${page.id}/edit`)).text();
-  assert.match(whole, /<h1>Editing wildlog — wine cellar<\/h1>/);
-  assert.match(whole, /name="title" [^>]*value="wildlog — wine cellar"/);
+  assert.doesNotMatch(whole, /<h1>/, 'the whole-page editor has no heading of its own; the title input is it');
+  assert.match(whole, /<input name="title" class="ptitle-input"[^>]*value="wildlog — wine cellar"/);
 });
 
 test('preview shows the rendered text and keeps what was typed, without saving', async (t) => {
@@ -137,6 +137,14 @@ test('deleting hides the page from the Pages tab and frees its title; undelete b
   assert.equal(und.headers.get('location'), `/pages/${page.id}`);
   assert.equal(app.deps.pages.get(page.id)!.deletedAt, null);
   assert.equal((await f(`/pages/${page.id}/edit`)).status, 200);
+});
+
+test('a page can be deleted from its own side rail, without opening the editor', async (t) => {
+  const { f, page } = await start(t);
+  const view = await (await f(`/pages/${page.id}`)).text();
+  const rail = view.slice(view.indexOf('<aside class="paside">'), view.indexOf('</aside>'));
+  assert.match(rail, new RegExp(`Ask an AI to update[\\s\\S]*<details class="pg-danger"><summary>Delete this page…<span class="chev"></span></summary>[\\s\\S]*action="/pages/${page.id}/delete"[\\s\\S]*On this page`));
+  assert.match(rail, /you can undelete it from its address/);
 });
 
 test('every page form refuses a POST from another origin', async (t) => {
@@ -232,9 +240,9 @@ test('the page text field has a name on every editor screen', async (t) => {
 test('Write and Preview say which one is showing', async (t) => {
   const { f, page } = await start(t);
   const write = await (await f(`/pages/${page.id}/edit`)).text();
-  assert.match(write, /<button type="submit" name="intent" value="write" class="tab on" aria-pressed="true" formnovalidate>Write<\/button><button type="submit" name="intent" value="preview" class="tab" aria-pressed="false" formnovalidate>Preview<\/button>/);
+  assert.match(write, /<button type="submit" name="intent" value="write" class="ptool on" aria-pressed="true" formnovalidate>Write<\/button><button type="submit" name="intent" value="preview" class="ptool" aria-pressed="false" formnovalidate>Preview<\/button>/);
   const preview = await (await f(`/pages/${page.id}`, post({ base: '1', title: page.title, project: 'wildlog', area: 'start', body: 'Hi', intent: 'preview' }))).text();
-  assert.match(preview, /value="write" class="tab" aria-pressed="false" formnovalidate>Write<\/button><button [^>]*value="preview" class="tab on" aria-pressed="true" formnovalidate>Preview/);
+  assert.match(preview, /value="write" class="ptool" aria-pressed="false" formnovalidate>Write<\/button><button [^>]*value="preview" class="ptool on" aria-pressed="true" formnovalidate>Preview/);
 });
 
 test('a whole-page conflict shows a changed title and project under Yours, next to the current ones', async (t) => {
@@ -297,9 +305,89 @@ test('every editor carries the Add picture button, its file input and status lin
   const sec = (await (await f(`/pages/${page.id}`)).text()).match(/href="\/pages\/[^"]+\/edit\?section=([^"]+)"/)![1];
   for (const path of ['/pages/new', `/pages/${page.id}/edit`, `/pages/${page.id}/edit?section=${sec}`]) {
     const body = await (await f(path)).text();
-    assert.match(body, /<form method="post" action="[^"]+" class="peditor" data-pics="\/static\/editor-pics\.js\?v=[0-9a-f]{10}">/, path);
-    assert.match(body, /<button type="button" class="tab add-pic" hidden>＋ Add picture<\/button><input type="file" class="pic-input" accept="image\/\*" multiple hidden>/, path);
+    assert.match(body, /<form method="post" action="[^"]+" class="peditor" data-pics="\/static\/editor-pics\.js\?v=[0-9a-f]{10}" data-cm="\/static\/editor-cm\.js\?v=[0-9a-f]{10}">/, path);
+    assert.match(body, /<button type="button" class="ptool add-pic" hidden>＋ Add picture<\/button><input type="file" class="pic-input" accept="image\/\*" multiple hidden>/, path);
     assert.match(body, /<p class="pic-strip" role="status" hidden><\/p>/, path);
     assert.doesNotMatch(body, /image\/heic/, path);
   }
+});
+
+// ---- The editor's layout (UI round, task 2) ----
+
+test('the editor sits alone in the reading column: no pages tree, the title input as its heading', async (t) => {
+  const { f, page } = await start(t);
+  const whole = await (await f(`/pages/${page.id}/edit`)).text();
+  assert.doesNotMatch(whole, /class="pnav"/, 'no pages tree on the edit screen');
+  assert.doesNotMatch(whole, /All pages by area/);
+  assert.match(whole, /<input name="title" class="ptitle-input" aria-label="Title"/);
+  assert.match(whole, /<title>Editing wildlog — wine cellar<\/title>/, 'the tab title keeps the page name');
+  const section = await (await f(`/pages/${page.id}/edit?section=gotchas`)).text();
+  assert.doesNotMatch(section, /class="pnav"/, 'the section editor has no pages tree either');
+  assert.match(section, /<h1>Editing “Gotchas”<\/h1>/, 'section mode keeps its own heading');
+});
+
+test('Project and Area sit under Details, closed for a page that has them; Area only without a project', async (t) => {
+  const { app, f, page } = await start(t);
+  const withProject = await (await f(`/pages/${page.id}/edit`)).text();
+  const fold = withProject.slice(withProject.indexOf('<details class="pdetails"'), withProject.indexOf('</details>', withProject.indexOf('<details class="pdetails"')));
+  assert.match(fold, /^<details class="pdetails">/, 'closed: the page has a project');
+  assert.match(fold, /<summary>Details/);
+  assert.match(fold, /name="project"/);
+  assert.doesNotMatch(withProject, /name="area"/, 'a project page has no Area field');
+  const plain = await app.deps.pages.create({ title: 'Standalone notes', body: 'No project.', area: 'start' }, 'owner');
+  const without = await (await f(`/pages/${plain.id}/edit`)).text();
+  const fold2 = without.slice(without.indexOf('<details class="pdetails"'), without.indexOf('</details>', without.indexOf('<details class="pdetails"')));
+  assert.match(fold2, /^<details class="pdetails">/, 'closed: the page has a project or an area already');
+  assert.match(fold2, /name="area"[^>]*data-area-for-no-project|data-area-for-no-project[^>]*name="area"/, 'the Area field is marked for the script');
+  assert.match(fold2, /name="project"/);
+  const fresh = await (await f('/pages/new')).text();
+  assert.match(fresh, /<details class="pdetails" open>/, 'a new page opens Details');
+  assert.match(fresh, /name="area"/, 'a new page shows Area until a project is chosen');
+});
+
+test('the save bar says which version saving makes, and the old footer line is gone', async (t) => {
+  const { f, page } = await start(t);
+  const edit = await (await f(`/pages/${page.id}/edit`)).text();
+  const bar = edit.slice(edit.indexOf('<div class="psavebar">'), edit.indexOf('</div>', edit.indexOf('<div class="psavebar">')));
+  assert.match(bar, /<button type="submit" name="intent" value="save" class="primary">Save page/);
+  assert.match(bar, />Cancel<\/a>/);
+  assert.match(bar, /Saving makes version 2\./, 'the page is at version 1');
+  assert.doesNotMatch(edit, /Saved as version/, 'the old footer line is gone');
+  const fresh = await (await f('/pages/new')).text();
+  assert.match(fresh, /Saving makes version 1\./);
+  const section = await (await f(`/pages/${page.id}/edit?section=gotchas`)).text();
+  assert.match(section, /Saving makes version 2\./);
+});
+
+test('the toolbar sits above the text and says how a link is written', async (t) => {
+  const { f, page } = await start(t);
+  const edit = await (await f(`/pages/${page.id}/edit`)).text();
+  assert.match(edit, /<div class="ptools">[\s\S]*<\/div>/);
+  assert.match(edit, /<span class="phint">\[\[ links a page or fact<\/span>/);
+  assert.doesNotMatch(edit, /links a page ·/, 'the long syntax hint is gone');
+});
+
+test('the body textarea is the mount point for the live editor', async (t) => {
+  const { f, page } = await start(t);
+  const edit = await (await f(`/pages/${page.id}/edit`)).text();
+  assert.match(edit, /<textarea name="body"[^>]*data-editor/);
+  const section = await (await f(`/pages/${page.id}/edit?section=gotchas`)).text();
+  assert.match(section, /<textarea name="body"[^>]*data-editor/);
+});
+
+test('every editor screen carries the editor\'s own script, so the live editor can mount', async (t) => {
+  const { app, f, page } = await start(t);
+  const cm = /<form method="post" action="[^"]+" class="peditor" data-pics="\/static\/editor-pics\.js\?v=[0-9a-f]{10}" data-cm="\/static\/editor-cm\.js\?v=[0-9a-f]{10}">/;
+  assert.match(await (await f('/pages/new')).text(), cm);
+  assert.match(await (await f(`/pages/${page.id}/edit`)).text(), cm);
+  assert.match(await (await f(`/pages/${page.id}/edit?section=gotchas`)).text(), cm);
+  // A conflict and a refusal both come back as the editor again, with the text the server put in the box.
+  await app.deps.pages.saveSection(page.id, { base: 1, anchor: 'gotchas', text: '## Gotchas\nClaude found one.' }, 'Claude Code');
+  const conflict = await (await f(`/pages/${page.id}`, post({ base: '1', section: 'gotchas', body: '## Gotchas\nMine.', intent: 'save' }))).text();
+  assert.match(conflict, cm);
+  assert.match(conflict, /<textarea name="body"[^>]*data-editor[^>]*>## Gotchas\nClaude found one\.<\/textarea>/, 'the editor under a conflict holds the version now saved');
+  assert.match(conflict, /<pre class="mine">## Gotchas\nMine\.<\/pre>/, 'the typed words are still there, beside it');
+  const refused = await (await f('/pages', post({ title: 'WILDLOG — wine cellar', project: 'wildlog', body: 'Another.', intent: 'save' }))).text();
+  assert.match(refused, cm);
+  assert.match(refused, /<textarea name="body"[^>]*data-editor[^>]*>Another\.<\/textarea>/, 'the refusal keeps the typed text');
 });

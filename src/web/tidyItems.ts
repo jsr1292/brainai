@@ -4,12 +4,12 @@ import type { TidyItems } from './dashboardViews.js';
 import { memoByKey } from './memo.js';
 
 /** One lazy set of Tidy checks, shared by the list and summary renderers. */
-export function makeTidyItems(d: Pick<AppDeps, 'store' | 'service' | 'now'>): () => TidyItems {
+export function makeTidyItems(d: Pick<AppDeps, 'store' | 'service' | 'now' | 'sameProjectFloor'>): () => TidyItems {
   // The pair checks and the map compare every pair of memories (seconds of CPU at a few thousand, with every other
   // request waiting), so they are recomputed only when the memories changed: not on a recall, which nearly every
   // assistant session makes. The cheap stale list also follows recalls and the date.
   const pairChecks = memoByKey(() => d.store.memoryVersion(), () => ({
-    duplicates: d.service.duplicates(), overlaps: projectOverlaps(d.store), statuses: statusGroups(d.store),
+    duplicates: d.service.duplicates(), overlaps: projectOverlaps(d.store, d.sameProjectFloor), statuses: statusGroups(d.store),
   }));
   const staleList = memoByKey(
     () => `${d.store.memoryVersion()}|${d.store.recallVersion()}|${d.now().toISOString().slice(0, 10)}`,

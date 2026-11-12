@@ -43,10 +43,11 @@ ${unsorted.length > 0 ? html`<h2>Unsorted</h2><ul>${unsorted.map(link)}</ul>` : 
 
 /**
  * The page first, then its rail, then the Pages list: keyboard, screen reader and a phone's single column all meet the
- * page before every page title. On wider screens the grid draws the list in the left column (style.css).
+ * page before every page title. On wider screens the grid draws the list in the left column (style.css). The editor
+ * (`edit`) is a column on its own: no tree, no by-area heading, just the reading column's width.
  */
-export const layout = (nav: SafeHtml, main: SafeHtml, aside?: SafeHtml, opts?: { onPage?: boolean }) =>
-  html`<div class="pages-wrap${aside ? ' with-aside' : ''}${opts?.onPage ? ' on-page' : ''}"><div class="pmain">${main}</div>${aside ?? ''}${opts?.onPage ? '' : html`<h2 class="by-area">All pages by area</h2>`}${nav}</div>`;
+export const layout = (nav: SafeHtml, main: SafeHtml, aside?: SafeHtml, opts?: { onPage?: boolean; edit?: boolean }) =>
+  html`<div class="pages-wrap${aside ? ' with-aside' : ''}${opts?.onPage ? ' on-page' : ''}${opts?.edit ? ' edit' : ''}"><div class="pmain">${main}</div>${aside ?? ''}${opts?.onPage || opts?.edit ? '' : html`<h2 class="by-area">All pages by area</h2>`}${opts?.edit ? '' : nav}</div>`;
 
 /** The Pages tab (mockup pages-home.html). */
 export function pagesHomeView(v: {
@@ -188,6 +189,11 @@ const ASK_ID = 'ask_ai';
  * The form posts to #ask_ai, so a refused note comes back scrolled to the form and its reason (on a phone or tablet
  * the rail sits far below the article); a saved note's redirect carries its own #ai_notes instead.
  */
+/** The page's Delete, folded so it is never pressed by accident; the reading view's rail and the editor share it. */
+export function deletePageFold(pageId: string): SafeHtml {
+  return html`<details class="pg-danger"><summary>Delete this page…<span class="chev"></span></summary><p class="meta">It disappears from Pages and search. Its versions are kept, and you can undelete it from its address.</p><form method="post" action="/pages/${pageId}/delete"><button type="submit" class="secondary">Delete page</button></form></details>`;
+}
+
 function askForm(p: Page, sections: StoredSection[], draft?: NoteDraft, opts: { id?: string; label?: string; prefill?: { section: string; text: string } } = {}): SafeHtml {
   const picked = draft?.section ?? opts.prefill?.section;
   const chosen = (anchor: string) => (picked === anchor ? html` selected` : '');
@@ -258,6 +264,7 @@ export function pageView(v: {
 <a class="button primary" href="/pages/${p.id}/edit">Edit</a>
 <p class="rail-link"><a href="/pages/${p.id}/history">History</a><span class="n">${plural(v.versions, 'version', 'versions')}</span></p>
 ${askForm(p, toc, v.noteDraft)}
+${deletePageFold(p.id)}
 ${tocList}${picsRail}
 ${relatedFacts(v.related, `/pages/${p.id}`)}
 ${v.linkedFrom.length > 0 ? html`<h2>Linked from</h2><ul class="lk">${v.linkedFrom.map((x) => html`<li><a href="/pages/${x.id}">${x.title}</a></li>`)}</ul>` : ''}

@@ -1,5 +1,6 @@
+import { CHECK_LABELS, CHECK_STATUSES, MAX_NOTE, STATUS_LABELS, type CheckStatus, type ShownStatus } from '../learning/types.js';
 import type { Health } from '../health/health.js';
-import type { Home, HomeSuggestion, ProjectCard, ProjectDetail } from '../projects/service.js';
+import type { AreaSection, Home, HomeSuggestion, ProjectCard, ProjectDetail } from '../projects/service.js';
 import { localDay, longDate } from '../timezone.js';
 import { AREAS, AREA_LABELS, type Project } from '../projects/types.js';
 import { withFrom } from './back.js';
@@ -20,6 +21,13 @@ const daysBetween = (from: string, to: string): number => Math.round((Date.parse
 const panelHref = (name: string): string => `/?project=${encodeURIComponent(name)}#panel`;
 const action = (name: string, what: string): string => `/projects/${encodeURIComponent(name)}/${what}`;
 
+/** A tile's chip: only something late or due within a week (the amber dot already says that something waits). */
+function dueOnly(c: ProjectCard, now: Date): SafeHtml {
+  const today = day(now);
+  const due = c.soonestDue !== null && (c.late > 0 || (c.soonestDue >= today && daysBetween(today, c.soonestDue) <= 7));
+  return due ? waitChip(c, now) : html``;
+}
+
 /** The one chip a card carries: late in red, soon in amber, otherwise how many items wait for you. */
 function waitChip(c: ProjectCard, now: Date): SafeHtml {
   const today = day(now);
@@ -33,14 +41,23 @@ export const areaRing = (area: string | null): SafeHtml => html`<span class="rin
 const areaDot = (p: Project): SafeHtml => areaRing(p.area);
 const areaName = (p: Project): string => (p.area ? AREA_LABELS[p.area] : 'Unsorted');
 
-/** An On the go card: name and one chip (late > soon > for you), the one-liner, Next, and a steady ring · area · when footer. */
-function bigCard(c: ProjectCard, now: Date, selected: string | undefined): SafeHtml {
+/** The state dot: green while it is being worked on, amber when something waits on the owner, grey when quiet. */
+const DOT_LABEL: Record<ProjectCard['dot'], string> = { on: 'being worked on', wait: 'waiting on you', quiet: 'quiet' };
+const stateDot = (c: ProjectCard): SafeHtml => html`<span class="pdot d-${c.dot}" role="img" aria-label="${DOT_LABEL[c.dot]}" title="${DOT_LABEL[c.dot]}"></span>`;
+/** The one learning mark on the home page: work that exists only on the Mac (spec 2026-11-11). */
+const safeMark = (c: ProjectCard): SafeHtml => {
+  if (!c.safeWarning) return html``;
+  const why = c.notPushed ? 'Work not safe: not pushed' : 'Work not safe: not in git';
+  return html`<span class="pwarn" role="img" aria-label="${why}" title="${why}">!</span>`;
+};
+
+/** A live project as a tile: dot and name (and the warning mark), the one-liner, the next step. */
+function tile(c: ProjectCard, now: Date, selected: string | undefined): SafeHtml {
   const p = c.project;
-  return html`<li><a class="pcard${selected === p.name ? ' is-selected' : ''}" href="${panelHref(p.name)}"${selected === p.name ? html` aria-current="true"` : ''}>
-  <span class="pcard-head"><span class="pcard-name">${p.name}</span>${waitChip(c, now)}</span>
+  return html`<li><a class="pcard ptile${selected === p.name ? ' is-selected' : ''}" href="${panelHref(p.name)}"${selected === p.name ? html` aria-current="true"` : ''}>
+  <span class="ptile-head">${stateDot(c)}<span class="pcard-name">${p.name}</span>${dueOnly(c, now)}${safeMark(c)}</span>
   ${p.oneLiner ? html`<span class="pcard-one">${p.oneLiner}</span>` : ''}
-  ${c.next ? html`<span class="pcard-line"><span class="pcard-label">Next</span>${c.next}</span>` : ''}
-  <div class="pcard-foot">${areaDot(p)}${metaLine([areaName(p), pastLabel(c.lastTouched, now)])}</div>
+  ${c.next ? html`<span class="pcard-line">${c.next}</span>` : ''}
 </a></li>`;
 }
 
@@ -53,24 +70,47 @@ function row(c: ProjectCard, now: Date, selected: string | undefined, one = fals
   const note = c.newActivity ? html`<span class="row-note">new activity</span>`
     : c.quietDays !== null ? html`<span class="row-note">quiet · ${c.quietDays < 21 ? `${c.quietDays} days` : `${Math.floor(c.quietDays / 7)} weeks`}</span>` : html``;
   const wait = waitChip(c, now);
-  const chip = wait.value !== '' ? wait : c.notPushed ? html`<span class="chip plain">not pushed</span>` : html``;
-  return html`<li><a class="row prow${selected === p.name ? ' is-selected' : ''}" href="${panelHref(p.name)}"${selected === p.name ? html` aria-current="true"` : ''}>${areaDot(p)}<span class="prow-name">${p.name}</span>${one ? html`<span class="prow-one" hidden>${p.oneLiner ?? ''}</span>` : ''}<span class="prow-next">${c.next ?? p.oneLiner ?? (c.roadmap ? '' : html`<span class="quiet">no roadmap yet</span>`)}${note}</span><span class="prow-chip">${chip}</span><span class="prow-when">${pastLabel(c.lastTouched, now)}</span></a></li>`;
+  // The waiting chip and the work-not-safe mark side by side: the mark is the one signal never dropped.
+  const chip = html`${wait}${safeMark(c)}`;
+  return html`<li><a class="row prow${selected === p.name ? ' is-selected' : ''}" href="${panelHref(p.name)}"${selected === p.name ? html` aria-current="true"` : ''}>${stateDot(c)}<span class="prow-name">${p.name}</span>${one ? html`<span class="prow-one" hidden>${p.oneLiner ?? ''}</span>` : ''}<span class="prow-next">${c.next ?? p.oneLiner ?? (c.roadmap ? '' : html`<span class="quiet">no roadmap yet</span>`)}${note}</span><span class="prow-chip">${chip}</span><span class="prow-when">${pastLabel(c.lastTouched, now)}</span></a></li>`;
 }
 
 /** A shelf's last line (desktop, 1920 px and up; hidden below): "N more" past the three names it shows, else "Open". */
 const shelfMore = (href: string, count: number): SafeHtml =>
   html`<a class="shelf-more" href="${href}" hidden>${count > 3 ? `${count - 3} more` : 'Open'}<span class="chev"></span></a>`;
 
+const AREA_KEY = (area: string | null): string => area ?? 'unsorted';
+const plainCount = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+
 /**
- * One row of the folds card: the name and a grey count; opens in place to its projects. On the plain home (no project
- * open) it carries data-desk-open="xl": from 1920 px app.js opens it as a named shelf (desktop only, inert below),
- * which shows three names and a link to the fold's first project, where the list beside it has the fold open.
+ * The fold line under an area: "+3 quiet · 1 idea · 2 parked · 1 done" (only what there is), opening in place to their
+ * rows; open when it holds the selected project. Personal adds its areas of life as one more line.
  */
-function fold(title: string, cards: ProjectCard[], now: Date, selected: string | undefined, mode: ListMode): SafeHtml {
-  if (cards.length === 0) return html``;
-  const open = cards.some((c) => c.project.name === selected);
-  const plain = mode === 'home';
-  return html`<li><details class="fold"${plain ? html` data-desk-open="xl"` : ''}${open ? html` open` : ''}><summary class="row nolead">${title}<span class="n">${cards.length}</span><span class="chev"></span></summary><ul class="fold-list">${cards.map((c) => row(c, now, selected))}</ul>${plain ? shelfMore(panelHref(cards[0]!.project.name), cards.length) : ''}</details></li>`;
+function areaFolds(sec: AreaSection, now: Date, selected: string | undefined): SafeHtml {
+  const rest = [...sec.quiet, ...sec.ideas, ...sec.parked, ...sec.done];
+  const parts = [
+    sec.quiet.length > 0 ? `+${sec.quiet.length} quiet` : null,
+    sec.ideas.length > 0 ? plainCount(sec.ideas.length, 'idea') : null,
+    sec.parked.length > 0 ? `${sec.parked.length} parked` : null,
+    sec.done.length > 0 ? `${sec.done.length} done` : null,
+  ].filter((x): x is string => x !== null);
+  const fold = (label: string, cards: ProjectCard[]) => {
+    const open = cards.some((c) => c.project.name === selected);
+    return html`<li><details class="fold"${open ? html` open` : ''}><summary class="row nolead">${label}<span class="chev"></span></summary><ul class="fold-list">${cards.map((c) => row(c, now, selected))}</ul></details></li>`;
+  };
+  if (rest.length === 0 && sec.lifeAreas.length === 0) return html``;
+  return html`<ul class="group pfolds">${rest.length > 0 ? fold(parts.join(' · '), rest) : ''}${sec.lifeAreas.length > 0 ? fold(`Areas of life: ${sec.lifeAreas.map((c) => c.project.name).join(', ')}`, sec.lifeAreas) : ''}</ul>`;
+}
+
+/** One area of the Projects page: its live projects as tiles (compact rows beside an open project), the rest folded. */
+function areaSection(sec: AreaSection, now: Date, selected: string | undefined, mode: ListMode): SafeHtml {
+  const key = AREA_KEY(sec.area);
+  const label = sec.area ? AREA_LABELS[sec.area] : 'Unsorted';
+  const live = sec.live.length === 0 ? html``
+    : mode === 'home' ? html`<ul class="pcards ptiles">${sec.live.map((c) => tile(c, now, selected))}</ul>`
+    : html`<ul class="group prows">${sec.live.map((c) => row(c, now, selected))}</ul>`;
+  return html`<section class="parea" aria-labelledby="pa-${key}"><h2 id="pa-${key}">${areaRing(sec.area)}${label}${sec.live.length > 0 ? html` <span class="n">${sec.live.length}</span>` : ''}</h2>
+  ${live}${areaFolds(sec, now, selected)}</section>`;
 }
 
 /**
@@ -86,7 +126,7 @@ function stateButtons(p: Project): SafeHtml {
   const to = (state: string, label: string) =>
     html`<form method="post" action="${action(p.name, 'state')}"><input type="hidden" name="state" value="${state}"><button type="submit" class="${state === 'archived' ? 'danger' : 'sm'}">${label}</button></form>`;
   const pin = p.state === 'open'
-    ? html`<form method="post" action="${action(p.name, p.pinnedAt ? 'unpin' : 'pin')}"><button type="submit" class="sm">${p.pinnedAt ? 'Take off on the go' : 'Put on the go'}</button></form>`
+    ? html`<form method="post" action="${action(p.name, p.pinnedAt ? 'unpin' : 'pin')}"><button type="submit" class="sm">${p.pinnedAt ? 'Unpin' : 'Pin to the top'}</button></form>`
     : html``;
   const byState: Record<Project['state'], SafeHtml> = {
     idea: html`${to('open', 'Start it')}${to('archived', 'Archive')}`,
@@ -107,11 +147,38 @@ function leftOff(text: string): SafeHtml {
   return html`<details class="leftoff-more"><summary><span class="leftoff">${short}</span><span class="read-all">Read all</span></summary><p class="leftoff">${text}</p></details>`;
 }
 
+/** A status as the owner reads it: a dot (or a dash for not needed) and its words. */
+const areaStatus = (s: ShownStatus): SafeHtml =>
+  s === 'not_needed' ? html`<span class="adash" aria-hidden="true">–</span>` : html`<span class="pdot a-st-${s}" aria-hidden="true"></span>`;
+
+/**
+ * The project's five areas (spec 2026-11-11): each with its status, the developer term, the note and when, the why one tap
+ * away, and a small form for the owner; then the handbook topics applied on the project.
+ */
+function fiveAreas(name: string, d: ProjectDetail, now: Date): SafeHtml {
+  if (d.areas === null) return html``;
+  // No status is preselected: one Save without choosing must never mark an area done.
+  const option = (v: CheckStatus) => html`<option value="${v}">${STATUS_LABELS[v]}</option>`;
+  return html`<h3 id="p-areas">Five areas</h3>
+  <ul class="areas plain-list">${d.areas.map((a) => html`<li class="area-row">
+    <div class="area-head">${areaStatus(a.status)}<b>${CHECK_LABELS[a.area].name}</b><span class="area-term">${CHECK_LABELS[a.area].term}</span><span class="area-st">${STATUS_LABELS[a.status]}${a.snoozedUntil ? html` · not now until ${longDate(new Date(a.snoozedUntil))}` : ''}</span></div>
+    ${a.note ? html`<p class="area-note">${a.note}${a.setAt ? html` <span class="quiet">· ${a.setBy === 'owner' ? 'you' : a.setBy}, ${timeAgo(a.setAt, now)}</span>` : ''}</p>` : ''}
+    <details class="area-why"><summary>Why<span class="chev"></span></summary><p>${CHECK_LABELS[a.area].why}</p>
+      <form method="post" action="${action(name, `areas/${a.area}`)}" class="area-set">
+        <label>Status <select name="status" required><option value="" disabled selected>Choose…</option>${CHECK_STATUSES.map((v) => option(v))}</select></label>
+        <label>Note <input name="note" maxlength="${MAX_NOTE}" value="${a.source === 'hand' ? a.note ?? '' : ''}" placeholder="What was done, or why it isn't needed"></label>
+        <button type="submit" class="sm">Save</button>
+      </form>
+    </details>
+  </li>`)}</ul>
+  ${d.handbook.length > 0 ? html`<h3 id="p-handbook">Handbook</h3><ul class="plain-list handbook">${d.handbook.map((t) => html`<li>${t.pageId ? html`<a href="/pages/${t.pageId}">${t.title}</a>` : t.title} <span class="quiet">· ${{ seen: 'seen', helped: 'done with help', alone: 'done alone' }[t.level]}</span></li>`)}</ul>` : ''}`;
+}
+
 function panel(d: ProjectDetail, now: Date, error?: string): SafeHtml {
   const p = d.card.project;
   /** The panel's own address, so the facts and pages it links come back here. */
   const self = `/?project=${encodeURIComponent(p.name)}`;
-  const state = p.pinnedAt ? 'On the go' : { idea: 'Idea', open: 'Open', parked: 'Parked', done: 'Done', archived: 'Archived' }[p.state];
+  const state = p.pinnedAt ? 'Pinned' : { idea: 'Idea', open: 'Open', parked: 'Parked', done: 'Done', archived: 'Archived' }[p.state];
   // The jump row: one chip per part that has something; a 0 drops its chip, and nothing at all drops the row.
   const chips: [string, number][] = [['Waiting', d.waiting.length], ['Disagree', d.disagreements.length], ['Pages', d.pages.length], ['Discussions', d.discussionsTotal], ['Facts', d.facts.total]];
   const jump = chips.every(([, n]) => n === 0) ? html`` : html`<nav class="jump" aria-label="In this project">${chips
@@ -146,6 +213,7 @@ function panel(d: ProjectDetail, now: Date, error?: string): SafeHtml {
   ${disagreeGroup(p.name, d.disagreements, now)}
   ${doneToday}
   ${d.nextSteps.length > 0 ? html`<h3>Then</h3><ol class="then">${d.nextSteps.map((s) => html`<li>${s}</li>`)}</ol>` : ''}
+  ${fiveAreas(p.name, d, now)}
   ${d.pages.length > 0 ? html`<h3 id="p-pages">Pages</h3>
   <ul class="ppages plain-list">${d.pages.map((x) => html`<li><a href="${withFrom(`/pages/${x.id}`, self)}">${x.title}</a>${x.mayBeOutOfDate ? html` ${staleChip()}` : ''}</li>`)}</ul>` : ''}
   ${d.discussions.length > 0 ? html`<h3 id="p-discussions">Discussions</h3>
@@ -232,10 +300,7 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   // System problems only, one at most: the backup warning. Approvals and discussions are For-you rows.
   const banner = v.backupProblem ? html`<div class="banner warn"><span class="dot attention" aria-hidden="true"></span><span class="txt">${v.backupProblem}</span><a class="button sm" href="/settings#health">Look</a></div>` : '';
   const forYou = forYouCard(forYouRows({ approvals: v.approvals, disagreements: v.disagreements ?? 0, health: v.health, discussions: v.discussionsWaiting ?? [], weekLine: v.weekLine ?? null, suggestions: home.suggestions }));
-  const empty = home.onTheGo.length + home.open.length + home.quiet.length + home.ideas.length + home.parked.length + home.done.length + home.personal.length === 0;
-  const rest = home.open.slice(ALSO_OPEN_SHOWN);
-  const selectedInRest = rest.some((c) => c.project.name === sel);
-  const shownOpen = rest.length >= 2 ? home.open.slice(0, ALSO_OPEN_SHOWN) : home.open;
+  const empty = home.sections.length === 0;
   const plain = mode === 'home';
   return html`<div class="plist">
   <h1>Projects${plain ? html`<span class="phome-date" hidden>${longDate(now)}</span>` : ''}</h1>
@@ -246,12 +311,7 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   ${!empty ? '' : v.connected === false
     ? html`<div class="quiet empty"><p>No projects yet. Connect an assistant, and what it saves appears here.</p><p class="first-step"><a class="button" href="/settings#setup">Connect your first assistant</a></p></div>`
     : html`<p class="quiet empty">No projects yet. They appear here as soon as an assistant saves something about one.</p>`}
-  ${home.onTheGo.length > 0 ? html`<section aria-labelledby="ongo"><h2 id="ongo">On the go <span class="n">${home.onTheGo.length}</span></h2>
-    <ul class="pcards">${home.onTheGo.map((c) => bigCard(c, now, sel))}</ul></section>` : ''}
-  ${home.open.length > 0 ? html`<section aria-labelledby="alsoopen"><h2 id="alsoopen">${home.onTheGo.length > 0 ? 'Also open' : 'Open'} <span class="n">${home.open.length}</span></h2>
-    <ul class="group prows">${shownOpen.map((c) => row(c, now, sel, plain))}${rest.length >= 2 ? html`<li><details class="fold more" data-desk-open${selectedInRest ? html` open` : ''}><summary class="row nolead">${rest.length} more<span class="chev"></span></summary><ul class="fold-list">${rest.map((c) => row(c, now, sel, plain))}</ul></details></li>` : ''}</ul></section>` : ''}
-  <h2 class="pf-h" hidden>Everything else</h2>
-  <ul class="group pfolds">
-    ${fold('Quiet', home.quiet, now, sel, mode)}${fold('Ideas', home.ideas, now, sel, mode)}${fold('Parked', home.parked, now, sel, mode)}${fold('Personal', home.personal, now, sel, mode)}${fold('Done', home.done, now, sel, mode)}${notInBrain(home.folders, v.ignored ?? [], plain)}${allDiscussions(v.discussions ?? [], mode)}</ul>
+  ${home.sections.length > 0 ? html`<div class="pareas">${home.sections.map((sec) => areaSection(sec, now, sel, mode))}</div>` : ''}
+  <ul class="group pfolds pextra"><li><a class="row nolead map-link" href="/map"><span class="txt"><b>Map</b> · every project against the five areas</span><span class="chev"></span></a></li>${notInBrain(home.folders, v.ignored ?? [], plain)}${allDiscussions(v.discussions ?? [], mode)}</ul>
 </div>`;
 }

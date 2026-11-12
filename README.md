@@ -175,3 +175,7 @@ the version's `CHANGELOG.md` entry first.
 ## Licence
 
 MIT. See `LICENSE`.
+
+The search models are not part of that licence. EmbeddingGemma (the default search model) is provided under and
+subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms: see `licenses/GEMMA-NOTICE.txt`. The other
+models are multilingual-e5-small (MIT) and mmarco-mMiniLMv2 (Apache-2.0).

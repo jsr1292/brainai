@@ -42,7 +42,8 @@ export function keepStatuses(store: MemoryStore, project: string): void {
  * Pairs of projects that look like one project under two names: on average, each memory of the smaller project
  * has a very close match in the larger one.
  */
-export function projectOverlaps(store: MemoryStore): Overlap[] {
+/** `floor`: the embedding model's same-project cut-off (its profile); the e5 value by default. */
+export function projectOverlaps(store: MemoryStore, floor = SAME_PROJECT_FLOOR): Overlap[] {
   const projectOf = new Map(store.list({}).map((m) => [m.id, m.project]));
   const vectors = new Map<string, Float32Array[]>();
   for (const e of store.activeEmbeddings({})) {
@@ -56,7 +57,7 @@ export function projectOverlaps(store: MemoryStore): Overlap[] {
     const others = vectors.get(large)!;
     const mine = vectors.get(small)!;
     const similarity = mine.reduce((s, v) => s + Math.max(...others.map((o) => cosine(v, o))), 0) / mine.length;
-    if (similarity < SAME_PROJECT_FLOOR) continue;
+    if (similarity < floor) continue;
     found.push({
       smaller: { project: small, count: mine.length },
       larger: { project: large, count: others.length },

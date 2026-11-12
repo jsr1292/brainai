@@ -83,3 +83,23 @@ test('dark mode is the owner\'s deep navy, and the phone bar matches the backgro
   }
   assert.match(page('t', html``), new RegExp(`<meta name="theme-color" content="${v('bg')}" media="\\(prefers-color-scheme: dark\\)">`));
 });
+
+test('hovering the current tab keeps its label readable (the hover colour is the current tab\'s background)', () => {
+  const css = readFileSync(new URL('./static/style.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(css, /\.tabs a:hover \{[^}]*color/, 'a bare .tabs a:hover outranks the current tab and paints --fg on --primary');
+  assert.match(css, /\.tabs a:not\(\[aria-current\]\):hover \{ color: var\(--fg\); \}/);
+});
+
+test('the Facts filters apply as they change wherever the list is drawn, so Show hides with script on, also in the list pane', () => {
+  const css = readFileSync(new URL('./static/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.js form\.frow-filters > \.filter-show \{ display: none; \}/);
+  const app = readFileSync(new URL('./static/app.js', import.meta.url), 'utf8');
+  // Listened for on the document, not on the forms there at load: the desk's list pane draws its form later.
+  assert.match(app, /document\.addEventListener\('change', \(e\) => \{[^}]*form\.frow-filters/);
+  assert.match(app, /document\.addEventListener\('input', \(e\) => \{[^}]*form\.frow-filters/);
+});
+
+test('the live editor hides the plain text box it replaces (style.css sets textarea display, which beats [hidden])', () => {
+  const css = readFileSync(new URL('./static/style.css', import.meta.url), 'utf8');
+  assert.match(css, /textarea\[data-editor\]\[hidden\] \{ display: none; \}/);
+});

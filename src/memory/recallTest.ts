@@ -70,7 +70,7 @@ export async function runRecallTest(service: MemoryService, cases: RecallCase[],
   for (const c of cases) {
     const expected = c.expect.map((id) => service.get(id)).filter((m): m is Memory => m !== undefined && !m.deletedAt);
     if (expected.length === 0) { stale.push({ q: c.q, ids: c.expect }); continue; }
-    const got = (await service.recall({ query: c.q, project: c.project, limit, touch: false, alt: opts.alt === false ? undefined : c.alt })).map((r) => r.memory);
+    const got = (await service.recall({ query: c.q, project: c.project, limit, touch: false, readTime: true, alt: opts.alt === false ? undefined : c.alt })).map((r) => r.memory);
     const i = got.findIndex((m) => expected.some((e) => e.id === m.id));
     results.push({ q: c.q, tags: c.tags ?? [], expected, got, rank: i === -1 ? null : i + 1 });
   }

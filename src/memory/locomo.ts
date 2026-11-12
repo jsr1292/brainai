@@ -118,14 +118,30 @@ export function packTurns(turns: Turn[], pack = 0): { text: string; diaIds: stri
  * so no duplicate checks hold it), then each answerable question recalled with `limit` results; rank is where the first
  * fact holding a turn of its evidence came (null: not in the results). Adversarial questions and questions without evidence are counted and skipped.
  */
-export async function benchConversation(c: Conversation, service: MemoryService, opts: { limit?: number; project?: string; pack?: number } = {}): Promise<{
+const EN_MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+
+/** A LoCoMo session date ("8 May, 2023") as that day at noon UTC; null when it can't be read. */
+export function sessionDay(date: string): Date | null {
+  const m = /(\d{1,2}) ([A-Za-z]+),? (\d{4})/.exec(date);
+  const month = m ? EN_MONTHS.indexOf(m[2]!.toLowerCase()) : -1;
+  return m && month >= 0 ? new Date(Date.UTC(+m[3]!, month, +m[1]!, 12)) : null;
+}
+
+/**
+ * `dated` (B10): sets the brain's clock, so each turn is saved on its session's day and the questions are asked the
+ * day after the last session, as if the conversation had just happened (time words then mean what they would).
+ */
+export async function benchConversation(c: Conversation, service: MemoryService, opts: { limit?: number; project?: string; pack?: number; dated?: (d: Date | null) => void } = {}): Promise<{
   saved: number; skipped: { adversarial: number; noEvidence: number; unsaved: number }; results: { id: string; category: number; rank: number | null }[];
 }> {
   const limit = opts.limit ?? 10;
   const project = opts.project ?? 'locomo';
   const diaOf = new Map<string, string[]>();
   let unsaved = 0;
+  const dayOf = new Map(c.turns.map((t) => [t.diaId, sessionDay(t.date)]));
+  let last: Date | null = null;
   for (const t of packTurns(c.turns, opts.pack)) {
+    if (opts.dated) { const d = dayOf.get(t.diaIds[0]!) ?? null; if (d) last = d; opts.dated(d ?? last); }
     try {
       const r = await service.remember({ kind: 'decision', content: t.text, project, allowDuplicate: true, newProject: true }, { type: 'owner' });
       if (r.status === 'saved') diaOf.set(r.memory.id, t.diaIds); else unsaved++;
@@ -134,15 +150,17 @@ export async function benchConversation(c: Conversation, service: MemoryService,
       unsaved++; // too long, or it looks like a secret
     }
   }
+  if (opts.dated && last) opts.dated(new Date(last.getTime() + 86_400_000));
   const skipped = { adversarial: 0, noEvidence: 0, unsaved };
   const results: { id: string; category: number; rank: number | null }[] = [];
   for (const q of c.qa) {
     if (q.category === 5) { skipped.adversarial++; continue; }
     if (q.evidence.length === 0) { skipped.noEvidence++; continue; }
     const wanted = new Set(q.evidence);
-    const hits = await service.recall({ query: q.question, project, limit, touch: false });
+    const hits = await service.recall({ query: q.question, project, limit, touch: false, readTime: true });
     const at = hits.findIndex((h) => (diaOf.get(h.memory.id) ?? []).some((d) => wanted.has(d)));
     results.push({ id: q.id, category: q.category, rank: at < 0 ? null : at + 1 });
   }
+  opts.dated?.(null);
   return { saved: diaOf.size, skipped, results };
 }

@@ -1,6 +1,8 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
+import { groupFacts } from './dashboardViews.js';
+import type { Memory } from '../memory/types.js';
 
 const owner = { type: 'owner' } as const;
 const claude = { type: 'ai', name: 'Claude' } as const;
@@ -114,13 +116,15 @@ test('Facts sits under Pages with three quick views', async (t) => {
   assert.match(body, /Replaced 1/);
 });
 
-test('the filter folds into one pill that says what it shows', async (t) => {
+test('the filters are one visible row, and it says what it shows', async (t) => {
   const app = await start(t);
   const f = await loggedIn(app);
   const plain = await (await f('/facts')).text();
-  assert.match(plain, /<details class="fold filter-fold"><summary>Filter · all projects · all kinds/);
+  assert.match(plain, /<form method="get" action="\/facts" class="frow-filters">/);
+  assert.doesNotMatch(plain, /filter-fold/);
   const filtered = await (await f('/facts?project=wildlog&kind=decision')).text();
-  assert.match(filtered, /Filter · wildlog · decision/);
+  assert.match(filtered, /<option value="decision" selected>/);
+  assert.match(filtered, /<option value="wildlog" selected>/);
   assert.match(filtered, /href="\/\?project=wildlog#panel"[^>]*>‹ wildlog/);
   assert.match(filtered, /aria-label="Show"/);
 });
@@ -157,7 +161,7 @@ test('an empty brain says so once', async (t) => {
   const body = await (await f('/facts')).text();
   assert.match(body, /No facts yet\. Assistants save them as you work\./);
   assert.doesNotMatch(body, /tidy-line|About you \d|Replaced \d/);
-  assert.match(body, /href="\/memories\/new"[^>]*><span class="txt"><b>New fact<\/b>/);
+  assert.match(body, /<a class="button new-fact" href="\/memories\/new">New fact<\/a>/);
 });
 
 test('Tidy up is a line on Facts only when there is something', async (t) => {
@@ -424,4 +428,145 @@ test("the fact page's Delete says assistants will ask before saving it again", a
   assert.match(edit, /<p class="meta">It leaves search for you and your assistants\. Assistants that try to save it again will ask you first\. You can bring it back from its History\.<\/p>/);
   // Inside the delete form: the Mac's fact sheet hides that form (its Delete… question says the same), so no stray copy.
   assert.match(edit, /<form method="post" action="\/memories\/[^"]+\/delete" class="danger">[\s\S]*Assistants that try to save it again will ask you first\.[\s\S]*<\/form>/);
+});
+
+// ---- Facts by project (UI round, task 6) ----
+
+const one = (over: Partial<Memory>): Memory => ({
+  id: 'x', kind: 'decision', content: 'A fact.', project: null, tags: [], createdAt: '2026-09-20T09:00:00Z', createdBy: 'owner',
+  updatedAt: '2026-09-20T09:00:00Z', updatedBy: 'owner', lastRecalledAt: null, deletedAt: null, keys: '', ...over,
+});
+
+test('groupFacts puts the profile first, the projects by their newest fact, and the facts with no project last', () => {
+  const facts = [
+    one({ id: 'p1', kind: 'profile', content: 'Lives in Berlin', updatedAt: '2026-09-01T00:00:00Z' }),
+    one({ id: 'p2', kind: 'profile', content: 'Prefers tea', updatedAt: '2026-09-02T00:00:00Z' }),
+    one({ id: 'p3', kind: 'profile', content: 'Owns a NAS', updatedAt: '2026-09-03T00:00:00Z' }),
+    one({ id: 'h1', project: 'homelab', content: 'The router', updatedAt: '2026-09-10T00:00:00Z' }),
+    one({ id: 'h2', project: 'homelab', content: 'The NAS', updatedAt: '2026-09-11T00:00:00Z' }),
+    one({ id: 'h3', project: 'homelab', content: 'The switch', updatedAt: '2026-09-12T00:00:00Z' }),
+    one({ id: 'g1', project: 'garden', content: 'The beds', updatedAt: '2026-09-20T00:00:00Z' }),
+    one({ id: 'n1', content: 'A fact with no project', updatedAt: '2026-09-15T00:00:00Z' }),
+  ];
+  const groups = groupFacts(facts, 2);
+  assert.deepEqual(groups.map((g) => g.label), ['About you', 'garden', 'homelab', 'No project']);
+  assert.deepEqual(groups.map((g) => g.total), [3, 1, 3, 1]);
+  assert.deepEqual(groups.map((g) => g.shown.length), [2, 1, 2, 1]);
+  assert.deepEqual(groups[0]!.shown.map((m) => m.id), ['p3', 'p2'], 'the newest facts of the group');
+  assert.deepEqual(groups[2]!.shown.map((m) => m.id), ['h3', 'h2']);
+  assert.equal(groups[2]!.project, 'homelab');
+  assert.equal(groups[0]!.project, null);
+});
+
+test('groupFacts leaves every fact in one group, and a group with one fact has no room to show', () => {
+  const facts = [one({ id: 'a', kind: 'profile' }), one({ id: 'b', project: 'p' }), one({ id: 'c' })];
+  const groups = groupFacts(facts, 5);
+  const ids = groups.flatMap((g) => g.shown.map((m) => m.id));
+  assert.deepEqual(ids.sort(), ['a', 'b', 'c']);
+  assert.deepEqual(groups.map((g) => g.total), [1, 1, 1]);
+});
+
+/** A fact in a project (or none), saved by the owner. */
+const fact = async (app: App, content: string, project: string | null = null, kind: 'decision' | 'profile' | 'roadmap' = 'decision') =>
+  (await app.deps.service.remember({ kind, content, project: project ?? undefined, newProject: true, allowDuplicate: true } as any, owner) as any).memory as Memory;
+
+test('/facts groups the facts by project, the profile first, and every fact appears once', async (t) => {
+  const app = await start(t);
+  await fact(app, 'Lives in Berlin', null, 'profile');
+  app.advance(DAY);
+  await fact(app, 'The beds', 'garden');
+  for (let i = 0; i < 7; i++) { app.advance(DAY); await fact(app, `The router ${i}`, 'homelab'); }
+  const f = await loggedIn(app);
+  const body = await (await f('/facts')).text();
+  // The profile group comes first, then the projects by their newest fact.
+  assert.ok(body.indexOf('About you') < body.indexOf('>garden</a>'), 'About you comes before the projects');
+  assert.ok(body.indexOf('>homelab</a>') < body.indexOf('>garden</a>'), 'the newest project comes first');
+  assert.match(body, /<h2><a href="\/\?project=homelab#panel">homelab<\/a> <span class="n">7<\/span><\/h2>/);
+  assert.match(body, /<a class="fall" href="\/facts\?project=homelab">All 7 homelab facts<\/a>/);
+  // Every fact is in one group only: no fact is listed twice.
+  for (const m of app.deps.store.list({ limit: -1 })) {
+    const hits = body.split(`/memories/${m.id}`).length - 1;
+    assert.ok(hits <= 1, `${m.content} appears ${hits} times`);
+  }
+  // The facts a group does not show are behind the group's own link: the profile fact, five of the seven homelab
+  // facts and the one garden fact.
+  const shown = app.deps.store.list({ limit: -1 }).filter((m) => body.includes(`/memories/${m.id}`)).length;
+  assert.equal(shown, 7);
+});
+
+test('the grouped rows are the rows the desktop list steps through and marks (a.card-link)', async (t) => {
+  const app = await start(t);
+  const m = await fact(app, 'The beds', 'garden');
+  const body = await (await (await loggedIn(app))('/facts')).text();
+  assert.match(body, new RegExp(`<li class="frow"><a class="card-link" href="/memories/${m.id}`));
+});
+
+test('a roadmap fact reads as Now, Next and Done', async (t) => {
+  const app = await start(t);
+  await fact(app, 'Done: tools merged (2026-10-20); design plan (2026-10-21)\nNow: design refresh (8/15)\nNext: final review; merge\nLater: dark mode', 'homelab', 'roadmap');
+  const body = await (await (await loggedIn(app))('/facts')).text();
+  assert.match(body, /<dt>Now:<\/dt><dd>design refresh \(8\/15\)<\/dd>/);
+  assert.match(body, /<dt>Next:<\/dt><dd>final review<\/dd>/);
+  assert.match(body, /<dt>Done:<\/dt><dd>design plan<\/dd>/);
+});
+
+test('the filter row is one visible row, and New fact sits at the top', async (t) => {
+  const app = await start(t);
+  await fact(app, 'The router', 'homelab');
+  const body = await (await (await loggedIn(app))('/facts')).text();
+  assert.doesNotMatch(body, /<details class="fold filter-fold">/);
+  assert.match(body, /<form method="get" action="\/facts" class="frow-filters">/);
+  assert.match(body, /<input type="search" name="q"/);
+  assert.match(body, /<select name="kind"/);
+  assert.match(body, /<select name="project"/);
+  assert.match(body, /aria-label="Show"/);
+  // New fact is in the header row, before the first group, and the old row at the foot is gone.
+  assert.ok(body.indexOf('New fact') < body.indexOf('class="fgroup"'), 'New fact comes before the groups');
+  assert.equal(body.match(/New fact/g)?.length, 1);
+});
+
+test('/facts with a search or a project still shows the flat list', async (t) => {
+  const app = await start(t);
+  await fact(app, 'The router', 'homelab');
+  await fact(app, 'The beds', 'garden');
+  const f = await loggedIn(app);
+  const byProject = await (await f('/facts?project=homelab')).text();
+  assert.match(byProject, /The router/);
+  assert.doesNotMatch(byProject, /The beds/);
+  assert.doesNotMatch(byProject, /class="fgroup"/);
+  const bySearch = await (await f('/facts?q=router')).text();
+  assert.match(bySearch, /The router/);
+  assert.doesNotMatch(bySearch, /class="fgroup"/);
+});
+
+// ---- B9: search words on the fact page ----
+test('the fact page shows its search words and edits them; a keys-only save keeps the date', async (t) => {
+  const app = await start(t);
+  const id = await save(app, 'vino-db prints two label sizes');
+  await app.deps.service.update(id, { content: 'vino-db prints two label sizes', keys: 'Grapevine cellar' }, owner);
+  const f = await loggedIn(app);
+  const body = await (await f(`/memories/${id}`)).text();
+  assert.match(body, /<p class="fact-keys">Search words: Grapevine cellar<\/p>/);
+  assert.match(body, /<input type="text" name="keys" value="Grapevine cellar" maxlength="200">/);
+  assert.match(body, /Search words \(help search find this fact; never in search results\)/);
+  const before = app.deps.store.get(id)!;
+  app.advance(DAY);
+  const res = await f(`/memories/${id}`, form({ content: before.content, project: before.project ?? '', tags: '', keys: 'Grapevine wine cellar', base: before.updatedAt }));
+  assert.equal(res.status, 303);
+  const after = app.deps.store.get(id)!;
+  assert.equal(after.keys, 'Grapevine wine cellar');
+  assert.equal(after.updatedAt, before.updatedAt);
+  assert.equal(app.deps.store.history(id).length, 0);
+  // A fact with none shows no line.
+  const other = await save(app, 'vino-db exports a csv');
+  assert.doesNotMatch(await (await f(`/memories/${other}`)).text(), /class="fact-keys"/);
+});
+test('a save from a form without the search-words field keeps the fact\'s search words', async (t) => {
+  const app = await start(t);
+  const id = await save(app, 'vino-db prints two label sizes');
+  await app.deps.service.update(id, { content: 'vino-db prints two label sizes', keys: 'Grapevine cellar' }, owner);
+  const f = await loggedIn(app);
+  const m = app.deps.store.get(id)!;
+  assert.equal((await f(`/memories/${id}`, form({ content: 'vino-db prints three label sizes', project: m.project ?? '', tags: '', base: m.updatedAt }))).status, 303);
+  assert.equal(app.deps.store.get(id)!.keys, 'Grapevine cellar');
 });

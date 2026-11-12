@@ -28,6 +28,8 @@ import { PageStore } from './pages/store.js';
 import { DiscussionStore } from './discussions/store.js';
 import { openDb, purgeExpired } from './db.js';
 import { createLocalEmbedder } from './memory/embedder.js';
+import { ensureEmbeddings, staleOverrides } from './memory/reembed.js';
+import { LearningService } from './learning/service.js';
 import { startReranker } from './memory/reranker.js';
 import { MemoryService } from './memory/service.js';
 import { MemoryStore } from './memory/store.js';
@@ -41,7 +43,7 @@ import { watchParent } from './watchParent.js';
 import { createApp, type AppDeps } from './web/app.js';
 import { makeTidyItems, tidySummary } from './web/tidyItems.js';
 import { GraphService } from './graph/data.js';
-import { MeaningIndex, THREAD_FLOOR, THREAD_KINDS } from './graph/threads.js';
+import { MeaningIndex, THREAD_KINDS } from './graph/threads.js';
 
 const CLEANUP_INTERVAL_MS = 60 * 60_000;
 
@@ -52,22 +54,24 @@ let stopWhenGone: (() => void) | null = null;
 watchParent(process.env, process.stdin, () => (stopWhenGone ? stopWhenGone() : process.exit(0)));
 mkdirSync(config.dataDir, { recursive: true });
 const db = openDb(join(config.dataDir, 'memory.db'));
-const embedder = await createLocalEmbedder({ modelDir: config.modelDir, allowRemote: false });
+const embedder = await createLocalEmbedder({ modelDir: config.modelDir, allowRemote: false, model: config.embedModel });
+// A changed search model re-embeds everything once, before anything can read or save (src/memory/reembed.ts).
+const embedded = await ensureEmbeddings(db, join(config.dataDir, 'memory.db'), embedder, config.embedModel);
+if (embedded.reembedded) for (const line of staleOverrides(process.env, embedded.from)) console.warn(line);
 const reranker = await startReranker(config);
 
 const now = systemClock;
-/**
- * How close by meaning another project's decision must be to show as related to a page. Measured on the real model
- * (2026-11-03): a project's own decisions scored 0.89–0.93 against its page, unrelated projects' up to 0.863, so
- * recall's 0.75 floor let them all in.
- */
-const RELATED_SIMILARITY = 0.88;
+// Every similarity cut-off comes from the embedding model's profile (src/memory/embeddingProfile.ts).
+const profile = config.embedModel;
 const store = new MemoryStore(db, now);
 const service = new MemoryService(store, embedder, {
   duplicateThreshold: config.duplicateThreshold,
   minRecallSimilarity: config.minRecallSimilarity,
   recallConfidentSimilarity: config.recallConfidentSimilarity,
   recallWindow: config.recallWindow,
+  keywordWeight: profile.keywordWeight,
+  rerankPrior: profile.rerankPrior,
+  closeFacts: profile.closeFacts,
   reranker,
 });
 const registry = new ProjectStore(db, now);
@@ -77,10 +81,13 @@ const provider = new MemoryOAuthProvider(db, clients, allowlist, now, new URL('/
 const discussions = new DiscussionService(new DiscussionStore(db, now), service, () => provider.activeConnections(), now);
 const devices = new DeviceService(db, now);
 const folders = new FolderService(devices, registry, service, now);
-const pages = new PageService(new PageStore(db, now), embedder, service, registry, store, now);
+// The five areas and the owner's handbook (src/learning/); a merged project's rows follow it.
+const learning = new LearningService(db, now, folders, { get: (n) => registry.get(n), named: (n) => service.projectNamed(n), list: () => registry.list() });
+service.setProjectMoveHook((from, to) => learning.moveProject(from, to));
+const pages = new PageService(new PageStore(db, now), embedder, service, registry, store, now, { keywordWeight: profile.keywordWeight });
 pages.realignAnchors();
 // The graph's meaning links: every save updates them right after it commits; the catch-up after listen is the safety net.
-const meaning = new MeaningIndex(db, { floor: THREAD_FLOOR, kinds: THREAD_KINDS, now });
+const meaning = new MeaningIndex(db, { floor: profile.threadFloor, kinds: THREAD_KINDS, now });
 service.setMeaningHook(meaning);
 pages.setMeaningHook(meaning);
 const notes = new NoteService(db, pages, now);
@@ -89,11 +96,11 @@ const diagramChecks = new DiagramChecks(db, now);
 const skills = new SkillService(db, now);
 const uploadLinks = new UploadLinks(db, now);
 pages.setPictureStore(images);
-const projects = new ProjectsService(registry, service, store, discussions, pages, folders);
+const projects = new ProjectsService(registry, service, store, discussions, pages, folders, learning);
 const graph = new GraphService({ db, projects, registry, service, pages, meaning, now });
 const growth = new GrowthService(new GrowthStore(db, now), embedder, service, registry, store, { duplicateThreshold: config.duplicateThreshold }, now);
 // Work mode has no Growth, so its weekly reviews have no growth part.
-const tidyItems = makeTidyItems({ store, service, now });
+const tidyItems = makeTidyItems({ store, service, now, sameProjectFloor: profile.sameProject });
 const reviews = new ReviewService({
   store: new ReviewStore(db), memories: store, service, registry, folders, pages, growth: config.mode === 'work' ? null : growth, grants: () => provider.listGrants(),
   tidy: () => tidySummary(tidyItems()),
@@ -115,7 +122,7 @@ if (config.backupDir) scheduleBackups(db, config.backupDir, config.backupKeep, n
 
 const deps: AppDeps = {
   statusDir: config.dataDir, db,
-  publicUrl: config.publicUrl, allowlist, store, service, registry, projects, discussions, growth, reviews, pages, images, diagramChecks, uploadLinks, setupOverlay: loadSetupOverlay(config.overlayDir), skills, skillSync: new SkillSync(db, now, skills), notes, devices, folders, imports: new ImportLog(db, now), relatedSimilarity: RELATED_SIMILARITY, graph, provider, owner, sessions, limiter, clients, now,
+  publicUrl: config.publicUrl, allowlist, store, service, registry, projects, discussions, growth, reviews, pages, images, diagramChecks, uploadLinks, setupOverlay: loadSetupOverlay(config.overlayDir), skills, skillSync: new SkillSync(db, now, skills), notes, devices, folders, imports: new ImportLog(db, now), relatedSimilarity: profile.related, sameProjectFloor: profile.sameProject, learning, graph, provider, owner, sessions, limiter, clients, now,
   mode: config.mode, trustCfConnectingIp: config.trustCfConnectingIp, askCommands: config.askCommands, localMode: config.localMode, appSecret: config.appSecret,
   tools: config.localMode ? { home: homedir(), path: config.toolPath ?? `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${homedir()}/.local/bin` } : undefined,
 };

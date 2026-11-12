@@ -24,7 +24,8 @@ export interface ProjectWeek {
   undated: number;
   quiet: { lastTouched: string; next: string | null } | null;
   back: { quietDays: number } | null;
-  notPushed: { count: number; receivedAt: string } | null;
+  /** Commits only on the Mac (count), or when there are none, uncommitted changes older than a day (uncommitted files). */
+  notPushed: { count: number; uncommitted?: number; receivedAt: string } | null;
 }
 
 /** 'replaced-others' came with section 16 (the union only grows, so REVIEW_FORMAT stays 1); weeks built before it rightly have none. */

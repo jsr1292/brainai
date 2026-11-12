@@ -14,7 +14,8 @@ import { openDb } from '../db.js';
 import { DeviceService } from '../folders/devices.js';
 import { FolderService } from '../folders/match.js';
 import { GraphService } from '../graph/data.js';
-import { MeaningIndex, THREAD_FLOOR, THREAD_KINDS } from '../graph/threads.js';
+import { MeaningIndex, THREAD_KINDS } from '../graph/threads.js';
+import { profileFor } from '../memory/embeddingProfile.js';
 import { createFakeEmbedder } from '../memory/fakeEmbedder.js';
 import { MemoryService } from '../memory/service.js';
 import { MemoryStore } from '../memory/store.js';
@@ -45,7 +46,7 @@ const registry = new ProjectStore(db, now);
 const pages = new PageService(new PageStore(db, now), embedder, service, registry, store, now);
 const folders = new FolderService(new DeviceService(db, now), registry, service, now);
 const projects = new ProjectsService(registry, service, store, undefined, pages, folders);
-const meaning = new MeaningIndex(db, { floor: THREAD_FLOOR, kinds: THREAD_KINDS, now, log: () => {} });
+const meaning = new MeaningIndex(db, { floor: profileFor(process.env.EMBED_MODEL).threadFloor, kinds: THREAD_KINDS, now, log: () => {} });
 const graph = new GraphService({ db, projects, registry, service, pages, meaning, now });
 
 const ms = (t0: number) => Math.round((performance.now() - t0) * 10) / 10;

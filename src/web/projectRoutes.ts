@@ -1,3 +1,5 @@
+import { LearningError } from '../learning/service.js';
+import { CHECK_AREAS, CHECK_STATUSES, type CheckArea, type CheckStatus } from '../learning/types.js';
 import { Router, type Request, type Response } from 'express';
 import { backupHealth, readBackupStatus } from '../backupStatus.js';
 import { folderKey } from '../folders/report.js';
@@ -114,19 +116,19 @@ export function projectRoutes(d: AppDeps): Router {
    * Runs an owner action on a project: 303 back to its panel, 404 for an unknown project, 400 with the message
    * otherwise. Sent from a page or a review (a safe `back`), it returns there, with a fixed line when it failed.
    */
-  const act = async (req: Request, res: Response, action: (name: string) => unknown) => {
+  const act = async (req: Request, res: Response, action: (name: string) => unknown, anchor?: string) => {
     const back = safeBack(req.body?.back);
     const name = d.service.projectNamed(req.params.name as string);
     if (!d.registry.get(name)) return back ? res.redirect(303, withBackError(back, 'changed')) : notFound(res);
     try {
       await action(name);
     } catch (e) {
-      if (!(e instanceof ProjectError || e instanceof MemoryError)) throw e;
+      if (!(e instanceof ProjectError || e instanceof MemoryError || e instanceof LearningError)) throw e;
       if (back) return res.redirect(303, withBackError(back, e.code === 'not_found' || e.message === LIST_CHANGED ? 'changed' : 'failed'));
       if (e.code === 'not_found') return notFound(res);
       return home(req, res, 400, e.message, name);
     }
-    res.redirect(303, back ?? panelHref(name));
+    res.redirect(303, back ?? (anchor ? panelHref(name).replace(/#panel$/, anchor) : panelHref(name)));
   };
   const index = (req: Request): number | undefined => {
     const raw = req.params.index as string;
@@ -205,6 +207,15 @@ export function projectRoutes(d: AppDeps): Router {
       oneLiner: orNull(str(req, 'oneLiner')), area: area === '' ? null : (area as Area), folder: orNull(str(req, 'folder')), url: orNull(str(req, 'url')),
       runsOn: str(req, 'runsOn'), nicknames: str(req, 'nicknames'),
     }, 'owner'));
+  });
+
+  // The owner sets one of a project's five areas from its panel (spec 2026-11-11).
+  router.post('/projects/:name/areas/:area', owner, (req: Request, res) => {
+    const area = req.params.area as string;
+    const status = str(req, 'status');
+    if (!(CHECK_AREAS as readonly string[]).includes(area)) return home(req, res, 400, `area must be one of: ${CHECK_AREAS.join(', ')}`);
+    if (!(CHECK_STATUSES as readonly string[]).includes(status)) return home(req, res, 400, `status must be one of: ${CHECK_STATUSES.join(', ')}`);
+    return act(req, res, (name) => d.learning.set(name, area as CheckArea, { status: status as CheckStatus, note: str(req, 'note') }, 'owner'), '#p-areas');
   });
 
   router.post('/projects/:name/waiting/:index/done', owner, (req: Request, res) => {

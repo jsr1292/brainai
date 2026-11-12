@@ -30,7 +30,7 @@ export function reviewJson(v: ReviewView, o: { work: boolean }): Record<string, 
       ...(m.moreSteps > 0 ? { more_steps: m.moreSteps } : {}),
       ...(m.progress ? { progress: { now: m.progress.now, ...(m.progress.from === null ? {} : { from: m.progress.from }), to: m.progress.to, of: m.progress.total } } : {}),
       ...(m.pagesUpdated > 0 ? { pages_updated: m.pagesUpdated } : {}),
-      ...(m.notPushed ? { not_pushed: m.notPushed.count } : {}),
+      ...(m.notPushed ? (m.notPushed.count > 0 ? { not_pushed: m.notPushed.count } : { not_committed: m.notPushed.uncommitted ?? 0 }) : {}),
       ...(m.chips.length > 0 ? { chips: m.chips } : {}),
     })),
     // Projects whose only news is a chip (a new idea, a state the owner set).

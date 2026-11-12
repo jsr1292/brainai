@@ -148,7 +148,7 @@ test('sideUrl asks the fragment of the same route', () => {
 
 test('crumbs read as in the mockup', () => {
   assert.deepEqual(d.crumbParts('project', 'ferngrid'), ['Projects', 'ferngrid']);
-  assert.deepEqual(d.crumbParts('approval', ''), ['Projects', 'For you', 'Approvals']);
+  assert.deepEqual(d.crumbParts('approval', ''), ['Inbox']);
   assert.deepEqual(d.crumbParts('discussion', 'ledgerline'), ['Projects', 'ledgerline', 'Discussion']);
   assert.deepEqual(d.crumbParts('discussion', ''), ['Projects', 'Discussions', 'Discussion']);
   assert.deepEqual(d.crumbParts('notyet', ''), ['Projects', 'Not in the brain yet']);
@@ -253,9 +253,9 @@ test('the approval sheet shows one suggestion: the one in ?id= when it still wai
   assert.equal(d.approvalIdOf('/approvals'), undefined);
 });
 
-test('the approval crumb ends in the suggestion\'s kind, as in the mockup (Projects › For you › Profile)', () => {
-  assert.deepEqual(d.crumbParts('approval', 'Profile'), ['Projects', 'For you', 'Profile']);
-  assert.deepEqual(d.crumbParts('approval', ''), ['Projects', 'For you', 'Approvals']);
+test('the approval crumb ends in the suggestion\'s kind, as in the mockup (Inbox › Profile)', () => {
+  assert.deepEqual(d.crumbParts('approval', 'Profile'), ['Inbox', 'Profile']);
+  assert.deepEqual(d.crumbParts('approval', ''), ['Inbox']);
 });
 
 test('the approval sheet is shaped as the mockup: the sentence is the h1, the writer leads the meta line, Suggested then Replaces struck through, key hints on the pills', () => {
@@ -334,6 +334,22 @@ test('DESK_FOLDS never names a never-open fold', () => {
   for (const s of d.DESK_FOLDS) assert.doesNotMatch(s, /stale|nopage|notyet|panel\.fold|\.review > |asknote|livefold|toc-fold|picker/, s);
 });
 
+test('a fact opens read-only: the desktop does not open its editor, and History stays open', () => {
+  assert.ok(!d.DESK_FOLDS.some((s: string) => s.includes('#edit')), 'the Edit fold stays folded');
+  assert.ok(d.DESK_FOLDS.some((s: string) => s.includes('#history')), 'History stays open');
+});
+
+test('E opens the fact\'s editor and puts the caret at the end of its text', () => {
+  const ta = { value: 'Cellar', scrolled: false, focused: false, range: null as [number, number] | null,
+    scrollIntoView() { this.scrolled = true; }, focus() { this.focused = true; }, setSelectionRange(a: number, b: number) { this.range = [a, b]; } };
+  const fold = { open: false, querySelector: (s: string) => (s === 'textarea' ? ta : null) };
+  assert.equal(d.openEditFold(fold), true);
+  assert.equal(fold.open, true, 'the fold opens');
+  assert.equal(ta.focused, true, 'the text is focused');
+  assert.deepEqual(ta.range, [6, 6], 'the caret is at the end');
+  assert.equal(d.openEditFold(undefined), false, 'no fold, nothing to open');
+});
+
 test('spyIndex picks the last heading at or above the line', () => {
   assert.equal(d.spyIndex([], 80), -1);
   assert.equal(d.spyIndex([120, 400, 900], 80), 0);
@@ -385,7 +401,7 @@ test('capLabel', () => {
 // ---- D34 Task 7: the ⌘K palette ----
 test('paletteDo never posts: only GET jumps and an idea that fills the field', () => {
   const all = d.paletteDo('', { work: false });
-  assert.deepEqual(all.map((x: any) => x.label), ['Go to Projects', 'Go to Pages', 'Go to Facts', 'Go to Last week', 'Go to So far', 'Go to Growth', 'Go to Graph', 'Go to Settings', 'Go to Approvals']);
+  assert.deepEqual(all.map((x: any) => x.label), ['Go to Projects', 'Go to Pages', 'Go to Facts', 'Go to Inbox', 'Go to Last week', 'Go to So far', 'Go to Growth', 'Go to Graph', 'Go to Settings']);
   for (const x of all) { assert.match(x.href, /^\/[\w/]*$/); assert.equal(x.idea, undefined); }
   assert.deepEqual(d.paletteDo('lantern', { work: false })[0], { label: 'Add “lantern” as an idea', idea: 'lantern' });
   assert.ok(!d.paletteDo('grow', { work: true }).some((x: any) => /Growth/.test(x.label)));
@@ -408,4 +424,14 @@ test('paletteOrder: In the graph first, only on Graph', () => {
 
 test("Delete…'s question says assistants will ask before saving the fact again", () => {
   assert.ok(deskSrc.includes("text: 'It leaves search for you and your assistants. Assistants that try to save it again will ask you first. You can bring it back from its History.'"));
+});
+
+test('opening a project in the sheet stays at its top: #panel and #notyet only name the sheet, a section hash scrolls', () => {
+  // #panel is the project's own wrapper: scrolling to it put the title under the sticky crumb bar.
+  assert.equal(d.sheetScrollId('/?project=homelab#panel'), null);
+  assert.equal(d.sheetScrollId('/#notyet'), null);
+  assert.equal(d.sheetScrollId('/pages/p1'), null);
+  assert.equal(d.sheetScrollId('/pages/p1#'), null);
+  assert.equal(d.sheetScrollId('/pages/p1#run-and-deploy'), 'run-and-deploy');
+  assert.equal(d.sheetScrollId('/pages/p1#caf%C3%A9'), 'café');
 });

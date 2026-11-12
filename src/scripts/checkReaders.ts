@@ -131,7 +131,7 @@ let fromVectors = 0;
 recalled.forEach((r, i) => {
   const q = queries[i]!;
   const best = Math.max(...store.activeEmbeddings({ project: q.project ? service.projectNamed(q.project) : undefined }).map((e) => cosine(q.vector, e.embedding)));
-  const floor = Math.max(MIN_SIMILARITY, best - DEFAULT_RECALL_WINDOW);
+  const floor = Math.max(MIN_SIMILARITY, best - (DEFAULT_RECALL_WINDOW ?? Infinity));
   for (const x of r) if (cosine(q.vector, stored.get(x.memory.id)!) >= floor) fromVectors++;
 });
 const recallTime = await time(() => runRecall());

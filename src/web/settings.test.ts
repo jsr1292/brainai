@@ -85,7 +85,7 @@ test('a failing approval shows its message on Approvals with status 400', async 
   const res = await f(`/suggestions/${s.id}/approve`, form({ content: 'x'.repeat(1001) }));
   assert.equal(res.status, 400);
   const body = await res.text();
-  assert.match(body, /<title>Approvals<\/title>/);
+  assert.match(body, /<title>Inbox<\/title>/);
   assert.match(body, /the limit is 1000/);
 });
 

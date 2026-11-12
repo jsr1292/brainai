@@ -10,7 +10,8 @@
 import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { openDb } from '../db.js';
-import { MeaningIndex, THREAD_FLOOR, THREAD_KINDS, type MeaningHook } from '../graph/threads.js';
+import { MeaningIndex, THREAD_KINDS, type MeaningHook } from '../graph/threads.js';
+import { profileFor } from '../memory/embeddingProfile.js';
 import { createFakeEmbedder } from '../memory/fakeEmbedder.js';
 import { MemoryService } from '../memory/service.js';
 import { MemoryStore } from '../memory/store.js';
@@ -132,7 +133,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const service = new MemoryService(store, embedder, { duplicateThreshold: 0.9, minRecallSimilarity: 0.2, recallConfidentSimilarity: 0.2 });
   const registry = new ProjectStore(db, now);
   const pages = new PageService(new PageStore(db, now), embedder, service, registry, store, now);
-  const meaning = new MeaningIndex(db, { floor: THREAD_FLOOR, kinds: THREAD_KINDS, now, log: () => {} });
+  const meaning = new MeaningIndex(db, { floor: profileFor(process.env.EMBED_MODEL).threadFloor, kinds: THREAD_KINDS, now, log: () => {} });
   console.log(await seedGraph({ registry, service, pages, meaning }, Number(count ?? 200)));
   db.close();
 }

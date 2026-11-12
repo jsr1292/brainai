@@ -534,6 +534,54 @@ const MIGRATION_31 = `
 ALTER TABLE projects ADD COLUMN nicknames TEXT NOT NULL DEFAULT '[]';
 `;
 
+/** B9: search words on a fact ('' for none); on a held save, NULL means "keep the fact's own". */
+const MIGRATION_32 = `
+ALTER TABLE memories ADD COLUMN keys TEXT NOT NULL DEFAULT '';
+ALTER TABLE profile_suggestions ADD COLUMN keys TEXT;
+`;
+
+/**
+ * Which embedding model made the stored vectors (facts, page sections, observations). A brain that already has vectors
+ * was made by e5, the only model before this; an empty one gets the configured model at its first start
+ * (src/memory/reembed.ts), which also re-embeds everything once whenever the configured model differs.
+ */
+const MIGRATION_33 = `
+CREATE TABLE embedding_model(id INTEGER PRIMARY KEY CHECK(id = 1), model TEXT NOT NULL, dim INTEGER NOT NULL, embedded_at TEXT NOT NULL);
+-- Vectors a re-embed has computed so far (in batches), so a stopped start resumes instead of starting over; emptied
+-- once the switch is written. text_hash: a text edited between two attempts is embedded again.
+CREATE TABLE embedding_staging(model TEXT NOT NULL, tbl TEXT NOT NULL, key TEXT NOT NULL, text_hash TEXT NOT NULL, embedding BLOB NOT NULL,
+  PRIMARY KEY(model, tbl, key));
+INSERT INTO embedding_model(id, model, dim, embedded_at)
+  SELECT 1, 'e5', 384, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  WHERE EXISTS (SELECT 1 FROM memories) OR EXISTS (SELECT 1 FROM page_sections) OR EXISTS (SELECT 1 FROM observations);
+`;
+
+/**
+ * The learning layer (spec 2026-11-11-learning-layer-and-projects-page): each project's hand-set status in the five
+ * areas with every change kept, "not now" snoozes, and the owner's handbook topics. Work is safe is computed from the
+ * Mac's folder report and only stored when set by hand.
+ */
+const MIGRATION_34 = `
+CREATE TABLE project_checks(project TEXT NOT NULL, area TEXT NOT NULL CHECK(area IN ('safe','finish','auto','alerts','upkeep')),
+  status TEXT NOT NULL CHECK(status IN ('done','look','todo','not_needed')), note TEXT, automatic INTEGER NOT NULL DEFAULT 0,
+  set_by TEXT NOT NULL, set_at TEXT NOT NULL, PRIMARY KEY(project, area));
+CREATE TABLE project_check_history(project TEXT NOT NULL, area TEXT NOT NULL, status TEXT NOT NULL, note TEXT, set_by TEXT NOT NULL, set_at TEXT NOT NULL);
+CREATE INDEX project_check_history_at ON project_check_history(set_at);
+CREATE TABLE check_snoozes(project TEXT NOT NULL, area TEXT NOT NULL, until TEXT NOT NULL, set_by TEXT NOT NULL, PRIMARY KEY(project, area));
+CREATE TABLE handbook_topics(slug TEXT PRIMARY KEY, title TEXT NOT NULL, level TEXT NOT NULL CHECK(level IN ('seen','helped','alone')),
+  page_id TEXT, projects TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL);
+`;
+
+/** The Map's weekly counts: how many projects stood where in each area, recorded when the Map is viewed (no job). */
+const MIGRATION_35 = `
+CREATE TABLE map_snapshots(week TEXT NOT NULL, area TEXT NOT NULL, status TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY(week, area, status));
+`;
+
+/** Work is safe only: what the folder report said when the status was set by hand, so a later report overrides it only when worse. */
+const MIGRATION_36 = `
+ALTER TABLE project_checks ADD COLUMN report_at_set TEXT;
+`;
+
 const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] = [
   { version: 1, sql: MIGRATION_1 },
   { version: 2, sql: MIGRATION_2 },
@@ -567,17 +615,25 @@ const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] 
   { version: 29, sql: MIGRATION_29 },
   { version: 30, sql: MIGRATION_30 },
   { version: 31, sql: MIGRATION_31 },
+  { version: 32, sql: MIGRATION_32 },
+  { version: 33, sql: MIGRATION_33 },
+  { version: 34, sql: MIGRATION_34 },
+  { version: 35, sql: MIGRATION_35 },
+  { version: 36, sql: MIGRATION_36 },
 ];
 
 /** `upTo` stops at that schema version (tests of a migration start from the one before it). */
 /** Copies kept in <data>/pre-migrate/: the newest few, one per update that changed the database. */
 const PRE_MIGRATE_KEEP = 3;
 
-/** VACUUM INTO <dir>/pre-migrate/pre-migrate-<from>-to-<to>-<stamp>.db, checked; throws (and nothing migrates) if it fails. */
-function backupBeforeMigrating(db: DB, path: string, from: number, to: number): void {
+/**
+ * VACUUM INTO <dir>/pre-migrate/<prefix>-<stamp>.db, checked by an integrity check; a failed copy never stays under a
+ * good name. Then only the newest PRE_MIGRATE_KEEP copies (schema updates and re-embeds together) are kept.
+ */
+function checkedCopy(db: DB, path: string, prefix: string): void {
   const dir = join(dirname(path), 'pre-migrate');
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
-  const target = join(dir, `pre-migrate-${from}-to-${to}-${stamp}.db`);
+  const target = join(dir, `${prefix}-${stamp}.db`);
   try {
     mkdirSync(dir, { recursive: true });
     if (existsSync(target)) rmSync(target);
@@ -587,15 +643,33 @@ function backupBeforeMigrating(db: DB, path: string, from: number, to: number): 
       if ((check.pragma('integrity_check', { simple: true }) as string) !== 'ok') throw new Error('the copy failed its integrity check');
     } finally { check.close(); }
   } catch (e) {
-    // A partial or unchecked copy never stays under a good name.
     try { rmSync(target, { force: true }); } catch { /* the folder itself may be the problem */ }
+    throw e;
+  }
+  // Oldest first: by the time in the name, then by the schema version it came from (several updates in one second).
+  const pattern = /^pre-(?:migrate-(\d+)-to-\d+|reembed-[a-z0-9]+-to-[a-z0-9]+)-(\d{8}-\d{6})\.db$/;
+  const key = (f: string) => { const m = pattern.exec(f)!; return `${m[2]}:${(m[1] ?? '').padStart(6, '0')}`; };
+  const copies = readdirSync(dir).filter((f) => pattern.test(f)).sort((a, b) => key(a).localeCompare(key(b)));
+  for (const old of copies.slice(0, Math.max(0, copies.length - PRE_MIGRATE_KEEP))) rmSync(join(dir, old), { force: true });
+}
+
+/** The copy before a schema update; throws (and nothing migrates) if it fails. */
+function backupBeforeMigrating(db: DB, path: string, from: number, to: number): void {
+  try {
+    checkedCopy(db, path, `pre-migrate-${from}-to-${to}`);
+  } catch (e) {
     db.close();
     throw new Error(`Could not back up the database before migrating it (version ${from} to ${to}): ${e instanceof Error ? e.message : String(e)}. Nothing was changed.`);
   }
-  // Oldest first: by the time in the name, then by the version it came from (several updates in one second).
-  const key = (f: string) => { const m = /^pre-migrate-(\d+)-to-\d+-(\d{8}-\d{6})\.db$/.exec(f)!; return `${m[2]}:${m[1]!.padStart(6, '0')}`; };
-  const copies = readdirSync(dir).filter((f) => /^pre-migrate-\d+-to-\d+-\d{8}-\d{6}\.db$/.test(f)).sort((a, b) => key(a).localeCompare(key(b)));
-  for (const old of copies.slice(0, Math.max(0, copies.length - PRE_MIGRATE_KEEP))) rmSync(join(dir, old), { force: true });
+}
+
+/** The copy before every vector is rebuilt for another embedding model (src/memory/reembed.ts); throws if it fails. */
+export function backupBeforeReembedding(db: DB, path: string, from: string, to: string): void {
+  try {
+    checkedCopy(db, path, `pre-reembed-${from}-to-${to}`);
+  } catch (e) {
+    throw new Error(`Could not back up the database before re-embedding it (${from} to ${to}): ${e instanceof Error ? e.message : String(e)}. Nothing was changed.`);
+  }
 }
 
 export function openDb(path: string, opts: { upTo?: number } = {}): DB {

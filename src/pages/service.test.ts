@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakeEmbedder } from '../memory/fakeEmbedder.js';
 import { ProjectStore } from '../projects/store.js';
-import { makeService } from '../testing/helpers.js';
+import { makePages, makeService } from '../testing/helpers.js';
 import { freshnessWorld } from '../testing/freshnessWorld.js';
 import { PageService } from './service.js';
 import { PageStore } from './store.js';
@@ -480,4 +480,17 @@ test('page_images follows every save: create, a save without one picture, and a 
   assert.deepEqual(ids(p.id), [b]);
   await pages.restore(p.id, 1, 'owner');
   assert.deepEqual(ids(p2.id), [a, b]);
+});
+
+test('a section hit carries its heading path and the passage that matched (B10)', async () => {
+  const ctx = makeService();
+  const pages = makePages(ctx);
+  const filler = Array.from({ length: 90 }, (_, i) => `word${i}`).join(' ');
+  await pages.create({ title: 'homelab — the mini PC', area: 'start', body: `## Stack and where it lives\n\nDocker on the mini PC.\n\n### Backups\n\n${filler} The restic retention keeps 7 daily snapshots. ${filler}\n` }, 'owner');
+  const vector = await createFakeEmbedder().embed('restic retention', 'query');
+  const [hit] = pages.search('restic retention', vector, 3, 0);
+  assert.equal(hit!.heading, 'Backups');
+  assert.equal(hit!.headingPath, 'Stack and where it lives › Backups');
+  assert.match(hit!.snippet, /restic retention keeps 7 daily/);
+  assert.ok(hit!.snippet.startsWith('…'));
 });

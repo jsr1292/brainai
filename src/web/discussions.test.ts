@@ -363,11 +363,11 @@ test('every owner action on a discussion clears the sidebar cache, not only deci
   d.reply(grok, a.id, { text: 'SQLite is fine.' });
   const sidebarOf = (body: string) => { const at = body.indexOf('<nav class="side"'); return body.slice(at, body.indexOf('</nav>', at)); };
   // Round 2 waits on the owner: the needs-you count is worked out once and cached.
-  assert.match(sidebarOf(await (await f('/')).text()), /side-need/);
+  assert.match(sidebarOf(await (await f('/')).text()), /side-count/);
   const r = await f(`/discussions/${a.id}/delete`, { ...post({ confirm: 'yes' }), redirect: 'manual' });
   assert.equal(r.status, 303);
   // No clock advance: only the delete itself can have cleared the cache.
-  assert.doesNotMatch(sidebarOf(await (await f('/review')).text()), /side-need/);
+  assert.doesNotMatch(sidebarOf(await (await f('/review')).text()), /side-count/);
 });
 
 test('earlier rounds are marked to open on a wide screen, and are never rendered open', async (t) => {

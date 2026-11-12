@@ -148,6 +148,9 @@ test('merge can keep the older memory', async (t) => {
   const newer = await remember(app, 'Same thing');
   const body = await (await f('/facts/tidy')).text();
   assert.equal(body.match(/>Keep this one</g)!.length, 2);
+  // "side" is the sidebar's class (desk.css pins it to the left edge): the two halves of a pair must not use it.
+  assert.equal(body.match(/class="side"/g)?.length ?? 0, 1, 'only the sidebar is class="side"');
+  assert.equal(body.match(/class="dup-side"/g)?.length ?? 0, 2);
   assert.match(body, new RegExp(`name="keep" value="${older.id}"><input type="hidden" name="drop" value="${newer.id}"`));
   assert.equal((await f('/duplicates/merge', form({ keep: older.id, drop: newer.id }))).status, 303);
   assert.equal(app.deps.store.get(older.id)!.deletedAt, null);

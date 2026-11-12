@@ -164,7 +164,7 @@ export function pageRoutes(d: AppDeps): Router {
     const section = typeof req.query.section === 'string' ? req.query.section : undefined;
     const form = p ? formFor(p, section) : undefined;
     if (!p || !form) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
-    send(res, 200, 'Edit page', editView(nav(), form), { href: `/pages/${p.id}`, label: p.title });
+    send(res, 200, `Editing ${p.title}`, editView(nav(), form), { href: `/pages/${p.id}`, label: p.title });
   });
 
   router.post('/pages/:id', owner, async (req, res) => {
@@ -178,13 +178,13 @@ export function pageRoutes(d: AppDeps): Router {
       // The section was renamed or removed since the editor opened: a conflict, never a lost edit.
       if (anchor === undefined || base === p.version) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
       const whole = formFor(p, undefined)!;
-      return send(res, 409, 'Edit page', conflictView(nav(), { ...whole, base, savedBy: p.updatedBy, version: p.version, theirs: p.body, mine: field(req, 'body') }), { href: `/pages/${p.id}`, label: p.title });
+      return send(res, 409, `Editing ${p.title}`, conflictView(nav(), { ...whole, base, savedBy: p.updatedBy, version: p.version, theirs: p.body, mine: field(req, 'body') }), { href: `/pages/${p.id}`, label: p.title });
     }
     const v: EditForm = anchor === undefined
       ? { ...shown, base, title: field(req, 'title'), project: field(req, 'project'), area: field(req, 'area'), body: field(req, 'body') }
       : { ...shown, base, body: field(req, 'body') };
     const intent = field(req, 'intent');
-    if (intent !== 'save') return send(res, 200, 'Edit page', editView(nav(), { ...v, preview: intent === 'preview' ? preview(v.body) : undefined }), { href: `/pages/${p.id}`, label: p.title });
+    if (intent !== 'save') return send(res, 200, `Editing ${v.title}`, editView(nav(), { ...v, preview: intent === 'preview' ? preview(v.body) : undefined }), { href: `/pages/${p.id}`, label: p.title });
     try {
       const before = splitSections(p.body).findIndex((s) => s.anchor === anchor);
       const saved = anchor === undefined
@@ -200,9 +200,9 @@ export function pageRoutes(d: AppDeps): Router {
         const now = d.pages.get(p.id)!;
         const theirs = anchor === undefined ? now.body : sectionText(now.body, anchor) ?? now.body;
         const saved = formFor(now, undefined)!;
-        return send(res, 409, 'Edit page', conflictView(nav(), { ...v, mode: anchor !== undefined && sectionText(now.body, anchor) !== undefined ? 'section' : 'page', savedBy: now.updatedBy, version: now.version, theirs, mine: v.body, current: anchor === undefined ? { title: saved.title, project: saved.project, area: saved.area } : undefined }), { href: `/pages/${p.id}`, label: p.title });
+        return send(res, 409, `Editing ${p.title}`, conflictView(nav(), { ...v, mode: anchor !== undefined && sectionText(now.body, anchor) !== undefined ? 'section' : 'page', savedBy: now.updatedBy, version: now.version, theirs, mine: v.body, current: anchor === undefined ? { title: saved.title, project: saved.project, area: saved.area } : undefined }), { href: `/pages/${p.id}`, label: p.title });
       }
-      send(res, 400, 'Edit page', editView(nav(), { ...v, error: e.message }), { href: `/pages/${p.id}`, label: p.title });
+      send(res, 400, `Editing ${v.title}`, editView(nav(), { ...v, error: e.message }), { href: `/pages/${p.id}`, label: p.title });
     }
   });
 

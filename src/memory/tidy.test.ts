@@ -54,6 +54,14 @@ test('a project whose memories match another project\'s closely is offered as th
   assert.ok(overlaps[0]!.similarity > 0.88 && overlaps[0]!.similarity <= 1);
 });
 
+test('the same-project floor comes from the caller (the embedding model\'s profile)', async () => {
+  const { store, add } = setup();
+  await add('decision', 'CSV merge tool for seed catalogues', 'seedsheet');
+  await add('decision', 'CSV merge tool for seed catalogues v1', 'csvmerge');
+  assert.equal(projectOverlaps(store, 0.88).length, 1);
+  assert.equal(projectOverlaps(store, 1.01).length, 0);
+});
+
 test('"different projects" hides the pair for good', async () => {
   const { store, add } = setup();
   await add('decision', 'CSV merge tool for seed catalogues', 'seedsheet');

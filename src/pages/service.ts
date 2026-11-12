@@ -11,6 +11,7 @@ import { findLinks, isKeyDecisions, plainText, replaceSection, splitSections, ty
 import type { ImageStore } from '../images/store.js';
 import { Freshness, SECTION_MATCH } from './freshness.js';
 import { PageStore, type StoredLink, type StoredSection } from './store.js';
+import { passage } from './passage.js';
 import { EMBED_CHARS, MAX_BODY, MAX_TITLE, PAGE_AREAS, PageError, type CaughtUp, type Page, type PageArea, type PageHeader, type PageVersion } from './types.js';
 import type { MeaningHook } from '../graph/threads.js';
 
@@ -44,13 +45,17 @@ export class PageService {
     private registry: ProjectStore,
     private memoryStore: MemoryStore,
     private now: Clock,
-    opts: { sectionMatch?: number | null } = {},
+    opts: { sectionMatch?: number | null; keywordWeight?: number } = {},
   ) {
+    this.keywordWeight = opts.keywordWeight ?? KEYWORD_WEIGHT;
     this.freshness = new Freshness({
       store, memoryStore, memories, registry, forProject: (name) => this.forProject(name),
       sectionMatch: opts.sectionMatch === undefined ? SECTION_MATCH : opts.sectionMatch,
     });
   }
+
+  /** How much a keyword rank counts against a by-meaning rank (the embedding model's profile). */
+  private readonly keywordWeight: number;
 
   private images: ImageStore | null = null;
 
@@ -322,6 +327,11 @@ export class PageService {
     return this.store.byTitle(title);
   }
 
+  /** Live pages whose title holds the word, for the editor's [[ picker. */
+  titlesMatching(q: string, limit: number): { id: string; title: string }[] {
+    return this.store.titlesMatching(q, limit);
+  }
+
   /** A project's live pages, including those filed under one of its aliases, by title. */
   forProject(name: string): Page[] {
     const real = this.memories.projectNamed(name);
@@ -417,7 +427,7 @@ export class PageService {
    * sections of the pages it accepts (a read-only grant, a project), chosen before the limit, so other pages never
    * crowd them out.
    */
-  search(text: string, vector: Float32Array, limit: number, minSimilarity: number, accept?: (p: PageHeader) => boolean): { page: Page; anchor: string; heading: string; snippet: string; instructionLike: boolean }[] {
+  search(text: string, vector: Float32Array, limit: number, minSimilarity: number, accept?: (p: PageHeader) => boolean): { page: Page; anchor: string; heading: string; headingPath: string; snippet: string; instructionLike: boolean }[] {
     const key = (pageId: string, anchor: string) => `${pageId}\n${anchor}`;
     const scores = new Map<string, number>();
     const add = (k: string, weight: number, rank: number) => scores.set(k, (scores.get(k) ?? 0) + weight / (RRF_K + rank));
@@ -425,7 +435,7 @@ export class PageService {
     if (allowed?.size === 0) return [];
     const q = toFtsQuery(text);
     const fts = q ? this.store.ftsSections(q, CANDIDATES, allowed && [...allowed]) : [];
-    fts.forEach((s, i) => add(key(s.pageId, s.anchor), KEYWORD_WEIGHT, i + 1));
+    fts.forEach((s, i) => add(key(s.pageId, s.anchor), this.keywordWeight, i + 1));
     this.store.sectionEmbeddings()
       .filter((e) => allowed === undefined || allowed.has(e.pageId))
       .map((e) => ({ k: key(e.pageId, e.anchor), sim: cosine(vector, e.embedding) }))
@@ -434,15 +444,18 @@ export class PageService {
       .slice(0, CANDIDATES)
       .forEach((e, i) => add(e.k, 1, i + 1));
     const sections = new Map<string, StoredSection[]>();
-    const out: { page: Page; anchor: string; heading: string; snippet: string; instructionLike: boolean }[] = [];
+    const out: { page: Page; anchor: string; heading: string; headingPath: string; snippet: string; instructionLike: boolean }[] = [];
     for (const [k] of [...scores.entries()].sort((a, b) => b[1] - a[1])) {
       if (out.length >= limit) break;
       const [pageId, anchor] = k.split('\n') as [string, string];
       const page = this.store.get(pageId);
       if (!page || page.deletedAt !== null) continue;
       if (!sections.has(pageId)) sections.set(pageId, this.store.sections(pageId));
-      const s = sections.get(pageId)!.find((x) => x.anchor === anchor);
-      if (s) out.push({ page, anchor, heading: s.heading, snippet: plainText(s.text, 160), instructionLike: s.instructionLike });
+      const all = sections.get(pageId)!;
+      const i = all.findIndex((x) => x.anchor === anchor);
+      const s = all[i];
+      // B10: where the section sits (a subsection under its section) and the passage that matched.
+      if (s) out.push({ page, anchor, heading: s.heading, headingPath: headingPath(all, i), snippet: passage(s.text, text), instructionLike: s.instructionLike });
     }
     return out;
   }
@@ -476,4 +489,12 @@ export class PageService {
       .map((p) => p.name)
       .sort();
   }
+}
+
+/** B10: a section's place in its page: "Section › Subsection" for a subsection, its own heading otherwise. */
+export function headingPath(sections: StoredSection[], i: number): string {
+  const s = sections[i]!;
+  if (s.level < 3) return s.heading;
+  for (let j = i - 1; j >= 0; j--) if (sections[j]!.level === 2) return `${sections[j]!.heading} › ${s.heading}`;
+  return s.heading;
 }

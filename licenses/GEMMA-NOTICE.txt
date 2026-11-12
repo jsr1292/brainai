@@ -1,0 +1,8 @@
+Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms
+
+BrainAI's search model, EmbeddingGemma-300m (the ONNX conversion onnx-community/embeddinggemma-300m-ONNX, 4-bit,
+unmodified), is Gemma. Its use is subject to the use restrictions in Section 3.2 of the Gemma Terms of Use, including
+the Gemma Prohibited Use Policy (ai.google.dev/gemma/prohibited_use_policy). Copies of both are in GEMMA-TERMS.md and
+GEMMA-PROHIBITED-USE-POLICY.md next to this file.
+
+BrainAI's own code is MIT-licensed (LICENSE); that licence does not cover the Gemma model files.

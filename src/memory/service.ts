@@ -1,4 +1,6 @@
 import { isStatus, projectBrief, type Brief } from './brief.js';
+import { embedText, normalizeKeys } from './keys.js';
+import { EPOCH, factDates, parseTimeRange, todayIn } from './timeRange.js';
 import { cosine, type Embedder } from './embedder.js';
 import { findSimilar, hybridSearch, type SearchHit } from './search.js';
 import { RERANK_POOL, type Reranker } from './reranker.js';
@@ -21,6 +23,8 @@ export const MAX_ROADMAP = 1500;
 export const QUIET_DAYS = 14;
 export const MAX_TAGS = 10;
 export const STALE_DAYS = 180;
+/** B10: explicit dates that find fewer facts than this fall back to the nearest overall. */
+const STRICT_MIN = 3;
 export const DEFAULT_LIMIT = 8;
 const MAX_LIMIT = 20;
 /** Other phrasings recall searches with a question (B4): at most this many, each cut to this many characters. */
@@ -89,6 +93,13 @@ export class MemoryError extends Error {
   constructor(public code: 'not_found' | 'invalid' | 'secret_detected' | 'changed', message: string, public current?: Memory) {
     super(message);
     this.name = 'MemoryError';
+  }
+}
+
+/** B9: an assistant's search words are names, words and dates, never a message to the assistants that read briefings. */
+function checkAiKeys(keys: string): void {
+  if (keys !== '' && looksLikeInstruction(keys)) {
+    throw new MemoryError('invalid', 'keys: they read like an instruction to AI assistants. Keep them to names, words and dates someone might search for.');
   }
 }
 
@@ -215,6 +226,12 @@ export function deletedDay(iso: string): string {
 
 export class MemoryService {
   private meaning: MeaningHook | undefined;
+  private projectMoved: ((from: string, to: string) => void) | undefined;
+
+  /** Told when a project's facts move into another project (a merge or a new alias), so its learning rows follow. */
+  setProjectMoveHook(hook: (from: string, to: string) => void): void {
+    this.projectMoved = hook;
+  }
 
   /** The graph's meaning index, told about every fact whose vector or project changed, right after the write commits. */
   setMeaningHook(hook: MeaningHook): void {
@@ -240,6 +257,11 @@ export class MemoryService {
     private embedder: Embedder,
     private opts: {
       duplicateThreshold: number; minRecallSimilarity: number; recallConfidentSimilarity: number; recallWindow?: number; reranker?: Reranker;
+      /** From the embedding model's profile: keyword vs meaning rank weight (default 0.5), and the search-order prior
+       *  added to reranker scores (default 0, the reranker alone). */
+      keywordWeight?: number; rerankPrior?: number;
+      /** A save's close facts start at this similarity (the model's profile); recall's confident level by default. */
+      closeFacts?: number;
     },
   ) {}
 
@@ -317,9 +339,19 @@ export class MemoryService {
     replaced?: 'hide' | 'include'; replacedLimit?: number; replacedCut?: 'follow' | 'joint-top'; rerank?: boolean;
     /** Other phrasings written by the asking assistant (an English version, the project's real name): see otherPhrasings. */
     alt?: string[];
-    /** Told once the reranker's best score over all phrasings, or null when it did not run (off, skipped or failed). */
-    report?: (r: { bestScore: number | null }) => void;
-  }): Promise<{ memory: Memory; score: number; replaced?: true }[]> {
+    /**
+     * B10: the days the question is about. Left out, they are read from the question's words (a soft boost); given by the
+     * caller, `strict` searches only facts of that time, falling back to the soft boost when fewer than 3 match.
+     */
+    range?: { from?: string; to?: string; strict: boolean };
+    /** B10: read time words in the question (assistants' recall, the benches); the dashboard's searches leave it out. */
+    readTime?: boolean;
+    /**
+     * Told once: the reranker's best score over all phrasings, or null when it did not run (off, skipped or failed);
+     * B10: the range used and where it came from, and whether strict dates fell back.
+     */
+    report?: (r: { bestScore: number | null; timeRange?: { from: string; to: string; source: 'question' | 'given' }; fellBack?: boolean }) => void;
+  }): Promise<{ memory: Memory; score: number; replaced?: true; inRange?: true }[]> {
     const limit = Math.min(Math.max(Math.trunc(q.limit ?? DEFAULT_LIMIT) || DEFAULT_LIMIT, 1), MAX_LIMIT);
     const project = q.project === undefined ? undefined : this.lookup(q.project);
     const projects = q.projects;
@@ -334,15 +366,27 @@ export class MemoryService {
     const named = project === undefined ? this.namedProjects([q.query, ...given].join(' \n '), projects, false) : [];
     const unnamed = named.filter((p) => ![q.query, ...given].some((t) => words(t).includes(words(p))));
     const alt = [...(unnamed.length > 0 ? [`${q.query} (${unnamed.join(', ')})`] : []), ...given].slice(0, MAX_PHRASINGS);
-    const variants = [];
+    const variants: { text: string; vector: Float32Array }[] = [];
     for (const text of alt) variants.push({ text, vector: await this.embedder.embed(text, 'query') });
     const rerank = this.opts.reranker !== undefined && q.rerank !== false;
-    const found = hybridSearch(this.store, {
+    // B10: the time the question is about, from the caller or from its words.
+    const now = this.store.nowDate();
+    const read = q.range || !q.readTime ? null : parseTimeRange(q.query, now);
+    // A given range open at one end runs from the start of time, or up to today.
+    const range = q.range ? { from: q.range.from ?? EPOCH, to: q.range.to ?? todayIn(now), strict: q.range.strict } : read ? { ...read, strict: false } : undefined;
+    const inRange = range ? this.datedIn(range) : undefined;
+    const search = (strict: boolean) => hybridSearch(this.store, {
       vector, text: q.query, kind: q.kind, project, projects, limit, touch: rerank ? false : q.touch, variants,
       pool: rerank ? RERANK_POOL : undefined,
-      minSimilarity: this.opts.minRecallSimilarity, confidentSimilarity: this.opts.recallConfidentSimilarity, window: this.opts.recallWindow,
+      minSimilarity: this.opts.minRecallSimilarity, confidentSimilarity: this.opts.recallConfidentSimilarity, window: this.opts.recallWindow, keywordWeight: this.opts.keywordWeight,
       replaced: q.replaced, replacedLimit: q.replacedLimit, replacedCut: q.replacedCut,
+      time: inRange ? { ids: inRange, strict } : undefined,
     });
+    let found = search(range?.strict === true);
+    // Too few facts of that time: the nearest overall, with the time as a boost only (the caller says so).
+    let fellBack = false;
+    if (range?.strict && found.filter((r) => !r.replaced).length < STRICT_MIN) { found = search(false); fellBack = true; }
+    const time = range ? { timeRange: { from: range.from, to: range.to, source: q.range ? 'given' as const : 'question' as const }, fellBack } : {};
     let current = found.filter((r) => !r.replaced);
     let bestScore: number | null = null;
     let pinned = q.kind === undefined ? this.currentWordOn(q.query, project, projects) : [];
@@ -363,16 +407,26 @@ export class MemoryService {
       current = reordered.hits.slice(0, limit);
       if (q.touch !== false) this.store.markRecalled(current.filter((r) => r.sure).map((r) => r.memory.id));
     }
-    const plain = ({ memory, score, replaced }: SearchHit) => (replaced ? { memory, score, replaced } : { memory, score });
+    const mark = (id: string) => (inRange?.has(id) ? { inRange: true as const } : {});
+    const plain = ({ memory, score, replaced }: SearchHit) => (replaced ? { memory, score, replaced } : { memory, score, ...mark(memory.id) });
     const results = current.map(plain);
     const replaced = found.filter((r) => r.replaced).map(plain);
     // A question answered by its project's pinned status has no weak match to report (B6 review).
-    q.report?.({ bestScore: pinned.length > 0 ? null : bestScore });
+    q.report?.({ bestScore: pinned.length > 0 ? null : bestScore, ...time });
     if (pinned.length === 0) return [...results, ...replaced];
     if (q.touch !== false) this.store.markRecalled(pinned.map((m) => m.id));
     const top = (results[0]?.score ?? 0) + 1;
     const pinnedIds = new Set(pinned.map((m) => m.id));
-    return [...[...pinned.map((memory) => ({ memory, score: top })), ...results.filter((r) => !pinnedIds.has(r.memory.id))].slice(0, limit), ...replaced];
+    return [...[...pinned.map((memory) => ({ memory, score: top, ...mark(memory.id) })), ...results.filter((r) => !pinnedIds.has(r.memory.id))].slice(0, limit), ...replaced];
+  }
+
+  /** B10: the live facts saved or dated (an ISO date in their text or keys) within the range. */
+  private datedIn(range: { from: string; to: string }): Set<string> {
+    const ids = new Set<string>();
+    for (const m of this.store.datedCandidates(range)) {
+      if (factDates(m).some((d) => d >= range.from && d <= range.to)) ids.add(m.id);
+    }
+    return ids;
   }
 
   /**
@@ -389,7 +443,10 @@ export class MemoryService {
         if (scores.length !== hits.length || scores.some((x) => !Number.isFinite(x))) throw new Error(`${scores.length} scores for ${hits.length} facts`);
         scores.forEach((x, i) => { best[i] = Math.max(best[i]!, x); });
       }
-      return { hits: hits.map((h, i) => ({ h, s: best[i]! })).sort((a, b) => b.s - a.s).map((x) => x.h), best: Math.max(...best) };
+      // The rank prior (Gemma profile): log(1 / rank) favours the search's own order, so the reranker changes it only
+      // where it clearly disagrees. `best` stays the reranker's raw score (the weak-match cut-off reads it).
+      const prior = this.opts.rerankPrior ?? 0;
+      return { hits: hits.map((h, i) => ({ h, s: best[i]! + prior * Math.log(1 / (i + 1)) })).sort((a, b) => b.s - a.s).map((x) => x.h), best: Math.max(...best) };
     } catch (e) {
       console.error(`reranker failed: ${e instanceof Error ? e.message : String(e)}`);
       return { hits, best: null };
@@ -447,7 +504,7 @@ export class MemoryService {
    * `base`: for a roadmap, the updatedAt of the project's roadmap as the writer read it (see update).
    */
   async remember(
-    input: { kind: Kind; content: string; project?: string; tags?: string[]; allowDuplicate?: boolean; newProject?: boolean; separateWork?: boolean; base?: string; supersedes?: string[];
+    input: { kind: Kind; content: string; project?: string; tags?: string[]; keys?: string; allowDuplicate?: boolean; newProject?: boolean; separateWork?: boolean; base?: string; supersedes?: string[];
       /** A save that can't wait for approval (closing a discussion): refuse a match with a deleted fact with this message. */
       refuseDeleted?: (day: string) => string },
     actor: Actor,
@@ -455,6 +512,8 @@ export class MemoryService {
     let kind = checkKind(input.kind);
     const content = checkContent(input.content, maxFor(kind));
     const tags = checkTags(input.tags);
+    const keys = normalizeKeys(input.keys);
+    if (actor.type === 'ai') checkAiKeys(keys);
     const project = this.resolveProject(input.project);
     if (kind === 'roadmap') {
       if (project === null) throw new MemoryError('invalid', 'A roadmap belongs to a project: give its project name.');
@@ -478,12 +537,12 @@ export class MemoryService {
     const roadmap = kind === 'roadmap' ? this.roadmapOf(project!) : undefined;
     if (roadmap) {
       // The project keeps the state the owner gave it: an assistant's new roadmap never reopens a parked project.
-      const r = await this.update(roadmap.id, { content, tags: input.tags === undefined ? roadmap.tags : tags }, actor, { base: input.base });
+      const r = await this.update(roadmap.id, { content, tags: input.tags === undefined ? roadmap.tags : tags, keys: input.keys }, actor, { base: input.base });
       if (r.status === 'updated') return { status: 'roadmap_updated', memory: r.memory };
       if (r.status === 'suggested') return { status: 'suggested', suggestion: r.suggestion, similar: [] };
       throw new Error('unreachable: a roadmap update never changes its project');
     }
-    const vector = await this.embedder.embed(content, 'passage');
+    const vector = await this.embedder.embed(embedText(content, keys), 'passage');
 
     if (fromAi && kind === 'profile') {
       const pending = await this.matchingPendingSuggestion(vector, kind, null);
@@ -492,7 +551,7 @@ export class MemoryService {
       const similar = findSimilar(this.store, vector, { kind }, this.opts.duplicateThreshold);
       const deleted = this.deletedMatch(vector, { kind, tags, project: null });
       const reason = looksLikeInstruction(content) ?? (deleted ? deletedReason(deleted) : null);
-      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, reason, suggestedBy: by, deletedMatch: deleted?.id ?? null });
+      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, reason, suggestedBy: by, deletedMatch: deleted?.id ?? null });
       return { status: 'suggested', suggestion, similar };
     }
     // Statuses this save replaces are not "the existing ones": they are being superseded by it.
@@ -516,7 +575,7 @@ export class MemoryService {
       const pending = await this.matchingPendingSuggestion(vector, kind, project);
       if (pending) return { status: 'already_suggested', suggestion: pending };
       this.checkHeldRoom();
-      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, kind, project, reason: looksLikeInstruction(content) ?? deletedReason(deleted), suggestedBy: by, supersedes: ids, deletedMatch: deleted.id });
+      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, kind, project, reason: looksLikeInstruction(content) ?? deletedReason(deleted), suggestedBy: by, supersedes: ids, deletedMatch: deleted.id });
       return { status: 'suggested', suggestion, similar: [] };
     }
     const reason = actor.type === 'ai' ? looksLikeInstruction(content) : null;
@@ -524,13 +583,13 @@ export class MemoryService {
       const pending = await this.matchingPendingSuggestion(vector, kind, project);
       if (pending) return { status: 'already_suggested', suggestion: pending };
       this.checkHeldRoom();
-      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, kind, project, reason, suggestedBy: by, supersedes: ids });
+      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, kind, project, reason, suggestedBy: by, supersedes: ids });
       return { status: 'suggested', suggestion, similar: [] };
     }
     let memory: Memory;
     try {
       memory = this.store.atomic(() => {
-        const saved = this.store.insert({ kind, content, project, tags, embedding: vector, by });
+        const saved = this.store.insert({ kind, content, project, tags, keys, embedding: vector, by });
         // Separate streams of work: neither status supersedes the other (newerStatus, the tidy page's status groups).
         for (const s of statuses) this.store.dismissPair(saved.id, s.id);
         if (ids.length > 0) {
@@ -639,7 +698,7 @@ export class MemoryService {
     for (const s of this.store.listSuggestions('pending')) {
       if (s.content === null || s.kind !== kind) continue;
       if (kind !== 'profile' && this.suggestedProject(s) !== project) continue;
-      if (cosine(vector, await this.embedder.embed(s.content, 'passage')) >= this.opts.duplicateThreshold) return s;
+      if (cosine(vector, await this.embedder.embed(embedText(s.content, s.keys ?? ''), 'passage')) >= this.opts.duplicateThreshold) return s;
     }
     return undefined;
   }
@@ -664,7 +723,7 @@ export class MemoryService {
    */
   async update(
     id: string,
-    input: { content: string; project?: string | null; tags?: string[]; newProject?: boolean; supersedes?: string[] },
+    input: { content?: string; project?: string | null; tags?: string[]; keys?: string; newProject?: boolean; supersedes?: string[] },
     actor: Actor,
     opts: { expectContent?: string; base?: string } = {},
   ): Promise<
@@ -678,8 +737,12 @@ export class MemoryService {
       throw new MemoryError('invalid', `This fact was replaced by ${this.store.supersessions.chainEnd(id).endId}. Update that one.`);
     }
     if (opts.base !== undefined && current.updatedAt !== opts.base) throw changedSince(current);
-    const content = checkContent(input.content, maxFor(current.kind));
+    // Content left out (B9: only new search words): the text as it is now, read again on every retry.
+    const content = checkContent(input.content ?? current.content, maxFor(current.kind));
     const tags = input.tags === undefined ? current.tags : checkTags(input.tags);
+    // B9: search words left out keep the fact's own; '' clears them.
+    const keys = input.keys === undefined ? current.keys : normalizeKeys(input.keys);
+    if (actor.type === 'ai' && input.keys !== undefined) checkAiKeys(keys);
     this.checkKindKept(current, tags, actor);
     const project = input.project === undefined ? current.project : this.resolveProject(input.project);
     const by = actorLabel(actor);
@@ -714,7 +777,7 @@ export class MemoryService {
         .filter((s) => s.action === 'update' && s.memoryId === id && s.suggestedBy === by);
       this.checkHeldRoom(superseded.length);
       for (const s of superseded) this.store.resolveSuggestion(s.id, 'rejected');
-      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, reason, suggestedBy: by });
+      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, keys: input.keys === undefined ? null : keys, reason, suggestedBy: by });
       return { status: 'suggested', suggestion };
     }
     /** Adds the replacement rows in the caller's transaction, decided again on the fact as it is now. */
@@ -726,16 +789,23 @@ export class MemoryService {
     if (content === current.content) {
       // Same text: only the labels change, and the memory keeps its date (moving a status must not make it the latest).
       const same = project === current.project && tags.length === current.tags.length && tags.every((t, i) => t === current.tags[i]);
-      if (same) {
+      // New search words (B9) are embedded with the text: not a version and not an edit, so the date stays too.
+      const vector = keys === current.keys ? null : await this.embedder.embed(embedText(content, keys), 'passage');
+      if (same && vector === null) {
         if (ids.length > 0) this.store.atomic(replaceIn);
         return { status: 'updated', memory: current, replaced: this.memories(ids) };
       }
       const relabelled = this.store.atomic(() => {
-        this.checkKindKept(this.activeMemory(id), tags, actor);
-        const m = this.store.relabel(id, { project, tags, by });
+        const latest = this.activeMemory(id);
+        // The text changed while the keys were embedded: start again from what is there now.
+        if (latest.content !== content) return 'changed' as const;
+        this.checkKindKept(latest, tags, actor);
+        let m = same ? latest : this.store.relabel(id, { project, tags, by });
+        if (vector !== null) m = this.store.setKeys(id, keys, vector);
         replaceIn();
         return m;
       });
+      if (relabelled === 'changed') return this.update(id, input, actor, opts);
       this.indexFacts([id]);
       return { status: 'updated', memory: relabelled, replaced: this.memories(ids) };
     }
@@ -747,12 +817,12 @@ export class MemoryService {
       for (const s of superseded) this.store.resolveSuggestion(s.id, 'rejected');
       // Only a project the AI chose is recorded: approval otherwise keeps whatever project the memory has by then.
       const chosen = input.project === undefined ? null : project;
-      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, kind: current.kind, project: chosen, reason, suggestedBy: by, supersedes: ids, deletedMatch });
+      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, keys: input.keys === undefined ? null : keys, kind: current.kind, project: chosen, reason, suggestedBy: by, supersedes: ids, deletedMatch });
       return { status: 'suggested', suggestion };
     };
     const reason = actor.type === 'ai' ? looksLikeInstruction(content) : null;
     if (reason) return holdUpdate(reason);
-    const embedding = await this.embedder.embed(content, 'passage');
+    const embedding = await this.embedder.embed(embedText(content, keys), 'passage');
     // Forgetting that sticks (§17a): an assistant can't rewrite a fact into one the owner deleted.
     const deleted = actor.type === 'ai' ? this.deletedMatch(embedding, { kind: current.kind, tags, project }, id) : undefined;
     if (deleted) return holdUpdate(deletedReason(deleted), deleted.id);
@@ -764,11 +834,11 @@ export class MemoryService {
         throw new MemoryError('invalid', LIST_CHANGED);
       }
       // Changed meanwhile: start again from what is there now (an assistant's roadmap then keeps a tick made meanwhile).
-      if (latest.content !== current.content || latest.project !== current.project || JSON.stringify(latest.tags) !== JSON.stringify(current.tags)) {
+      if (latest.content !== current.content || latest.project !== current.project || JSON.stringify(latest.tags) !== JSON.stringify(current.tags) || latest.keys !== current.keys) {
         return 'changed';
       }
       this.checkKindKept(latest, tags, actor);
-      const memory = this.store.update(id, { content, project, tags, embedding, by });
+      const memory = this.store.update(id, { content, project, tags, keys, embedding, by });
       // Rewritten, the fact may no longer disagree with anything: its open pairs end (a new flag opens one again).
       if (content !== latest.content) this.store.disagreements.settleFor(id, 'changed', by);
       replaceIn();
@@ -818,7 +888,8 @@ export class MemoryService {
     }
     // An older version's tags must not change the kind of a fact linked by a replacement.
     this.checkKindKept(current, h.tags, actor);
-    const embedding = await this.embedder.embed(h.content, 'passage');
+    // The fact keeps its search words (B9): an older text is embedded with them.
+    const embedding = await this.embedder.embed(embedText(h.content, current.keys), 'passage');
     const restored = this.store.atomic(() => {
       this.checkKindKept(this.store.get(h.memoryId)!, h.tags, actor);
       return this.store.restore(historyId, 'owner', embedding);
@@ -957,7 +1028,7 @@ export class MemoryService {
     const vector = await this.embedder.embed(project, 'query');
     const matches = hybridSearch(this.store, {
       vector, text: project, limit: MAX_LIMIT, touch: false,
-      minSimilarity: this.opts.minRecallSimilarity, confidentSimilarity: this.opts.recallConfidentSimilarity, window: this.opts.recallWindow,
+      minSimilarity: this.opts.minRecallSimilarity, confidentSimilarity: this.opts.recallConfidentSimilarity, window: this.opts.recallWindow, keywordWeight: this.opts.keywordWeight,
     });
     for (const { memory } of matches) {
       if (memory.project !== null && !closest.includes(memory.project)) closest.push(memory.project);
@@ -991,6 +1062,7 @@ export class MemoryService {
     this.indexFacts(moved);
     // Pages and facts still filed under an old name now resolve to the target: they are re-indexed as its own.
     this.indexStep((m) => m.projectChanged(target));
+    this.projectMoved?.(source, target);
     return n;
   }
 
@@ -1012,6 +1084,7 @@ export class MemoryService {
     });
     this.indexFacts(ids);
     this.indexStep((m) => m.projectChanged(target));
+    this.projectMoved?.(source, target);
     return moved;
   }
 
@@ -1073,9 +1146,12 @@ export class MemoryService {
     let embedding: Float32Array | null = null;
     let roadmap = false;
     let replaced: string | undefined;
+    // B9: the search words the save carries, or (an update that gave none) the fact's own as they are now.
+    let keys = first.keys ?? '';
     if (first.action !== 'delete') {
       content = checkContent(editedContent ?? first.content ?? '', maxFor(first.kind));
       const target = first.memoryId ? this.store.get(first.memoryId) : undefined;
+      if (first.keys === null && target) keys = target.keys;
       roadmap = (target?.kind ?? first.kind) === 'roadmap';
       if (roadmap) {
         checkRoadmapContent(content);
@@ -1083,7 +1159,7 @@ export class MemoryService {
         replaced = this.roadmapReplacedBy(first)?.content;
         if (replaced !== undefined && checkRoadmap(replaced) === null) content = keepTicked(replaced, content);
       }
-      embedding = await this.embedder.embed(content, 'passage');
+      embedding = await this.embedder.embed(embedText(content, keys), 'passage');
     }
     // Everything below is synchronous: re-check after the await, then apply and resolve atomically.
     const notReplaced: { id: string; why: string }[] = [];
@@ -1091,6 +1167,8 @@ export class MemoryService {
       const s = this.pendingSuggestion(id);
       // The roadmap changed while the text was embedded: start again from what is there now.
       if (roadmap && this.roadmapReplacedBy(s)?.content !== replaced) return 'changed';
+      // The fact's own search words changed meanwhile, and this update keeps them: embed them again.
+      if (s.action === 'update' && s.keys === null && s.memoryId && (this.store.get(s.memoryId)?.keys ?? '') !== keys) return 'changed';
       // A project merged into another while this waited: the memory goes to the project it was merged into.
       const chosen = s.project === null ? null : this.canonical(s.project);
       let applied: Memory | null;
@@ -1101,14 +1179,18 @@ export class MemoryService {
         // A roadmap saved meanwhile for the same project is the one this approval updates (one per project).
         const existing = s.kind === 'roadmap' && chosen !== null ? this.roadmapOf(chosen) : undefined;
         applied = existing
-          ? this.store.update(existing.id, { content: content!, project: existing.project, tags: s.tags, embedding: embedding!, by: s.suggestedBy })
-          : this.store.insert({ kind: s.kind, content: content!, project: chosen, tags: s.tags, embedding: embedding!, by: s.suggestedBy });
+          ? this.store.update(existing.id, { content: content!, project: existing.project, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy })
+          : this.store.insert({ kind: s.kind, content: content!, project: chosen, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy });
       } else {
         const target = this.activeMemory(s.memoryId ?? '');
         // The owner approves this: a fact linked by a replacement since it was held keeps its kind.
         this.checkKindKept(target, s.tags, { type: 'owner' });
         const project = s.kind === 'profile' ? target.project : (chosen ?? target.project);
-        applied = this.store.update(target.id, { content: content!, project, tags: s.tags, embedding: embedding!, by: s.suggestedBy });
+        // Only new search words (B9): not a version and not an edit, as when an assistant changes them directly.
+        const keysOnly = content === target.content && project === target.project && JSON.stringify(s.tags) === JSON.stringify(target.tags);
+        applied = keysOnly
+          ? this.store.setKeys(target.id, keys, embedding!)
+          : this.store.update(target.id, { content: content!, project, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy });
       }
       if (applied) {
         // Each id on its own: one that no longer qualifies is skipped and named, the others are still replaced.
@@ -1276,7 +1358,7 @@ export class MemoryService {
     return all
       .filter((e) => e.id !== id)
       .map((e) => ({ id: e.id, similarity: cosine(self.embedding, e.embedding) }))
-      .filter((x) => x.similarity >= this.opts.recallConfidentSimilarity && x.similarity < this.opts.duplicateThreshold)
+      .filter((x) => x.similarity >= (this.opts.closeFacts ?? this.opts.recallConfidentSimilarity) && x.similarity < this.opts.duplicateThreshold)
       .sort((x, y) => y.similarity - x.similarity)
       .map((x) => ({ memory: this.store.get(x.id)!, similarity: x.similarity }))
       .filter((x) => x.memory && !isStatus(x.memory) && project(x.memory) === mine && !this.store.disagreements.forPair(id, x.memory.id))

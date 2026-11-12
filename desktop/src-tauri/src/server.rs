@@ -3,6 +3,28 @@ use crate::proof;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+/// A Windows long-form path (`\\?\C:\…`, `\\?\UNC\server\share\…`) in its plain form, which Node can open: Tauri's
+/// resource folder comes from `canonicalize`, which adds the prefix, and Node fails on such a script path with
+/// "EISDIR … lstat 'C:'". Left as it is when the plain form would mean something else or not work: over 259
+/// characters, or a part that Windows treats specially in plain form (CON, NUL, COM1…, or ending in a dot or space).
+pub fn plain_path(p: &str) -> String {
+    let plain = if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = p.strip_prefix(r"\\?\") {
+        let b = rest.as_bytes();
+        if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\' { rest.to_string() } else { return p.to_string() }
+    } else {
+        return p.to_string();
+    };
+    let special = |part: &str| {
+        let stem = part.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+        part.ends_with('.') || part.ends_with(' ')
+            || ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&stem.as_str())
+            || ((stem.starts_with("COM") || stem.starts_with("LPT")) && stem.len() == 4 && stem.as_bytes()[3].is_ascii_digit())
+    };
+    if plain.chars().count() > 259 || plain.split('\\').skip(1).any(special) { p.to_string() } else { plain }
+}
+
 /// Exactly what the server is started with: local mode on this port, data in the app-data folder, the bundled model,
 /// this start's key, and a pipe it watches so it stops when the app is gone.
 /// On Windows `system` carries the system variables Node and the tools need (empty on the Mac).
@@ -245,6 +267,19 @@ pub fn ticket(port: u16, secret: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_long_form_windows_path_is_given_to_node_in_its_plain_form() {
+        // Tauri's resource folder comes from canonicalize, which on Windows adds \\?\ ; Node then fails on "lstat 'C:'".
+        assert_eq!(super::plain_path(r"\\?\C:\Users\Ana Gil\AppData\Local\BrainAI"), r"C:\Users\Ana Gil\AppData\Local\BrainAI");
+        assert_eq!(super::plain_path(r"\\?\UNC\nas\apps\BrainAI"), r"\\nas\apps\BrainAI");
+        // Already plain, a Mac path, or a long-form path that only works long-form (over 259 characters): unchanged.
+        assert_eq!(super::plain_path(r"C:\Program Files\BrainAI"), r"C:\Program Files\BrainAI");
+        assert_eq!(super::plain_path("/Applications/BrainAI.app/Contents/Resources"), "/Applications/BrainAI.app/Contents/Resources");
+        let long = format!(r"\\?\C:\{}", "a".repeat(260));
+        assert_eq!(super::plain_path(&long), long);
+        assert_eq!(super::plain_path(r"\\?\Volume{0b1c}\x"), r"\\?\Volume{0b1c}\x");
+    }
+
     #[test]
     fn on_windows_the_server_starts_without_a_console_window() {
         assert_eq!(creation_flags(true), 0x0800_0000, "CREATE_NO_WINDOW");

@@ -36,7 +36,7 @@ test('Tidy items share the checks and summarize old statuses, pairs and missing 
   w.store.supersessions.add(gone.id, newer.id, 'owner');
   w.store.softDelete(newer.id, 'owner');
   const checks = t.mock.method(w.service, 'duplicates');
-  const items = makeTidyItems({ ...w, now });
+  const items = makeTidyItems({ ...w, now, sameProjectFloor: 0.88 });
   assert.equal(checks.mock.callCount(), 0, 'creating the helper is lazy');
   const first = items();
   assert.deepEqual(tidySummary(first), {

@@ -20,4 +20,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/models ./models
+# EmbeddingGemma ships with its notice and terms (Gemma Terms of Use, section 3.1).
+COPY licenses ./licenses
+COPY licenses/GEMMA-NOTICE.txt ./models/onnx-community/embeddinggemma-300m-ONNX/NOTICE
 CMD ["node", "dist/index.js"]

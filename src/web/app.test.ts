@@ -210,7 +210,7 @@ test('end-to-end: register → authorize → login → consent → token → MCP
   });
   assert.equal(init.result.serverInfo.name, 'brainai');
   const list = await mcp(app, tokens.access_token, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
-  assert.deepEqual(list.result.tools.map((x: any) => x.name).sort(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'note_observation', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
+  assert.deepEqual(list.result.tools.map((x: any) => x.name).sort(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'note_observation', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'record_lesson', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_area', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
   const saved = await mcp(app, tokens.access_token, {
     jsonrpc: '2.0', id: 3, method: 'tools/call',
     params: { name: 'remember', arguments: { kind: 'decision', content: 'The web app uses Express 5', project: 'brainai' } },
@@ -518,7 +518,7 @@ test('MCP requests use the grant\'s access level', async (t) => {
   const f = await loggedInFetch(app);
   const { accessToken } = await connectClient(app.baseUrl, f, 'Grok');
   const names = async () => (await mcp(app, accessToken, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })).result.tools.map((x: any) => x.name).sort();
-  assert.deepEqual(await names(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'note_observation', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
+  assert.deepEqual(await names(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'note_observation', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'record_lesson', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_area', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
   app.deps.provider.setGrantAccess(app.deps.provider.listGrants()[0]!.id, 'discussions');
   assert.deepEqual(await names(), ['list_discussions', 'open_discussion', 'read_discussion', 'reply_to_discussion']);
 });
@@ -558,7 +558,7 @@ test('work mode: the MCP server is "work-memory" with the work instructions and 
   assert.equal(init.result.serverInfo.name, 'work-memory');
   assert.equal(init.result.instructions, WORK_INSTRUCTIONS);
   const list = await mcp(app, accessToken, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
-  assert.deepEqual(list.result.tools.map((x: any) => x.name).sort(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
+  assert.deepEqual(list.result.tools.map((x: any) => x.name).sort(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'record_lesson', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_area', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
 });
 
 test('work mode: the dashboard is called "Work brain", with discussions and no access choice at consent', async (t) => {
@@ -625,7 +625,7 @@ test('a memory that reads like an instruction is held: the assistant is told so 
   assert.match(r.result.content[0].text, /^Not saved yet: it reads like an instruction to AI assistants/);
   assert.match(r.result.content[0].text, /"held_because":"asks to ignore instructions"/);
   const approvals = await (await f('/approvals')).text();
-  assert.match(approvals, /<title>Approvals<\/title>/);
+  assert.match(approvals, /<title>Inbox<\/title>/);
   assert.match(approvals, /Held because it asks to ignore instructions\. Saved as a decision in wildlog if you approve\./);
 });
 

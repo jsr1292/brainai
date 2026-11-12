@@ -162,6 +162,18 @@ export class PageStore {
     return (this.db.prepare(`SELECT ${HEADER_COLUMNS} FROM pages WHERE deleted_at IS NULL ORDER BY updated_at DESC, title_key`).all() as PageRow[]).map(toHeader);
   }
 
+  /**
+   * Live pages whose title holds the word: the ones that start with it first, the newest first after that. The word
+   * is a word, so % and _ in it match themselves and not everything.
+   */
+  titlesMatching(q: string, limit: number): { id: string; title: string }[] {
+    const marks = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`);
+    return this.db.prepare(`SELECT id, title FROM pages
+      WHERE deleted_at IS NULL AND title LIKE ? ESCAPE '\\'
+      ORDER BY CASE WHEN title LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END, updated_at DESC, title_key
+      LIMIT ?`).all(`%${marks(q)}%`, `${marks(q)}%`, Math.max(0, Math.trunc(limit))) as { id: string; title: string }[];
+  }
+
   /** How many live pages there are. */
   count(): number {
     return (this.db.prepare('SELECT count(*) AS n FROM pages WHERE deleted_at IS NULL').get() as { n: number }).n;

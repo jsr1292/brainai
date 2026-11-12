@@ -40,6 +40,32 @@ test('loadConfig rejects bad PORT, DUPLICATE_THRESHOLD and recall similarities',
   assert.throws(() => loadConfig({ ...base, MIN_RECALL_SIMILARITY: '0.9', RECALL_CONFIDENT_SIMILARITY: '0.8' }), /RECALL_CONFIDENT_SIMILARITY/);
 });
 
+test('EMBED_MODEL picks the profile whose cut-offs become the defaults; env overrides still win', () => {
+  const base = { PUBLIC_URL: 'https://memory.example.com' };
+  assert.equal(loadConfig(base).embedModel.id, 'gemma');
+  assert.equal(loadConfig({ ...base, EMBED_MODEL: 'e5' }).minRecallSimilarity, 0.75);
+  const g = loadConfig({ ...base, EMBED_MODEL: 'gemma' });
+  assert.equal(g.embedModel.id, 'gemma');
+  assert.equal(g.minRecallSimilarity, 0.3);
+  assert.equal(g.recallWindow, undefined);
+  assert.equal(loadConfig({ ...base, EMBED_MODEL: 'gemma', MIN_RECALL_SIMILARITY: '0.32' }).minRecallSimilarity, 0.32);
+  assert.equal(loadConfig({ ...base, EMBED_MODEL: 'gemma', RECALL_WINDOW: '0.02' }).recallWindow, 0.02);
+  assert.throws(() => loadConfig({ ...base, EMBED_MODEL: 'bert' }), /EMBED_MODEL must be e5 or gemma/);
+});
+
+test('an e5-tuned floor left in .env stops a Gemma start with a message that says what to do', () => {
+  const base = { PUBLIC_URL: 'https://memory.example.com' };
+  assert.throws(() => loadConfig({ ...base, MIN_RECALL_SIMILARITY: '0.75' }),
+    /MIN_RECALL_SIMILARITY \(0\.75\).*tuned for e5.*remove .*from \.env, or set EMBED_MODEL=e5/s);
+  assert.equal(loadConfig({ ...base, EMBED_MODEL: 'e5', MIN_RECALL_SIMILARITY: '0.75' }).minRecallSimilarity, 0.75);
+});
+
+test('a search setting left empty (an uncommented line of .env.example) means the model\'s own value', () => {
+  const base = { PUBLIC_URL: 'https://memory.example.com' };
+  const c = loadConfig({ ...base, DUPLICATE_THRESHOLD: '', MIN_RECALL_SIMILARITY: '', RECALL_WINDOW: '', RECALL_CONFIDENT_SIMILARITY: '' });
+  assert.deepEqual([c.duplicateThreshold, c.minRecallSimilarity, c.recallWindow, c.recallConfidentSimilarity], [0.78, 0.3, undefined, 0.35]);
+});
+
 test('loadConfig defaults suit a stranger: this machine only, no tunnel header trusted, no backups (the Docker image and the owner set the rest)', () => {
   const c = loadConfig({ PUBLIC_URL: 'https://memory.example.com' });
   assert.deepEqual([c.mode, c.host, c.trustCfConnectingIp, c.backupDir, c.backupKeep], ['personal', '127.0.0.1', false, null, DEFAULT_BACKUP_KEEP]);

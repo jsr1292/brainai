@@ -10,18 +10,18 @@ const look: BackLookups = {
 
 test('each allowed origin gives its label, address and tab', () => {
   const cases: [string, Back][] = [
-    ['/facts', { href: '/facts', label: 'Facts', tab: 'pages' }],
-    ['/facts?project=wildlog&kind=decision&page=2', { href: '/facts?kind=decision&project=wildlog&page=2', label: 'Facts', tab: 'pages' }],
-    ['/facts?kind=profile', { href: '/facts?kind=profile', label: 'About you', tab: 'pages' }],
-    ['/facts?show=replaced', { href: '/facts?show=replaced', label: 'Facts', tab: 'pages' }],
-    ['/facts/tidy', { href: '/facts/tidy', label: 'Tidy up', tab: 'pages' }],
+    ['/facts', { href: '/facts', label: 'Facts', tab: 'facts' }],
+    ['/facts?project=wildlog&kind=decision&page=2', { href: '/facts?kind=decision&project=wildlog&page=2', label: 'Facts', tab: 'facts' }],
+    ['/facts?kind=profile', { href: '/facts?kind=profile', label: 'About you', tab: 'facts' }],
+    ['/facts?show=replaced', { href: '/facts?show=replaced', label: 'Facts', tab: 'facts' }],
+    ['/facts/tidy', { href: '/facts/tidy', label: 'Tidy up', tab: 'facts' }],
     ['/pages', { href: '/pages', label: 'Pages', tab: 'pages' }],
     ['/pages/11111111-2222-3333-4444-555555555555', { href: '/pages/11111111-2222-3333-4444-555555555555', label: 'wildlog — wine cellar', tab: 'pages' }],
-    ['/memories/11111111-2222-3333-4444-555555555555', { href: '/memories/11111111-2222-3333-4444-555555555555', label: 'Fact', tab: 'pages' }],
+    ['/memories/11111111-2222-3333-4444-555555555555', { href: '/memories/11111111-2222-3333-4444-555555555555', label: 'Fact', tab: 'facts' }],
     ['/', { href: '/', label: 'Projects', tab: 'projects' }],
     ['/?project=WildLog', { href: '/?project=wildlog#panel', label: 'wildlog', tab: 'projects' }],
     ['/discussions/d1', { href: '/discussions/d1', label: 'Discussion', tab: 'projects' }],
-    ['/approvals', { href: '/approvals', label: 'Approvals', tab: 'projects' }],
+    ['/approvals', { href: '/approvals', label: 'Inbox', tab: 'inbox' }],
     ['/review', { href: '/review', label: 'Last week', tab: 'week' }],
     ['/review/now', { href: '/review/now', label: 'So far', tab: 'week' }],
     ['/review/2026-10-26', { href: '/review/2026-10-26', label: 'Week of 26 Oct', tab: 'week' }],
@@ -42,8 +42,8 @@ test('anything else is ignored, and a label is never URL text', () => {
 });
 test('a fact with no origin goes back to its project, else to Facts', () => {
   assert.deepEqual(factBackDefault({ project: 'WildLog' }, look), { href: '/?project=wildlog#panel', label: 'wildlog', tab: 'projects' });
-  assert.deepEqual(factBackDefault({ project: 'gone' }, look), { href: '/facts', label: 'Facts', tab: 'pages' });
-  assert.deepEqual(factBackDefault({ project: null }, look), { href: '/facts', label: 'Facts', tab: 'pages' });
+  assert.deepEqual(factBackDefault({ project: 'gone' }, look), { href: '/facts', label: 'Facts', tab: 'facts' });
+  assert.deepEqual(factBackDefault({ project: null }, look), { href: '/facts', label: 'Facts', tab: 'facts' });
 });
 test('approvals return only to Projects or Approvals', () => {
   assert.equal(suggestionBack('/approvals'), '/approvals');

@@ -302,8 +302,13 @@ test('on every page screen the page itself comes before the Pages list, so keybo
   const reading = await (await f(`/pages/${page.id}`)).text();
   order(reading, '<div class="pmain">', '<h1>', '<aside class="paside">', '<nav class="pnav"');
   order(await (await f('/pages')).text(), '<div class="pmain">', '<h1>', '<nav class="pnav"');
-  for (const path of [`/pages/${page.id}/edit`, `/pages/${page.id}/history`, '/pages/new']) {
-    order(await (await f(path)).text(), '<div class="pmain">', '<h1>', '<nav class="pnav"');
+  order(await (await f(`/pages/${page.id}/history`)).text(), '<div class="pmain">', '<h1>', '<nav class="pnav"');
+  // The editor is a column of its own: no pages tree, and the title input is its heading (UI round, task 2).
+  for (const path of [`/pages/${page.id}/edit`, '/pages/new']) {
+    const body = await (await f(path)).text();
+    order(body, '<div class="pmain">', 'class="ptitle-input"');
+    assert.doesNotMatch(body, /<nav class="pnav"/, path);
+    assert.doesNotMatch(body, /<h1>/, path);
   }
 });
 

@@ -12,6 +12,7 @@ export function mcpServerFor(d: AppDeps, o: { actorName: string; access: Access;
   return buildMcpServer(d.service, o.actorName, {
     registry: d.registry,
     growth: d.growth,
+    learning: d.learning,
     pages: d.pages,
     notes: d.notes,
     discussions: d.discussions,

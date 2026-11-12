@@ -37,7 +37,7 @@ test('approve with edit, reject, and escaping', async (t) => {
   assert.equal(ok.headers.get('location'), '/approvals');
   assert.equal((await f(`/suggestions/${b.id}/reject`, { method: 'POST' })).status, 303);
   assert.deepEqual(deps.service.loadProfile().map((m) => m.content), ['Has a Synology NAS']);
-  assert.match(await (await f('/approvals')).text(), /Nothing waits for your approval\./);
+  assert.match(await (await f('/approvals')).text(), /Nothing waits for you\. Suggestions from assistants, discussions that need your answer and possible tidy-ups land here\./);
 });
 
 test('an invalid edit re-renders Approvals with the message and status 400', async (t) => {
@@ -47,7 +47,7 @@ test('an invalid edit re-renders Approvals with the message and status 400', asy
   const res = await f(`/suggestions/${s.id}/approve`, { method: 'POST', body: new URLSearchParams({ content: 'x'.repeat(1001) }) });
   assert.equal(res.status, 400);
   const body = await res.text();
-  assert.match(body, /<title>Approvals<\/title>/);
+  assert.match(body, /<title>Inbox<\/title>/);
   assert.match(body, /class="error"/);
   assert.equal(app.deps.service.loadProfile().length, 0);
 });
@@ -172,18 +172,26 @@ test('Facts lists facts with the project, kind and text filters, and each fact\'
   const page = await (await f('/facts')).text();
   assert.match(page, /<title>Facts<\/title>/);
   assert.match(page, /<h1>Facts <span class="n">1 current<\/span><\/h1>/);
-  assert.match(page, /<form method="get" action="\/facts" class="filters">/);
+  assert.match(page, /<form method="get" action="\/facts" class="frow-filters">/);
   assert.match(page, new RegExp(`href="/memories/${m.id}\\?from=%2Ffacts"`));
-  assert.match(page, /href="\/facts\?project=wildlog"/);
+  assert.match(page, /<h2><a href="\/\?project=wildlog#panel">wildlog<\/a>/);
   assert.match(await (await f('/facts?project=wildlog&kind=decision')).text(), /wildlog uses SwiftUI/);
   assert.match(await (await f(`/memories/${m.id}`)).text(), /<a href="\/\?project=wildlog#panel">‹ wildlog<\/a>/);
 });
 
 test('a held roadmap suggestion can be edited up to the roadmap limit, and Reject skips the length check', () => {
-  const base = { id: 's1', memoryId: 'm1', tags: [] as string[], project: 'trellis', reason: 'skips the owner\'s confirmation', suggestedAt: '2026-11-03T10:00:00Z', suggestedBy: 'Grok', status: 'pending', supersedes: [] as string[], deletedMatch: null } as const;
+  const base = { id: 's1', memoryId: 'm1', tags: [] as string[], project: 'trellis', reason: 'skips the owner\'s confirmation', suggestedAt: '2026-11-03T10:00:00Z', suggestedBy: 'Grok', status: 'pending', supersedes: [] as string[], deletedMatch: null, keys: null } as const;
   const roadmap = suggestionCard({ ...base, action: 'update', kind: 'roadmap', content: 'Now: ' + 'x'.repeat(1300) }, 'Now: old', { back: '/approvals' }).value;
   assert.match(roadmap, /<textarea name="content" rows="4" maxlength="1500">/);
   assert.match(roadmap, /<button type="submit" formaction="\/suggestions\/s1\/reject" formnovalidate class="ghost push-right">Reject<\/button>/);
   const decision = suggestionCard({ ...base, action: 'add', kind: 'decision', content: 'Use Postgres' }, undefined, { back: '/' }).value;
   assert.match(decision, /<textarea name="content" rows="4" maxlength="1000">/);
+});
+
+test('a held save shows the search words it carries, so a keys-only change is visible before approval', () => {
+  const base = { id: 's1', memoryId: 'm1', tags: [] as string[], project: null, reason: null, suggestedAt: '2026-11-03T10:00:00Z', suggestedBy: 'Claude', status: 'pending', supersedes: [] as string[], deletedMatch: null } as const;
+  const card = suggestionCard({ ...base, action: 'update', kind: 'profile', content: 'Drinks tea', keys: 'té mañana' }, 'Drinks tea', { back: '/approvals' }).value;
+  assert.match(card, /<p class="sg-keys">Search words: té mañana<\/p>/);
+  const keeps = suggestionCard({ ...base, action: 'update', kind: 'profile', content: 'Drinks coffee', keys: null }, 'Drinks tea', { back: '/approvals' }).value;
+  assert.doesNotMatch(keeps, /sg-keys/);
 });

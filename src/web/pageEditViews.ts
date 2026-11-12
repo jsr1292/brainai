@@ -4,11 +4,13 @@ import { errorBlock } from './dashboardViews.js';
 import { asset, html, type SafeHtml } from './html.js';
 import { metaLine } from './metaLine.js';
 import { timeAgo } from './when.js';
-import { layout, pagesNav, type NavEntry } from './pageViews.js';
+import { deletePageFold, layout, pagesNav, type NavEntry } from './pageViews.js';
 
 const who = (by: string) => (by === 'owner' ? 'you' : by);
 const day = (iso: string): SafeHtml => timeAgo(iso);
 const wrap = (nav: NavEntry[], current: string | undefined, main: SafeHtml) => layout(pagesNav(nav, current), html`<div class="wide-narrow">${main}</div>`);
+/** The editor's own column: no pages tree, just the reading column's width (UI round, task 2). */
+const editWrap = (main: SafeHtml) => layout(html``, main, undefined, { edit: true });
 
 /** What the editor shows and posts back: a new page, the whole page, or one section. */
 export interface EditForm {
@@ -29,11 +31,15 @@ export interface EditForm {
 function fields(v: EditForm): SafeHtml {
   if (v.mode === 'section') return html``;
   const placeholder = v.project ? `${v.project} — short description` : 'Title';
-  return html`<div class="pfields">
-<label>Title <input name="title" maxlength="140" required value="${v.title}" placeholder="${placeholder}"></label>
+  // The title input is the editor's heading: it reads like the page's own h1. Project and Area are Details, folded away
+  // once the page has them (only a new page opens them). Area exists only for a page without a project: it is not
+  // rendered for a project page, and Task 3's script hides it (data-area-for-no-project) when a project is chosen.
+  const open = v.mode === 'new' ? html` open` : '';
+  return html`<input name="title" class="ptitle-input" aria-label="Title" maxlength="140" required value="${v.title}" placeholder="${placeholder}">
+<details class="pdetails"${open}><summary>Details<span class="chev"></span></summary><div class="pdetails-body">
 <label>Project <select name="project"><option value=""${v.project === '' ? html` selected` : ''}>No project</option>${v.projects.map((p) => html`<option value="${p}"${p === v.project ? html` selected` : ''}>${p}</option>`)}</select></label>
-<label>Area <span class="quiet">(only for a page without a project)</span> <select name="area">${PAGE_AREAS.map((a) => html`<option value="${a}"${a === v.area ? html` selected` : ''}>${PAGE_AREA_LABELS[a]}</option>`)}</select></label>
-</div>`;
+${v.project === '' ? html`<label>Area <select name="area" data-area-for-no-project>${PAGE_AREAS.map((a) => html`<option value="${a}"${a === v.area ? html` selected` : ''}>${PAGE_AREA_LABELS[a]}</option>`)}</select></label>` : ''}
+</div></details>`;
 }
 
 function editor(v: EditForm): SafeHtml {
@@ -42,29 +48,29 @@ function editor(v: EditForm): SafeHtml {
   // Enter in the Title field (or a phone's Go key) sends the form's first submit button: this hidden Save, not the Write tab.
   // Adding pictures needs editor-pics.js (an upload without script would lose the unsaved text), so its button and
   // status line stay hidden until that script shows them.
-  return html`<form method="post" action="${action}" class="peditor" data-pics="${asset('editor-pics.js')}">
+  return html`<form method="post" action="${action}" class="peditor" data-pics="${asset('editor-pics.js')}" data-cm="${asset('editor-cm.js')}">
 <button type="submit" name="intent" value="save" class="visually-hidden" tabindex="-1" aria-hidden="true">Save</button>
 ${v.base !== undefined ? html`<input type="hidden" name="base" value="${v.base}">` : ''}
 ${v.section ? html`<input type="hidden" name="section" value="${v.section.anchor}">` : ''}
 ${fields(v)}
 <section class="panel ed">
-<div class="edtabs"><button type="submit" name="intent" value="write" class="tab${v.preview ? '' : ' on'}" aria-pressed="${v.preview ? 'false' : 'true'}" formnovalidate>Write</button><button type="submit" name="intent" value="preview" class="tab${v.preview ? ' on' : ''}" aria-pressed="${v.preview ? 'true' : 'false'}" formnovalidate>Preview</button><button type="button" class="tab add-pic" hidden>＋ Add picture</button><input type="file" class="pic-input" accept="image/*" multiple hidden>
-<span class="hint">Markdown · <code>[[Page title]]</code> links a page · <code>[[fact:id]]</code> links a fact</span></div>
+<div class="ptools"><button type="submit" name="intent" value="write" class="ptool${v.preview ? '' : ' on'}" aria-pressed="${v.preview ? 'false' : 'true'}" formnovalidate>Write</button><button type="submit" name="intent" value="preview" class="ptool${v.preview ? ' on' : ''}" aria-pressed="${v.preview ? 'true' : 'false'}" formnovalidate>Preview</button><button type="button" class="ptool add-pic" hidden>＋ Add picture</button><input type="file" class="pic-input" accept="image/*" multiple hidden>
+<span class="phint">[[ links a page or fact</span></div>
 <p class="pic-strip" role="status" hidden></p>
 ${v.preview ? html`<div class="preview art"${/class="(pic|diagram)"/.test(v.preview.value) ? html` data-viewer="${asset('viewer.js')}"` : ''}${v.preview.value.includes('class="diagram"') ? html` data-diagrams="${asset('diagrams.js')}" data-renderer="${asset('diagram-frame.js')}"` : ''}>${v.preview}</div>` : ''}
-<textarea name="body" rows="${v.mode === 'section' ? 14 : 24}" aria-label="${v.mode === 'section' && v.section ? `Text of the ${v.section.heading || 'Introduction'} section (Markdown)` : 'Page text (Markdown)'}" spellcheck="true"${v.preview ? html` class="under-preview"` : ''}>${v.body}</textarea>
-<div class="edfoot"><span class="meta">${v.mode === 'new' ? 'Saved as version 1.' : `Saved as version ${(v.base ?? 0) + 1}. Every version is kept in History.`}</span>
-<a class="button secondary" href="${cancel}">Cancel</a><button type="submit" name="intent" value="save" class="primary">${v.mode === 'section' ? 'Save section' : v.mode === 'new' ? 'Create page' : 'Save page'}</button></div>
+<textarea name="body" rows="${v.mode === 'section' ? 14 : 24}" aria-label="${v.mode === 'section' && v.section ? `Text of the ${v.section.heading || 'Introduction'} section (Markdown)` : 'Page text (Markdown)'}" spellcheck="true" data-editor${v.preview ? html` class="under-preview"` : ''}>${v.body}</textarea>
 </section>
+<div class="psavebar"><button type="submit" name="intent" value="save" class="primary">${v.mode === 'section' ? 'Save section' : v.mode === 'new' ? 'Create page' : 'Save page'}<kbd>⌘S</kbd></button><a class="quiet-btn" href="${cancel}">Cancel</a><span class="psave-note">${v.mode === 'new' ? 'Saving makes version 1.' : `Saving makes version ${(v.base ?? 0) + 1}.`}</span></div>
 </form>
-${v.mode === 'page' ? html`<details class="pg-danger"><summary>Delete this page…<span class="chev"></span></summary><p class="meta">It disappears from Pages and search. Its versions are kept, and you can undelete it from its address.</p><form method="post" action="/pages/${v.pageId}/delete"><button type="submit" class="secondary">Delete page</button></form></details>` : ''}`;
+${v.mode === 'page' && v.pageId ? deletePageFold(v.pageId) : ''}`;
 }
 
 /** The editor (mockup pages-edit.html): a new page, the whole page or one section. */
 export function editView(nav: NavEntry[], v: EditForm): SafeHtml {
-  const heading = v.mode === 'new' ? 'New page' : v.mode === 'section' ? `Editing “${v.section!.heading || 'Introduction'}”` : `Editing ${v.pageTitle}`;
+  void nav; // the editor has no pages tree; the column is its own (UI round, task 2)
+  const heading = v.mode === 'section' ? html`<h1>Editing “${v.section!.heading || 'Introduction'}”</h1>` : html``;
   const sub = v.mode === 'section' ? metaLine([v.pageTitle, `version ${v.base}`, html`<a href="/pages/${v.pageId}/edit">Edit the whole page instead</a>`]) : '';
-  return wrap(nav, v.pageId, html`<h1>${heading}</h1>${sub}${errorBlock(v.error)}${editor(v)}`);
+  return editWrap(html`${heading}${sub}${errorBlock(v.error)}${editor(v)}`);
 }
 
 export interface PageFields { title: string; project: string; area: string }
@@ -78,8 +84,9 @@ const fieldsLine = (x: PageFields): SafeHtml =>
  * In page mode, `current` is the saved title and project: when the owner changed them, both columns show them.
  */
 export function conflictView(nav: NavEntry[], v: EditForm & { savedBy: string; version: number; theirs: string; mine: string; current?: PageFields }): SafeHtml {
+  void nav; // like the editor it replaces: its own column, no pages tree
   const fieldsChanged = v.mode === 'page' && v.current !== undefined && !sameFields(v.current, v);
-  return wrap(nav, v.pageId, html`
+  return editWrap(html`
 <h1>Someone else saved first</h1>
 <section class="panel conflict">
 <p class="warn">${v.savedBy === 'owner' ? 'You saved this page in another tab or on another device' : `${v.savedBy} saved this page`} while you were editing (version ${v.version}). Nothing of yours is lost: your text is below. Copy what you need into the current version, then save.</p>

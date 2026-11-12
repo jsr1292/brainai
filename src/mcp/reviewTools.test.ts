@@ -36,7 +36,7 @@ function week(): ReviewWorld {
 }
 
 async function connect(w: ReviewWorld, actorName: string, opts: Partial<Parameters<typeof buildMcpServer>[2]> = {}) {
-  const tidyItems = makeTidyItems(w);
+  const tidyItems = makeTidyItems({ ...w, sameProjectFloor: 0.88 });
   const reviews = new ReviewService({
     store: w.reviews, memories: w.store, service: w.service, registry: w.registry, folders: w.folders, pages: w.pages,
     growth: opts.mode === 'work' ? null : w.growth, grants: () => w.grants, tidy: () => tidySummary(tidyItems()),
@@ -151,8 +151,8 @@ test('work mode has the tool without growth; a discussions-only connection doesn
 });
 
 test('the instructions tell assistants to use it only when asked', () => {
-  assert.match(SERVER_INSTRUCTIONS, /\n15\. When the owner asks how the week went, what happened last week, or for a weekly review, call weekly_review\. Never bring the review up unasked\.\n16\. Skills: /);
-  assert.match(WORK_INSTRUCTIONS, /\n18\. When the owner asks how the week went, what happened last week, or for a weekly review, call weekly_review\. Never bring the review up unasked\.\n19\. Skills: /);
+  assert.match(SERVER_INSTRUCTIONS, /\n16\. When the owner asks how the week went, what happened last week, or for a weekly review, call weekly_review\. Never bring the review up unasked\.\n17\. Skills: /);
+  assert.match(WORK_INSTRUCTIONS, /\n19\. When the owner asks how the week went, what happened last week, or for a weekly review, call weekly_review\. Never bring the review up unasked\.\n20\. Skills: /);
   assert.match(readOnlyInstructions(['wildlog']), /call weekly_review/);
 });
 

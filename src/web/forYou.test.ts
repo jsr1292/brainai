@@ -8,7 +8,7 @@ import { forYouCard, forYouRows, type ApprovalSummary } from './forYou.js';
 const sug = (p: string) => ({ project: p, kind: 'pin-late', text: `${p} has something late. Put it on the go?` }) as HomeSuggestion;
 const aSuggestion = (over: Partial<Suggestion> = {}): Suggestion => ({
   id: 's1', action: 'add', memoryId: null, content: 'Prefers short answers in German when on the phone.', tags: [], kind: 'profile', project: null,
-  reason: null, suggestedAt: '2026-11-03T09:00:00Z', suggestedBy: 'ChatGPT', status: 'pending', supersedes: [], deletedMatch: null, ...over,
+  reason: null, suggestedAt: '2026-11-03T09:00:00Z', suggestedBy: 'ChatGPT', status: 'pending', supersedes: [], deletedMatch: null, keys: null, ...over,
 });
 const oneWaiting: ApprovalSummary = {
   count: 1, first: { by: 'ChatGPT', kind: 'profile', action: 'create' },

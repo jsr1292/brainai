@@ -9,6 +9,7 @@
  * The demo account signs in with the password "try-brainai-demo" and the code from demo:code. That login is public, so the
  * seed only writes into a new or empty folder; never use the folder for real data.
  */
+import { LearningService } from '../learning/service.js';
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -18,7 +19,8 @@ import { totpAt } from '../auth/totp.js';
 import { openDb } from '../db.js';
 import { DiscussionService } from '../discussions/service.js';
 import { DiscussionStore } from '../discussions/store.js';
-import { MeaningIndex, THREAD_FLOOR, THREAD_KINDS } from '../graph/threads.js';
+import { MeaningIndex, THREAD_KINDS } from '../graph/threads.js';
+import { profileFor } from '../memory/embeddingProfile.js';
 import { createLocalEmbedder, type Embedder } from '../memory/embedder.js';
 import { MemoryService } from '../memory/service.js';
 import { MemoryStore } from '../memory/store.js';
@@ -72,7 +74,7 @@ export async function seedDemo(dataDir: string, embedder: Embedder, today = Date
   const service = new MemoryService(store, embedder, { duplicateThreshold: 0.97, minRecallSimilarity: 0.2, recallConfidentSimilarity: 0.5 });
   const registry = new ProjectStore(db, now);
   const pages = new PageService(new PageStore(db, now), embedder, service, registry, store, now);
-  const meaning = new MeaningIndex(db, { floor: THREAD_FLOOR, kinds: THREAD_KINDS, now, log: () => {} });
+  const meaning = new MeaningIndex(db, { floor: profileFor(process.env.EMBED_MODEL).threadFloor, kinds: THREAD_KINDS, now, log: () => {} });
   service.setMeaningHook(meaning);
   pages.setMeaningHook(meaning);
   const discussions = new DiscussionService(new DiscussionStore(db, now), service, () => [], now);
@@ -198,6 +200,17 @@ export async function seedDemo(dataDir: string, embedder: Embedder, today = Date
   at(2, 15);
   discussions.reply({ name: 'Codex', model: 'GPT', access: 'full' }, d.id, { text: 'Agree for now. Add an unsubscribe link from day one, and switch to a service only if the list passes 500 or the mailbox starts bouncing.' });
 
+  // The learning layer (spec 2026-11-11): a few areas set by assistants, with notes, and one lesson in the handbook.
+  const learning = new LearningService(db, now, { match: () => ({ byProject: new Map(), unmatched: [], receivedAt: null, device: null }) },
+    { get: (n) => registry.get(n), named: (n) => service.projectNamed(n), list: () => registry.list() });
+  at(1, 16);
+  learning.set('garden-club-site', 'finish', { status: 'done', note: 'v1 is bookings, sign-in and the members page; the newsletter is v2' }, 'Claude Code');
+  learning.set('garden-club-site', 'auto', { status: 'look', note: 'tests run on the Mac only; nothing runs on push yet' }, 'Claude Code');
+  learning.set('seed-swap', 'alerts', { status: 'not_needed', note: 'an iPhone app: nothing runs on a server' }, 'Claude Code');
+  learning.set('homelab', 'upkeep', { status: 'done', note: 'Watchtower updates the containers every night', automatic: true }, 'Claude Code');
+  if (!registry.get('developer-handbook')) registry.create('developer-handbook', { state: 'open', area: 'tools', oneLiner: 'What the owner has learned about building software, one topic per page' }, 'Claude Code');
+  learning.recordLesson({ title: 'What a commit and a push are', level: 'helped', project: 'garden-club-site' }, 'Claude Code');
+
   at(0, 8);
   await meaning.catchUp();
   // Last night's backup, export and git copy and this week's off-site copy, as the scripts would report them, so the demo dashboard is not all warnings.
@@ -230,7 +243,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.error('usage: npm run demo:seed -- <new data folder>   |   npm run demo:code');
     process.exit(2);
   } else {
-    const embedder = await createLocalEmbedder({ modelDir: process.env.MODEL_DIR ?? './models', allowRemote: false });
+    const embedder = await createLocalEmbedder({ modelDir: process.env.MODEL_DIR ?? './models', allowRemote: false, model: profileFor(process.env.EMBED_MODEL) });
     const r = await seedDemo(arg, embedder);
     await setDemoLogin(arg);
     console.log(`Seeded ${r.facts} facts and ${r.pages} pages in ${arg}.`);

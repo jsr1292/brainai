@@ -59,6 +59,12 @@ fn log_path(app: &AppHandle) -> PathBuf {
     app_data(app).join("logs").join("server.log")
 }
 
+/// The app's resource folder in a form Node can open (on Windows, without the `\\?\` that canonicalize adds).
+fn resources_dir(app: &AppHandle) -> PathBuf {
+    let raw = app.path().resource_dir().expect("the app's resources");
+    raw.to_str().map(|s| PathBuf::from(server::plain_path(s))).unwrap_or(raw)
+}
+
 /// The bundled Node sits next to the app's own executable (Tauri's externalBin, `binaries/node`).
 fn node_path() -> PathBuf {
     std::env::current_exe().expect("the app's path").parent().expect("its folder").join("node")
@@ -72,7 +78,7 @@ fn tool_path() -> &'static str {
 
 fn start_server(app: &AppHandle, port: u16, secret: &str) -> std::io::Result<Child> {
     let data = app_data(app);
-    let resources = app.path().resource_dir().expect("the app's resources");
+    let resources = resources_dir(app);
     std::fs::create_dir_all(data.join("logs"))?;
     let log = OpenOptions::new().create(true).append(true).open(log_path(app))?;
     let tmpdir = std::env::var("TMPDIR").ok();
@@ -209,7 +215,7 @@ fn start_and_open(app: &AppHandle) {
     // be gone and the PC lack the runtime too, say so plainly rather than "the server did not start".
     if cfg!(windows) {
         let system32 = PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into())).join("System32");
-        let dirs = server::runtime_dirs(&app.path().resource_dir().expect("the app's resources").join("server"));
+        let dirs = server::runtime_dirs(&resources_dir(app).join("server"));
         let missing = server::missing_runtime(|f| server::runtime_found(f, &dirs, &system32, |p| p.exists()));
         if !missing.is_empty() {
             return give_up(app, &format!(

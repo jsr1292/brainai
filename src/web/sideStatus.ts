@@ -40,9 +40,11 @@ let current: SideStatus | null = null;
 export function setSideStatus(s: SideStatus | null): void {
   current = s;
 }
-/** What the sidebar shows; both false when no app set one. */
-export function sideStatus(): { needsYou: boolean; backupLate: boolean } {
-  return current === null ? { needsYou: false, backupLate: false } : { needsYou: current.needsYouCount() > 0, backupLate: current.backupLate() };
+/** What the sidebar shows: the Inbox count (what waits for the owner) and the backup warning. */
+export function sideStatus(): { needsYou: boolean; needsYouCount: number; backupLate: boolean } {
+  if (current === null) return { needsYou: false, needsYouCount: 0, backupLate: false };
+  const count = current.needsYouCount();
+  return { needsYou: count > 0, needsYouCount: count, backupLate: current.backupLate() };
 }
 export function invalidateSideStatus(): void {
   current?.invalidate();

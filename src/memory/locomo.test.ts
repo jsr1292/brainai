@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeService } from '../testing/helpers.js';
 import { createHash } from 'node:crypto';
-import { benchConversation, CATEGORY_NAMES, checkPinned, parseLocomo, scoreRecall } from './locomo.js';
+import { benchConversation, CATEGORY_NAMES, checkPinned, parseLocomo, scoreRecall, sessionDay } from './locomo.js';
 
 // Made up, in the shape of LoCoMo's locomo10.json (snap-research/locomo): never the real data.
 const FIXTURE = JSON.stringify([{
@@ -121,4 +121,23 @@ test('with pack, consecutive turns of one session are saved as one fact, and a f
   assert.equal(store.list({}).length, 2);
   assert.ok(store.list({}).some((m) => m.content.includes('Pixel') && m.content.includes('violin') && m.content.includes('\n')));
   assert.deepEqual(r.results.map((x) => x.rank !== null), [true, true, true]);
+});
+
+test('with dated, each turn is saved on its session\'s day and the questions are asked the day after the last session', async () => {
+  const [c] = parseLocomo(FIXTURE);
+  let at: Date | null = null;
+  const { service, store } = makeService({ now: () => at ?? new Date() });
+  const asked: string[] = [];
+  const recall = service.recall.bind(service);
+  service.recall = async (q) => { asked.push((at ?? new Date()).toISOString().slice(0, 10)); return recall(q); };
+  await benchConversation(c!, service, { dated: (d) => { at = d; } });
+  const days = store.list({ limit: -1 }).map((m) => m.createdAt.slice(0, 10)).sort();
+  assert.deepEqual(days, ['2023-05-08', '2023-05-08', '2023-05-08', '2023-05-20']);
+  assert.ok(asked.length > 0 && asked.every((d) => d === '2023-05-21'), asked.join(' '));
+});
+
+test('sessionDay reads LoCoMo\'s session dates as that day at noon UTC, and nothing it cannot read', () => {
+  assert.equal(sessionDay('8 May, 2023')?.toISOString(), '2023-05-08T12:00:00.000Z');
+  assert.equal(sessionDay('20 May, 2023')?.toISOString(), '2023-05-20T12:00:00.000Z');
+  assert.equal(sessionDay('someday'), null);
 });

@@ -107,7 +107,7 @@ const quietOf = (w: ReviewWorld, name: string, monday = W26) => buildReview(w.so
 const migrationRow = (w: ReviewWorld, name: string, state: string, at: string, by = 'migration') =>
   w.db.prepare(`INSERT INTO projects(name, state, state_changed_at, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .run(name, state, at, at, by, at, by);
-const folder = (name: string, o: { unpushed?: number; lastCommit: string }) => ({ name, git: true, branch: 'main', uncommitted: 0, unpushed: o.unpushed ?? 0, lastCommit: o.lastCommit, remotes: [] });
+const folder = (name: string, o: { unpushed?: number; uncommitted?: number; lastCommit: string }) => ({ name, git: true, branch: 'main', uncommitted: o.uncommitted ?? 0, unpushed: o.unpushed ?? 0, lastCommit: o.lastCommit, remotes: [] });
 
 test('went quiet: touched 10 days before the start and not since', () => {
   const w = reviewWorld('2026-10-15T23:00:00Z');
@@ -160,6 +160,22 @@ test('the Mac\'s commit counts only from a report that came inside the week or w
   assert.equal(q.quiet!.lastTouched, '2026-10-15T10:00:00.000Z');
   assert.equal(q.notPushed, null);
   assert.equal(late.quietFromFactsOnly, true);
+});
+
+test('weekly review flags uncommitted work older than a day, as the project chip does', () => {
+  const w = reviewWorld('2026-10-15T10:00:00Z');
+  w.save('2026-10-15T10:00:00Z', { content: 'fact', project: 'energy' });
+  w.save('2026-10-15T10:00:00Z', { content: 'fact', project: 'larder' });
+  const { device } = w.devices.create('Mac');
+  w.at('2026-11-02T01:00:00Z');
+  w.devices.storeReport(device.id, [
+    folder('energy', { uncommitted: 3, lastCommit: '2026-10-30T23:00:00Z' }),
+    folder('larder', { uncommitted: 2, lastCommit: '2026-11-01T23:00:00Z' }),
+  ]);
+  w.at('2026-11-03T07:14:00Z');
+  const r = buildReview(w.sources(), windowFor(W26));
+  assert.deepEqual(r.projects.find((x) => x.project === 'energy')!.notPushed, { count: 0, uncommitted: 3, receivedAt: '2026-11-02T01:00:00.000Z' });
+  assert.equal(r.projects.find((x) => x.project === 'larder')?.notPushed ?? null, null, 'committed 2 hours before the report: work in progress');
 });
 
 test('back after a while counts the quiet days before the first change this week', () => {

@@ -134,7 +134,7 @@ export function skillRoutes(d: AppDeps): Router {
 
   // ---- Proposals (Approvals) ----
   const answered = (res: Response, e: SkillError) =>
-    send(res, status(e), 'Approvals', html`<h1>Approvals</h1><p class="error" role="alert">${e.message}</p><p><a href="/approvals">Back to Approvals</a></p>`, { href: '/approvals', label: 'Approvals' });
+    send(res, status(e), 'Inbox', html`<h1>Inbox</h1><p class="error" role="alert">${e.message}</p><p><a href="/approvals">Back to the Inbox</a></p>`, { href: '/approvals', label: 'Inbox' });
   router.post('/skill-proposals/:id/add', owner, (req, res) => {
     try {
       const s = d.skills.addProposal(req.params.id as string, req.body.on === '1');
@@ -153,7 +153,7 @@ export function skillRoutes(d: AppDeps): Router {
       const p = d.skills.proposal(req.params.id as string);
       if (e.code !== 'changed' || !p || !p.skillId) return answered(res, e);
       // The skill moved on since: the same card again, saying so, with Apply it confirming.
-      send(res, 409, 'Approvals', html`<div class="narrow approvals"><h1>Approvals</h1>${proposalCard(p, d.skills.get(p.skillId), { changed: e.message })}</div>`, { href: '/approvals', label: 'Approvals' });
+      send(res, 409, 'Inbox', html`<div class="narrow approvals"><h1>Inbox</h1>${proposalCard(p, d.skills.get(p.skillId), { changed: e.message })}</div>`, { href: '/approvals', label: 'Inbox' });
     }
   });
   router.post('/skill-proposals/:id/reject', owner, (req, res) => {

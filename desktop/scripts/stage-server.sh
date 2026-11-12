@@ -16,6 +16,8 @@ trap 'rm -rf "$WORK"' EXIT
   echo "The search model is missing: run  npm run model  first." >&2; exit 1; }
 [ -f "$ROOT/models/cross-encoder/mmarco-mMiniLMv2-L12-H384-v1/onnx/model_qint8_arm64.onnx" ] || {
   echo "The reranker model is missing: run  npm run model  first." >&2; exit 1; }
+[ -f "$ROOT/models/onnx-community/embeddinggemma-300m-ONNX/onnx/model_q4.onnx_data" ] || {
+  echo "The Gemma search model is missing: run  npm run model  first." >&2; exit 1; }
 # The app must contain exactly a commit, so nothing uncommitted ships.
 if [ -n "$(cd "$ROOT" && git status --porcelain -- src package.json package-lock.json)" ] && [ "${ALLOW_DIRTY:-0}" != "1" ]; then
   echo "Uncommitted changes in the server: commit them first (or set ALLOW_DIRTY=1 for a throwaway build)." >&2; exit 1
@@ -26,6 +28,9 @@ echo "Building the server ..."
 rm -rf "$SERVER" && mkdir -p "$SERVER" "$TAURI/binaries"
 cp -R "$ROOT/dist" "$ROOT/package.json" "$ROOT/package-lock.json" "$SERVER/"
 cp -RL "$ROOT/models" "$SERVER/models"
+# EmbeddingGemma is distributed with its notice and terms (Gemma Terms of Use, section 3.1).
+cp -R "$ROOT/licenses" "$SERVER/licenses"
+cp "$ROOT/licenses/GEMMA-NOTICE.txt" "$SERVER/models/onnx-community/embeddinggemma-300m-ONNX/NOTICE"
 
 echo "Installing the darwin-arm64 dependencies ..."
 (cd "$SERVER" && npm ci --omit=dev --ignore-scripts --os=darwin --cpu=arm64 --no-audit --no-fund >/dev/null)

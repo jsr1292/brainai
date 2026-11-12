@@ -4,7 +4,7 @@
  */
 import { KINDS } from '../memory/types.js';
 
-export type Tab = 'projects' | 'pages' | 'week' | 'graph' | 'settings';
+export type Tab = 'projects' | 'pages' | 'facts' | 'inbox' | 'week' | 'graph' | 'settings';
 export interface Back { href: string; label: string; tab: Tab | null }
 export interface BackLookups {
   pageTitle(id: string): string | undefined;
@@ -16,7 +16,7 @@ export const SUGGESTION_BACK = /^\/(approvals)?$/;
 export const suggestionBack = (v: unknown): '/' | '/approvals' => v === '/approvals' ? '/approvals' : '/';
 const UUID = /^[0-9a-f-]{36}$/;
 const REVIEW_DATE = /^\d{4}-\d{2}-\d{2}$/;
-const factsBack: Back = { href: '/facts', label: 'Facts', tab: 'pages' };
+const factsBack: Back = { href: '/facts', label: 'Facts', tab: 'facts' };
 const simple = (href: string, label: string, tab: Tab | null): Back => ({ href, label, tab });
 
 function paramsAllowed(u: URL, allowed: readonly string[]): boolean {
@@ -46,7 +46,7 @@ export function backFrom(from: unknown, look: BackLookups): Back | undefined {
     if (page !== null && !/^\d{1,4}$/.test(page)) return undefined;
     const out = new URLSearchParams();
     for (const key of ['q', 'kind', 'project', 'show', 'page'] as const) if (p.has(key)) out.set(key, p.get(key)!);
-    return simple('/facts' + (out.size ? '?' + out : ''), kind === 'profile' ? 'About you' : 'Facts', 'pages');
+    return simple('/facts' + (out.size ? '?' + out : ''), kind === 'profile' ? 'About you' : 'Facts', 'facts');
   }
   if (path === '/' && paramsAllowed(u, ['project'])) {
     const project = u.searchParams.get('project');
@@ -70,15 +70,15 @@ export function backFrom(from: unknown, look: BackLookups): Back | undefined {
     return simple('/search' + (q === null ? '' : '?q=' + encodeURIComponent(q.slice(0, 200))), 'Search', null);
   }
   if (!paramsAllowed(u, [])) return undefined;
-  if (path === '/facts/tidy') return simple(path, 'Tidy up', 'pages');
+  if (path === '/facts/tidy') return simple(path, 'Tidy up', 'facts');
   if (path === '/pages') return simple(path, 'Pages', 'pages');
   if (path.startsWith('/pages/') && UUID.test(path.slice(7))) {
     const title = look.pageTitle(path.slice(7));
     return title ? simple(path, title, 'pages') : undefined;
   }
-  if (path.startsWith('/memories/') && UUID.test(path.slice(10))) return simple(path, 'Fact', 'pages');
+  if (path.startsWith('/memories/') && UUID.test(path.slice(10))) return simple(path, 'Fact', 'facts');
   if (path.startsWith('/discussions/') && look.discussionTitle(path.slice(13))) return simple(path, 'Discussion', 'projects');
-  if (path === '/approvals') return simple(path, 'Approvals', 'projects');
+  if (path === '/approvals') return simple(path, 'Inbox', 'inbox');
   if (path === '/review') return simple(path, 'Last week', 'week');
   if (path === '/review/now') return simple(path, 'So far', 'week');
   if (path.startsWith('/review/') && REVIEW_DATE.test(path.slice(8))) {

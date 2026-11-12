@@ -1,3 +1,4 @@
+import type { AreaState, HandbookTopic } from '../learning/types.js';
 import type { PageHeader } from '../pages/types.js';
 import { isStatus } from '../memory/brief.js';
 import { checkRoadmap, formatRoadmap, parseRoadmap, type Roadmap } from '../memory/roadmap.js';
@@ -10,7 +11,7 @@ import type { Memory } from '../memory/types.js';
 import type { Disagreement } from '../memory/disagreements.js';
 import { localDay, shortDay } from '../timezone.js';
 import type { ProjectStore } from './store.js';
-import { MAX_PINNED, ProjectError, type Project, type ProjectStateName } from './types.js';
+import { MAX_PINNED, ProjectError, type Area, type Project, type ProjectStateName } from './types.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** An item due within this many days is "soon". */
@@ -36,7 +37,20 @@ export interface ProjectCard {
   newActivity: boolean;
   /** The Mac's latest report shows work in its folder that isn't on any remote. */
   notPushed: boolean;
+  /** Its state dot on the Projects page: wait (something waits on the owner), on (being worked on), quiet. */
+  dot: Dot;
+  /** The learning layer's "work is safe" warning (not pushed, or not in git): the one mark the home page shows. */
+  safeWarning: boolean;
 }
+export type Dot = 'on' | 'wait' | 'quiet';
+/** One area's part of the Projects page: its live projects as tiles, the rest folded (spec 2026-11-11). */
+export interface AreaSection {
+  area: Area | null; live: ProjectCard[]; quiet: ProjectCard[]; ideas: ProjectCard[]; parked: ProjectCard[]; done: ProjectCard[];
+  /** Personal only: the areas of life (finances, health…), folded into one line. */
+  lifeAreas: ProjectCard[];
+}
+/** The order of the Projects page's sections; projects with no area come last, as Unsorted. */
+export const SECTION_ORDER: (Area | null)[] = ['apps', 'tools', 'home', 'work', 'personal', null];
 export interface WaitingRow { index: number; text: string; due: string | null; late: boolean; soon: boolean }
 export interface DoneRow { index: number; text: string; date: string | null }
 /** `needsYou`: an open round every assistant has answered, so it waits on the owner. */
@@ -60,6 +74,10 @@ export interface ProjectDetail {
   folder: FolderState | null;
   /** B1: pairs of its facts an assistant flagged as disagreeing, not settled yet, newest first. */
   disagreements: (Disagreement & { factA: Memory; factB: Memory })[];
+  /** The five areas (null for a project without them: an idea, a finished one, an area of life). */
+  areas: AreaState[] | null;
+  /** The owner's handbook topics applied on this project. */
+  handbook: HandbookTopic[];
 }
 /** What the panel needs from discussions: the owner's list of every discussion. */
 /** What the panel needs from pages: a project's live pages, and which of them may be out of date. */
@@ -75,6 +93,8 @@ export interface HomeSuggestion { project: string; kind: 'pin-late' | 'park-quie
 /** What the home screen needs from the Mac's folder report. */
 export interface FolderSource { match(): FolderMatch }
 export interface Home {
+  /** The Projects page by area (spec 2026-11-11); the fields below stay for the graph and older readers. */
+  sections: AreaSection[];
   onTheGo: ProjectCard[];
   open: ProjectCard[];
   /** Open projects with no change for QUIET_DAYS or more, folded away so Also open stays short. */
@@ -122,7 +142,16 @@ export function ideaName(text: string): string {
 
 /** The projects home: the registry joined with roadmaps and memories, and the owner's actions on it. */
 export class ProjectsService {
-  constructor(private registry: ProjectStore, private memories: MemoryService, private store: MemoryStore, private discussions?: DiscussionList, private pages?: PageList, private folders?: FolderSource) {}
+  constructor(private registry: ProjectStore, private memories: MemoryService, private store: MemoryStore, private discussions?: DiscussionList, private pages?: PageList, private folders?: FolderSource,
+    private learning?: { safeWarning(name: string, folders?: FolderMatch): boolean; areas?(name: string, folders?: FolderMatch): AreaState[] | null; topics?(project: string): HandbookTopic[] }) {}
+
+  /** Projects something waits on the owner for: a held save or suggestion filed under them, or a discussion round they must answer. */
+  private needingOwner(): Set<string> {
+    const out = new Set<string>();
+    for (const sg of this.memories.pendingSuggestions()) if (sg.project) out.add(this.memories.projectNamed(sg.project));
+    for (const d of this.discussions?.ownerList() ?? []) if (!d.closed && d.waitingFor.length === 0 && d.project) out.add(this.memories.projectNamed(d.project));
+    return out;
+  }
 
   /** The newest change to the project's facts, or its folder's last commit on the Mac when that is newer. */
   private lastTouched(p: Project, folders?: FolderMatch): string {
@@ -151,7 +180,7 @@ export class ProjectsService {
     return this.folders?.match() ?? { byProject: new Map(), unmatched: [], receivedAt: null, device: null };
   }
 
-  private card(p: Project, now: Date, folders: FolderMatch = this.match()): ProjectCard {
+  private card(p: Project, now: Date, folders: FolderMatch = this.match(), owner: Set<string> = this.needingOwner()): ProjectCard {
     const memory = this.memories.roadmapOf(p.name);
     const roadmap = memory ? parseRoadmap(memory.content) : null;
     const lastTouched = this.lastTouched(p, folders);
@@ -164,7 +193,8 @@ export class ProjectsService {
     return {
       project: p,
       roadmap,
-      next: roadmap?.nextSteps[0] ?? roadmap?.now ?? null,
+      // What is being done comes first: the roadmap's Now, else its first Next step.
+      next: roadmap?.now ?? roadmap?.nextSteps[0] ?? null,
       lastTouched,
       quietDays: days >= QUIET_DAYS ? days : null,
       waiting: waiting.length,
@@ -173,16 +203,35 @@ export class ProjectsService {
       newActivity: (p.state === 'parked' || p.state === 'done') && (this.lastAiChange(p) ?? '') > this.acknowledged(p),
       // Done projects too: finished work that exists only on the Mac is exactly what must not go unseen.
       notPushed: folders.byProject.has(p.name) && notPushed(folders.byProject.get(p.name)!, now),
+      dot: waiting.length > 0 || owner.has(p.name) ? 'wait' : p.state === 'open' && (p.pinnedAt !== null || days < QUIET_DAYS) ? 'on' : 'quiet',
+      safeWarning: this.learning?.safeWarning(p.name, folders) ?? false,
     };
   }
 
   /** `holdBackPark`: projects whose "park it?" suggestion waits while the Monday line already says they went quiet. */
   home(now: Date, opts: { holdBackPark?: ReadonlySet<string> } = {}): Home {
     const folders = this.match();
-    const cards = this.registry.list().filter((p) => !this.isEmpty(p)).map((p) => this.card(p, now, folders));
+    const owner = this.needingOwner();
+    const cards = this.registry.list().filter((p) => !this.isEmpty(p)).map((p) => this.card(p, now, folders, owner));
     const by = (f: (c: ProjectCard) => boolean) => cards.filter(f).sort(newestFirst);
     const personal = (c: ProjectCard) => isLifeArea(c.project);
+    const pinnedFirst = (a: ProjectCard, b: ProjectCard) =>
+      (a.project.pinnedAt === null ? 1 : 0) - (b.project.pinnedAt === null ? 1 : 0) || (a.project.pinnedAt ?? '').localeCompare(b.project.pinnedAt ?? '') || newestFirst(a, b);
+    const sections = SECTION_ORDER.map((area): AreaSection => {
+      const mine = cards.filter((c) => c.project.area === area);
+      const open = (c: ProjectCard) => c.project.state === 'open' && !personal(c);
+      return {
+        area,
+        live: mine.filter((c) => open(c) && (c.project.pinnedAt !== null || c.quietDays === null)).sort(pinnedFirst),
+        quiet: mine.filter((c) => open(c) && c.project.pinnedAt === null && c.quietDays !== null).sort(newestFirst),
+        ideas: mine.filter((c) => c.project.state === 'idea').sort(newestFirst),
+        parked: mine.filter((c) => c.project.state === 'parked' && !personal(c)).sort(newestFirst),
+        done: mine.filter((c) => c.project.state === 'done' || c.project.state === 'archived').sort(newestFirst),
+        lifeAreas: mine.filter((c) => (c.project.state === 'open' || c.project.state === 'parked') && personal(c)).sort(newestFirst),
+      };
+    }).filter((x) => x.live.length + x.quiet.length + x.ideas.length + x.parked.length + x.done.length + x.lifeAreas.length > 0);
     return {
+      sections,
       onTheGo: cards.filter((c) => c.project.state === 'open' && c.project.pinnedAt !== null)
         .sort((a, b) => a.project.pinnedAt!.localeCompare(b.project.pinnedAt!)),
       open: by((c) => c.project.state === 'open' && c.project.pinnedAt === null && !personal(c) && c.quietDays === null),
@@ -232,6 +281,8 @@ export class ProjectsService {
       pages: this.panelPages(p.name),
       folder: folders.byProject.get(p.name) ?? null,
       disagreements: this.memories.openDisagreements(p.name),
+      areas: this.learning?.areas?.(p.name) ?? null,
+      handbook: this.learning?.topics?.(p.name) ?? [],
     };
   }
 

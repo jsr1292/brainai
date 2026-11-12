@@ -2,7 +2,9 @@
  * Calibrates the graph's thread floor on a copy of a real database and prints only counts and timings: never a name,
  * a word or any text unless --samples is passed (words are content; only the owner passes it, on their own computer).
  *
- *   node --import tsx src/scripts/calibrateThreads.ts <copy.db> [--samples]
+ *   node --import tsx src/scripts/calibrateThreads.ts <copy.db> [--samples] [--floors 0.84,0.85,...]
+ *
+ * --floors: the floors to try (default e5's range; another search model needs its own, see embeddingProfile.ts).
  *
  * Opening the copy runs the migrations on it, and every run empties and rebuilds its meaning tables with the real
  * index (MeaningIndex.catchUp, not chooseLinks: the stored set is a superset of it), so never point this at a live file.
@@ -15,8 +17,11 @@ import { MeaningIndex, topThreads } from '../graph/threads.js';
 import type { Kind } from '../memory/types.js';
 
 const args = process.argv.slice(2);
-const path = args.find((a) => !a.startsWith('--'));
+const path = args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--floors');
 const samples = args.includes('--samples');
+const floorsArg = args[args.indexOf('--floors') + 1];
+const floors = args.includes('--floors') && floorsArg ? floorsArg.split(',').map(Number) : [0.84, 0.85, 0.86, 0.87, 0.88];
+if (floors.some((f) => !Number.isFinite(f))) { console.error(`--floors takes numbers, got ${floorsArg}`); process.exit(2); }
 if (!path) {
   console.error('usage: node --import tsx src/scripts/calibrateThreads.ts <copy.db> [--samples]');
   process.exit(2);
@@ -35,7 +40,7 @@ const open = (db.prepare("SELECT name FROM projects WHERE state = 'open'").all()
 const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length === 0 ? 0 : s.length % 2 ? s[(s.length - 1) / 2]! : (s[s.length / 2 - 1]! + s[s.length / 2]!) / 2; };
 
 for (const kinds of [['decision'], ['decision', 'summary']] as Kind[][]) {
-  for (const floor of [0.84, 0.85, 0.86, 0.87, 0.88]) {
+  for (const floor of floors) {
     const started = performance.now();
     db.exec('DELETE FROM meaning_links; DELETE FROM meaning_indexed;');
     const meaning = new MeaningIndex(db, { floor, kinds, now, log: () => {} });

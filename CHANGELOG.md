@@ -4,6 +4,54 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Backups and health shows the version you run.
 
+## 1.2.0 (2026-11-12)
+
+Updating needs nothing from you: the database updates itself when the server starts (a copy is kept first). The first
+start after this update also rebuilds the search index for the new search model, which takes about a minute; the
+server answers once it's done.
+
+- **A better search model:** recall now finds facts with EmbeddingGemma-300m instead of multilingual-e5-small. On the
+  author's own 168 recall questions the right fact came first 149 times instead of 143; on the LoCoMo benchmark the
+  right turn is in the first 8 results for 87% of questions instead of 74% (docs/BENCHMARK.md). Duplicate
+  warnings, related facts, project-merge suggestions and the graph's threads use cut-offs tuned for it. The Docker
+  image grows by about 210 MB. `EMBED_MODEL=e5` in `.env` switches back (the index is rebuilt again at the next start);
+  if you set `MIN_RECALL_SIMILARITY`, `RECALL_WINDOW`, `RECALL_CONFIDENT_SIMILARITY` or `DUPLICATE_THRESHOLD`
+  yourself, they were tuned for e5: the server log names them at the first start so you can remove them.
+- **Licence:** EmbeddingGemma is provided under and subject to the Gemma Terms of Use found at
+  ai.google.dev/gemma/terms. The notice and the terms ship with the model (`licenses/`). Using BrainAI with it means
+  using the model only as those terms allow, never for anything the Gemma Prohibited Use Policy forbids
+  (ai.google.dev/gemma/prohibited_use_policy).
+- **Work memory for a Windows laptop, as a download:** the release page now carries
+  `work-memory-win-x64-1.2.0.zip`, a private memory for Codex and Claude Code on a work laptop: no install rights, no
+  internet and no other software needed (docs/WORK.md). To update, unzip the newer zip and run `setup.ps1` again;
+  your memories and settings are kept. Its README now has a licences section with the Gemma terms of use.
+- **Projects by area:** the Projects page now has one section per area (Apps, Tools & AI, Home & infrastructure, Work,
+  Personal). Projects you're working on are small tiles with a coloured dot (green: being worked on, amber: waiting on
+  you, grey: quiet), their one-liner and what's being done now; quiet, ideas, parked and done projects fold into one line
+  under their area. "On the go" and "Also open" are gone: pin a project to keep it first in its area.
+- **Learning to work like a developer:** every project now has five areas: work is safe (committed and pushed), runs by
+  itself (CI/CD), kept up to date, you'd know if it broke, and a clear finish line. Assistants see where each project
+  stands, bring up the next area at a good moment (one at a time; "not now" holds two weeks), explain the why as they
+  work on it with you, and keep what you learned as a handbook (project developer-handbook). "Work is safe" fills itself
+  in from the Mac's folder report. Each project shows its five areas, and **Map** (from the Projects page) shows every
+  project against them, with a week-by-week line. A tile marked "!" holds work that exists only on the Mac.
+- **The weekly review** flags uncommitted work older than a day, like the project pages do.
+- **Search asks assistants for a guess:** with a question, an assistant now usually sends one sentence written as the
+  answer might be stored (a guess, never saved or shown). On LoCoMo this finds the right turn first 60% of the time
+  instead of 57%, at about 0.3 s more per search on a mini PC.
+- **Search words:** an assistant can give a fact a few search words the text doesn't say (a nickname, the Spanish
+  word, the date of an event). Search finds the fact by them; nobody has to read them. You see and edit them on the
+  fact's page. To add them to facts you already have, ask an assistant to "add search words to my facts".
+- **More results for assistants:** a search from an assistant returns up to 12 facts instead of 8, as long as they fit
+  in about 1,500 words. The dashboard is unchanged.
+- **One topic per fact:** assistants are asked to save two facts when what they save covers two things.
+- **Time questions:** "what did we decide last week?", "¿qué hicimos en octubre?": facts saved or dated in that time
+  come first; nothing else is hidden. Assistants can also pass exact dates, and recall says how it read the time.
+- **Page matches:** a page section found by search shows where it sits ("Stack and where it lives › Backups") and the
+  passage that matched, not just its first lines.
+- **Pages:** a live-styled editor (the page's own font and headings while you type, a [[ picker for links, ⌘S to save),
+  Facts and Inbox in the sidebar, and Facts grouped by project with roadmaps as Now / Next / Done.
+
 ## 1.1.1 (2026-11-09)
 
 Updating needs nothing from you.

@@ -13,6 +13,7 @@ import { ClientsStore } from './auth/clientsStore.js';
 import { MemoryOAuthProvider } from './auth/provider.js';
 import { generateTotpSecret, otpauthUri } from './auth/totp.js';
 import { createLocalEmbedder } from './memory/embedder.js';
+import { ensureEmbeddings, modelOf } from './memory/reembed.js';
 import { startReranker, type Reranker } from './memory/reranker.js';
 import { exportMarkdown } from './memory/exportMarkdown.js';
 import { comparePaired, formatReport, parseCases, runRecallTest } from './memory/recallTest.js';
@@ -61,7 +62,7 @@ export async function prompt(question: string, opts: { hidden?: boolean } = {}):
   return line;
 }
 
-export interface CliContext { db: DB; owner: OwnerAuth; args?: string[]; embedder?: Embedder; reranker?: Reranker }
+export interface CliContext { db: DB; owner: OwnerAuth; args?: string[]; embedder?: Embedder; reranker?: Reranker; /** The database file (absent in tests on :memory:). */ dbPath?: string }
 
 async function setPassword({ owner }: CliContext): Promise<void> {
   const pw = await prompt('New password (min 12 characters): ', { hidden: true });
@@ -139,29 +140,43 @@ async function clients({ db, args = [] }: CliContext): Promise<void> {
  * questions gained and lost within the first result and within the limit. `--no-alt` leaves out each question's other
  * phrasings (`alt`), to measure what they add.
  */
-async function recallTest({ db, args = [], embedder: given, reranker }: CliContext): Promise<void> {
+async function recallTest({ db, args = [], embedder: given, reranker, dbPath }: CliContext): Promise<void> {
   const config = loadConfig(process.env);
   const flag = (name: string): string | undefined => {
     const i = args.indexOf(name);
     if (i < 0) return undefined;
     const v = args[i + 1];
-    if (v === undefined || v.startsWith('--')) throw new Error(`Usage: cli recall-test [file] [--json <out>] [--against <earlier json>] [--no-alt]`);
+    if (v === undefined || v.startsWith('--')) throw new Error(`Usage: cli recall-test [file] [--json <out>] [--against <earlier json>] [--limit <1-20>] [--no-alt] [--reembed]`);
     return v;
   };
   const jsonOut = flag('--json');
   const against = flag('--against');
-  const file = args.find((a, i) => !a.startsWith('--') && !['--json', '--against'].includes(args[i - 1] ?? ''));
+  // B9: assistants get up to 12 results; --limit 12 measures that (the default stays 8, comparable with earlier runs).
+  const limitArg = flag('--limit');
+  const limit = limitArg === undefined ? DEFAULT_LIMIT : Number(limitArg);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new Error(`recall-test --limit must be a whole number from 1 to 20; got ${limitArg}`);
+  const file = args.find((a, i) => !a.startsWith('--') && !['--json', '--against', '--limit'].includes(args[i - 1] ?? ''));
   const cases = parseCases(readFileSync(file ?? join(config.dataDir, 'recall-test.json'), 'utf8'));
-  const embedder = given ?? await createLocalEmbedder({ modelDir: config.modelDir, allowRemote: false });
+  const embedder = given ?? await createLocalEmbedder({ modelDir: config.modelDir, allowRemote: false, model: config.embedModel });
+  // The questions are asked with the configured model. A brain made by another one is never switched behind the
+  // owner's back (it may be the live one, with the server running): only on a copy, with --reembed.
+  const made = modelOf(db);
+  if (made !== null && made.model !== config.embedModel.id && !args.includes('--reembed')) {
+    throw new Error(`recall-test: this brain's vectors were made by ${made.model}, not ${config.embedModel.id}. Run it on a copy with --reembed (it rebuilds the copy's vectors), or set EMBED_MODEL=${made.model} to test the model it has.`);
+  }
+  await ensureEmbeddings(db, dbPath ?? ':memory:', embedder, config.embedModel);
   const service = new MemoryService(new MemoryStore(db, systemClock), embedder, {
     duplicateThreshold: config.duplicateThreshold,
     minRecallSimilarity: config.minRecallSimilarity,
     recallConfidentSimilarity: config.recallConfidentSimilarity,
     recallWindow: config.recallWindow,
+    keywordWeight: config.embedModel.keywordWeight,
+    rerankPrior: config.embedModel.rerankPrior,
+    closeFacts: config.embedModel.closeFacts,
     // What assistants get: the server's reranker setting.
     reranker: reranker ?? await startReranker(config),
   });
-  const report = await runRecallTest(service, cases, DEFAULT_LIMIT, { alt: !args.includes('--no-alt') });
+  const report = await runRecallTest(service, cases, limit, { alt: !args.includes('--no-alt') });
   console.log(formatReport(report));
   const perQuestion = report.results.map((r) => ({ id: r.q, rank: r.rank }));
   if (jsonOut) writeFileSync(jsonOut, JSON.stringify({ limit: report.limit, summary: report.summary, byTag: report.byTag, perQuestion }, null, 2));
@@ -257,7 +272,7 @@ export async function main(argv: string[], deps: { embedder?: Embedder; reranker
   mkdirSync(dir, { recursive: true });
   const db = openDb(`${dir}/memory.db`);
   try {
-    await handler({ db, owner: new OwnerAuth(db, systemClock), args: argv.slice(1), embedder: deps.embedder, reranker: deps.reranker });
+    await handler({ db, owner: new OwnerAuth(db, systemClock), args: argv.slice(1), embedder: deps.embedder, reranker: deps.reranker, dbPath: `${dir}/memory.db` });
     return 0;
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));

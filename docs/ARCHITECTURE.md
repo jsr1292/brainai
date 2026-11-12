@@ -13,6 +13,7 @@ Cloudflare Tunnel. Everything the dashboard shows is rendered on the server; the
 | `src/auth/` | OAuth for apps (registration, consent, tokens), the owner's password and authenticator, sessions, the login rate limit. |
 | `src/mcp/` | The MCP server: the tools each app sees and the instructions it gets, by access level. |
 | `src/memory/` | Facts: save, recall (keyword and embedding search), duplicates, supersession, secrets refusal, briefings and roadmaps. |
+| `src/learning/` | The five areas each project is checked against (work is safe, finish line, automation, alerts, upkeep), "not now", the owner's handbook topics and the Map's weekly counts. |
 | `src/pages/` | Pages: Markdown documents with sections, history, freshness checks and the Markdown export. |
 | `src/projects/` | Projects, their aliases, and where each one lives (folders reported by your computers). |
 | `src/review/`, `src/growth/` | The weekly review and the profile suggestions that wait for approval. |
@@ -26,8 +27,9 @@ Cloudflare Tunnel. Everything the dashboard shows is rendered on the server; the
 
 ## Things worth knowing
 
-- **Embeddings run in the app,** with a small multilingual model downloaded at build time, so recall works offline
-  and no text leaves the server.
+- **Embeddings run in the app,** with a local model downloaded at build time (EmbeddingGemma-300m by default,
+  multilingual-e5-small with `EMBED_MODEL=e5`), so recall works offline and no text leaves the server. Each model has
+  its own similarity cut-offs (`src/memory/embeddingProfile.ts`).
 - **Migrations only go forward.** Each is numbered and runs once; the database is copied first, and the newest three
   copies are kept.
 - **The overlay** (`overlay/`) is the one place for the owner's own texts and script settings; code never writes to it.

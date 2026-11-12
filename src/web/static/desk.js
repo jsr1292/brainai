@@ -164,7 +164,6 @@ export function sameDocAnchor(href, shown, base) {
 export const DESK_FOLDS = [
   'main > .narrow > details.filter-fold',
   '.desk-list details.filter-fold',
-  '.desk-sheet details#edit.pfold',
   '.desk-sheet details#history.pfold',
   '.review .decisions details.more',
 ];
@@ -189,7 +188,7 @@ export function sideUrl(kind, href, base, approvalId) {
 /** The sheet bar's crumb. For a discussion, `title` is its project (or empty: "Discussions"). */
 export function crumbParts(kind, title) {
   if (kind === 'project') return ['Projects', title];
-  if (kind === 'approval') return ['Projects', 'For you', title || 'Approvals'];
+  if (kind === 'approval') return title ? ['Inbox', title] : ['Inbox'];
   if (kind === 'discussion') return ['Projects', title || 'Discussions', 'Discussion'];
   return ['Projects', 'Not in the brain yet'];
 }
@@ -275,9 +274,9 @@ export function toastText(text) {
 
 // ---- The ⌘K palette (design §4.10): pure helpers ----
 
-/** The places the palette's Do group jumps to (GET only), in the sidebar's order; the digit where one exists. */
-const DO_PLACES = [['Projects', '/', '1'], ['Pages', '/pages', '2'], ['Facts', '/facts'], ['Last week', '/review', '3'], ['So far', '/review/now'],
-  ['Growth', '/growth'], ['Graph', '/graph', '4'], ['Settings', '/settings'], ['Approvals', '/approvals']];
+/** The places the palette's Do group jumps to (GET only), in the sidebar's order; the digit where one exists, and another name it answers to. */
+const DO_PLACES = [['Projects', '/', '1'], ['Pages', '/pages', '2'], ['Facts', '/facts'], ['Inbox', '/approvals', undefined, 'Approvals'],
+  ['Last week', '/review', '3'], ['So far', '/review/now'], ['Growth', '/growth'], ['Graph', '/graph', '4'], ['Settings', '/settings']];
 const fold = (t) => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 /**
@@ -289,9 +288,9 @@ export function paletteDo(q, o) {
   const t = String(q ?? '').trim();
   const out = [];
   if (t.length >= 1 && t.length <= 140) out.push({ label: `Add “${t}” as an idea`, idea: t });
-  for (const [name, href, key] of DO_PLACES) {
+  for (const [name, href, key, alias] of DO_PLACES) {
     if (o.work && name === 'Growth') continue;
-    if (t !== '' && !fold(name).includes(fold(t))) continue;
+    if (t !== '' && !fold(name).includes(fold(t)) && !(alias && fold(alias).includes(fold(t)))) continue;
     out.push(key ? { label: `Go to ${name}`, href, key } : { label: `Go to ${name}`, href });
   }
   return out;
@@ -464,7 +463,7 @@ function keyContext() {
   const sheetForm = !!(form && form.closest('.desk-sheet, .phome.has-panel > .ppanel') && cmdEnterForm(form.getAttribute('action') ?? ''));
   const inList = listFocus(a, landing);
   const shown = (n) => !!n && n.getClientRects().length > 0;
-  const filter = [...document.querySelectorAll('.desk-list input[name="q"], main > .narrow details.filter-fold input[name="q"]')].some(shown);
+  const filter = [...document.querySelectorAll('.desk-list input[name="q"], main > .narrow details.filter-fold input[name="q"], main > .narrow form.frow-filters input[name="q"]')].some(shown);
   return {
     typing: isTyping(a), keysOn: prefs().keys, screen: screen(), inSheetForm: sheetForm, inList, toast: hooks.toastOpen(), dialog: dialogOpen(),
     filter, peek: !!document.querySelector('dialog.desk-peek[open]'), palette: !!document.querySelector('dialog.desk-palette[open]'),
@@ -745,7 +744,7 @@ function crumbTitle(kind, doc, root) {
 function sheetTitle(kind, root) {
   if (kind === 'project') return root.querySelector('#panel-title')?.textContent.trim() ?? '';
   if (kind === 'discussion') return root.querySelector(':scope > h1')?.textContent.trim() ?? 'the discussion';
-  if (kind === 'approval') return root.querySelector('h1.approval-head')?.textContent.trim() ?? 'Approvals';
+  if (kind === 'approval') return root.querySelector('h1.approval-head')?.textContent.trim() ?? 'Inbox';
   if (kind === 'page') return root.querySelector('.pmain > h1')?.textContent.trim() ?? 'the page';
   if (kind === 'fact') return root.querySelector(':scope > h1.fact-text')?.textContent.trim() ?? 'the fact';
   return 'Not in the brain yet';
@@ -1160,7 +1159,8 @@ function stepList(dir) {
 function foldFromOverview(summary, e) {
   if (screen() !== 'overview') return false;
   const fold = summary.parentElement;
-  if (!fold || !fold.matches('.pfolds details.fold') || fold.id === 'notyet') return false;
+  // Only the extras' folds (the area fold lines open in place, spec 2026-11-11).
+  if (!fold || !fold.matches('.pextra details.fold') || fold.id === 'notyet') return false;
   const first = fold.querySelector('.fold-list a.row[href]');
   if (!first || !sheetKind(first.href, location.href)) return false;
   e.preventDefault();
@@ -1289,10 +1289,10 @@ async function refreshList() {
   markSelected(location.href);
 }
 
-/** The sidebar's Projects place (its needs-you dot) as the response page draws it. */
+/** The sidebar's Inbox place (its count of what waits for the owner) as the response page draws it. */
 function sidebarFrom(doc) {
-  const mine = document.querySelector('nav.side a.side-place[href="/"]');
-  const theirs = doc?.querySelector('nav.side a.side-place[href="/"]');
+  const mine = document.querySelector('nav.side a.side-place[href="/approvals"]');
+  const theirs = doc?.querySelector('nav.side a.side-place[href="/approvals"]');
   if (mine && theirs) mine.replaceChildren(...[...theirs.childNodes].map((n) => document.importNode(n, true)));
 }
 
@@ -1573,13 +1573,22 @@ hooks.actions.push((action, e) => {
 // ---- Pages (design §4.5): .pnav as the list pane, the page in the sheet with its rail, scroll-spy ----
 
 /** After a sheet shows a URL with a #fragment: that part at the top of the sheet. */
-function scrollToHash(href) {
+/**
+ * The id a sheet's address asks it to scroll to, or null. #panel (a project's own wrapper) and #notyet only say which
+ * sheet is open: scrolling to them put the heading under the sticky crumb bar, so the sheet stays at its top.
+ */
+export function sheetScrollId(href, base = 'http://localhost/') {
   let hash = '';
-  try { hash = new URL(href, location.href).hash; } catch { return; }
-  if (hash.length < 2) return;
+  try { hash = new URL(href, base).hash; } catch { return null; }
+  if (hash.length < 2) return null;
   let id = hash.slice(1);
   try { id = decodeURIComponent(id); } catch { /* as is */ }
-  const t = document.getElementById(id);
+  return id === 'panel' || id === 'notyet' ? null : id;
+}
+
+function scrollToHash(href) {
+  const id = sheetScrollId(href, location.href);
+  const t = id ? document.getElementById(id) : null;
   if (t && sheet()?.contains(t)) t.scrollIntoView({ block: 'start' });
 }
 
@@ -1792,7 +1801,7 @@ setups.push((signal) => {
 
 /** /facts (any filter) with no panes yet: its own list becomes the list pane when a fact opens. */
 function factsOverview() {
-  return !document.querySelector('main > .desk-panes') && location.pathname === '/facts' ? document.querySelector('main > .narrow:has(> ul.cards.list), main > .narrow:has(> p.empty)') : null;
+  return !document.querySelector('main > .desk-panes') && location.pathname === '/facts' ? document.querySelector('main > .narrow:has(> ul.cards.list), main > .narrow:has(> section.fgroup), main > .narrow:has(> p.empty)') : null;
 }
 
 /** A fact's side column: This decision over time, Where it shows (Near it comes from the side fragment). */
@@ -1816,9 +1825,8 @@ function factBar(kind, node, s) {
 }
 hooks.filled.push(factBar);
 
-/** e, or Edit: the fact's Edit fold open, its text focused with the caret at the end. */
-function openEdit() {
-  const d = sheet()?.querySelector('details#edit');
+/** The Edit fold open, its text focused with the caret at the end: what E and the Edit button do. */
+export function openEditFold(d) {
   const ta = d?.querySelector('textarea');
   if (!d || !ta) return false;
   d.open = true;
@@ -1826,6 +1834,11 @@ function openEdit() {
   ta.focus({ preventScroll: true });
   ta.setSelectionRange(ta.value.length, ta.value.length);
   return true;
+}
+
+/** e, or Edit: the fact's Edit fold open, its text focused with the caret at the end. */
+function openEdit() {
+  return openEditFold(sheet()?.querySelector('details#edit'));
 }
 
 /** Delete… asks first; only its Delete posts the fact's own delete form. */
@@ -1977,7 +1990,7 @@ hooks.restored.facts = (home, href) => {
 
 hooks.actions.push((action, e) => {
   if (action === 'filter') {
-    const q = [...document.querySelectorAll('.desk-list input[name="q"], main > .narrow details.filter-fold input[name="q"]')].find((x) => x.getClientRects().length > 0);
+    const q = [...document.querySelectorAll('.desk-list input[name="q"], main > .narrow details.filter-fold input[name="q"], main > .narrow form.frow-filters input[name="q"]')].find((x) => x.getClientRects().length > 0);
     if (!q) return false;
     e.preventDefault();
     q.focus();

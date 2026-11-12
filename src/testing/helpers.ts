@@ -1,3 +1,4 @@
+import { LearningService } from '../learning/service.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { ImageStore } from '../images/store.js';
@@ -115,14 +116,16 @@ export async function startTestApp(opts: { publicUrl?: string; mode?: AppDeps['m
   pages.setMeaningHook(meaning);
   const devices = new DeviceService(db, now);
   const folders = new FolderService(devices, registry, service, now);
+  const learning = new LearningService(db, now, folders, { get: (n) => registry.get(n), named: (n) => service.projectNamed(n), list: () => registry.list() });
+  service.setProjectMoveHook((from, to) => learning.moveProject(from, to));
   const growth = makeGrowth({ db, store, service }, now);
   // Work mode has no Growth, so its reviews have no growth part.
-  const tidyItems = makeTidyItems({ store, service, now });
+  const tidyItems = makeTidyItems({ store, service, now, sameProjectFloor: 0.88 });
   const reviews = new ReviewService({
     store: new ReviewStore(db), memories: store, service, registry, folders, pages, growth: opts.mode === 'work' ? null : growth, grants: () => provider.listGrants(),
     tidy: () => tidySummary(tidyItems()),
   }, now, () => {});
-  const projects = new ProjectsService(registry, service, store, discussions, pages, folders);
+  const projects = new ProjectsService(registry, service, store, discussions, pages, folders, learning);
   const graph = new GraphService({ db, projects, registry, service, pages, meaning, now });
   const imagesDir = mkdtempSync(join(tmpdir(), 'brain-test-images-'));
   const images = new ImageStore(db, imagesDir, now);
@@ -130,7 +133,7 @@ export async function startTestApp(opts: { publicUrl?: string; mode?: AppDeps['m
   const skills = new SkillService(db, now);
   const deps: AppDeps = {
     allowlist,
-    publicUrl, store, service, registry, projects, graph, discussions, growth, reviews, pages, images, diagramChecks: new DiagramChecks(db, now), uploadLinks: new UploadLinks(db, now), skills, skillSync: new SkillSync(db, now, skills), notes: new NoteService(db, pages, now), devices, folders, imports: new ImportLog(db, now), relatedSimilarity: 0.2, provider, owner, sessions: new SessionStore(db, now), limiter: new LoginLimiter(), clients, now,
+    publicUrl, store, service, registry, projects, graph, discussions, growth, reviews, pages, images, diagramChecks: new DiagramChecks(db, now), uploadLinks: new UploadLinks(db, now), skills, skillSync: new SkillSync(db, now, skills), notes: new NoteService(db, pages, now), devices, folders, imports: new ImportLog(db, now), relatedSimilarity: 0.2, sameProjectFloor: 0.88, learning, provider, owner, sessions: new SessionStore(db, now), limiter: new LoginLimiter(), clients, now,
     mode: opts.mode, trustCfConnectingIp: opts.trustCfConnectingIp, statusDir: opts.statusDir, setupOverlay: opts.setupOverlay,
     localMode: opts.localMode, appSecret: opts.appSecret, db,
     // Tests never reach the real Tailscale app on this computer, only a fake on the given PATH.

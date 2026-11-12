@@ -104,7 +104,7 @@ test('migration 15 runs on a database at version 14', (t) => {
     VALUES ('m1', 'decision', 'Use SQLite', 'wildlog', '[]', x'00', '2026-10-01', 'Claude', '2026-10-02', 'Claude')`).run();
   old.close();
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version, 31);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version, 36);
   assert.equal(count(db, 'memories'), 1);
   assert.equal(count(db, 'pages'), 0);
 });
@@ -193,4 +193,26 @@ test('headings lists each page\'s sections without reading their vectors', () =>
   const { store } = setup();
   const p = store.insert(page, [sec('top', 'Lead.'), { ...sec('key-decisions', 'x', 1), heading: 'Key decisions' }], [], C);
   assert.deepEqual(store.headings([p.id]).get(p.id), [{ anchor: 'top', heading: '' }, { anchor: 'key-decisions', heading: 'Key decisions' }]);
+});
+
+test('titlesMatching finds pages by title: the marks are literal, a title that starts with the word comes first', () => {
+  const { store, tick } = setup();
+  const prefix = store.insert({ ...page, title: 'homelab notes' }, [], [], C);
+  const middle = store.insert({ ...page, title: 'the homelab server' }, [], [], C);
+  const later = store.insert({ ...page, title: 'homelab later' }, [], [], C);
+  tick(1000);
+  store.update(middle.id, 1, { ...page, title: 'the homelab server', body: 'New.' }, [], [], {});
+  const gone = store.insert({ ...page, title: 'homelab gone' }, [], [], C);
+  store.setDeleted(gone.id, true, 'owner');
+  assert.deepEqual(store.titlesMatching('homelab', 10).map((p) => p.title), ['homelab later', 'homelab notes', 'the homelab server']);
+  assert.deepEqual(store.titlesMatching('homelab', 2).map((p) => p.title), ['homelab later', 'homelab notes']);
+  assert.deepEqual(store.titlesMatching('homelab', 10).map((p) => p.id).includes(gone.id), false, 'a deleted page is not offered');
+  // The marks in the word are words: % and _ match themselves.
+  const odd = store.insert({ ...page, title: '100% of it' }, [], [], C);
+  const under = store.insert({ ...page, title: 'a_b' }, [], [], C);
+  assert.deepEqual(store.titlesMatching('100%', 10).map((p) => p.id), [odd.id]);
+  assert.deepEqual(store.titlesMatching('a_b', 10).map((p) => p.id), [under.id]);
+  assert.deepEqual(store.titlesMatching('%', 10).map((p) => p.id), [odd.id]);
+  assert.deepEqual(store.titlesMatching('_', 10).map((p) => p.id), [under.id]);
+  void prefix;
 });

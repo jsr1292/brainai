@@ -81,62 +81,15 @@ test('an unknown project answers 404, and a bad state answers 400', async (t) =>
   assert.equal(app.deps.registry.get('vpn')!.state, 'parked');
 });
 
-test('home shows on-the-go cards, one row per other open project, and the folds with counts', async (t) => {
-  const { app, f } = await start(t);
-  const r = app.deps.registry;
-  for (const n of ['a1', 'a2', 'b1', 'b2', 'b3']) r.create(n, { state: 'open', oneLiner: `Project ${n}` }, 'owner');
-  r.pin('a1', 'owner');
-  r.pin('a2', 'owner');
-  r.create('idea1', { state: 'idea', oneLiner: 'An idea' }, 'owner');
-  r.create('parked1', { state: 'parked' }, 'owner');
-  r.create('done1', { state: 'done' }, 'owner');
-  r.create('career', { state: 'open', area: 'personal' }, 'owner');
-  const page = await (await f('/')).text();
-  assert.match(page, /<h2 id="ongo">On the go <span class="n">2<\/span><\/h2>[\s\S]*a1[\s\S]*a2/);
-  assert.match(page, /<h2 id="alsoopen">Also open <span class="n">3<\/span><\/h2>/);
-  for (const [title, n] of [['Ideas', 1], ['Parked', 1], ['Personal', 1], ['Done', 1]] as const) {
-    assert.match(page, new RegExp(`<summary class="row nolead">${title}<span class="n">${n}</span><span class="chev"></span></summary>`));
-  }
-  assert.match(page, /aria-current="page">Projects</);
-  assert.doesNotMatch(page.slice(page.indexOf('<main')), / style="/);
-});
-
-test('Also open shows six rows and folds the rest', async (t) => {
-  const { app, f } = await start(t);
-  for (let i = 0; i < 14; i++) app.deps.registry.create(`open${String(i).padStart(2, '0')}`, { state: 'open', oneLiner: 'a project' }, 'owner');
-  const body = await (await f('/')).text();
-  const section = body.slice(body.indexOf('id="alsoopen"'), body.indexOf('class="group pfolds"'));
-  const direct = section.slice(0, section.indexOf('<details class="fold more"'));
-  assert.equal((direct.match(/<li><a class="row prow/g) ?? []).length, 6);
-  assert.equal((section.match(/<li><a class="row prow/g) ?? []).length, 14);
-  assert.match(section, /<li><details class="fold more" data-desk-open><summary class="row nolead">8 more/);
-  // Beside an open project too (the desktop's list pane shows every Also open row): the fold is marked, and open when it holds the project.
-  assert.match(await (await f('/?project=open09')).text(), /<details class="fold more" data-desk-open open>/);
-  const seven = await startTestApp();
-  t.after(() => seven.close());
-  for (let i = 0; i < 7; i++) seven.deps.registry.create(`p${i}`, { state: 'open', oneLiner: 'a project' }, 'owner');
-  const sevenBody = await (await (await loggedIn(seven))('/')).text();
-  const sevenSection = sevenBody.slice(sevenBody.indexOf('id="alsoopen"'), sevenBody.indexOf('class="group pfolds"'));
-  assert.equal((sevenSection.match(/<li><a class="row prow/g) ?? []).length, 7);
-  assert.doesNotMatch(sevenSection, /class="fold more"/);
-});
-
-test('on the plain home each Also open row carries its one-liner, hidden, for the desktop; nowhere else does', async (t) => {
-  const { app, f } = await start(t);
-  for (let i = 0; i < 9; i++) app.deps.registry.create(`open${i}`, { state: 'open', oneLiner: `Project number ${i}` }, 'owner');
-  app.deps.registry.create('gone', { state: 'open', oneLiner: 'Finished thing' }, 'owner'); app.deps.registry.setState('gone', 'done', 'owner');
-  await app.deps.service.remember({ kind: 'roadmap', project: 'open0', content: 'Now: x\nNext: ship the next bit' }, ai);
-  const text = await (await f('/')).text();
-  const section = text.slice(text.indexOf('id="alsoopen"'), text.indexOf('class="group pfolds"'));
-  // The name, then the one-liner (not Next), in every row, also those in the "N more" fold.
-  assert.match(section, /<span class="prow-name">open0<\/span><span class="prow-one" hidden>Project number 0<\/span><span class="prow-next">ship the next bit/);
-  const rows = (section.match(/<li><a class="row prow/g) ?? []).length;
-  assert.ok(rows >= 9, String(rows));
-  assert.equal((section.match(/<span class="prow-one" hidden>/g) ?? []).length, rows);
-  // The folds and the list beside an open project keep today's rows.
-  assert.doesNotMatch(text.slice(text.indexOf('class="group pfolds"')), /prow-one/);
-  assert.doesNotMatch(await (await f('/?project=open1')).text(), /prow-one/);
-});
+async function panelFixture(t: TestContext) {
+  const app = await startTestApp({ startAt: new Date('2026-10-18T08:00:00Z') });
+  t.after(() => app.close());
+  await seedWildlogWeek(app.deps, app.advance);
+  await app.deps.service.remember({ kind: 'summary', project: 'wildlog', content: 'wildlog status: the release is close.' }, ai);
+  await app.deps.service.remember({ kind: 'decision', project: 'wildlog', content: 'wildlog keeps the cellar in SQLite' }, ai);
+  const page = await app.deps.pages.create({ title: 'wildlog — wine cellar', project: 'wildlog', body: 'The wine cellar app.\n\n## Stack\nSwiftUI.' }, 'owner');
+  return { app, f: await loggedIn(app), page };
+}
 
 test('a late item shows "N days late" as a chip on its card, and no screen shows a bare ISO date', async (t) => {
   const { app, f } = await start(t);
@@ -419,37 +372,6 @@ test('a review build that fails never takes Projects down', async (t) => {
   assert.deepEqual(deps.store.mondays(), []);
 });
 
-test('the folds sit in one grouped card whose last row is All discussions', async (t) => {
-  const { f } = await start(t);
-  const body = await (await f('/')).text();
-  const folds = body.slice(body.indexOf('<ul class="group pfolds">'), body.indexOf('</ul>', body.indexOf('<ul class="group pfolds"')) + 5);
-  assert.ok(folds.endsWith('<li><a class="row nolead" href="/discussions"><span class="txt"><b>All discussions</b></span><span class="chev"></span></a><a class="shelf-more" href="/discussions" hidden>Open<span class="chev"></span></a></li></ul>'), folds.slice(-200));
-  assert.doesNotMatch(folds, /All weekly reviews/, 'Week holds the reviews now');
-});
-
-test('On the go cards carry one chip and a ring · area · when footer; Also open is one grouped list', async (t) => {
-  const { app, f } = await start(t);
-  app.deps.registry.create('a1', { state: 'open', oneLiner: 'Project a1', area: 'apps' }, 'owner');
-  app.deps.registry.pin('a1', 'owner');
-  app.deps.registry.create('b1', { state: 'open', oneLiner: 'Project b1' }, 'owner');
-  await app.deps.service.remember({ kind: 'roadmap', project: 'a1', content: 'Now: x\nNext: ship it\nWaiting on you: one (by 2020-01-01); two' }, ai);
-  const body = await (await f('/')).text();
-  const card = body.slice(body.indexOf('class="pcard'), body.indexOf('</a>', body.indexOf('class="pcard')));
-  assert.equal((card.match(/class="chip/g) ?? []).length, 1);
-  assert.match(card, /<div class="pcard-foot"><span class="ring a-apps" aria-hidden="true"><\/span><ul class="meta-line"><li>Apps<\/li><li>[^<]+<\/li><\/ul><\/div>/);
-  assert.match(body, /<ul class="group prows">[\s\S]*prow-name">b1</);
-});
-
-async function panelFixture(t: TestContext) {
-  const app = await startTestApp({ startAt: new Date('2026-10-18T08:00:00Z') });
-  t.after(() => app.close());
-  await seedWildlogWeek(app.deps, app.advance);
-  await app.deps.service.remember({ kind: 'summary', project: 'wildlog', content: 'wildlog status: the release is close.' }, ai);
-  await app.deps.service.remember({ kind: 'decision', project: 'wildlog', content: 'wildlog keeps the cellar in SQLite' }, ai);
-  const page = await app.deps.pages.create({ title: 'wildlog — wine cellar', project: 'wildlog', body: 'The wine cellar app.\n\n## Stack\nSwiftUI.' }, 'owner');
-  return { app, f: await loggedIn(app), page };
-}
-
 test('a project reads first and ends with Manage', async (t) => {
   const { app, f } = await panelFixture(t);
   await app.deps.service.remember({ kind: 'decision', project: 'wildlog', content: 'wildlog: labels print at 300 dpi' }, { type: 'owner' });
@@ -596,75 +518,6 @@ test('a fold row\'s NOW line is a short excerpt cut at a word', async (t) => {
   assert.match(panel, new RegExp(`<div class="now"><b>NOW</b><a href="/memories/${b}\\?from=%2F%3Fproject%3Dwildlog">Drinking windows are set by hand per bottle…</a></div>`));
 });
 
-test('the home carries the desktop hooks, all hidden: the date, a For you heading, and Also open opening wide', async (t) => {
-  const app = await startTestApp({ startAt: new Date('2026-11-04T09:00:00Z') });
-  t.after(() => app.close());
-  const f = await loggedIn(app);
-  for (let i = 0; i < 9; i++) app.deps.registry.create(`open${String(i).padStart(2, '0')}`, { state: 'open', oneLiner: 'a project' }, 'owner');
-  const quiet = await (await f('/')).text();
-  assert.match(quiet, /<h1>Projects<span class="phome-date" hidden>Wednesday 4 November<\/span><\/h1>/);
-  assert.doesNotMatch(quiet, /class="fy-h"/, 'nothing for you: no heading');
-  assert.match(quiet, /<details class="fold more" data-desk-open>/);
-  await app.deps.service.remember({ kind: 'profile', content: 'Prefers short answers' }, { type: 'ai', name: 'Grok' });
-  const waiting = await (await f('/')).text();
-  assert.match(waiting, /<h2 class="fy-h" id="foryou" hidden>For you<\/h2>\s*<ul class="group foryou"/);
-});
-
-test('on the plain home each shelf carries, hidden, what the desktop shows at 1920: three names, then "N more" or "Open"', async (t) => {
-  const { app, f } = await start(t);
-  const reg = app.deps.registry;
-  for (let i = 0; i < 3; i++) reg.create(`open${i}`, { state: 'open', oneLiner: 'a project' }, 'owner');
-  for (let i = 0; i < 5; i++) { reg.create(`gone${i}`, { state: 'open' }, 'owner'); reg.setState(`gone${i}`, 'done', 'owner'); }
-  reg.create('old', { state: 'open' }, 'owner'); reg.setState('old', 'parked', 'owner');
-  for (let i = 0; i < 5; i++) app.deps.discussions.open({ name: 'Claude Code', model: 'Opus', access: 'full' }, { title: `Question ${i}?`, question: 'Q?' });
-  const { device } = app.deps.devices.create('Mac');
-  const folder = (name: string) => ({ name, git: true, branch: 'main', uncommitted: 0, unpushed: 0, lastCommit: null, remotes: [] });
-  app.deps.devices.storeReport(device.id, ['loose-a', 'loose-b', 'loose-c', 'loose-d', 'skipped'].map(folder));
-  app.deps.devices.ignore('skipped');
-  const body = await (await f('/')).text();
-  const folds = body.slice(body.indexOf('<ul class="group pfolds">'));
-  // A fold: its rows as today, then a link to its first project with the fold open beside it.
-  const done = folds.slice(folds.indexOf('>Done<'), folds.indexOf('</details>', folds.indexOf('>Done<')));
-  assert.match(done, /<\/ul><a class="shelf-more" href="\/\?project=gone\d#panel" hidden>2 more<span class="chev"><\/span><\/a>$/);
-  const parked = folds.slice(folds.indexOf('>Parked<'), folds.indexOf('</details>', folds.indexOf('>Parked<')));
-  assert.match(parked, /<a class="shelf-more" href="\/\?project=old#panel" hidden>Open<span class="chev"><\/span><\/a>$/);
-  // All discussions: its count, and the first three titles (the Discussions list's order), all hidden; then "2 more".
-  assert.match(folds, /<a class="row nolead" href="\/discussions"><span class="txt"><b>All discussions<\/b><span class="n" hidden>5<\/span><\/span><span class="chev"><\/span><\/a><ul class="shelf-names" hidden><li><a href="\/discussions\/[\w-]+">Question \d\?<\/a><\/li><li><a href="\/discussions\/[\w-]+">Question \d\?<\/a><\/li><li><a href="\/discussions\/[\w-]+">Question \d\?<\/a><\/li><\/ul><a class="shelf-more" href="\/discussions" hidden>2 more<span class="chev"><\/span><\/a><\/li>/);
-  // Not in the brain yet: the first three folders and "Ignored 1" inside its summary, so any click opens it.
-  assert.match(folds, /<summary class="row nolead">Not in the brain yet<span class="n">4<\/span><span class="nib-peek" hidden><span>loose-a<\/span><span>loose-b<\/span><span>loose-c<\/span><span class="nib-peek-more">Ignored 1<span class="chev"><\/span><\/span><\/span><span class="chev"><\/span><\/summary>/);
-  // Beside an open project the list has no shelf hooks; All discussions keeps only its hidden count (the list pane's).
-  const open = await (await f('/?project=open1')).text();
-  assert.doesNotMatch(open, /shelf-more|shelf-names|nib-peek/);
-  assert.match(open, /<b>All discussions<\/b><span class="n" hidden>5<\/span><\/span><span class="chev"><\/span><\/a><\/li>/);
-});
-
-test('with a project open, the list beside the panel marks only Also open\'s "N more" fold, never a shelf', async (t) => {
-  const { app, f } = await start(t);
-  for (let i = 0; i < 9; i++) app.deps.registry.create(`open${String(i).padStart(2, '0')}`, { state: 'open', oneLiner: 'a project' }, 'owner');
-  const body = await (await f('/?project=open01')).text();
-  assert.deepEqual(body.match(/<details[^>]*data-desk-open[^>]*>/g), ['<details class="fold more" data-desk-open>']);
-});
-
-test('the home folds open as shelves on a very wide screen; "Not in the brain yet" never does', async (t) => {
-  const { app, f } = await start(t);
-  const reg = app.deps.registry;
-  for (let i = 0; i < 3; i++) reg.create(`open${i}`, { state: 'open', oneLiner: 'a project' }, 'owner');
-  reg.create('someday', { state: 'idea' }, 'owner');
-  reg.create('old', { state: 'open' }, 'owner'); reg.setState('old', 'parked', 'owner');
-  reg.create('fin', { state: 'open', area: 'personal' }, 'owner');
-  reg.create('gone', { state: 'open' }, 'owner'); reg.setState('gone', 'done', 'owner');
-  const { device } = app.deps.devices.create('Mac');
-  app.deps.devices.storeReport(device.id, [{ name: 'loose-sketches', git: true, branch: 'main', uncommitted: 0, unpushed: 0, lastCommit: null, remotes: [] }]);
-  const body = await (await f('/')).text();
-  for (const title of ['Ideas', 'Parked', 'Personal', 'Done'])
-    assert.match(body, new RegExp(`<details class="fold" data-desk-open="xl"><summary class="row nolead">${title}<`), title);
-  assert.match(body, /<details class="fold notinbrain" id="notyet">/);
-  assert.match(body, /<h2 class="pf-h" hidden>Everything else<\/h2>\s*<ul class="group pfolds">/);
-  const open = await (await f('/?project=open1')).text();
-  assert.doesNotMatch(open, /data-desk-open="xl"/);
-  assert.match(open, /<details class="fold"><summary class="row nolead">Ideas</);
-});
-
 test("the panel's Edit details sets nicknames, comma-separated, and shows a clash", async (t) => {
   const { app, f } = await start(t);
   app.deps.registry.create('vino-db', { state: 'open' }, 'owner');
@@ -677,4 +530,141 @@ test("the panel's Edit details sets nicknames, comma-separated, and shows a clas
   assert.equal(bad.status, 400);
   assert.match(await bad.text(), /already garden&#39;s name or nickname|already garden's name or nickname/);
   assert.deepEqual(app.deps.registry.get('vino-db')!.nicknames, ['cellar app', 'the cellar']);
+});
+
+test('the Projects page has one section per area, live projects as tiles with dot, one-liner and next step', async (t) => {
+  const { app, f } = await start(t);
+  const r = app.deps.registry;
+  r.create('larder', { state: 'open', area: 'apps', oneLiner: 'Grapevine, wine cellar app' }, 'owner');
+  r.create('brainai', { state: 'open', area: 'tools', oneLiner: 'Shared memory' }, 'owner');
+  r.create('home-infra', { state: 'open', area: 'home' }, 'owner');
+  r.create('loose', { state: 'open', area: null, oneLiner: 'Not sorted yet' }, 'owner');
+  await app.deps.service.remember({ kind: 'roadmap', project: 'larder', content: 'Now: label scanner\nNext: export' }, ai);
+  const page = await (await f('/')).text();
+  const order = ['pa-apps', 'pa-tools', 'pa-home', 'pa-unsorted'].map((id) => page.indexOf(`id="${id}"`));
+  assert.ok(order.every((x, i) => x > 0 && (i === 0 || x > order[i - 1]!)), String(order));
+  assert.match(page, /<h2 id="pa-apps"><span class="ring a-apps" aria-hidden="true"><\/span>Apps <span class="n">1<\/span><\/h2>/);
+  assert.match(page, /<a class="pcard ptile" href="\/\?project=larder#panel">[\s\S]*?<span class="pdot d-on" role="img" aria-label="being worked on"[\s\S]*?<span class="pcard-name">larder<\/span>[\s\S]*?<span class="pcard-one">Grapevine, wine cellar app<\/span>[\s\S]*?<span class="pcard-line">label scanner<\/span>/);
+  assert.doesNotMatch(page, /id="ongo"|id="alsoopen"|On the go|Also open/);
+  assert.doesNotMatch(page.slice(page.indexOf('<main')), / style="/);
+});
+
+test('quiet, ideas, parked and done fold into one line per area, opening in place to their rows', async (t) => {
+  const { app, f } = await start(t);
+  const r = app.deps.registry;
+  r.create('live', { state: 'open', area: 'apps' }, 'owner');
+  r.create('idea1', { state: 'idea', area: 'apps' }, 'owner');
+  r.create('parked1', { state: 'parked', area: 'apps' }, 'owner');
+  r.create('parked2', { state: 'parked', area: 'apps' }, 'owner');
+  r.create('done1', { state: 'done', area: 'apps' }, 'owner');
+  r.create('budget', { state: 'open', area: 'personal' }, 'owner');
+  r.create('running', { state: 'open', area: 'personal' }, 'owner');
+  const page = await (await f('/')).text();
+  const apps = page.slice(page.indexOf('id="pa-apps"'), page.indexOf('</section>', page.indexOf('id="pa-apps"')));
+  assert.match(apps, /<summary class="row nolead">1 idea · 2 parked · 1 done<span class="chev"><\/span><\/summary><ul class="fold-list">/);
+  assert.equal((apps.match(/<li><a class="row prow/g) ?? []).length, 4);
+  const personal = page.slice(page.indexOf('id="pa-personal"'));
+  assert.match(personal, /<summary class="row nolead">Areas of life: (budget, running|running, budget)<span class="chev">/);
+  assert.doesNotMatch(personal.slice(0, personal.indexOf('</section>')), /class="pcard ptile"/, 'areas of life are never tiles');
+});
+
+test('a pinned personal project is a tile; the pin button says Pin to the top', async (t) => {
+  const { app, f } = await start(t);
+  app.deps.registry.create('career-site', { state: 'open', area: 'personal' }, 'owner');
+  app.deps.registry.pin('career-site', 'owner');
+  const page = await (await f('/')).text();
+  assert.match(page.slice(page.indexOf('id="pa-personal"')), /class="pcard ptile"[^>]*href="\/\?project=career-site#panel"|href="\/\?project=career-site#panel"[^>]*/);
+  assert.match(await (await f('/?project=career-site')).text(), />Unpin</);
+});
+
+test('a tile shows the warning when work is not safe, and no not-pushed chip anywhere', async (t) => {
+  const { app, f } = await start(t);
+  app.deps.registry.create('side-project', { state: 'open', area: 'apps' }, 'owner');
+  const { device } = app.deps.devices.create('Mac');
+  app.deps.devices.storeReport(device.id, [{ name: 'side-project', git: false, branch: null, uncommitted: null, unpushed: null, lastCommit: null, remotes: [] }]);
+  const page = await (await f('/')).text();
+  assert.match(page, /<span class="pcard-name">side-project<\/span><span class="pwarn" role="img" aria-label="Work not safe: not in git"/);
+  assert.doesNotMatch(page, /chip plain">not pushed/);
+});
+
+test('the list beside a project and the list pane use the same sections as compact rows', async (t) => {
+  const { app, f } = await start(t);
+  app.deps.registry.create('larder', { state: 'open', area: 'apps' }, 'owner');
+  app.deps.registry.create('gpx', { state: 'open', area: 'apps' }, 'owner');
+  for (const path of ['/?project=larder', '/?pane=projects']) {
+    const page = await (await f(path)).text();
+    assert.match(page, /<h2 id="pa-apps">/, path);
+    assert.match(page, /<ul class="group prows"><li><a class="row prow/, path);
+    assert.doesNotMatch(page, /class="pcard ptile"/, path);
+  }
+});
+
+test('edge shapes: no projects, only quiet projects in an area, 40 projects in one area, a project with no area', async (t) => {
+  const { app, f } = await start(t);
+  assert.match(await (await f('/')).text(), /No projects yet/);
+  const r = app.deps.registry;
+  for (let i = 0; i < 40; i++) r.create(`app${String(i).padStart(2, '0')}`, { state: 'open', area: 'apps', oneLiner: 'A'.repeat(140) }, 'owner');
+  r.create('loose', { state: 'open', area: null, oneLiner: 'Not sorted yet' }, 'owner');
+  r.create('sleepy', { state: 'parked', area: 'work' }, 'owner');
+  const page = await (await f('/')).text();
+  assert.equal((page.match(/class="pcard ptile/g) ?? []).length, 41);
+  assert.match(page, /<h2 id="pa-unsorted"><span class="ring a-unsorted" aria-hidden="true"><\/span>Unsorted <span class="n">1<\/span><\/h2>/);
+  assert.match(page, /<h2 id="pa-work"><span class="ring a-work" aria-hidden="true"><\/span>Work<\/h2>[\s\S]*?1 parked/);
+});
+
+test('the panel shows the five areas with notes and the why, and the handbook topics applied on it', async (t) => {
+  const { app, f } = await start(t);
+  app.deps.registry.create('gpx', { state: 'open', area: 'apps', oneLiner: 'Kart telemetry' }, 'owner');
+  app.deps.learning.set('gpx', 'auto', { status: 'done', note: 'tests run on every push (GitHub Actions)' }, 'Claude Code');
+  app.deps.learning.recordLesson({ title: 'What CI is', level: 'helped', project: 'gpx' }, 'Claude Code');
+  const page = await (await f('/?project=gpx')).text();
+  const sec = page.slice(page.indexOf('<h3 id="p-areas">Five areas</h3>'));
+  assert.ok(sec.length > 0 && page.includes('<h3 id="p-areas">Five areas</h3>'));
+  for (const name of ['Work is safe', 'Clear finish line', 'Runs by itself', 'You&#39;d know if it broke', 'Kept up to date']) assert.ok(sec.includes(name), name);
+  assert.match(sec, /Runs by itself[\s\S]*?CI\/CD, automation[\s\S]*?tests run on every push \(GitHub Actions\)/);
+  assert.match(sec, /<summary>Why<span class="chev"><\/span><\/summary>[\s\S]*?Tests \(and for apps, the build or deploy\) run by themselves/);
+  assert.match(sec, /<h3[^>]*>Handbook<\/h3>[\s\S]*?What CI is/);
+});
+
+test('the owner sets an area from the panel and it shows at once; not needed without a reason is refused', async (t) => {
+  const { app, f } = await start(t);
+  app.deps.registry.create('gpx', { state: 'open', area: 'apps' }, 'owner');
+  const ok = await post(f, '/projects/gpx/areas/finish', { status: 'done', note: 'v1 is auto-record' });
+  assert.equal(ok.status, 303);
+  assert.equal(ok.headers.get('location'), '/?project=gpx#p-areas');
+  const a = app.deps.learning.areas('gpx')!.find((x) => x.area === 'finish')!;
+  assert.deepEqual([a.status, a.note, a.setBy], ['done', 'v1 is auto-record', 'owner']);
+  assert.match(await (await f('/?project=gpx')).text(), /v1 is auto-record/);
+  const bad = await post(f, '/projects/gpx/areas/alerts', { status: 'not_needed', note: '' });
+  assert.equal(bad.status, 400);
+  assert.match(await bad.text(), /reason/);
+  assert.equal((await post(f, '/projects/gpx/areas/nonsense', { status: 'done' })).status, 400);
+});
+
+test('an idea\'s panel has no five areas section', async (t) => {
+  const { app, f } = await start(t);
+  app.deps.registry.create('someday', { state: 'idea', area: 'apps', oneLiner: 'Maybe later' }, 'owner');
+  assert.doesNotMatch(await (await f('/?project=someday')).text(), /id="p-areas"/);
+});
+
+test('review I4: a row keeps the work-not-safe mark next to a waiting chip', async (t) => {
+  const { app, f } = await start(t);
+  app.deps.registry.create('pizza', { state: 'open', area: 'apps' }, 'owner');
+  app.deps.registry.create('other', { state: 'open', area: 'apps' }, 'owner');
+  await app.deps.service.remember({ kind: 'roadmap', project: 'pizza', content: 'Now: menu\nWaiting on you: pick a logo' }, ai);
+  const { device } = app.deps.devices.create('Mac');
+  app.deps.devices.storeReport(device.id, [{ name: 'pizza', git: false, branch: null, uncommitted: null, unpushed: null, lastCommit: null, remotes: [] }]);
+  const page = await (await f('/?project=other')).text();
+  const row = page.slice(page.indexOf('<span class="prow-name">pizza</span>'), page.indexOf('</a>', page.indexOf('<span class="prow-name">pizza</span>')));
+  assert.match(row, /1 for you<\/span>[\s\S]*<span class="pwarn"/);
+});
+
+test('review M1 and M3: a snooze shows its date; the owner form makes you choose a status', async (t) => {
+  const { app, f } = await start(t);
+  app.deps.registry.create('gpx', { state: 'open', area: 'apps' }, 'owner');
+  app.deps.learning.notNow('gpx', 'finish', 'Claude Code');
+  const page = await (await f('/?project=gpx')).text();
+  assert.match(page, /not now until (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) \d+ \w+/);
+  assert.doesNotMatch(page, /not now until just now/);
+  assert.match(page, /<select name="status" required><option value="" disabled selected>Choose…<\/option>/);
 });

@@ -246,10 +246,36 @@ for (const form of document.querySelectorAll('form.peditor[data-pics]')) {
   try { import(form.dataset.pics).then((m) => m.setUpEditor(form), () => {}); } catch { /* no module loader */ }
 }
 
+// The page editor's live-styled CodeMirror (UI round, task 3): editor-cm.js mounts the editor over the text box,
+// keeps the box in step with it, and adds ⌘S. Without it (no modules, or the import fails) the plain text box from
+// task 2 stays and works.
+for (const form of document.querySelectorAll('form.peditor[data-cm]')) {
+  try { import(form.dataset.cm).then((m) => m.setUpEditor(form), () => {}); } catch { /* no module loader */ }
+}
+
 // Diagrams (round 2 section 12): diagrams.js draws the page's ```mermaid blocks as they scroll into view. Without
 // it (no modules, or the import fails) each diagram stays as its text.
 for (const holder of document.querySelectorAll('[data-diagrams]')) {
   try { import(holder.dataset.diagrams).then((m) => m.setUpDiagrams(holder), () => {}); } catch { /* no module loader */ }
+}
+
+// The Facts filters apply as you change them (UI round, task 6): a select goes at once, the search box waits for a
+// pause in typing. The Show button stays in the markup for the path without script; with script on, style.css hides it.
+// Listened for on the document, so the desk's list pane (drawn after this ran) filters the same way.
+let filterTimer = null;
+const filterGo = (form) => { if (filterTimer !== null) { clearTimeout(filterTimer); filterTimer = null; } form.submit(); };
+document.addEventListener('change', (e) => { const f = e.target instanceof HTMLSelectElement ? e.target.closest('form.frow-filters') : null; if (f) filterGo(f); });
+document.addEventListener('input', (e) => {
+  const f = e.target instanceof HTMLInputElement && e.target.type === 'search' ? e.target.closest('form.frow-filters') : null;
+  if (!f) return;
+  if (filterTimer !== null) clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => filterGo(f), 300);
+});
+// After a search the box keeps the caret, at the end of what is there.
+for (const search of document.querySelectorAll('form.frow-filters input[type="search"]')) {
+  if (search.value === '') continue;
+  search.focus();
+  try { search.setSelectionRange(search.value.length, search.value.length); } catch { /* not a text field */ }
 }
 
 // One logout (round 2 section 12): the drawn diagrams kept in IndexedDB go before the logout form posts (the server

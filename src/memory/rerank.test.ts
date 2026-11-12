@@ -14,10 +14,15 @@ function prefers(word: string): Reranker & { calls: number } {
   return r;
 }
 
-function brain(reranker?: Reranker) {
+/** Scores 0.5 for a text containing `word`, 0 otherwise: a small preference the search-order prior can outweigh. */
+function leansTo(word: string): Reranker {
+  return { async score(_q: string, texts: string[]) { return texts.map((t) => (t.includes(word) ? 0.5 : 0)); } };
+}
+
+function brain(reranker?: Reranker, rerankPrior?: number) {
   let t = Date.parse('2026-10-20T10:00:00Z');
   const store = new MemoryStore(openDb(':memory:'), () => new Date(t));
-  const service = new MemoryService(store, createFakeEmbedder(), { duplicateThreshold: 0.99, minRecallSimilarity: 0.2, recallConfidentSimilarity: 0.2, reranker });
+  const service = new MemoryService(store, createFakeEmbedder(), { duplicateThreshold: 0.99, minRecallSimilarity: 0.2, recallConfidentSimilarity: 0.2, reranker, rerankPrior });
   const save = async (content: string, project = 'garden', kind: 'decision' | 'summary' | 'roadmap' = 'decision') => {
     t += 86_400_000;
     const r = await service.remember({ kind, content, project }, owner) as any;
@@ -236,4 +241,14 @@ test('when the reranker fails on a question about one part, the roadmap and stat
   const { roadmap, status } = await crowded(b);
   const ids = (await b.service.recall({ query: "what's the latest on wildlog's label printer?", touch: false })).map((h) => h.memory.id);
   assert.deepEqual(ids.slice(0, 2), [roadmap, status]);
+});
+
+test('the rank prior (Gemma profile) keeps the search order unless the reranker clearly disagrees', async () => {
+  const plain = brain(leansTo('zebra'));
+  const z0 = await fifteen(plain);
+  assert.equal((await plain.service.recall({ query: QUERY, limit: 3, touch: false }))[0]!.memory.id, z0, 'no prior: the reranker alone decides');
+  const withPrior = brain(leansTo('zebra'), 1);
+  const z1 = await fifteen(withPrior);
+  const got = await withPrior.service.recall({ query: QUERY, limit: 20, touch: false });
+  assert.notEqual(got[0]!.memory.id, z1, 'a 0.5 preference does not lift the 15th search match over the first');
 });

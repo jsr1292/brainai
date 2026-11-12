@@ -13,6 +13,8 @@ STAGE="$WORK/WorkMemory"
 
 [ -f "$ROOT/models/Xenova/multilingual-e5-small/onnx/model_quantized.onnx" ] || {
   echo "The search model is missing: run  MODEL_DIR=./models npx tsx src/scripts/warmModel.ts  first." >&2; exit 1; }
+[ -f "$ROOT/models/onnx-community/embeddinggemma-300m-ONNX/onnx/model_q4.onnx_data" ] || {
+  echo "The Gemma search model is missing: run  npm run model  first." >&2; exit 1; }
 [ -f "$ROOT/models/cross-encoder/mmarco-mMiniLMv2-L12-H384-v1/onnx/model_qint8_arm64.onnx" ] || {
   echo "The reranker model is missing: run  MODEL_DIR=./models npx tsx src/scripts/warmModel.ts  first." >&2; exit 1; }
 
@@ -25,8 +27,11 @@ echo "Building the server ..."
 # A clean build, so no stale or test files ship.
 (cd "$ROOT" && rm -rf dist && npm run build >/dev/null)
 mkdir -p "$STAGE/app" "$STAGE/node"
-cp -R "$ROOT/dist" "$ROOT/package.json" "$ROOT/package-lock.json" "$STAGE/app/"
+cp -R "$ROOT/dist" "$ROOT/package.json" "$ROOT/package-lock.json" "$ROOT/LICENSE" "$STAGE/app/"
 cp -R "$ROOT/models" "$STAGE/app/models"
+# EmbeddingGemma is distributed with its notice and terms (Gemma Terms of Use, section 3.1).
+cp -R "$ROOT/licenses" "$STAGE/app/licenses"
+cp "$ROOT/licenses/GEMMA-NOTICE.txt" "$STAGE/app/models/onnx-community/embeddinggemma-300m-ONNX/NOTICE"
 
 echo "Installing the Windows x64 dependencies ..."
 (cd "$STAGE/app" && npm ci --omit=dev --ignore-scripts --os=win32 --cpu=x64 --no-audit --no-fund >/dev/null)

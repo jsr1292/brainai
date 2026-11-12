@@ -27,6 +27,8 @@ export interface Memory {
   content: string;
   project: string | null;
   tags: string[];
+  /** B9: search words recall matches but results never show ('' for none). */
+  keys: string;
   createdAt: string;
   createdBy: string;
   updatedAt: string;
@@ -64,4 +66,6 @@ export interface Suggestion {
   supersedes: string[];
   /** Forgetting that sticks (§17a): the fact the owner deleted that this save is close to; null otherwise. */
   deletedMatch: string | null;
+  /** B9: the search words the save carries; null keeps the fact's own (an update that gave none). */
+  keys: string | null;
 }

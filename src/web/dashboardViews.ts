@@ -6,6 +6,7 @@ import { deletedDay, MAX_CONTENT, MAX_ROADMAP } from '../memory/service.js';
 import type { Overlap } from '../memory/tidy.js';
 import type { ActivityRow } from '../memory/store.js';
 import { KINDS, type HistoryEntry, type Kind, type Memory, type Suggestion } from '../memory/types.js';
+import { parseRoadmap } from '../memory/roadmap.js';
 import { deviceLabel } from './deviceLabel.js';
 import type { FactEvent, FactStory } from '../memory/factStory.js';
 import type { MemoryService } from '../memory/service.js';
@@ -26,7 +27,7 @@ export const PAGE_SIZE = 50;
 const EXCERPT = 160;
 
 /** `base`: the updatedAt of the memory the form was filled from, so a save from a stale page is refused. */
-export interface MemoryFormValues { kind: string; content: string; project: string; tags: string; base?: string }
+export interface MemoryFormValues { kind: string; content: string; project: string; tags: string; keys?: string; base?: string }
 export interface ActivityItem { at: string; by: string; action: ActivityRow['action']; memoryId: string; content: string }
 
 export const when = (iso: string): SafeHtml => timeAgo(iso, viewNow());
@@ -34,7 +35,7 @@ export const errorBlock = (error?: string): SafeHtml => (error ? html`<p class="
 export const excerpt = (s: string) => (s.length > EXCERPT ? s.slice(0, EXCERPT) + '…' : s);
 export const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-export const valuesOf = (m: Memory): MemoryFormValues => ({ kind: m.kind, content: m.content, project: m.project ?? '', tags: m.tags.join(' '), base: m.updatedAt });
+export const valuesOf = (m: Memory): MemoryFormValues => ({ kind: m.kind, content: m.content, project: m.project ?? '', tags: m.tags.join(' '), keys: m.keys, base: m.updatedAt });
 
 // ---- Who wrote it (colour) and what kind it is (shape) ----
 
@@ -73,6 +74,8 @@ export function suggestionCard(s: Suggestion, current: string | undefined, o: { 
     deleting ? html`<p class="label">Remove:</p>${quote('removed', current)}`
     : s.action === 'update' ? html`<p class="label">Currently:</p>${quote('current', current)}${quote('proposed', s.content ?? '')}`
     : quote('proposed', s.content ?? '');
+  // B9: the search words the save carries (a keys-only change has the same text on both sides).
+  const keys = !deleting && s.keys ? html`<p class="sg-keys">Search words: ${s.keys}</p>` : '';
   const gone = o.deleted?.deletedAt ? o.deleted : undefined;
   const deletedQuote = gone && !deleting
     ? html`<p class="label">You deleted, ${deletedDay(gone.deletedAt!)}:</p><blockquote class="dim">${gone.content}</blockquote>
@@ -87,7 +90,7 @@ export function suggestionCard(s: Suggestion, current: string | undefined, o: { 
   <p class="approval-head">${writer(s.suggestedBy)} suggests ${suggestionPhrase(s)}</p>
   ${metaLine([when(s.suggestedAt), s.kind.charAt(0).toUpperCase() + s.kind.slice(1), s.project])}
   ${s.reason ? html`<p class="held">Held because it ${s.reason}. Saved as a ${s.kind}${s.project ? html` in ${s.project}` : ''} if you approve.</p>` : ''}
-  ${deletedQuote}${body}
+  ${deletedQuote}${body}${keys}
   ${replaces.length > 0 ? html`<p class="label">Approving also replaces:</p>
   ${replaces.map((m) => html`<blockquote class="dim"><a href="${withFrom(`/memories/${m.id}`, o.back)}">${excerpt(m.content)}</a></blockquote>`)}` : ''}
   <form method="post" action="/suggestions/${s.id}/approve">
@@ -196,7 +199,7 @@ export function tidyView(v: TidyItems, error?: string, now: Date = new Date()): 
     const { a, b, similarity, replaceable } = item;
     // "Newer replaces older" (section 16) is the one primary button when offered; newer means saved later.
     const [older, newer] = a.createdAt <= b.createdAt ? [a, b] : [b, a];
-    const side = (keep: Memory, drop: Memory) => html`<div class="side">
+    const side = (keep: Memory, drop: Memory) => html`<div class="dup-side">
   <blockquote><a href="${fact(keep.id)}">${excerpt(keep.content)}</a></blockquote>
   <p class="meta">${replaceable ? `${keep.id === older.id ? 'older' : 'newer'} · ` : ''}updated ${when(keep.updatedAt)}</p>
   <form method="post" action="/duplicates/merge"><input type="hidden" name="keep" value="${keep.id}"><input type="hidden" name="drop" value="${drop.id}"><button type="submit"${replaceable ? html` class="secondary"` : ''}>Keep this one</button></form>
@@ -289,12 +292,85 @@ export function writersTable(writers: WriterTally[], lookupsSince: string | null
 
 export type FactsShow = 'current' | 'replaced' | 'everything';
 
+/** One group of facts on the Facts page: its project (null for the profile and for the facts with none), its label, how many it holds and the few shown. */
+export interface FactGroup { project: string | null; label: string; total: number; shown: Memory[] }
+
+/** The filter for the facts with no project: the leftover group has no project of its own, so it gets a name of its own. */
+export const NO_PROJECT = 'none';
+
+/**
+ * The facts grouped for the Facts page: the profile facts first ("About you"), then one group per project, the
+ * project whose newest fact is newest first, and the facts with no project last. Each group shows its newest
+ * `perGroup` facts and counts them all, so nothing is lost: the rest sit behind the group's own link.
+ */
+export function groupFacts(facts: Memory[], perGroup: number): FactGroup[] {
+  const newest = (a: Memory, b: Memory) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0);
+  const profile: Memory[] = [];
+  const loose: Memory[] = [];
+  const byProject = new Map<string, Memory[]>();
+  for (const m of facts) {
+    if (m.kind === 'profile') { profile.push(m); continue; }
+    if (m.project === null || m.project === '') { loose.push(m); continue; }
+    const list = byProject.get(m.project) ?? [];
+    list.push(m);
+    byProject.set(m.project, list);
+  }
+  const groups: FactGroup[] = [];
+  if (profile.length > 0) {
+    profile.sort(newest);
+    groups.push({ project: null, label: 'About you', total: profile.length, shown: profile.slice(0, perGroup) });
+  }
+  const projects = [...byProject.entries()].map(([project, list]) => [project, list.sort(newest)] as const)
+    .sort(([, a], [, b]) => newest(a[0]!, b[0]!));
+  for (const [project, list] of projects) groups.push({ project, label: project, total: list.length, shown: list.slice(0, perGroup) });
+  if (loose.length > 0) {
+    loose.sort(newest);
+    groups.push({ project: null, label: 'No project', total: loose.length, shown: loose.slice(0, perGroup) });
+  }
+  return groups;
+}
+
+/** A roadmap fact read as three short lines: Now, Next and Done; nothing when it parses to nothing. */
+function roadmapLines(content: string): SafeHtml | null {
+  const r = parseRoadmap(content);
+  const now = r.now === null ? null : r.progress ? `${r.now} (${r.progress.done}/${r.progress.total})` : r.now;
+  const next = r.nextSteps[0] ?? r.next;
+  const dated = r.done.filter((d) => d.date !== null);
+  const done = (dated.length > 0 ? dated.at(-1)! : r.done.at(-1))?.text ?? null;
+  const lines: [string, string][] = [['Now:', now], ['Next:', next], ['Done:', done]].filter((l): l is [string, string] => l[1] !== null);
+  if (lines.length === 0) return null;
+  return html`<dl class="rmap">${lines.map(([label, value]) => html`<dt>${label}</dt><dd>${value}</dd>`)}</dl>`;
+}
+
+/** One fact in a group: its text (a roadmap reads as Now, Next and Done) and its meta line. */
+function groupRow(m: Memory, from?: string): SafeHtml {
+  const href = `/memories/${m.id}${from ? `?from=${encodeURIComponent(from)}` : ''}`;
+  const roadmap = m.kind === 'roadmap' ? roadmapLines(m.content) : null;
+  return html`<li class="frow"><a class="card-link" href="${href}">${roadmap ?? excerpt(m.content)}</a>
+  <p class="fmeta"><span class="fkind">${m.kind}</span> · ${writer(m.updatedBy)} · ${when(m.updatedAt)}</p></li>`;
+}
+
+/** One group: its heading (the project links to the project), its facts, and a link to the ones it does not show. */
+function groupView(g: FactGroup, from?: string): SafeHtml {
+  const heading = g.project === null
+    ? html`<h2>${g.label} <span class="n">${g.total}</span></h2>`
+    : html`<h2><a href="/?project=${encodeURIComponent(g.project)}#panel">${g.label}</a> <span class="n">${g.total}</span></h2>`;
+  const all = g.total > g.shown.length
+    ? html`<a class="fall" href="${g.project === null ? (g.label === 'About you' ? '/facts?kind=profile' : `/facts?project=${NO_PROJECT}`) : `/facts?project=${encodeURIComponent(g.project)}`}">All ${g.total} ${g.label === 'No project' ? '' : `${g.label} `}facts</a>`
+    : '';
+  return html`<section class="fgroup">${heading}<ul class="flist">${g.shown.map((m) => groupRow(m, from))}</ul>${all}</section>`;
+}
+
+
 /**
  * All facts. `show` (section 16): Current (default), Replaced (`replaced` cards, newest replacement first, of
  * `replacedTotal`), or Everything (`items`, with `replacedIds` shown in grey, then `replaced` for a search).
+ * With `groups`, the facts come grouped by project instead, each group a heading and a few of its newest facts.
  */
 export function listView(v: {
   items: Memory[];
+  groups?: FactGroup[];
+  projects?: string[];
   filter: { kind?: Kind; project?: string; q?: string };
   page: number;
   hasNext: boolean;
@@ -326,36 +402,42 @@ export function listView(v: {
   const currentList = v.items.length === 0 ? '' : html`<ul class="cards list">${v.items.map((m) => memoryCard(m, v.replacedIds?.has(m.id) ?? false, v.from))}</ul>`;
   const replacedList = replaced.length === 0 ? '' : html`<ul class="cards list">${replaced.map((r) => replacedCard(r, now, v.from))}</ul>`;
   const total = v.replacedTotal ?? replaced.length;
-  const results = show === 'replaced'
+  const groups = v.groups;
+  const groupList = groups === undefined ? '' : html`${groups.map((g) => groupView(g, v.from))}`;
+  const results = groups !== undefined ? groupList : (show === 'replaced'
     ? html`${v.filter.q === undefined && total > 0 ? html`<p class="quiet rep-line">${total === 1 ? '1 replaced fact' : `${total} replaced facts`}, newest replacement first. You and your assistants don't find them in search. Deleted ones are not listed.</p>` : ''}${replacedList}`
-    : html`${currentList}${replacedList}`;
-  const empty = v.items.length === 0 && replaced.length === 0;
+    : html`${currentList}${replacedList}`);
+  const empty = groups !== undefined ? groups.length === 0 : v.items.length === 0 && replaced.length === 0;
   const counts = v.counts ?? { all: v.items.length, profile: 0, replaced: total };
   const plain = !v.filter.q && !v.filter.kind && !v.filter.project && show === 'current' && v.page === 1;
   const profile = v.filter.kind === 'profile' && !v.filter.q && !v.filter.project && show === 'current' && v.page === 1;
   const onlyReplaced = !v.filter.kind && !v.filter.q && !v.filter.project && show === 'replaced' && v.page === 1;
   const quick = (href: string, label: string, on: boolean) => html`<a href="${href}"${on ? html` aria-current="page"` : ''}>${label}</a>`;
+  // The filter row: one line, with the project names the Facts route knows.
+  const projects = [...new Set([...(v.projects ?? []), ...(v.filter.project && v.filter.project !== NO_PROJECT ? [v.filter.project] : [])])];
+  const filters = html`<form method="get" action="/facts" class="frow-filters">
+  <input type="search" name="q" value="${v.filter.q ?? ''}" maxlength="200" placeholder="Search facts" aria-label="Search facts"${v.filter.q ? html` autofocus` : ''}>
+  <select name="kind" aria-label="Kind"><option value="">Any kind</option>${KINDS.map((k) => html`<option value="${k}"${k === v.filter.kind ? ' selected' : ''}>${k}</option>`)}</select>
+  <select name="project" aria-label="Project"><option value="">All projects</option><option value="${NO_PROJECT}"${v.filter.project === NO_PROJECT ? ' selected' : ''}>No project</option>${projects.map((p) => html`<option value="${p}"${p === v.filter.project ? ' selected' : ''}>${p}</option>`)}</select>
+  ${show === 'current' ? '' : html`<input type="hidden" name="show" value="${show}">`}
+  <span class="seg" role="group" aria-label="Show">${seg('current', 'Current')}${seg('replaced', 'Replaced')}${seg('everything', 'Everything')}</span>
+  <button type="submit" class="filter-show">Show</button>
+</form>`;
   return html`<div class="narrow">
 ${pagesSubnav('/facts')}
+<div class="fhead">
 <h1>Facts <span class="n">${counts.all} current</span></h1>
+<a class="button new-fact" href="/memories/new">New fact</a>
+</div>
 <nav class="seg" aria-label="Facts quick views">${quick('/facts', `All ${counts.all}`, plain)}${counts.profile ? quick('/facts?kind=profile', `About you ${counts.profile}`, profile) : ''}${counts.replaced ? quick('/facts?show=replaced', `Replaced ${counts.replaced}`, onlyReplaced) : ''}</nav>
 ${profile ? html`<p class="lede">What every assistant loads about you at the start of a conversation. Assistants can only suggest changes here; you approve them on Projects.</p>` : ''}
+${filters}
 ${v.tidy ? html`<p class="tidy-line">Tidy up: ${v.tidy}. <a href="/facts/tidy">Have a look</a></p>` : ''}
-<details class="fold filter-fold"><summary>Filter · ${v.filter.project ?? 'all projects'} · ${v.filter.kind ?? 'all kinds'}<span class="chev"></span></summary>
-<form method="get" action="/facts" class="filters">
-  <label class="grow">Search <input type="search" name="q" value="${v.filter.q ?? ''}" maxlength="200" placeholder="Words or meaning"></label>
-  <label>Kind <select name="kind"><option value="">any</option>${KINDS.map((k) => html`<option value="${k}"${k === v.filter.kind ? ' selected' : ''}>${k}</option>`)}</select></label>
-  <label>Project <input type="text" name="project" value="${v.filter.project ?? ''}" maxlength="63"></label>
-  ${show === 'current' ? '' : html`<input type="hidden" name="show" value="${show}">`}
-  <div class="seg-field"><span class="seg-label">Show</span><span class="seg" role="group" aria-label="Show">${seg('current', 'Current')}${seg('replaced', 'Replaced')}${seg('everything', 'Everything')}</span></div>
-  <div class="actions"><button type="submit">Show</button></div>
-</form>
-</details>
 ${empty ? html`<p class="quiet">${plain && counts.all === 0 ? 'No facts yet. Assistants save them as you work.' : 'No facts found.'}</p>` : results}
 ${v.filter.q === undefined && (v.page > 1 || v.hasNext) ? html`<p class="pager">
   ${v.page > 1 ? html`<a href="${link(v.page - 1)}">Newer</a>` : ''}
   ${v.hasNext ? html`<a href="${link(v.page + 1)}">Older</a>` : ''}</p>` : ''}
-<ul class="group"><li><a class="row nolead" href="/memories/new"><span class="txt"><b>New fact</b></span><span class="chev"></span></a></li></ul></div>`;
+</div>`;
 }
 
 function memoryForm(action: string, values: MemoryFormValues, opts: { kindEditable: boolean; submit: string; from?: string }): SafeHtml {
@@ -370,6 +452,7 @@ function memoryForm(action: string, values: MemoryFormValues, opts: { kindEditab
     <label>Project <input type="text" name="project" value="${values.project}" maxlength="63"></label>
     <label>Tags (separated by spaces or commas) <input type="text" name="tags" value="${values.tags}"></label>
   </div>
+  <label>Search words (help search find this fact; never in search results) <input type="text" name="keys" value="${values.keys ?? ''}" maxlength="200"></label>
   <div class="actions"><button type="submit" class="primary">${opts.submit}</button></div>
 </form>`;
 }
@@ -408,6 +491,7 @@ ${replaced ? replacedNote(story!, now, self) : ''}
 <p class="eyebrow fact-kind">${kindMark(m.kind)}${m.project ? html` · ${projectLink(m.project)}` : ''}${replaced ? html` · <span class="chip plain">replaced</span>` : ''}</p>
 <h1 class="fact-text${replaced ? ' rep' : ''}">${m.content}</h1>
 ${metaLine([html`Saved by ${writer(m.createdBy)}`, when(m.createdAt), ...(history.length > 0 && !m.deletedAt ? [html`edited by ${writer(m.updatedBy)}`, when(m.updatedAt)] : []), ...(m.tags.length ? [html`Tags: ${m.tags.join(', ')}`] : [])])}
+${m.keys ? html`<p class="fact-keys">Search words: ${m.keys}</p>` : ''}
 ${m.deletedAt ? html`<p class="quiet">Deleted ${when(m.deletedAt)}. Use Undo in History to bring it back.</p>` : html`<details class="pfold" id="edit"${extra.open === 'edit' ? ' open' : ''}><summary>Edit or delete<span class="chev"></span></summary>${replaced ? html`<p class="quiet">Editing a replaced fact keeps it replaced.</p>` : ''}${editor}</details>`}
 <details class="pfold" id="history"${m.deletedAt || extra.open === 'history' ? ' open' : ''}><summary>History${events.length > 0 ? html` <span class="n">${events.length}</span>` : ''}<span class="chev"></span></summary>${factEvents(events, now, extra.from)}</details>
 ${story ? html`${replacesBox(story, now, self)}${chainList(story, kindWord(m), now, self)}` : ''}
