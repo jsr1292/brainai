@@ -1,5 +1,11 @@
+import { DEFAULT_BACKUP_KEEP } from '../config.js';
 import { healthOf } from './healthData.js';
 import { randomBytes } from 'node:crypto';
+import { existsSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+import { BRIDGE_KEY_FILE } from '../desktop/claudeBridge.js';
+import { syncedCloud } from '../saved/documents.js';
 import { Router, type Request, type Response } from 'express';
 import { InvalidNameError } from '../auth/clientsStore.js';
 import { backupHealth, readBackupStatus } from '../backupStatus.js';
@@ -20,6 +26,8 @@ import {
 } from './dashboardViews.js';
 import { deviceLabel } from './deviceLabel.js';
 import { FACT_RESULTS } from './searchRoutes.js';
+import { takeSearchSaid } from './searchSaid.js';
+import { readKey } from '../models/onlineKey.js';
 import { settingsView } from './settingsViews.js';
 import { html, page, type SafeHtml } from './html.js';
 import { backFrom, factBackDefault, suggestionBack, withFrom, type Back } from './back.js';
@@ -105,7 +113,8 @@ export function dashboardRoutes(d: AppDeps): Router {
     send(res, status, 'Inbox', approvalsView({ pending: pendingCards(), proposals: d.skills.pendingProposals().map((proposal) => ({ proposal, current: proposal.skillId ? d.skills.get(proposal.skillId) : undefined })), waiting: d.discussions.waitingOnOwner(), tidy: tidySentence(tidySummary(tidyItems())), error, notice }), { href: '/', label: 'Projects', tab: null });
 
   /** Settings: the owner's device, connections, devices, backups and health, and their login. */
-  const settings = (req: Request, res: Response, status = 200, error?: string, created?: { name: string; token: string }) => {
+  const settings = async (req: Request, res: Response, status = 200, error?: string, created?: { name: string; token: string }, ask?: { folder: string; cloud: string }) => {
+    const installedNow = d.localMode && d.models ? await d.models.installedIds() : [];
     const token = readCookie(req, SESSION_COOKIE);
     send(res, status, 'Settings', settingsView({
       error,
@@ -113,8 +122,8 @@ export function dashboardRoutes(d: AppDeps): Router {
       connStatus: connStatuses(d, d.provider.listGrants()),
       sessions: d.sessions.list(),
       currentSessionId: token ? d.sessions.idFor(token) : undefined,
-      work: d.mode === 'work',
       localMode: d.localMode,
+      search: d.localMode && d.models ? { status: d.models.status(), installed: installedNow, keySaved: !!d.statusDir && readKey(d.statusDir) !== null, said: takeSearchSaid(), dataDir: d.statusDir } : undefined,
       projects: d.service.listProjects().map((p) => p.project),
       version: { brain: BRAIN_VERSION, database: d.store.schemaVersion() },
       brainUrl: d.publicUrl.origin,
@@ -125,15 +134,32 @@ export function dashboardRoutes(d: AppDeps): Router {
       device: deviceLabel(req.get('user-agent') ?? null),
       created,
       health: healthOf(d, d.now()),
+      copy: d.localMode && d.backupCopy ? { keep: d.backupKeep ?? DEFAULT_BACKUP_KEEP, folder: d.backupCopy.folder(), last: d.backupCopy.lastResult(), ask } : undefined,
       backups: d.statusDir === undefined ? undefined : (() => {
         const status = readBackupStatus(d.statusDir);
-        // The work copy's backups go to OneDrive, outside the house already: no separate off-site copy.
-        // The work copy's backups go to OneDrive, and it has no git copy or Markdown export of its own.
-        return { status, health: backupHealth(status, d.now(), { offsite: d.mode !== 'work', jobs: d.mode !== 'work' }), offsite: d.mode !== 'work', jobs: d.mode !== 'work' };
+        return { status, health: backupHealth(status, d.now(), { offsite: true, jobs: true }), offsite: true, jobs: true };
       })(),
     }));
   };
 
+
+  // Settings › Backups (the app): the second folder for the daily backups.
+  router.post('/settings/backup-copy', owner, (req, res, next) => {
+    const copy = d.backupCopy;
+    if (!d.localMode || !copy) return next();
+    if (str(req, 'action') === 'off') { copy.set(null); return res.redirect(303, '/settings#backup-copy'); }
+    const folder = str(req, 'folder').trim();
+    const refuse = (why: string) => settings(req, res, 400, why);
+    if (!isAbsolute(folder)) return refuse('Give the full path of the folder, starting with / (or the drive letter on Windows).');
+    if (!existsSync(folder) || !statSync(folder).isDirectory()) return refuse(`${folder} doesn't exist. Make the folder first, then save it here.`);
+    const real = (p: string) => { try { return realpathSync(p); } catch { return resolve(p); } };
+    const inside = (child: string, parent: string) => { const r = relative(real(parent), real(child)); return r === '' || (!r.startsWith('..') && !isAbsolute(r)); };
+    if (d.statusDir && inside(folder, d.statusDir)) return refuse("That folder is inside BrainAI's own data folder. Choose one outside it.");
+    const cloud = syncedCloud(folder, { home: d.tools?.home ?? homedir(), platform: d.tools?.platform ?? process.platform, env: { ...process.env, ...d.tools?.extraEnv } });
+    if (cloud !== null && str(req, 'confirm') !== '1') return settings(req, res, 200, undefined, undefined, { folder, cloud });
+    copy.set(folder);
+    res.redirect(303, '/settings#backup-copy');
+  });
 
   // A new device's token, kept until the page after the redirect shows it (once), so a reload never mints another.
   const justAdded = new Map<string, { name: string; token: string; at: number }>();
@@ -142,7 +168,7 @@ export function dashboardRoutes(d: AppDeps): Router {
     const key = query(req, 'added');
     const added = key === undefined ? undefined : justAdded.get(key);
     if (key !== undefined) justAdded.delete(key);
-    settings(req, res, 200, undefined, added && Date.now() - added.at < ADDED_MS ? { name: added.name, token: added.token } : undefined);
+    return settings(req, res, 200, undefined, added && Date.now() - added.at < ADDED_MS ? { name: added.name, token: added.token } : undefined);
   });
   // Settings › Devices: adding redirects to Settings, which shows the new token once.
   router.post('/settings/devices', owner, (req, res) => {
@@ -154,7 +180,7 @@ export function dashboardRoutes(d: AppDeps): Router {
       justAdded.set(key, { name: device.name, token, at: Date.now() });
       res.redirect(303, `/settings?added=${key}#devices`);
     } catch (e) {
-      settings(req, res, 400, e instanceof Error ? e.message : 'Could not add the device');
+      return settings(req, res, 400, e instanceof Error ? e.message : 'Could not add the device');
     }
   });
   router.post('/settings/devices/:id/revoke', owner, (req, res) => {
@@ -483,8 +509,7 @@ export function dashboardRoutes(d: AppDeps): Router {
     const id = req.params.grantId as string;
     if (!d.provider.listGrants().some((g) => g.id === id)) return notFound(res);
     const access = str(req, 'access');
-    // Work mode connects only the owner's own assistants, so it offers neither discussions-only nor read-only access.
-    if (access !== 'full' && ((access !== 'discussions' && access !== 'projects') || d.mode === 'work')) return badRequest(res);
+    if (access !== 'full' && access !== 'discussions' && access !== 'projects') return badRequest(res);
     const projects = access === 'projects' ? pickedProjects(req.body, d.service.listProjects().map((p) => p.project)) : undefined;
     if (access === 'projects' && !projects) {
       return send(res, 400, 'Bad request', html`<h1>Bad request</h1><p>${PICK_A_PROJECT}</p><p><a href="/settings#connections">Back to Settings</a></p>`);
@@ -509,6 +534,11 @@ export function dashboardRoutes(d: AppDeps): Router {
     const id = req.params.grantId as string;
     if (!d.provider.listGrants().some((g) => g.id === id)) return notFound(res);
     d.provider.revokeGrant(id);
+    // Claude's desktop app keeps its key in a file: a revoked key is no use there, so the file goes too.
+    if (d.localMode && d.statusDir) {
+      const file = join(d.statusDir, BRIDGE_KEY_FILE);
+      try { if ((JSON.parse(readFileSync(file, 'utf8')) as { grant?: unknown }).grant === id) rmSync(file, { force: true }); } catch { /* no key file */ }
+    }
     res.redirect(303, '/settings#connections');
   });
 

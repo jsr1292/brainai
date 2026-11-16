@@ -19,7 +19,7 @@ test("an app's setup page shows the address and the text, each with Copy, in thr
   const url = new URL('/mcp', app.baseUrl).href;
   assert.match(body, /<h1>Set up ChatGPT<\/h1>/);
   assert.ok(body.includes(`data-copy="${attr(url)}"`), 'the address has a Copy button');
-  assert.ok(body.includes(`data-copy="${attr(setupText('chatgpt', 'personal', url))}"`), 'the text has a Copy button');
+  assert.ok(body.includes(`data-copy="${attr(setupText('chatgpt', url))}"`), 'the text has a Copy button');
   assert.deepEqual([...body.matchAll(/<li><h2>([^<]+)<\/h2>/g)].map((m) => m[1]), ['Connect', 'Paste the setup text', 'Check']);
   assert.match(body, /data-setup-status="\/settings\/setup\/chatgpt\/status"/);
 });
@@ -38,15 +38,6 @@ test("the check line waits, then says up to date once the app reports the newest
   assert.match(await (await f('/settings/setup/chatgpt/status')).text(), /Waiting: ChatGPT hasn(’|&#39;|')t reported a setup text yet/);
   (app.deps.provider as any).db.prepare("UPDATE oauth_grants SET setup_version = ?, setup_seen_at = ? WHERE name = 'ChatGPT'").run(SETUP_VERSION, new Date().toISOString());
   assert.match(await (await f('/settings/setup/chatgpt/status')).text(), new RegExp(`ChatGPT reports setup text ${SETUP_VERSION} · up to date ✓`));
-});
-
-test('the work brain sets up only Claude Code and Codex', async (t) => {
-  const { f } = await start(t, { mode: 'work' });
-  assert.equal((await f('/settings/setup/claude-code')).status, 200);
-  assert.equal((await f('/settings/setup/chatgpt')).status, 404);
-  const body = await (await f('/settings')).text();
-  const list = body.slice(body.indexOf('<h3 id="setup">'));
-  assert.ok(list.includes('/settings/setup/codex') && !list.includes('/settings/setup/grok'));
 });
 
 test("the owner's overlay sets the setup number and adds its lines to the setup pages and Connections (O1)", async (t) => {

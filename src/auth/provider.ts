@@ -425,6 +425,48 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
     return [...byName].map(([name, access]) => ({ name, access }));
   }
 
+  /**
+   * A long-lived access token on a new full-access grant of its own client, for a program on this computer that cannot
+   * do OAuth (the bridge Claude's desktop app runs). Local mode only: the caller checks. The token is bound to this
+   * server's own MCP endpoint, stored hashed like every other token, has no refresh token and ends with revokeGrant.
+   */
+  issueLocalGrant(opts: { name: string; clientName: string; years?: number }): { grantId: string; token: string } {
+    const name = validateDisplayName(opts.name);
+    const clientName = validateDisplayName(opts.clientName);
+    const years = opts.years ?? 10;
+    if (!Number.isInteger(years) || years < 1) throw new Error('years must be a whole number of at least 1');
+    const token = randomToken();
+    const grantId = randomUUID();
+    const clientId = randomUUID();
+    this.db.transaction(() => {
+      const created = this.now();
+      const nowIso = created.toISOString();
+      const expires = new Date(created.getTime());
+      expires.setUTCFullYear(expires.getUTCFullYear() + years);
+      // No redirect URIs: this client can never start an OAuth authorization of its own.
+      const metadata = {
+        client_id: clientId, client_id_issued_at: Math.floor(created.getTime() / 1000), client_name: clientName,
+        redirect_uris: [], token_endpoint_auth_method: 'none', grant_types: [],
+      };
+      this.db.prepare('INSERT INTO oauth_clients(client_id, client_name, metadata, is_cimd, created_at) VALUES (?, ?, ?, 0, ?)')
+        .run(clientId, clientName, JSON.stringify(metadata), nowIso);
+      this.db.prepare("INSERT INTO oauth_grants(id, client_id, name, created_at, access, projects) VALUES (?, ?, ?, ?, 'full', NULL)")
+        .run(grantId, clientId, name, nowIso);
+      this.db.prepare("INSERT INTO oauth_tokens(token_hash, grant_id, type, resource, expires_at) VALUES (?, ?, 'access', ?, ?)")
+        .run(sha256(token), grantId, this.resourceUrl.href, expires.toISOString());
+    })();
+    return { grantId, token };
+  }
+
+  /** Whether a local grant's access token still works: grant and token not revoked, not expired, made for this resource. */
+  isLocalGrantLive(grantId: string, resource: string): boolean {
+    const row = this.db.prepare(
+      `SELECT 1 FROM oauth_grants g JOIN oauth_tokens t ON t.grant_id = g.id
+       WHERE g.id = ? AND g.revoked_at IS NULL AND t.type = 'access' AND t.revoked_at IS NULL AND t.resource = ? AND t.expires_at > ?`,
+    ).get(grantId, resource, this.iso());
+    return row !== undefined;
+  }
+
   revokeGrant(id: string): void {
     this.db.transaction(() => {
       const exists = this.db.prepare('SELECT 1 FROM oauth_grants WHERE id = ?').get(id);

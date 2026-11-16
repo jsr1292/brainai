@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { Mode } from '../config.js';
 import type { Access } from '../discussions/types.js';
 import { NoteService } from '../pages/notes.js';
 import { ProjectStore } from '../projects/store.js';
@@ -26,7 +25,7 @@ async function setup() {
   const trellis = await pages.create({ title: 'trellis — reports', project: 'trellis', body: 'Monthly trellis reports.\n\n## Import\nThe workbook importer.' }, 'owner');
   const start = await pages.create({ title: 'How this brain is organised', area: 'start', body: 'Facts first.' }, 'owner');
   const money = await pages.create({ title: 'finances — money', project: 'finances', body: 'Private money notes.' }, 'owner');
-  const connect = async (name: string, opts: { access?: Access; projects?: string[]; mode?: Mode } = {}) => {
+  const connect = async (name: string, opts: { access?: Access; projects?: string[] } = {}) => {
     const [ct, st] = InMemoryTransport.createLinkedPair();
     await buildMcpServer(service, name, { registry, growth, pages, notes, ...opts }).connect(st);
     const client = new Client({ name: 't', version: '0' });
@@ -246,14 +245,6 @@ test('resolve_note resolves an open note with a reply; hidden, resolved, withdra
   assert.equal((await ro.call('resolve_note', { id: hidden.id, reply: 'x' })).isError, true);
   assert.equal(notes.get(hidden.id)!.status, 'open');
   assert.equal(notes.get(tNote.id)!.status, 'open');
-});
-
-test('the work memory has the page tools', async () => {
-  const { connect } = await setup();
-  const { tools } = await connect('Codex', { mode: 'work' });
-  const names = await tools();
-  for (const t of ['list_pages', 'read_page', 'write_page', 'edit_page_section', 'resolve_note']) assert.ok(names.includes(t), t);
-  assert.ok(!names.includes('note_observation'));
 });
 
 test('recall returns matching page sections in a second, labelled block', async () => {
@@ -531,7 +522,7 @@ async function flagSetup(opts: { sectionMatch?: number | null } = {}) {
   };
   const edit = (iso: string, id: string, content: string) => { at(iso); const m = store.get(id)!; return store.update(id, { content, project: m.project, tags: m.tags, embedding: far, by: 'Claude Code' }); };
   const page = async (iso: string, title: string, body: string, project = 'wildlog') => { at(iso); return pages.create({ title, project, body }, 'Claude Code'); };
-  const connect = async (name: string, o: { access?: Access; projects?: string[]; mode?: Mode } = {}) => {
+  const connect = async (name: string, o: { access?: Access; projects?: string[] } = {}) => {
     const [ct, st] = InMemoryTransport.createLinkedPair();
     await buildMcpServer(service, name, { registry, growth, pages, notes, ...o }).connect(st);
     const client = new Client({ name: 't', version: '0' });
@@ -721,17 +712,14 @@ test('discussions-only connections have no page tools and so no flags', async ()
   }
 });
 
-test('work mode gives the same flag in project_brief and read_page', async () => {
+test('project_brief and read_page give the same flag', async () => {
   const w = await flagSetup();
   const main = await w.page('2026-10-21T09:00:00Z', 'wildlog — wine cellar iPhone app', MAIN_BODY);
   for (const d of ['2026-10-28', '2026-10-30', '2026-11-01']) w.fact(`${d}T10:00:00Z`, `wildlog decision ${d}`);
   const full = await w.connect('Claude Code');
-  const work = await w.connect('Claude Code', { mode: 'work' });
   const a = briefPages((await full.call('project_brief', { project: 'wildlog' })).text).find((p) => p.id === main.id).may_be_out_of_date;
-  const b = briefPages((await work.call('project_brief', { project: 'wildlog' })).text).find((p) => p.id === main.id).may_be_out_of_date;
-  assert.deepEqual(b, a);
-  assert.notEqual(b, null);
-  assert.deepEqual(data((await work.call('read_page', { id: main.id })).text).may_be_out_of_date, a);
+  assert.notEqual(a, null);
+  assert.deepEqual(data((await full.call('read_page', { id: main.id })).text).may_be_out_of_date, a);
 });
 
 // ---- What assistants hear when they save (Task 10) ----

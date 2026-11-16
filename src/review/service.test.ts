@@ -184,7 +184,7 @@ test('only the owner sees last week’s stored Tidy summary, after the safety no
   w.grants.push({ clientName: 'Test assistant', createdAt: '2026-10-29T09:00:00Z' });
   const { s } = service(w, { tidy: () => tidy });
   const r = s.withTidy(s.ensure(s.lastMonday(), 'owner')!);
-  const options = { work: false, prev: null, next: null, back: '/review' };
+  const options = { prev: null, next: null, back: '/review' };
   const owner = s.present(r, 'last', { kind: 'owner' });
   assert.deepEqual(owner.tidy, tidy);
   const body = reviewView(owner, options).value;

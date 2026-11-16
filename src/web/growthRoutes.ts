@@ -12,12 +12,10 @@ export function growthRoutes(d: AppDeps): Router {
   const owner = requireOwner(d.sessions);
 
   router.get('/growth', owner, (_req, res) => {
-    if (d.mode === 'work') return res.status(404).type('html').send(page('Not found', html`<h1>Not found</h1>`, { nav: true, tab: null }));
     res.status(200).type('html').send(page('Growth', growthView(d.growth.list()), { nav: true, tab: 'week', section: 'growth' }));
   });
 
   router.get('/settings/growth', owner, (_req, res) => {
-    if (d.mode === 'work') return res.status(404).type('html').send(page('Not found', html`<h1>Not found</h1>`, { nav: true, tab: null }));
     res.redirect(301, '/growth');
   });
 

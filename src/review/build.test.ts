@@ -293,7 +293,7 @@ test('decisions saved this week, statuses and roadmaps left out, newest first', 
   assert.deepEqual(buildReview(w.sources(), windowFor(W26)).decisions, [b.id, a.id]);
 });
 
-test('growth keeps the strength and the improve with the most evidence this week; work mode keeps none', () => {
+test('growth keeps the strength and the improve with the most evidence this week', () => {
   const w = reviewWorld('2026-10-20T10:00:00Z');
   const obs = w.db.prepare(`INSERT INTO observations(id, kind, area, summary, embedding, created_at, created_by, last_evidence_at)
     VALUES (?, ?, 'reviewing', 's', x'00', 'x', 'c', 'x')`);
@@ -306,7 +306,6 @@ test('growth keeps the strength and the improve with the most evidence this week
   w.at('2026-11-03T07:14:00Z');
   const g = buildReview(w.sources(), windowFor(W26)).growth!;
   assert.deepEqual([g.strength, g.improve], ['s2', 'i2'], 'most evidence; a tie goes to the later one');
-  assert.equal(buildReview(w.sources({ growth: false }), windowFor(W26)).growth, null);
 });
 
 test('digest totals, writer rows and safety flags are stored, so a grant deleted later still shows', () => {

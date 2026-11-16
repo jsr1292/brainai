@@ -5,7 +5,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { NoteService } from '../pages/notes.js';
 import { ReviewService } from '../review/service.js';
 import { reviewWorld, type ReviewWorld } from '../testing/reviewWorld.js';
-import { SERVER_INSTRUCTIONS, WORK_INSTRUCTIONS, readOnlyInstructions } from './instructions.js';
+import { SERVER_INSTRUCTIONS, readOnlyInstructions } from './instructions.js';
 import { buildMcpServer } from './server.js';
 import { makeTidyItems, tidySummary } from '../web/tidyItems.js';
 
@@ -39,7 +39,7 @@ async function connect(w: ReviewWorld, actorName: string, opts: Partial<Paramete
   const tidyItems = makeTidyItems({ ...w, sameProjectFloor: 0.88 });
   const reviews = new ReviewService({
     store: w.reviews, memories: w.store, service: w.service, registry: w.registry, folders: w.folders, pages: w.pages,
-    growth: opts.mode === 'work' ? null : w.growth, grants: () => w.grants, tidy: () => tidySummary(tidyItems()),
+    growth: w.growth, grants: () => w.grants, tidy: () => tidySummary(tidyItems()),
   }, w.now, () => {});
   const [ct, st] = InMemoryTransport.createLinkedPair();
   await buildMcpServer(w.service, actorName, { registry: w.registry, growth: w.growth, pages: w.pages, notes: new NoteService(w.db, w.pages, w.now), reviews, ...opts }).connect(st);
@@ -133,12 +133,8 @@ test('week accepts now, a Monday and a weekday; a week with no review is an erro
   }
 });
 
-test('work mode has the tool without growth; a discussions-only connection doesn\'t list the tool', async () => {
+test('a discussions-only connection doesn\'t list the tool', async () => {
   const w = week();
-  const work = await connect(w, 'Claude Code', { mode: 'work' });
-  const d = dataOf((await work.call()).text);
-  assert.equal(d.growth, undefined);
-  assert.ok(d.moved.length > 0);
   const limited = await connect(w, 'Grok', { access: 'discussions' });
   // With no discussion service given, a discussions-only server has no tools at all and refuses to list them.
   const listed = await limited.client.listTools().then((r) => r.tools, () => []);
@@ -152,7 +148,6 @@ test('work mode has the tool without growth; a discussions-only connection doesn
 
 test('the instructions tell assistants to use it only when asked', () => {
   assert.match(SERVER_INSTRUCTIONS, /\n16\. When the owner asks how the week went, what happened last week, or for a weekly review, call weekly_review\. Never bring the review up unasked\.\n17\. Skills: /);
-  assert.match(WORK_INSTRUCTIONS, /\n19\. When the owner asks how the week went, what happened last week, or for a weekly review, call weekly_review\. Never bring the review up unasked\.\n20\. Skills: /);
   assert.match(readOnlyInstructions(['wildlog']), /call weekly_review/);
 });
 

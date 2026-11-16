@@ -29,7 +29,7 @@ export function healthInput(d: AppDeps, now: Date): HealthInput {
     if (d.statusDir === undefined) return null;
     const status = readBackupStatus(d.statusDir);
     if (d.localMode && !status.nightly) return null;
-    return backupHealth(status, now, { offsite: d.mode !== 'work', jobs: d.mode !== 'work' });
+    return backupHealth(status, now, { offsite: true, jobs: true });
   })();
   const today = localDay(now);
   return {

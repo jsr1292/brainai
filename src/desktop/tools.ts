@@ -5,18 +5,19 @@
  * up before it is changed, and the rules go in only once the server entry worked.
  */
 import { execFile, spawn } from 'node:child_process';
-import { accessSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { findBlock, putBlock, removeBlock, strayBrain } from './rulesBlock.js';
 import { thisComputer } from './computer.js';
+import { BRIDGE_KEY_FILE } from './claudeBridge.js';
 
-export type ToolId = 'claude-code' | 'codex' | 'opencode' | 'cursor';
+export type ToolId = 'claude-code' | 'codex' | 'opencode' | 'cursor' | 'claude-desktop';
 export interface ToolEnv {
   home: string;
   /** Where to look for the tools' commands (the owner's login-shell PATH, from the app). */
   path: string;
   mcpUrl: string;
-  /** The setup text for a tool, wrapped in its markers (setupText(slug, 'personal', mcpUrl, overlay)). */
+  /** The setup text for a tool, wrapped in its markers (setupText(slug, mcpUrl, overlay)). */
   rules: (slug: string) => string;
   /** Where apps are installed (/Applications). */
   apps?: string;
@@ -26,6 +27,15 @@ export interface ToolEnv {
   platform?: NodeJS.Platform;
   /** Windows: where the system variables come from (default this server's own environment). */
   system?: Record<string, string | undefined>;
+  /** Claude's desktop app: the path of claude_desktop_config.json (default: where the app keeps it on this computer). */
+  claudeConfig?: string;
+  /** Claude's desktop app: what its entry runs (the running server's own Node and cli.js) and where the bridge looks. */
+  bridge?: { node: string; cli: string; dataDir: string; portFile: string };
+  /** Claude's desktop app: a new key on its own grant, and taking it back. Wired by the routes, local mode only. */
+  issueKey?: () => { grantId: string; token: string };
+  revokeKey?: (grantId: string) => void;
+  /** Claude's desktop app: whether a key's grant still works here (not revoked, made for this address). Wired by the routes. */
+  keyLive?: (grantId: string) => boolean;
 }
 export interface ToolState {
   id: ToolId; name: string; installed: boolean;
@@ -159,6 +169,14 @@ interface Tool {
   rulesFile(env: ToolEnv): string | null;
   signIn: string;
   after?(env: ToolEnv): void;
+  /** For other-brainai: how to say what its server entry is (default: the host it points at). */
+  otherDetail?(server: string): string;
+  /** Why Connect cannot work from here (before anything is changed), or null. */
+  blocked?(env: ToolEnv): string | null;
+  /** Whatever else it holds of this brain outside its server entry (a key file). */
+  extraTraces?(env: ToolEnv): boolean;
+  /** Runs after Disconnect, whether or not an entry was there. */
+  cleanup?(env: ToolEnv): void;
 }
 
 const claudeCode: Tool = {
@@ -320,7 +338,124 @@ const cursor: Tool = {
   signIn: 'Cursor asks you to sign in the first time it uses BrainAI. Paste the rules below into Cursor › Settings › Rules.',
 };
 
-const TOOLS: Tool[] = [claudeCode, codex, opencode, cursor];
+const NEEDS_AGAIN = 'needs connecting again';
+/** server() for an entry that is this brain's own but no longer works (moved program, revoked or missing key). */
+const OWN_STALE = 'own entry that needs connecting again';
+const ON_A_DISK_IMAGE = /^\/Volumes\/|\/AppTranslocation\//;
+const CLAUDE_QUIT = 'Quit Claude completely (⌘Q on the Mac; on Windows, quit it from the tray icon) and open it again.';
+
+/** Where Claude's desktop app keeps its settings. */
+export function claudeConfigPath(env: ToolEnv): string {
+  if (env.claudeConfig) return env.claudeConfig;
+  if (platformOf(env) === 'win32') {
+    const appData = (env.system ?? process.env).APPDATA || join(env.home, 'AppData', 'Roaming');
+    return join(appData, 'Claude', 'claude_desktop_config.json');
+  }
+  return join(env.home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+}
+
+function claudeDesktopConfig(env: ToolEnv): { path: string; json: { mcpServers?: Record<string, unknown> } & Record<string, unknown> } | { refuse: string } {
+  const path = claudeConfigPath(env);
+  const text = read(path);
+  if (text === null) return { path, json: {} };
+  try {
+    const json = JSON.parse(text) as unknown;
+    if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('not an object');
+    const servers = (json as { mcpServers?: unknown }).mcpServers;
+    if (servers !== undefined && (!servers || typeof servers !== 'object' || Array.isArray(servers))) throw new Error('not an object');
+    return { path, json: json as Record<string, unknown> };
+  } catch {
+    return { refuse: "Claude's claude_desktop_config.json is not plain JSON: BrainAI will not rewrite it." };
+  }
+}
+
+/** The grant in the key file, or null. */
+function storedGrant(env: ToolEnv): string | null {
+  if (!env.bridge) return null;
+  try {
+    const key = JSON.parse(readFileSync(join(env.bridge.dataDir, BRIDGE_KEY_FILE), 'utf8')) as { grant?: unknown; token?: unknown };
+    return typeof key.grant === 'string' && key.grant !== '' && typeof key.token === 'string' && key.token !== '' ? key.grant : null;
+  } catch { return null; }
+}
+
+/** Takes the stored key back (revoked, file deleted). A revoke that fails (already gone) never stops the rest. */
+function dropKey(env: ToolEnv): void {
+  if (!env.bridge) return;
+  const grant = storedGrant(env);
+  if (grant) { try { env.revokeKey?.(grant); } catch { /* already revoked or gone */ } }
+  rmSync(join(env.bridge.dataDir, BRIDGE_KEY_FILE), { force: true });
+}
+
+/** Whether two paths are the same place: realpath when both exist, and on Windows case and a leading \\?\\ do not matter. */
+export function samePath(a: string, b: string, platform: string): boolean {
+  const real = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+  const [x, y] = existsSync(a) && existsSync(b) ? [real(a), real(b)] : [a, b];
+  if (platform !== 'win32') return x === y;
+  const norm = (p: string) => p.replace(/^\\\\\?\\/, '').toLowerCase();
+  return norm(x) === norm(y);
+}
+
+const claudeDesktop: Tool = {
+  id: 'claude-desktop', name: 'Claude (desktop app)', slug: 'claude-code',
+  installed: (env) => existsSync(join(env.apps ?? '/Applications', 'Claude.app')) || existsSync(dirname(claudeConfigPath(env))),
+  async server(env) {
+    const c = claudeDesktopConfig(env);
+    if ('refuse' in c) return { refuse: c.refuse };
+    const entry = c.json.mcpServers?.[NAME] as { command?: unknown; args?: unknown } | undefined;
+    if (entry === undefined) return null;
+    const args = Array.isArray(entry.args) ? entry.args : [];
+    const cli = args[0];
+    if (typeof entry.command !== 'string' || typeof cli !== 'string' || args[1] !== 'claude-bridge') return NO_ADDRESS;
+    const theirData = (entry as { env?: { BRAINAI_DATA_DIR?: unknown } }).env?.BRAINAI_DATA_DIR;
+    const platform = platformOf(env);
+    const ownData = !!env.bridge && typeof theirData === 'string' && samePath(theirData, env.bridge.dataDir, platform);
+    // The app was moved (or removed): its program is gone, so the entry cannot start.
+    if (!existsSync(entry.command) || !existsSync(cli)) return ownData ? OWN_STALE : NEEDS_AGAIN;
+    if (!env.bridge || (!ownData && !samePath(cli, env.bridge.cli, platform))) return `another BrainAI (${cli})`;
+    // Connected means the key works: the file is there and its grant is live.
+    const grant = storedGrant(env);
+    return grant !== null && (env.keyLive?.(grant) ?? true) ? env.mcpUrl : OWN_STALE;
+  },
+  async add(env) {
+    if (!env.bridge || !env.issueKey) return "BrainAI cannot connect Claude's desktop app from here.";
+    const c = claudeDesktopConfig(env);
+    if ('refuse' in c) return c.refuse;
+    const keyFile = join(env.bridge.dataDir, BRIDGE_KEY_FILE);
+    dropKey(env); // a key left from an earlier connection
+    let key: { grantId: string; token: string };
+    try { key = env.issueKey(); } catch (e) { return `BrainAI could not make a key for Claude: ${(e as Error).message}`; }
+    try {
+      mkdirSync(env.bridge.dataDir, { recursive: true });
+      writeFileSync(keyFile, JSON.stringify({ grant: key.grantId, token: key.token }), { mode: 0o600 });
+      chmodSync(keyFile, 0o600);
+      const entry = { command: env.bridge.node, args: [env.bridge.cli, 'claude-bridge'], env: { BRAINAI_DATA_DIR: env.bridge.dataDir, BRAINAI_PORT_FILE: env.bridge.portFile } };
+      writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcpServers: { ...c.json.mcpServers, [NAME]: entry } }, null, 2)}\n`);
+    } catch (e) {
+      try { env.revokeKey?.(key.grantId); } catch { /* nothing more to do */ }
+      rmSync(keyFile, { force: true });
+      return `BrainAI could not write ${c.path}: ${(e as Error).message}`;
+    }
+    return null;
+  },
+  async remove(env) {
+    const c = claudeDesktopConfig(env);
+    if ('refuse' in c) return c.refuse;
+    const servers = { ...c.json.mcpServers };
+    delete servers[NAME];
+    try { writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcpServers: servers }, null, 2)}\n`); } catch (e) { return `BrainAI could not write ${c.path}: ${(e as Error).message}`; }
+    dropKey(env);
+    return null;
+  },
+  // Its instructions come from BrainAI's own MCP instructions; Claude's app has no rules file.
+  rulesFile: () => null,
+  signIn: CLAUDE_QUIT,
+  otherDetail: (server) => server,
+  blocked: (env) => (env.bridge && (ON_A_DISK_IMAGE.test(env.bridge.node) || ON_A_DISK_IMAGE.test(env.bridge.cli)) ? 'Move BrainAI to Applications first, then connect Claude.' : null),
+  extraTraces: (env) => !!env.bridge && existsSync(join(env.bridge.dataDir, BRIDGE_KEY_FILE)),
+  cleanup: (env) => dropKey(env),
+};
+
+const TOOLS: Tool[] = [claudeCode, codex, opencode, cursor, claudeDesktop];
 
 interface Look {
   server: string | null; refuse?: string;
@@ -343,7 +478,9 @@ async function look(tool: Tool, env: ToolEnv): Promise<Look> {
 
 function stateFrom(tool: Tool, env: ToolEnv, l: Look): Pick<ToolState, 'state' | 'detail'> {
   const ours = hostOf(env.mcpUrl);
+  if (l.server === OWN_STALE) return { state: 'not-connected', detail: NEEDS_AGAIN };
   if (l.server !== null && l.server !== env.mcpUrl) {
+    if (tool.otherDetail && l.server !== NO_ADDRESS) return { state: 'other-brainai', detail: tool.otherDetail(l.server) };
     return { state: 'other-brainai', detail: l.server === NO_ADDRESS ? `it has a brainai entry that is not this one (${NO_ADDRESS})` : `its brainai server points at ${hostOf(l.server)}` };
   }
   // A block that does not name this BrainAI exactly (another host, or wording BrainAI cannot read) belongs to another brain.
@@ -367,6 +504,8 @@ export async function toolStates(env: ToolEnv): Promise<ToolState[]> {
 export async function connect(id: ToolId, env: ToolEnv, opts: { replace?: boolean }): Promise<Outcome> {
   const tool = TOOLS.find((t) => t.id === id);
   if (!tool || !tool.installed(env)) return { ok: false, reason: `${tool?.name ?? id} is not installed on ${thisComputer()}.` };
+  const blocked = tool.blocked?.(env);
+  if (blocked) return { ok: false, reason: blocked };
   const l = await look(tool, env);
   if (l.refuse) return { ok: false, reason: l.refuse };
   const s = stateFrom(tool, env, l);
@@ -406,11 +545,15 @@ export async function disconnect(id: ToolId, env: ToolEnv): Promise<Outcome> {
   if (!tool || !tool.installed(env)) return { ok: false, reason: `${tool?.name ?? id} is not installed on ${thisComputer()}.` };
   const l = await look(tool, env);
   if (l.refuse) return { ok: false, reason: l.refuse };
-  if (stateFrom(tool, env, l).state === 'other-brainai') return { ok: false, reason: `${tool.name} uses another BrainAI: BrainAI leaves it as it is.` };
-  if (l.server === env.mcpUrl) {
+  if (stateFrom(tool, env, l).state === 'other-brainai') {
+    tool.cleanup?.(env); // our own key is ours whatever the entry says; the entry itself is left alone
+    return { ok: false, reason: `${tool.name} uses another BrainAI: BrainAI leaves it as it is.` };
+  }
+  if (l.server === env.mcpUrl || l.server === OWN_STALE) {
     const removed = await tool.remove(env);
     if (removed) return { ok: false, reason: removed };
   }
+  tool.cleanup?.(env);
   const file = tool.rulesFile(env);
   const text = file ? read(file) : null;
   try {
@@ -419,4 +562,67 @@ export async function disconnect(id: ToolId, env: ToolEnv): Promise<Outcome> {
     return { ok: false, reason: `BrainAI could not write ${file}: ${(e as Error).message}` };
   }
   return { ok: true, signIn: '' };
+}
+
+/**
+ * The `.brainai-backup` files BrainAI made beside the owner's originals (CLAUDE.md, Codex's config.toml and AGENTS.md,
+ * OpenCode's opencode.json and AGENTS.md, Cursor's mcp.json) that exist now, as absolute paths. Removing BrainAI
+ * moves them into the saved folder, so the owner's originals are kept in one place.
+ */
+export function backupFiles(env: ToolEnv): string[] {
+  const originals = [
+    join(env.home, '.claude', 'CLAUDE.md'),
+    join(env.home, '.codex', 'config.toml'),
+    join(env.home, '.codex', 'AGENTS.md'),
+    join(OPENCODE_DIR(env), 'opencode.json'),
+    join(OPENCODE_DIR(env), 'AGENTS.md'),
+    join(env.home, '.cursor', 'mcp.json'),
+    claudeConfigPath(env),
+  ];
+  return originals.map((f) => `${f}.brainai-backup`).filter((f) => existsSync(f));
+}
+
+/**
+ * What a tool holds of this brain: its brainai server entry or rules block ('yes'), nothing ('no'), or a configuration
+ * BrainAI will not read ('unreadable': it cannot say, and cannot rewrite it either).
+ */
+export async function tracesOfThisBrain(id: ToolId, env: ToolEnv): Promise<'yes' | 'no' | 'unreadable'> {
+  const tool = TOOLS.find((t) => t.id === id);
+  if (!tool || !tool.installed(env)) return 'no';
+  const l = await look(tool, env);
+  if (l.refuse !== undefined) return 'unreadable';
+  return l.server === env.mcpUrl || l.server === OWN_STALE || l.block?.host === hostOf(env.mcpUrl) || tool.extraTraces?.(env) ? 'yes' : 'no';
+}
+
+/** A brain entry (`brainai` or `memory`) in ~/.claude.json, at the top or under any project; true when unreadable. */
+function claudeJsonHasBrain(env: ToolEnv): boolean {
+  const file = join(env.home, '.claude.json');
+  if (!existsSync(file)) return false;
+  try {
+    const json = JSON.parse(readFileSync(file, 'utf8')) as { mcpServers?: Record<string, unknown>; projects?: Record<string, { mcpServers?: Record<string, unknown> }> };
+    const has = (m?: Record<string, unknown>) => !!m && typeof m === 'object' && (NAME in m || 'memory' in m);
+    return has(json.mcpServers) || Object.values(json.projects ?? {}).some((p) => has(p?.mcpServers));
+  } catch { return true; }
+}
+
+/**
+ * Whether Claude Code may still have a brain: an MCP server named `brainai` or `memory`, asked of `claude` and read from
+ * ~/.claude.json. True unless that is certain not to be so: Claude Code not found, no clear answer or a timeout count
+ * as yes, because the hooks are only deleted when nobody could be using them.
+ */
+export async function claudeCodeHasBrainEntry(env: ToolEnv): Promise<boolean> {
+  if (!onPath(env, 'claude')) return true;
+  if (claudeJsonHasBrain(env)) return true;
+  for (const name of [NAME, 'memory']) {
+    const r = await run(env, 'claude', ['mcp', 'get', name]);
+    if (r.code !== 0 && notFound(r)) continue;
+    return true;
+  }
+  return false;
+}
+
+/** Takes back a key this brain left for a tool whose entry belongs to another BrainAI; the entry is not touched. */
+export function dropLeftoverKey(id: ToolId, env: ToolEnv): void {
+  const tool = TOOLS.find((t) => t.id === id);
+  if (tool?.installed(env)) tool.cleanup?.(env);
 }

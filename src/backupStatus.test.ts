@@ -38,7 +38,7 @@ test('the status files are written and read back; unreadable ones count as missi
   assert.deepEqual(readBackupStatus(dir), { nightly: ok });
 });
 
-test('the work copy has no off-site check: its backups already go to OneDrive', () => {
+test('without the off-site option there is no off-site check', () => {
   assert.deepEqual(backupHealth({ nightly: ok }, now, { offsite: false }).problems, []);
 });
 

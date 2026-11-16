@@ -66,7 +66,7 @@ test("the weekly off-site copy packs the newest nightly backup and a Markdown ex
     const bytes = readFileSync(join(unpacked, 'memory-2026-10-21.db')).toString('latin1');
     for (const marker of ['TOTPSECRETMARKER', 'HASHMARKER', 'SESSIONMARKER', 'DEVICEMARKER', 'CLIENTSECRETMARKER']) assert.ok(!bytes.includes(marker), marker);
     assert.equal(readFileSync(join(root, 'age-recipients'), 'utf8').trim(), join(appDir, 'offsite-recipient.txt'));
-    assert.match(readFileSync(join(root, 'rclone-calls'), 'utf8'), /^copy .*memory-.*\.tar\.gz\.age gdrive:memory-backups\ndelete gdrive:memory-backups --min-age 90d --include memory-\*\.tar\.gz\.age --drive-use-trash=false\n$/);
+    assert.match(readFileSync(join(root, 'rclone-calls'), 'utf8'), /^copy .*memory-.*\.tar\.gz\.age gdrive:memory-backups\ndelete gdrive:memory-backups --min-age 90d --include \/memory-\*\.tar\.gz\.age --drive-use-trash=false\n$/);
     const status = JSON.parse(readFileSync(join(appDir, 'data', 'offsite-status.json'), 'utf8'));
     assert.equal(status.ok, true);
     assert.equal(status.where, 'gdrive:memory-backups');

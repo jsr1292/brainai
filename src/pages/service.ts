@@ -1,7 +1,7 @@
 import type { Clock } from '../clock.js';
-import { cosine, type Embedder } from '../memory/embedder.js';
+import { cosine, isZeroVector, type Embedder } from '../memory/embedder.js';
 import { looksLikeInstruction } from '../memory/instructionLike.js';
-import { toFtsQuery } from '../memory/search.js';
+import { byMeaning, toFtsQuery } from '../memory/search.js';
 import { findSecret } from '../memory/secrets.js';
 import type { MemoryService } from '../memory/service.js';
 import type { MemoryStore } from '../memory/store.js';
@@ -45,17 +45,18 @@ export class PageService {
     private registry: ProjectStore,
     private memoryStore: MemoryStore,
     private now: Clock,
-    opts: { sectionMatch?: number | null; keywordWeight?: number } = {},
+    opts: { sectionMatch?: number | null; keywordWeight?: number | (() => number) } = {},
   ) {
-    this.keywordWeight = opts.keywordWeight ?? KEYWORD_WEIGHT;
+    const weight = opts.keywordWeight ?? KEYWORD_WEIGHT;
+    this.keywordWeightOf = typeof weight === 'number' ? () => weight : weight;
     this.freshness = new Freshness({
       store, memoryStore, memories, registry, forProject: (name) => this.forProject(name),
       sectionMatch: opts.sectionMatch === undefined ? SECTION_MATCH : opts.sectionMatch,
     });
   }
 
-  /** How much a keyword rank counts against a by-meaning rank (the embedding model's profile). */
-  private readonly keywordWeight: number;
+  /** How much a keyword rank counts against a by-meaning rank (the profile of the search model in use, read each time). */
+  private readonly keywordWeightOf: () => number;
 
   private images: ImageStore | null = null;
 
@@ -128,7 +129,8 @@ export class PageService {
    */
   private async sectionsFor(id: string | null, title: string, body: string): Promise<StoredSection[]> {
     const sameTitle = id !== null && this.store.get(id)?.title === title;
-    const previous = new Map((sameTitle ? this.store.sections(id) : []).map((s) => [`${s.anchor}\n${s.heading}\n${s.text}`, s.embedding]));
+    // A placeholder (saved while no search model was ready) is never kept: the section is embedded again.
+    const previous = new Map((sameTitle ? this.store.sections(id) : []).filter((s) => !isZeroVector(s.embedding)).map((s) => [`${s.anchor}\n${s.heading}\n${s.text}`, s.embedding]));
     const out: StoredSection[] = [];
     for (const [position, s] of splitSections(body).entries()) {
       const key = `${s.anchor}\n${s.heading}\n${s.text}`;
@@ -435,9 +437,11 @@ export class PageService {
     if (allowed?.size === 0) return [];
     const q = toFtsQuery(text);
     const fts = q ? this.store.ftsSections(q, CANDIDATES, allowed && [...allowed]) : [];
-    fts.forEach((s, i) => add(key(s.pageId, s.anchor), this.keywordWeight, i + 1));
-    this.store.sectionEmbeddings()
-      .filter((e) => allowed === undefined || allowed.has(e.pageId))
+    // Keywords only while no search model is ready (a zero question vector) or the vectors are another model's.
+    const stored = this.store.sectionEmbeddings().filter((e) => allowed === undefined || allowed.has(e.pageId));
+    const meaning = byMeaning(vector, stored);
+    fts.forEach((s, i) => add(key(s.pageId, s.anchor), meaning ? this.keywordWeightOf() : 1, i + 1));
+    (meaning ? stored : [])
       .map((e) => ({ k: key(e.pageId, e.anchor), sim: cosine(vector, e.embedding) }))
       .filter((e) => e.sim >= minSimilarity)
       .sort((a, b) => b.sim - a.sim)

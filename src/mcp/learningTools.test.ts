@@ -19,9 +19,9 @@ function setup() {
   const growth = makeGrowth(given);
   const pages = makePages(given);
   const notes = new NoteService(db, pages, () => new Date());
-  const connect = async (name: string, o: { access?: 'full' | 'projects' | 'discussions'; projects?: string[]; mode?: 'personal' | 'work' } = {}) => {
+  const connect = async (name: string, o: { access?: 'full' | 'projects' | 'discussions'; projects?: string[] } = {}) => {
     const [ct, st] = InMemoryTransport.createLinkedPair();
-    await buildMcpServer(service, name, { registry, growth, pages, notes, learning, access: o.access ?? 'full', projects: o.projects, mode: o.mode } as never).connect(st);
+    await buildMcpServer(service, name, { registry, growth, pages, notes, learning, access: o.access ?? 'full', projects: o.projects } as never).connect(st);
     const client = new Client({ name: 't', version: '0' }); await client.connect(ct);
     const call = async (tool: string, args: Record<string, unknown> = {}) => {
       const r: any = await client.callTool({ name: tool, arguments: args }); return { text: r.content[0].text as string, isError: !!r.isError };
@@ -97,12 +97,6 @@ test('read-only and discussions-only connections have neither tool; read-only br
   for (const tool of ['set_project_area', 'record_lesson']) assert.ok(!(await disc.tools()).includes(tool), tool);
 });
 
-test('work mode has both tools', async () => {
-  const { connect } = setup();
-  const w = await connect('Claude Code', { mode: 'work' });
-  for (const tool of ['set_project_area', 'record_lesson']) assert.ok((await w.tools()).includes(tool), tool);
-});
-
 test('an idea has five_areas null in its brief', async () => {
   const { connect, registry } = setup();
   registry.create('someday', { state: 'idea', area: 'apps' }, 'owner');
@@ -111,15 +105,12 @@ test('an idea has five_areas null in its brief', async () => {
   assert.equal(brief.five_areas, null);
 });
 
-test('both instruction sets explain the learning rule, numbered in order; work mode says to set safe by hand', async () => {
-  const { SERVER_INSTRUCTIONS, WORK_INSTRUCTIONS } = await import('./instructions.js');
-  for (const text of [SERVER_INSTRUCTIONS, WORK_INSTRUCTIONS]) {
-    assert.match(text, /\d+\. Learning: the owner is learning to work like a developer/);
-    assert.match(text, /Interrupt the current work only for a real risk/);
-    const numbers = [...text.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
-    assert.deepEqual(numbers, numbers.map((_, i) => i + 1), 'items numbered 1, 2, 3… with no gap');
-  }
-  assert.match(WORK_INSTRUCTIONS, /There is no folder report here: check the repository yourself and set safe by hand\./);
+test('the instructions explain the learning rule, numbered in order', async () => {
+  const { SERVER_INSTRUCTIONS } = await import('./instructions.js');
+  assert.match(SERVER_INSTRUCTIONS, /\d+\. Learning: the owner is learning to work like a developer/);
+  assert.match(SERVER_INSTRUCTIONS, /Interrupt the current work only for a real risk/);
+  const numbers = [...SERVER_INSTRUCTIONS.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
+  assert.deepEqual(numbers, numbers.map((_, i) => i + 1), 'items numbered 1, 2, 3… with no gap');
   assert.doesNotMatch(SERVER_INSTRUCTIONS, /There is no folder report here/);
 });
 
@@ -143,10 +134,7 @@ test('review M2: a refused record_lesson saves nothing, not even the handbook pr
   assert.equal(registry.get('developer-handbook'), undefined);
 });
 
-test('review I6 and M14: work mode keeps company data out of handbook pages; both say to explain less and hand steps over', async () => {
-  const { SERVER_INSTRUCTIONS, WORK_INSTRUCTIONS } = await import('./instructions.js');
-  assert.match(WORK_INSTRUCTIONS, /Handbook pages hold only the general lesson: no financial figures, account numbers, colleagues' names or company data\./);
-  for (const text of [SERVER_INSTRUCTIONS, WORK_INSTRUCTIONS]) {
-    assert.match(text, /Use each topic's level to explain less each time, and once the owner has done a step with you, suggest they try it themselves/);
-  }
+test('review M14: the instructions say to explain less and hand steps over', async () => {
+  const { SERVER_INSTRUCTIONS } = await import('./instructions.js');
+  assert.match(SERVER_INSTRUCTIONS, /Use each topic's level to explain less each time, and once the owner has done a step with you, suggest they try it themselves/);
 });

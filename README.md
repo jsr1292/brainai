@@ -22,14 +22,21 @@ server later without losing a memory.
 
 | | Suits | Needs | Guide |
 |---|---|---|---|
-| **Your computer** | Trying it, or using it from the apps on one computer | A Mac with Apple silicon, or Windows 10/11 (x64, test build) | `docs/DESKTOP.md` |
+| **Your computer** | Trying it, or using it from the apps on one computer | A Mac with Apple silicon, or Windows 10/11 (x64) | `docs/DESKTOP.md` |
 | **A home server** | Every assistant, on the web and the phone, all the time | A Linux machine that stays on, Docker, a domain on Cloudflare | [Quick start](#on-a-server-quick-start) below, `docs/RUNBOOK.md` |
 | **A cloud server** | The same, without a machine at home | A small rented Linux server, Docker, a domain on Cloudflare | `docs/CLOUD.md` |
 
-- **Your computer:** the Mac app runs BrainAI with no server, no domain and no password, and connects Claude Code,
-  Codex, OpenCode and Cursor in one click each. *Reach from phone and web* adds a public address (through Tailscale,
-  or your own domain on Cloudflare) while the Mac is on. For now you build the app yourself from `desktop/`; a
-  signed download comes with its first release. A Windows build exists, but it is still being tested.
+- **Your computer:** the app runs BrainAI with no server, no domain and no password, and connects Claude Code,
+  Codex, OpenCode, Cursor and Claude's desktop app in one click each. *Reach from phone and web* adds a public address (through Tailscale,
+  or your own domain on Cloudflare) while the Mac is on. The Mac app is about 281 MiB: it does not carry the search
+  models. On first run it suggests models for your computer and downloads the ones you pick (change them later in
+  Settings › Search). It tells you when a new version is out and updates itself when you say so.
+
+  **Get the app** from the [latest release](https://github.com/jsr1292/brainai/releases/latest):
+  - **Mac (Apple silicon):** open the `.dmg` and drag BrainAI to Applications.
+  - **Windows 10/11:** run the `…-setup.exe`. Windows asks once about an unknown publisher: **More info › Run anyway**.
+    Or, in PowerShell, one line that checks the download first:
+    `irm https://github.com/jsr1292/brainai/releases/latest/download/install-app.ps1 | iex`
 - **A server** keeps BrainAI reachable all the time. *Move to a server* in the app takes every memory there
   (`docs/RUNBOOK.md`, "Moving from the app").
 
@@ -52,7 +59,7 @@ server later without losing a memory.
 - **Shared skills:** share a skill from one computer and your other assistants can load it.
 - **Backups that leave the house:** nightly snapshots to your other drives, a nightly Markdown export into git, and a
   weekly encrypted copy in the cloud.
-- **A work copy:** a separate brain for a work laptop, sharing nothing with home (`docs/WORK.md`).
+- **You can leave any time, with everything:** one saved folder with every memory, readable and ready to bring back.
 
 ## A look around
 
@@ -113,6 +120,24 @@ Before any change to the database, BrainAI copies it to `data/pre-migrate/`. Set
 the version you run, and `CHANGELOG.md` says what changed and whether anything is needed from you. If an app's setup
 text changed, Settings tells you which apps to update.
 
+## Leaving BrainAI
+
+Settings › **Save a copy of everything** saves your memories whenever you like. In the app it makes a folder in your
+Documents. On a server, the dashboard asks for your authenticator code and downloads it as a `.tar.gz`. The folder
+holds one file BrainAI can read back, every page and fact as Markdown, and a README. It is not encrypted: keep it
+private.
+
+- **The app:** Settings › **Remove BrainAI**. It saves a copy first and stops if that fails. Then it turns Reach off,
+  disconnects your coding tools, deletes its own data and removes itself. The saved folder stays.
+- **A server:** `scripts/remove.sh` in the BrainAI folder. It saves a copy to your home folder, lists what it will
+  remove, and waits until you type `remove`. Copies outside the server (Google Drive, other drives) are kept unless you
+  say yes to each one.
+- **Coming back:** on a new install the app's welcome offers **I have a saved BrainAI folder**. On a server, run
+  `docker compose run --rm app node dist/cli.js restore data/<file>` (`docs/RUNBOOK.md`).
+
+Some things BrainAI cannot remove for you, such as the connectors in Claude, ChatGPT and Grok on the web. The removal
+ends with a checklist of them, and the saved folder's README keeps it.
+
 ## Your own settings: the overlay
 
 Anything personal lives in `overlay/`, which is never committed and never touched by an update. Start from
@@ -128,7 +153,6 @@ Anything personal lives in `overlay/`, which is never committed and never touche
 
 - `docs/RUNBOOK.md`: install, run, back up, restore and update.
 - `docs/CLIENTS.md`: connecting each app.
-- `docs/WORK.md`: the separate work copy.
 - `docs/DESKTOP.md`: the desktop app (Mac, and Windows in testing): connecting your tools, Reach from phone and web,
   moving to a server.
 - `docs/CLOUD.md`: running BrainAI on a rented server.

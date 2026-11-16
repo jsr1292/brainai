@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { profileFor } from './memory/embeddingProfile.js';
+import { writeChoice } from './models/choice.js';
 import { DEFAULT_BACKUP_KEEP, DEFAULT_DUPLICATE_THRESHOLD, DEFAULT_MIN_RECALL_SIMILARITY, DEFAULT_RECALL_CONFIDENT_SIMILARITY, DEFAULT_RECALL_WINDOW, loadConfig } from './config.js';
 
 test('loadConfig requires https PUBLIC_URL except localhost', () => {
@@ -68,21 +72,28 @@ test('a search setting left empty (an uncommented line of .env.example) means th
 
 test('loadConfig defaults suit a stranger: this machine only, no tunnel header trusted, no backups (the Docker image and the owner set the rest)', () => {
   const c = loadConfig({ PUBLIC_URL: 'https://memory.example.com' });
-  assert.deepEqual([c.mode, c.host, c.trustCfConnectingIp, c.backupDir, c.backupKeep], ['personal', '127.0.0.1', false, null, DEFAULT_BACKUP_KEEP]);
+  assert.deepEqual([c.host, c.trustCfConnectingIp, c.backupDir, c.backupKeep], ['127.0.0.1', false, null, DEFAULT_BACKUP_KEEP]);
   const tunnel = loadConfig({ PUBLIC_URL: 'https://memory.example.com', HOST: '0.0.0.0', TRUST_CF_CONNECTING_IP: 'true' });
   assert.deepEqual([tunnel.host, tunnel.trustCfConnectingIp], ['0.0.0.0', true]);
 });
 
-test('loadConfig work mode listens on the laptop only and ignores the tunnel header', () => {
-  const c = loadConfig({ PUBLIC_URL: 'http://localhost:3100', MEMORY_MODE: 'work', BACKUP_DIR: 'C:/Backups', BACKUP_KEEP: '7' });
-  assert.deepEqual([c.mode, c.host, c.trustCfConnectingIp, c.backupDir, c.backupKeep], ['work', '127.0.0.1', false, 'C:/Backups', 7]);
-  const o = loadConfig({ PUBLIC_URL: 'http://localhost:3100', MEMORY_MODE: 'work', HOST: '0.0.0.0', TRUST_CF_CONNECTING_IP: 'true' });
-  assert.deepEqual([o.host, o.trustCfConnectingIp], ['0.0.0.0', true]);
+test('BrainAI has one mode: MEMORY_MODE=work stops the start with where the move steps are', () => {
+  const base = { PUBLIC_URL: 'http://localhost:3100' };
+  assert.throws(() => loadConfig({ ...base, MEMORY_MODE: 'work' }), (e: Error) => e.message.includes('was removed') && e.message.includes('docs/DESKTOP.md'));
+  assert.throws(() => loadConfig({ ...base, MEMORY_MODE: 'office' }), /was removed/);
+  // Unset or personal loads as before, and the loaded settings carry no mode.
+  for (const env of [base, { ...base, MEMORY_MODE: 'personal' }]) {
+    const c = loadConfig(env);
+    assert.equal('mode' in c, false);
+    assert.deepEqual([c.host, c.trustCfConnectingIp], ['127.0.0.1', false]);
+  }
+  // A backup folder needs no mode.
+  const b = loadConfig({ ...base, BACKUP_DIR: 'C:/Backups', BACKUP_KEEP: '7' });
+  assert.deepEqual([b.backupDir, b.backupKeep], ['C:/Backups', 7]);
 });
 
-test('loadConfig rejects a bad MEMORY_MODE, TRUST_CF_CONNECTING_IP or BACKUP_KEEP', () => {
+test('loadConfig rejects a bad TRUST_CF_CONNECTING_IP or BACKUP_KEEP', () => {
   const base = { PUBLIC_URL: 'https://memory.example.com' };
-  assert.throws(() => loadConfig({ ...base, MEMORY_MODE: 'office' }), /MEMORY_MODE/);
   assert.throws(() => loadConfig({ ...base, TRUST_CF_CONNECTING_IP: 'yes' }), /TRUST_CF_CONNECTING_IP/);
   assert.throws(() => loadConfig({ ...base, BACKUP_KEEP: '0' }), /BACKUP_KEEP/);
 });
@@ -130,4 +141,22 @@ test('loadConfig: recall reranks unless RERANK=off; any other value is refused',
   assert.equal(loadConfig({ ...base, RERANK: 'on' }).rerank, true);
   assert.equal(loadConfig({ ...base, RERANK: 'off' }).rerank, false);
   assert.throws(() => loadConfig({ ...base, RERANK: 'maybe' }), /RERANK/);
+});
+
+test('the app (LOCAL_MODE) keeps its models in the data folder and takes its search model from models.json', () => {
+  const data = mkdtempSync(join(tmpdir(), 'cfg-'));
+  const base = { PUBLIC_URL: 'http://localhost:3100', PORT: '3100', LOCAL_MODE: 'true', DATA_DIR: data };
+  assert.equal(loadConfig(base).modelDir, join(data, 'models'), 'MODEL_DIR defaults to <data>/models in the app');
+  assert.equal(loadConfig({ ...base, MODEL_DIR: '/m' }).modelDir, '/m');
+  assert.equal(loadConfig(base).modelChoice, null, 'no models.json yet');
+  writeChoice(data, { search: 'e5', rerank: null });
+  const c = loadConfig(base);
+  assert.deepEqual(c.modelChoice, { search: 'e5', rerank: null });
+  assert.equal(c.embedModel.id, 'e5');
+  assert.equal(c.duplicateThreshold, profileFor('e5').duplicate, 'the cut-offs are the chosen model\'s');
+  // A server (Docker) never reads models.json: EMBED_MODEL and RERANK in .env decide.
+  const server = loadConfig({ PUBLIC_URL: 'https://m.example.com', DATA_DIR: data });
+  assert.equal(server.modelChoice, null);
+  assert.equal(server.embedModel.id, 'gemma');
+  assert.equal(server.modelDir, './models');
 });

@@ -22,8 +22,6 @@ export interface BuildSources {
   registry: ProjectStore;
   folders: FolderSource;
   grants: () => { clientName: string; createdAt: string }[];
-  /** False in work mode, which has no Growth. */
-  growth: boolean;
 }
 
 /** A finished week: late means due before the next Monday, "due after" runs to the Sunday after. */
@@ -209,12 +207,9 @@ export function buildReview(src: BuildSources, w: ReviewWindow): ReviewBody {
   const decisions = src.memories.createdBetween(w.start, w.end).filter((m) => m.kind === 'decision' && !isStatus(m))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((m) => m.id);
 
-  let growth: ReviewBody['growth'] = null;
-  if (src.growth) {
-    const best = (kind: 'strength' | 'improve') => src.reviews.evidenceAdded(start, end).filter((e) => e.kind === kind)
-      .sort((a, b) => b.count - a.count || b.latest.localeCompare(a.latest))[0]?.observationId ?? null;
-    growth = { strength: best('strength'), improve: best('improve'), finished, started };
-  }
+  const best = (kind: 'strength' | 'improve') => src.reviews.evidenceAdded(start, end).filter((e) => e.kind === kind)
+    .sort((a, b) => b.count - a.count || b.latest.localeCompare(a.latest))[0]?.observationId ?? null;
+  const growth: ReviewBody['growth'] = { strength: best('strength'), improve: best('improve'), finished, started };
 
   const digest = weeklyDigest(src.memories, { monday: w.monday, start: w.start, end: w.end }, { grants: src.grants(), waiting: 0 });
   const safety: SafetyFlag[] = digest.flags.flatMap((f): SafetyFlag[] => (f.kind === 'connected' ? [{ kind: 'connected', client: f.client, at: f.at }]

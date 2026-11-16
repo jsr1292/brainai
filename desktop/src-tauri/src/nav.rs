@@ -68,6 +68,32 @@ pub fn is_goodbye(url: &str, port: u16) -> bool {
     url == format!("http://localhost:{port}/app/goodbye")
 }
 
+/// BrainAI's removed page: the window going there means "finish removing BrainAI from this computer" (the server has
+/// already taken the tools and the hooks out and saved a copy). Exact match, like the goodbye page.
+pub fn is_removed(url: &str, port: u16) -> bool {
+    url == format!("http://localhost:{port}/app/removed")
+}
+
+/// BrainAI's restart page, where the server sends the window after it staged an import: the app stops the server and
+/// starts it again, so the staged copy is swapped in at startup.
+pub fn is_restart(url: &str, port: u16) -> bool {
+    url == format!("http://localhost:{port}/app/restart")
+}
+
+/// The update card's Update and restart: the app downloads, checks, backs up, installs and reopens (plan 2). Exact
+/// match, like the restart page: Later (`/app/update/later`) and the card's progress (`/app/update/state`) are the
+/// server's own.
+pub fn is_update(url: &str, port: u16) -> bool {
+    url == format!("http://localhost:{port}/app/update")
+}
+
+/// Whether the window is on Home (any query or fragment): the only page the shell reloads to show the update card.
+pub fn is_home(url: &str, port: u16) -> bool {
+    let Some(rest) = url.strip_prefix(&format!("http://localhost:{port}")) else { return false };
+    let path = rest.split(['?', '#']).next().unwrap_or("");
+    path.is_empty() || path == "/"
+}
+
 /// What to do with start at login when the app starts.
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoginAction {
@@ -96,6 +122,32 @@ pub fn goodbye_text(windows: bool) -> &'static str {
     }
 }
 
+/// The app's last words after removing itself.
+pub fn removed_text(windows: bool) -> String {
+    format!("BrainAI is removed from this {}. Your saved copy is where the last page said.", if windows { "PC" } else { "Mac" })
+}
+
+/// The question before removing (any link can lead the window to /app/removed, so the owner is always asked).
+pub fn remove_confirm_text(windows: bool, folder: &str) -> String {
+    format!("Remove BrainAI from this {}? Your saved copy is at {folder}.", if windows { "PC" } else { "Mac" })
+}
+
+/// Said instead, and nothing touched, when the server does not confirm a removal with a saved copy.
+pub const NOT_SAVED: &str = "BrainAI can't confirm a saved copy for this removal, so nothing was removed. Run Remove BrainAI again from Settings.";
+
+/// The `.app` bundle a Mac executable lives in: `/Applications/BrainAI.app` for `/Applications/BrainAI.app/Contents/MacOS/brainai`.
+pub fn app_bundle(exe: &str) -> Option<&str> {
+    let end = exe.rfind(".app/Contents/")? + ".app".len();
+    Some(&exe[..end])
+}
+
+/// What removing BrainAI deletes inside its data folder, entry by entry, while the app is still running. On Windows
+/// the window's WebView2 keeps its own data (`EBWebView`) open there, so that one entry is left to the detached
+/// command that runs after the app has exited; everything else (the database first of all) goes at once.
+pub fn deletable_now(entry: &str, windows: bool) -> bool {
+    !(windows && entry.eq_ignore_ascii_case("EBWebView"))
+}
+
 /// The window's link: a fresh one-time ticket, and the page to land on.
 pub fn open_url(port: u16, ticket: &str, next: &str) -> String {
     format!("http://localhost:{port}/app/open?ticket={ticket}&next={}", percent_encode(next))
@@ -110,6 +162,28 @@ pub fn install_location_ok(exe: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_and_restart_is_only_the_apps_own_update_address() {
+        assert!(is_update("http://localhost:3100/app/update", 3100));
+        assert!(!is_update("http://localhost:3100/app/update/later", 3100), "Later is the server's own form");
+        assert!(!is_update("http://localhost:3100/app/update?x", 3100), "a query string");
+        assert!(!is_update("http://localhost:3101/app/update", 3100), "another port");
+        assert!(!is_update("http://127.0.0.1:3100/app/update", 3100), "another host");
+        assert!(!is_update("http://localhost:3100/app/updater", 3100), "a look-alike");
+        assert!(!is_update("http://localhost:3100/app/update/state", 3100));
+        assert!(!is_update("https://evil.example/app/update", 3100));
+    }
+
+    #[test]
+    fn only_a_window_on_home_is_reloaded_for_the_update_card() {
+        for home in ["http://localhost:3100/", "http://localhost:3100/?x=1", "http://localhost:3100/#top", "http://localhost:3100"] {
+            assert!(is_home(home, 3100), "{home}");
+        }
+        for other in ["http://localhost:3100/pages/abc", "http://localhost:3100/settings", "http://localhost:3100/app/update", "http://localhost:3101/", "http://127.0.0.1:3100/", "tauri://localhost/index.html", "https://example.com/"] {
+            assert!(!is_home(other, 3100), "{other}");
+        }
+    }
 
     #[test]
     fn start_at_login_follows_the_owners_choice_even_after_an_installer_removed_it() {
@@ -136,6 +210,46 @@ mod tests {
         assert!(!is_goodbye("http://localhost:3100/app/goodbye/x", 3100));
         assert!(!is_goodbye("http://localhost:3100/app/goodbyes", 3100));
         assert!(!is_goodbye("https://evil.example/app/goodbye", 3100));
+    }
+
+    #[test]
+    fn removed_and_restart_addresses_are_only_ours() {
+        for (check, page) in [(is_removed as fn(&str, u16) -> bool, "removed"), (is_restart, "restart")] {
+            assert!(check(&format!("http://localhost:3100/app/{page}"), 3100));
+            assert!(!check(&format!("http://localhost:3101/app/{page}"), 3100), "another port");
+            assert!(!check(&format!("http://localhost:3100/app/{page}?x=1"), 3100), "a query string");
+            assert!(!check(&format!("http://127.0.0.1:3100/app/{page}"), 3100), "another host");
+            assert!(!check(&format!("http://localhost:3100/app/{page}/x"), 3100));
+            assert!(!check(&format!("https://evil.example/app/{page}"), 3100));
+        }
+        assert!(!is_removed("http://localhost:3100/app/restart", 3100));
+        assert!(!is_restart("http://localhost:3100/app/removed", 3100));
+        assert!(removed_text(false).contains("this Mac") && removed_text(true).contains("this PC"));
+    }
+
+    #[test]
+    fn removing_asks_first_and_names_the_saved_copy() {
+        assert_eq!(
+            remove_confirm_text(false, "/Users/alex/Documents/BrainAI saved 2026-11-12"),
+            "Remove BrainAI from this Mac? Your saved copy is at /Users/alex/Documents/BrainAI saved 2026-11-12."
+        );
+        assert!(remove_confirm_text(true, r"C:\Users\alex\Documents\BrainAI saved 2026-11-12").starts_with("Remove BrainAI from this PC? "));
+        assert_eq!(NOT_SAVED, "BrainAI can't confirm a saved copy for this removal, so nothing was removed. Run Remove BrainAI again from Settings.");
+    }
+
+    #[test]
+    fn the_webview_folder_is_left_for_after_exit_on_windows_only() {
+        assert!(!deletable_now("EBWebView", true));
+        assert!(deletable_now("EBWebView", false));
+        assert!(deletable_now("memory.db", true));
+        assert!(deletable_now("logs", true));
+    }
+
+    #[test]
+    fn the_bundle_to_trash_is_the_app_the_executable_is_in() {
+        assert_eq!(app_bundle("/Applications/BrainAI.app/Contents/MacOS/brainai"), Some("/Applications/BrainAI.app"));
+        assert_eq!(app_bundle("/Users/a/My.app Files/BrainAI.app/Contents/MacOS/brainai"), Some("/Users/a/My.app Files/BrainAI.app"));
+        assert_eq!(app_bundle("/usr/local/bin/brainai"), None);
     }
 
     #[test]

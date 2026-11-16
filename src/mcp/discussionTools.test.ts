@@ -4,7 +4,6 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { DiscussionService } from '../discussions/service.js';
 import { DiscussionStore } from '../discussions/store.js';
-import type { Mode } from '../config.js';
 import type { Access } from '../discussions/types.js';
 import { ProjectStore } from '../projects/store.js';
 import { NoteService } from '../pages/notes.js';
@@ -14,7 +13,7 @@ import { buildMcpServer } from './server.js';
 
 const TOOLS = ['close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'open_discussion', 'project_brief', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'whats_left', 'write_page'];
 
-function setup(opts: { askCommands?: Record<string, string>; mode?: Mode } = {}) {
+function setup(opts: { askCommands?: () => Record<string, string>; localMode?: boolean } = {}) {
   const given = makeService();
   const { service, db } = given;
   const growth = makeGrowth(given);
@@ -172,7 +171,7 @@ test('a discussions-only connection gets the same answer for a discussion hidden
 const ASK = { 'Grok Build': 'grok -p "{prompt}" --always-approve', codex: 'codex exec "{prompt}"', 'Claude Code': 'claude -p "{prompt}"' };
 
 test('an opener with no command of its own (a chat app, which cannot run commands) is asked to tell the owner instead', async () => {
-  const { connect } = setup({ askCommands: ASK });
+  const { connect } = setup({ askCommands: () => ASK });
   const chat = await connect('ChatGPT');
   const opened = await chat.call('open_discussion', { title: 'T', question: 'Q?', model: 'GPT', ask: ['Grok Build'] });
   assert.match(opened.text, /^Opened discussion \w+\. Tell the owner they can ask the others: /);
@@ -180,7 +179,7 @@ test('an opener with no command of its own (a chat app, which cannot run command
 });
 
 test('the opener is never given its own command, even once its reply has put it on the ask list', async () => {
-  const { connect } = setup({ askCommands: ASK });
+  const { connect } = setup({ askCommands: () => ASK });
   const a = await connect('Claude Code');
   const codex = await connect('Codex');
   const opened = await a.call('open_discussion', { title: 'T', question: 'Q?', model: 'Opus', ask: ['Codex', 'claude-code'] });
@@ -195,7 +194,7 @@ test('the opener is never given its own command, even once its reply has put it 
 });
 
 test('ask names match connection names ignoring case, spaces and hyphens, so a round still completes', async () => {
-  const { connect } = setup({ askCommands: ASK });
+  const { connect } = setup({ askCommands: () => ASK });
   const codex = await connect('Codex');
   const claude = await connect('Claude Code');
   const id = idOf((await codex.call('open_discussion', { title: 'T', question: 'Q?', model: 'GPT', ask: ['claude-code'] })).text);
@@ -206,7 +205,7 @@ test('ask names match connection names ignoring case, spaces and hyphens, so a r
 
 
 test('with ask commands, the opener is told to give its view first and then run one command per asked assistant', async () => {
-  const { connect } = setup({ askCommands: ASK });
+  const { connect } = setup({ askCommands: () => ASK });
   const a = await connect('Claude Code');
   const opened = await a.call('open_discussion', { title: 'T', question: 'Q?', model: 'Opus', ask: ['grok-build', 'Codex', 'Claude'] });
   const id = idOf(opened.text);
@@ -221,7 +220,7 @@ test('with ask commands, the opener is told to give its view first and then run 
 });
 
 test('the opener reading the discussion gets commands only for those still to reply, the round-2 prompt, and finally a report step', async () => {
-  const { connect } = setup({ askCommands: ASK });
+  const { connect } = setup({ askCommands: () => ASK });
   const a = await connect('Claude Code');
   const grok = await connect('Grok Build');
   const codex = await connect('Codex');
@@ -245,13 +244,9 @@ test('the opener reading the discussion gets commands only for those still to re
   assert.match(done, /Everyone asked has replied in round 2\. Tell the owner where you agree, where you differ and what you recommend; the owner decides, or starts another round on the dashboard\./);
 });
 
-test('without ask commands nothing changes for the opener; in work mode the prompts name the work memory', async () => {
+test('without ask commands nothing changes for the opener', async () => {
   const plainOpen = await (await setup().connect('Claude Code')).call('open_discussion', { title: 'T', question: 'Q?', model: 'Opus', ask: ['Grok Build'] });
   assert.match(plainOpen.text, /^Opened discussion \w+\. Tell the owner they can ask the others: /);
-  const work = await setup({ askCommands: ASK, mode: 'work' }).connect('Claude Code');
-  assert.deepEqual((await work.client.listTools()).tools.map((t) => t.name).sort(), TOOLS.filter((t) => t !== 'note_observation'));
-  const opened = await work.call('open_discussion', { title: 'T', question: 'Q?', model: 'Opus', ask: ['Codex'] });
-  assert.match(opened.text, /codex exec "Read the work-memory discussion with id \w+, give your own view/);
 });
 
 test('a discussions-only connection has no note_observation tool, and calling it stores nothing', async () => {
@@ -292,4 +287,24 @@ test('a discussions-only assistant cannot open a discussion hidden from itself: 
   // Leaving it out, or true, opens one it can read.
   const id = idOf((await g.call('open_discussion', { title: 'Plain', question: 'Q?', model: 'Grok 5', include_discussions_only: true })).text);
   assert.equal((await g.call('read_discussion', { id, model: 'Grok 5' })).isError, false);
+});
+
+test('the commands are read when each session starts: a new map between two sessions reaches the second opener', async () => {
+  let commands: Record<string, string> = { 'Claude Code': 'claude -p "{prompt}"' };
+  const { connect } = setup({ askCommands: () => commands });
+  const first = await connect('Claude Code');
+  const a = await first.call('open_discussion', { title: 'T', question: 'Q?', model: 'Opus', ask: ['Codex'] });
+  assert.doesNotMatch(a.text, /codex exec/);
+  commands = { ...commands, Codex: 'codex exec "{prompt}"' };
+  const second = await connect('Claude Code');
+  const b = await second.call('open_discussion', { title: 'T2', question: 'Q?', model: 'Opus', ask: ['Codex'] });
+  assert.match(b.text, /- Codex: codex exec /);
+});
+
+test('in local mode the discussion texts name the memory brainai', async () => {
+  const { connect } = setup({ localMode: true });
+  const chat = await connect('ChatGPT');
+  const opened = await chat.call('open_discussion', { title: 'T', question: 'Q?', model: 'GPT' });
+  assert.match(opened.text, /Read the brainai discussion with id/);
+  assert.doesNotMatch(opened.text, /shared-memory/);
 });

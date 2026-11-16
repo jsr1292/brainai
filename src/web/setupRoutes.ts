@@ -10,8 +10,7 @@ import { setupPage, setupStatusLine } from './setupViews.js';
 export function setupRoutes(d: AppDeps, refused: RefusedRedirects): Router {
   const router = Router();
   const owner = requireOwner(d.sessions);
-  const mode = d.mode ?? 'personal';
-  const appOf = (slug: string) => setupApps(mode).find((a) => a.slug === slug);
+  const appOf = (slug: string) => setupApps().find((a) => a.slug === slug);
   const missing = (res: Response) => res.status(404).type('html').send(page('Not found', html`<h1>Not found</h1><p>No setup page for that app.</p>`, { tab: null }));
 
   router.get('/settings/setup/:app', owner, (req, res) => {
@@ -23,7 +22,7 @@ export function setupRoutes(d: AppDeps, refused: RefusedRedirects): Router {
     const v = currentSetupVersion(d.setupOverlay);
     // An address allowed since (here, another page or the terminal) leaves the list.
     const allow = { allowed: (app.allow ?? []).every((e) => d.allowlist.isAllowed(e)), refused: refused.list().filter((r) => !d.allowlist.isAllowed(r.uri)) };
-    res.type('html').send(page(`Set up ${app.name}`, setupPage(app, setupText(app.slug, mode, mcpUrl, d.setupOverlay), mcpUrl, setupStatusLine(app, d.provider.listGrants(), v), v, allow),
+    res.type('html').send(page(`Set up ${app.name}`, setupPage(app, setupText(app.slug, mcpUrl, d.setupOverlay), mcpUrl, setupStatusLine(app, d.provider.listGrants(), v), v, allow),
       { nav: true, tab: null, back: { href: '/settings#connections', label: 'Settings' } }));
   });
 

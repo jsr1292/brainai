@@ -10,8 +10,6 @@ import { missingPictures } from '../backup.js';
 import { viaDoor } from '../desktop/publicDoor.js';
 import { deleteMoveFile, makeMoveFile, movedTo, moveFile, serverAddress, setMoved } from '../desktop/move.js';
 import { reachOff } from './reachRoutes.js';
-import { disconnect, toolStates } from '../desktop/tools.js';
-import { toolEnv } from './desktopRoutes.js';
 import { html } from './html.js';
 import type { AppDeps } from './app.js';
 import { requireOwner } from './authRoutes.js';
@@ -81,19 +79,11 @@ export function moveRoutes(d: AppDeps): Router {
     back(res, null);
   });
 
-  // After a move: the tools pointed at this Mac are disconnected (a tool on another BrainAI is left alone), then the
-  // window goes to the goodbye page, where the app stops starting at login and quits. The data folder stays.
-  router.post('/settings/move/remove', here, owner, async (_req, res, next) => {
+  // After a move, Remove BrainAI does the whole removal (the saved copy, the tools, the leftovers). The old button, and
+  // /app/goodbye below for windows that already show it, keep working.
+  router.post('/settings/move/remove', here, owner, (_req, res, next) => {
     if (!movedTo(dataDir)) return next();
-    const env = toolEnv(d);
-    if (env) {
-      for (const tool of await toolStates(env)) {
-        if (tool.state !== 'connected') continue;
-        const r = await disconnect(tool.id, env);
-        if (!r.ok) console.error(`disconnecting ${tool.name} failed: ${r.reason}`);
-      }
-    }
-    res.redirect(303, '/app/goodbye');
+    res.redirect(303, '/settings/remove');
   });
 
   router.get('/app/goodbye', here, (_req, res, next) => {

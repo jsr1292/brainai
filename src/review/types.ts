@@ -40,7 +40,7 @@ export interface ReviewBody {
   projects: ProjectWeek[];
   /** Memory ids, newest first. */
   decisions: string[];
-  /** Null in work mode. */
+  /** Null in a week stored without its growth part. */
   growth: { strength: string | null; improve: string | null; finished: number; started: number } | null;
   digest: { totals: Tally; writers: WriterTally[]; lookupsSince: string | null };
   safety: SafetyFlag[];

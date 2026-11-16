@@ -1,6 +1,6 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connectClient, loggedIn, startTestApp } from '../testing/helpers.js';
@@ -99,17 +99,6 @@ test('revoking a client returns to /settings#connections, and logging out a devi
   const other = app.deps.sessions.list().find((s) => /iPhone/.test(s.userAgent ?? ''))!;
   const out = await f(`/sessions/${other.id}/revoke`, { method: 'POST' });
   assert.equal(out.headers.get('location'), '/settings#login');
-});
-
-test('work mode Settings has no off-site line and keeps the work access choices', async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), 'settings-work-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const { app, f } = await start(t, { mode: 'work', statusDir: dir });
-  await connectClient(app.baseUrl, f, 'Codex');
-  const body = await (await f('/settings')).text();
-  assert.doesNotMatch(body, /Off-site/);
-  assert.doesNotMatch(body, /Discussions only/);
-  assert.match(body, /Codex/);
 });
 
 test('health shows how many facts and projects the brain holds', async (t) => {
@@ -258,8 +247,8 @@ test('the pictures sentence and the Review line are each one run of text, so the
   assert.match(b, /<p class="meta"><span>1 picture no current page shows <a href="\/settings\/pictures">Review<\/a><\/span><\/p>/);
 });
 
-test('in work mode, with no nightly status at all, unused pictures still lead to Review', async (t) => {
-  const { app, f } = await start(t, { mode: 'work' });
+test('with no nightly status at all, unused pictures still lead to Review', async (t) => {
+  const { app, f } = await start(t);
   const fx = await import('../testing/imageFixtures.js');
   app.deps.images.add(await fx.pngWithText(), { alt: 'Screenshot with a secret', by: 'Codex' });
   const b = await (await f('/settings')).text();
@@ -339,12 +328,6 @@ test('a setup number newer than the brain knows is unknown, never up to date', a
   assert.doesNotMatch(row, /up to date/);
 });
 
-test('in the work brain a connection named like a personal-only app links to the setup list, not a 404', async (t) => {
-  const { app, f } = await start(t, { mode: 'work' });
-  await connectClient(app.baseUrl, f, 'Claude');
-  assert.match(connRow(await (await f('/settings')).text(), 'Claude'), /<a href="\/settings#setup">Paste the setup text<\/a>/);
-});
-
 test('a style rule keeps Copy beside its text and underlines the setup links', () => {
   const css = readFileSync(new URL('./static/style.css', import.meta.url), 'utf8');
   assert.match(css, /\.copy-box \{ display: flex;/);
@@ -364,4 +347,69 @@ test('Backups and health shows the brain version and the database version (O1)',
   const { BRAIN_VERSION } = await import('../version.js');
   assert.match(BRAIN_VERSION, /^\d+\.\d+\.\d+$/);
   assert.match(await (await f('/settings')).text(), new RegExp(`BrainAI ${BRAIN_VERSION.replace(/\./g, '\\.')} · database \\d+`));
+});
+
+async function startApp(t: TestContext, opts: { localMode: boolean }) {
+  const dir = mkdtempSync(join(tmpdir(), 'settings-copy-'));
+  const home = mkdtempSync(join(tmpdir(), 'settings-home-'));
+  t.after(() => { rmSync(dir, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
+  const app = await startTestApp({ localMode: opts.localMode, statusDir: dir, tools: { home, path: '/usr/bin' } });
+  t.after(() => app.close());
+  return { dir, home, f: await loggedIn(app) };
+}
+
+test('Backups offers a second folder in the app only', async (t) => {
+  const local = await startApp(t, { localMode: true });
+  const page = await (await local.f('/settings')).text();
+  assert.match(page, /Also keep the daily backups in/);
+  assert.match(page, /It keeps the newest 14 memory-….db files there and removes older ones; nothing else in the folder is touched\./);
+  const server = await startApp(t, { localMode: false });
+  assert.doesNotMatch(await (await server.f('/settings')).text(), /Also keep the daily backups in/);
+  assert.equal((await server.f('/settings/backup-copy', form({ action: 'save', folder: '/tmp' }))).status, 404);
+});
+
+test('a second backup folder that is missing, or inside the data folder, is refused', async (t) => {
+  const { dir, home, f } = await startApp(t, { localMode: true });
+  for (const folder of [join(home, 'no-such-folder'), 'relative/dir', join(dir, 'inner')]) {
+    mkdirSync(join(dir, 'inner'), { recursive: true });
+    const res = await f('/settings/backup-copy', form({ action: 'save', folder }));
+    assert.equal(res.status, 400, folder);
+  }
+  assert.equal(existsSync(join(dir, 'backup-copy.json')), false);
+  assert.match(await (await f('/settings/backup-copy', form({ action: 'save', folder: join(home, 'no-such-folder') }))).text(), /doesn&#39;t exist/);
+});
+
+test('a second backup folder is saved, shown, and turned off', async (t) => {
+  const { dir, home, f } = await startApp(t, { localMode: true });
+  const folder = join(home, 'Spare');
+  mkdirSync(folder);
+  assert.equal((await f('/settings/backup-copy', { ...form({ action: 'save', folder }), redirect: 'manual' })).status, 303);
+  assert.match(readFileSync(join(dir, 'backup-copy.json'), 'utf8'), /Spare/);
+  assert.match(await (await f('/settings')).text(), /value="[^"]*Spare"/);
+  await f('/settings/backup-copy', { ...form({ action: 'off' }), redirect: 'manual' });
+  assert.equal(existsSync(join(dir, 'backup-copy.json')), false);
+});
+
+test('a synced folder asks before it is kept', async (t) => {
+  const { dir, home, f } = await startApp(t, { localMode: true });
+  const folder = join(home, 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'Spare');
+  mkdirSync(folder, { recursive: true });
+  const asked = await (await f('/settings/backup-copy', form({ action: 'save', folder }))).text();
+  assert.match(asked, /This folder syncs to iCloud: every memory will be stored there in clear text\./);
+  assert.match(asked, /Keep it/);
+  assert.match(asked, /Choose another/);
+  assert.equal(existsSync(join(dir, 'backup-copy.json')), false);
+  await f('/settings/backup-copy', { ...form({ action: 'save', folder, confirm: '1' }), redirect: 'manual' });
+  assert.match(readFileSync(join(dir, 'backup-copy.json'), 'utf8'), /CloudDocs/);
+});
+
+test('a failed copy shows the folder name, a good one shows when', async (t) => {
+  const { dir, home, f } = await startApp(t, { localMode: true });
+  const folder = join(home, 'Spare Drive');
+  mkdirSync(folder);
+  await f('/settings/backup-copy', { ...form({ action: 'save', folder }), redirect: 'manual' });
+  writeFileSync(join(dir, 'backup-copy.json'), JSON.stringify({ folder, last: { ok: false, at: '2026-11-04T02:10:00Z', folder, reason: 'The folder is not there.' } }));
+  assert.match(await (await f('/settings')).text(), /Last copy failed: Spare Drive/);
+  writeFileSync(join(dir, 'backup-copy.json'), JSON.stringify({ folder, last: { ok: true, at: '2026-11-04T02:10:00Z' } }));
+  assert.match(await (await f('/settings')).text(), /Last copy: <time/);
 });

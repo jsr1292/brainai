@@ -3,6 +3,7 @@ import { setImmediate as nextTurn } from 'node:timers/promises';
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
 import { cosine } from '../memory/embedder.js';
+import { vectorsEpoch } from '../memory/reembed.js';
 import type { Kind } from '../memory/types.js';
 import { isCurrentFactSql } from './current.js';
 import { normalWords, sectionText, threadWords, WordCounts } from './words.js';
@@ -121,7 +122,9 @@ type ItemRow = { kind: ItemKind; id: string; anchor: string; project: string; co
 
 export class MeaningIndex implements MeaningHook {
   private counts: WordCounts | undefined;
-  private readonly floor: number;
+  /** The thread floor of the search model in use (src/models/cutOffs.ts), read each time. */
+  private readonly floorOf: () => number;
+  private get floor(): number { return this.floorOf(); }
   private readonly kinds: readonly Kind[];
   private readonly neighbours: number;
   private readonly now: Clock;
@@ -130,8 +133,9 @@ export class MeaningIndex implements MeaningHook {
   private catching = 0;
   private stale = false;
 
-  constructor(private db: DB, opts: { floor: number; kinds: readonly Kind[]; neighbours?: number; now: Clock; log?: (line: string) => void }) {
-    this.floor = opts.floor;
+  constructor(private db: DB, opts: { floor: number | (() => number); kinds: readonly Kind[]; neighbours?: number; now: Clock; log?: (line: string) => void }) {
+    const floor = opts.floor;
+    this.floorOf = typeof floor === 'number' ? () => floor : floor;
     this.kinds = opts.kinds;
     this.neighbours = opts.neighbours ?? NEIGHBOURS;
     this.now = opts.now;
@@ -243,11 +247,14 @@ export class MeaningIndex implements MeaningHook {
    * with a turn of the event loop between chunks. An item a save hook re-indexed meanwhile is left as the hook wrote it,
    * and after any hook write the next chunk works from fresh items, so no link a hook made is dropped or made stale.
    */
-  async catchUp(opts: { chunk?: number; onChunk?: () => void } = {}): Promise<{ checked: number; indexed: number; ms: number }> {
+  async catchUp(opts: { chunk?: number; onChunk?: () => void } = {}): Promise<{ checked: number; indexed: number; ms: number; stopped?: true }> {
     const started = performance.now();
     const chunk = Math.max(1, opts.chunk ?? 200);
     this.catching++;
     try {
+      // The stored vectors' model and when they were made: a switch to another model meanwhile (src/memory/reembed.ts)
+      // empties the links, and this copy of the vectors is then the old model's, so the catch-up stops writing.
+      const epoch = vectorsEpoch(this.db);
       let items = this.loadItems();
       const checked = items.length;
       const seen = new Map((this.db.prepare('SELECT kind, id, anchor, fingerprint, indexed_at FROM meaning_indexed').all() as
@@ -262,7 +269,9 @@ export class MeaningIndex implements MeaningHook {
           items = this.loadItems();
           at = new Map(items.map((it, i) => [keyOf(it), i]));
         }
+        let switched = false;
         this.db.transaction(() => {
+          if (vectorsEpoch(this.db) !== epoch) { switched = true; return; }
           for (const key of todo.slice(start, start + chunk)) {
             const i = at.get(key);
             if (i === undefined) continue;
@@ -272,6 +281,7 @@ export class MeaningIndex implements MeaningHook {
             indexed++;
           }
         })();
+        if (switched) return { checked, indexed, ms: Math.round(performance.now() - started), stopped: true };
         opts.onChunk?.();
         await nextTurn();
       }

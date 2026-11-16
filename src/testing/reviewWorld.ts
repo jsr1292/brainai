@@ -38,8 +38,8 @@ export function reviewWorld(startIso: string) {
       const m = store.get(id)!;
       return store.update(id, { content, project: m.project, tags: m.tags, embedding: EMB, by });
     },
-    sources(opts: { growth?: boolean; folders?: FolderSource } = {}): BuildSources {
-      return { reviews, memories: store, registry, folders: opts.folders ?? folders, grants: () => grants, growth: opts.growth ?? true };
+    sources(opts: { folders?: FolderSource } = {}): BuildSources {
+      return { reviews, memories: store, registry, folders: opts.folders ?? folders, grants: () => grants };
     },
   };
 }

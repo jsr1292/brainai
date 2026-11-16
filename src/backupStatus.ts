@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 /**
  * What the last backup runs reported, kept beside the database so the dashboard can show it: the nightly snapshot
- * (scripts/backup.sh on the home server, or the in-app backup in work mode) writes backup-status.json, the weekly
+ * (scripts/backup.sh on the home server, or the in-app backup with BACKUP_DIR) writes backup-status.json, the weekly
  * off-site copy (scripts/offsite.sh) offsite-status.json. A failure that nobody sees can leave a copy missing for days,
  * so the dashboard warns about each problem.
  */

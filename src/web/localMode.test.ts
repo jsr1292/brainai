@@ -138,6 +138,18 @@ test('the app exchanges its key for a one-time ticket; the ticket opens a sessio
   assert.equal((await fetch(`${app.baseUrl}/app/open?ticket=${t2}&next=%2F%2Fevil.example`, { redirect: 'manual' })).headers.get('location'), '/');
 });
 
+test('/app/open lands on a same-origin path with a query, and still refuses other places', async (t) => {
+  const key = 'k'.repeat(40);
+  const app = await startTestApp({ localMode: true, appSecret: key });
+  t.after(() => app.close());
+  const land = async (next: string) => {
+    const { ticket } = await (await fetch(`${app.baseUrl}/app/ticket`, { method: 'POST', headers: { 'X-App-Key': key } })).json() as { ticket: string };
+    return (await fetch(`${app.baseUrl}/app/open?ticket=${ticket}&next=${encodeURIComponent(next)}`, { redirect: 'manual' })).headers.get('location');
+  };
+  assert.equal(await land('/welcome?step=2'), '/welcome?step=2');
+  for (const bad of ['//evil.example', '/\\evil.example', 'https://evil.example/welcome?step=2']) assert.equal(await land(bad), '/', bad);
+});
+
 test('outside local mode there is no app ticket and no app link, even with a key set', async (t) => {
   const key = 'k'.repeat(40);
   const app = await startTestApp({ appSecret: key });

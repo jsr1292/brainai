@@ -39,7 +39,7 @@ ${v.missingPictures > 0 ? html`<p class="notice">${v.missingPictures === 1 ? '1 
 <form method="post" action="/settings/move/remove"><button type="submit" class="primary">Remove BrainAI from ${thisComputer()}</button></form>
 <form method="post" action="/settings/move/undo"><button type="submit" class="secondary">Not moved after all</button></form>
 </div>
-<p class="meta">Remove disconnects the tools on ${thisComputer()} from this copy, stops BrainAI and stops it starting at login. Your data folder stays.</p>`
+<p class="meta">Remove BrainAI from ${thisComputer()} saves a copy of everything first, then disconnects your tools and removes the app and its data.</p>`
     : html`<p>Once the server runs with your memories, give its address. ${ThisComputer()} then stops answering its apps and tells them where the brain lives, and Reach from phone and web is turned off.</p>
 <form method="post" action="/settings/move/done" class="stack">
   <label for="address">The server's address</label><input id="address" name="address" type="url" placeholder="https://brain.example.com" required>

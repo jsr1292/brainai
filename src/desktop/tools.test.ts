@@ -1,11 +1,11 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, symlinkSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fakeHome, type FakeHome } from '../testing/fakeTools.js';
 import { setupText } from '../setup/texts.js';
-import { childEnv, commandLine, connect, disconnect, findCommand, toolStates, withCodexApproval, type ToolEnv } from './tools.js';
+import { backupFiles, tracesOfThisBrain, childEnv, commandLine, connect, disconnect, findCommand, toolStates, withCodexApproval, type ToolEnv } from './tools.js';
 import { findBlock } from './rulesBlock.js';
 
 const URL_ = 'http://localhost:3100/mcp';
@@ -17,7 +17,9 @@ function world(t: TestContext, tools?: Parameters<typeof fakeHome>[0]): { f: Fak
   const env: ToolEnv = {
     home: f.home, apps: f.apps, mcpUrl: URL_,
     path: `${f.bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
-    rules: (slug) => setupText(slug, 'personal', URL_),
+    rules: (slug) => setupText(slug, URL_),
+    // Never the real %APPDATA% or ~/Library/Application Support/Claude.
+    system: {}, claudeConfig: join(f.home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
   };
   return { f, env };
 }
@@ -26,7 +28,7 @@ const stateOf = async (env: ToolEnv, id: string) => (await toolStates(env)).find
 test('tools that are not installed are listed as such, and nothing is called', async (t) => {
   const { f, env } = world(t, []);
   const states = await toolStates(env);
-  assert.deepEqual(states.map((s) => [s.id, s.installed]), [['claude-code', false], ['codex', false], ['opencode', false], ['cursor', false]]);
+  assert.deepEqual(states.map((s) => [s.id, s.installed]), [['claude-code', false], ['codex', false], ['opencode', false], ['cursor', false], ['claude-desktop', false]]);
   assert.deepEqual(f.calls(), []);
 });
 
@@ -53,7 +55,7 @@ test('a tool already on another BrainAI is left alone unless the owner presses R
   const { f, env } = world(t);
   // The owner's own Mac: the home BrainAI as "memory", and its rules block.
   f.write('.fake-claude.json', JSON.stringify({ memory: HOME_BRAINAI }));
-  const home = `# Mine\n\n${setupText('claude-code', 'personal', HOME_BRAINAI)}\n`;
+  const home = `# Mine\n\n${setupText('claude-code', HOME_BRAINAI)}\n`;
   f.write('.claude/CLAUDE.md', home);
   const s = await stateOf(env, 'claude-code');
   assert.equal(s.state, 'other-brainai');
@@ -175,14 +177,16 @@ test('a tool whose answer cannot be read, or whose brainai entry has no address,
 
 test('Replace then Disconnect gives the owner back their original rules: the first backup is never overwritten', async (t) => {
   const { f, env } = world(t);
-  const home = `# Mine\n\n${setupText('claude-code', 'personal', HOME_BRAINAI)}\n`;
+  const home = `# Mine\n\n${setupText('claude-code', HOME_BRAINAI)}\n`;
   f.write('.claude/CLAUDE.md', home);
   assert.equal((await connect('claude-code', env, { replace: true })).ok, true);
   assert.equal((await disconnect('claude-code', env)).ok, true);
   assert.equal(f.read('.claude/CLAUDE.md.brainai-backup'), home, 'the original is kept');
 });
 
-test('a file BrainAI cannot write ends in a clear message, not a half-done tool', async (t) => {
+const cannotChmod = process.platform === 'win32' || process.getuid?.() === 0;
+
+test('a file BrainAI cannot write ends in a clear message, not a half-done tool', { skip: cannotChmod }, async (t) => {
   const { f, env } = world(t);
   f.write('.claude/CLAUDE.md', 'mine\n');
   chmodSync(join(f.home, '.claude', 'CLAUDE.md'), 0o444);
@@ -249,4 +253,226 @@ test("Codex's config.toml keeps its Windows line ends when BrainAI approves its 
   assert.equal(out, 'model = "x"\r\n\r\n[mcp_servers.brainai]\r\nurl = "http://localhost:3100/mcp"\r\ndefault_tools_approval_mode = "approve"\r\n\r\n[other]\r\nk = 1\r\n');
   assert.equal(withCodexApproval(out), null, 'once only');
   assert.equal(withCodexApproval('model = "x"\n'), null, 'no brainai table: nothing to do');
+});
+
+// ---- Claude's desktop app: a stdio entry in claude_desktop_config.json that runs the bridge ----
+
+const CLAUDE_CONFIG = 'Library/Application Support/Claude/claude_desktop_config.json';
+const OTHER_CONFIG = { mcpServers: { other: { command: 'x' } }, globalShortcut: 'Alt+Space' };
+
+/** A world with Claude's app "installed", a made-up bridge (real files, so its paths exist) and a fake key issuer. */
+function claudeWorld(t: TestContext) {
+  const w = world(t, []);
+  mkdirSync(join(w.f.apps, 'Claude.app'), { recursive: true });
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-bridge-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const cli = join(dir, 'dist-cli.js');
+  const node = join(dir, 'node-bin');
+  writeFileSync(cli, '');
+  writeFileSync(node, '');
+  const dataDir = join(dir, 'data');
+  mkdirSync(dataDir);
+  const log = { issued: 0, revoked: [] as string[] };
+  w.env.bridge = { node, cli, dataDir, portFile: join(dir, 'brainai.json') };
+  w.env.issueKey = () => { log.issued++; return { grantId: `grant-${log.issued}`, token: `tok-${log.issued}` }; };
+  w.env.revokeKey = (id) => { log.revoked.push(id); };
+  w.env.keyLive = (id) => !log.revoked.includes(id);
+  const config = () => JSON.parse(w.f.read(CLAUDE_CONFIG)!) as { mcpServers: Record<string, unknown> } & Record<string, unknown>;
+  return { ...w, dir, log, config, keyFile: join(dataDir, 'claude-desktop-key'), bridge: w.env.bridge };
+}
+
+test("Claude (desktop app): found by its app or its settings folder", async (t) => {
+  const none = world(t, []);
+  assert.equal((await stateOf(none.env, 'claude-desktop')).installed, false);
+  none.f.write(CLAUDE_CONFIG, '{}');
+  assert.equal((await stateOf(none.env, 'claude-desktop')).installed, true, 'the config folder');
+  const app = claudeWorld(t);
+  const s = await stateOf(app.env, 'claude-desktop');
+  assert.deepEqual([s.installed, s.state, s.name], [true, 'not-connected', 'Claude (desktop app)']);
+});
+
+test("Claude (desktop app): connect adds the bridge entry beside the owner's own servers, with a key of its own", async (t) => {
+  const c = claudeWorld(t);
+  const original = JSON.stringify(OTHER_CONFIG);
+  c.f.write(CLAUDE_CONFIG, original);
+  const r = await connect('claude-desktop', c.env, {});
+  assert.equal(r.ok, true);
+  assert.match((r as { signIn: string }).signIn, /Quit Claude completely.*open it again/);
+  const cfg = c.config();
+  assert.deepEqual(cfg.mcpServers.brainai, { command: c.bridge.node, args: [c.bridge.cli, 'claude-bridge'], env: { BRAINAI_DATA_DIR: c.bridge.dataDir, BRAINAI_PORT_FILE: c.bridge.portFile } });
+  assert.deepEqual(cfg.mcpServers.other, { command: 'x' });
+  assert.equal(cfg.globalShortcut, 'Alt+Space');
+  assert.equal(c.f.read(`${CLAUDE_CONFIG}.brainai-backup`), original, 'a backup of the original');
+  assert.equal(c.log.issued, 1);
+  assert.deepEqual(JSON.parse(readFileSync(c.keyFile, 'utf8')), { grant: 'grant-1', token: 'tok-1' });
+  assert.equal(statSync(c.keyFile).mode & 0o777, 0o600);
+  assert.equal((await stateOf(c.env, 'claude-desktop')).state, 'connected');
+  // The token is in the key file only, never in Claude's config.
+  assert.ok(!c.f.read(CLAUDE_CONFIG)!.includes('tok-1'));
+});
+
+test("Claude (desktop app): settings that are not plain JSON are refused, untouched, and no key is issued", async (t) => {
+  const c = claudeWorld(t);
+  c.f.write(CLAUDE_CONFIG, '{ // my notes\n "mcpServers": {} }');
+  const r = await connect('claude-desktop', c.env, {});
+  assert.equal(r.ok, false);
+  assert.match((r as { reason: string }).reason, /not plain JSON/);
+  assert.equal(c.f.read(CLAUDE_CONFIG), '{ // my notes\n "mcpServers": {} }');
+  assert.equal(c.log.issued, 0);
+  assert.equal(existsSync(c.keyFile), false);
+});
+
+test("Claude (desktop app): if the entry cannot be written the key is taken back", { skip: cannotChmod }, async (t) => {
+  const c = claudeWorld(t);
+  c.f.write(CLAUDE_CONFIG, JSON.stringify(OTHER_CONFIG));
+  chmodSync(join(c.f.home, CLAUDE_CONFIG, '..'), 0o500);
+  chmodSync(join(c.f.home, CLAUDE_CONFIG), 0o400);
+  let r;
+  try { r = await connect('claude-desktop', c.env, {}); } finally { chmodSync(join(c.f.home, CLAUDE_CONFIG, '..'), 0o700); }
+  assert.equal(r.ok, false);
+  assert.deepEqual(c.log.revoked, ['grant-1']);
+  assert.equal(existsSync(c.keyFile), false);
+});
+
+test("Claude (desktop app): an entry whose program is gone needs connecting again; another BrainAI's entry is left unless Replace", async (t) => {
+  const c = claudeWorld(t);
+  const entry = (node: string, cli: string) => JSON.stringify({ mcpServers: { brainai: { command: node, args: [cli, 'claude-bridge'] } } });
+  // The app was moved: the paths in the entry no longer exist.
+  c.f.write(CLAUDE_CONFIG, entry('/gone/node', '/gone/dist/cli.js'));
+  let s = await stateOf(c.env, 'claude-desktop');
+  assert.deepEqual([s.state, s.detail], ['other-brainai', 'needs connecting again']);
+  assert.equal((await connect('claude-desktop', c.env, {})).ok, false);
+  assert.equal((await connect('claude-desktop', c.env, { replace: true })).ok, true);
+  assert.equal((await stateOf(c.env, 'claude-desktop')).state, 'connected');
+  // Another BrainAI's bridge that exists.
+  const other = join(c.dir, 'other-cli.js');
+  writeFileSync(other, '');
+  c.f.write(CLAUDE_CONFIG, entry(c.bridge.node, other));
+  s = await stateOf(c.env, 'claude-desktop');
+  assert.equal(s.state, 'other-brainai');
+  assert.equal((await disconnect('claude-desktop', c.env)).ok, false, 'left as it is');
+  assert.equal(c.config().mcpServers.brainai !== undefined, true);
+  assert.equal((await connect('claude-desktop', c.env, { replace: true })).ok, true);
+  assert.equal((c.config().mcpServers.brainai as { args: string[] }).args[0], c.bridge.cli);
+});
+
+test("Claude (desktop app): disconnect removes only brainai, revokes the stored key and deletes its file", async (t) => {
+  const c = claudeWorld(t);
+  c.f.write(CLAUDE_CONFIG, JSON.stringify(OTHER_CONFIG));
+  await connect('claude-desktop', c.env, {});
+  const r = await disconnect('claude-desktop', c.env);
+  assert.equal(r.ok, true);
+  const cfg = c.config();
+  assert.deepEqual(cfg.mcpServers, { other: { command: 'x' } });
+  assert.equal(cfg.globalShortcut, 'Alt+Space');
+  assert.deepEqual(c.log.revoked, ['grant-1']);
+  assert.equal(existsSync(c.keyFile), false);
+  assert.equal((await stateOf(c.env, 'claude-desktop')).state, 'not-connected');
+  assert.ok(backupFiles(c.env).includes(join(c.f.home, `${CLAUDE_CONFIG}.brainai-backup`)));
+});
+
+test("Claude (desktop app): connected means the key works: a revoked or deleted key needs connecting again, and Connect fixes it without Replace", async (t) => {
+  const c = claudeWorld(t);
+  await connect('claude-desktop', c.env, {});
+  c.env.revokeKey!('grant-1'); // revoked from the Connections page
+  let s = await stateOf(c.env, 'claude-desktop');
+  assert.deepEqual([s.state, s.detail], ['not-connected', 'needs connecting again']);
+  assert.equal((await connect('claude-desktop', c.env, {})).ok, true);
+  assert.equal((await stateOf(c.env, 'claude-desktop')).state, 'connected');
+  assert.equal(JSON.parse(readFileSync(c.keyFile, 'utf8')).grant, 'grant-2');
+  // The key file deleted by hand.
+  rmSync(c.keyFile);
+  s = await stateOf(c.env, 'claude-desktop');
+  assert.deepEqual([s.state, s.detail], ['not-connected', 'needs connecting again']);
+  assert.equal((await connect('claude-desktop', c.env, {})).ok, true);
+  assert.equal((await stateOf(c.env, 'claude-desktop')).state, 'connected');
+  // An unreadable key file.
+  writeFileSync(c.keyFile, 'not json');
+  assert.equal((await stateOf(c.env, 'claude-desktop')).state, 'not-connected');
+});
+
+test("Claude (desktop app): this brain's own entry whose program moved is its own: Connect, Disconnect replace or remove it, another brain's is not", async (t) => {
+  const c = claudeWorld(t);
+  const own = { mcpServers: { brainai: { command: '/gone/node', args: ['/gone/cli.js', 'claude-bridge'], env: { BRAINAI_DATA_DIR: c.bridge.dataDir } } } };
+  c.f.write(CLAUDE_CONFIG, JSON.stringify(own));
+  let s = await stateOf(c.env, 'claude-desktop');
+  assert.deepEqual([s.state, s.detail], ['not-connected', 'needs connecting again']);
+  assert.equal((await disconnect('claude-desktop', c.env)).ok, true);
+  assert.deepEqual(c.config().mcpServers, {});
+  c.f.write(CLAUDE_CONFIG, JSON.stringify(own));
+  assert.equal((await connect('claude-desktop', c.env, {})).ok, true, 'no Replace needed');
+  assert.equal((await stateOf(c.env, 'claude-desktop')).state, 'connected');
+  const theirs = { mcpServers: { brainai: { command: '/gone/node', args: ['/gone/cli.js', 'claude-bridge'], env: { BRAINAI_DATA_DIR: '/elsewhere/data' } } } };
+  c.f.write(CLAUDE_CONFIG, JSON.stringify(theirs));
+  s = await stateOf(c.env, 'claude-desktop');
+  assert.equal(s.state, 'other-brainai');
+  assert.equal((await connect('claude-desktop', c.env, {})).ok, false);
+});
+
+test("Claude (desktop app): this brain's own entry is its own whatever the spelling of its paths: case on Windows, a symlink on the Mac", async (t) => {
+  // Windows: the same folders spelled in another case.
+  const w = claudeWorld(t);
+  w.env.platform = 'win32';
+  await connect('claude-desktop', w.env, {});
+  const entry = w.config().mcpServers.brainai as { command: string; args: string[]; env: Record<string, string> };
+  w.f.write(CLAUDE_CONFIG, JSON.stringify({ mcpServers: { brainai: { ...entry, args: [entry.args[0].toUpperCase(), 'claude-bridge'], env: { ...entry.env, BRAINAI_DATA_DIR: w.bridge.dataDir.toUpperCase() } }, other: { command: 'x' } } }));
+  assert.notEqual((await stateOf(w.env, 'claude-desktop')).state, 'other-brainai');
+  assert.equal(await tracesOfThisBrain('claude-desktop', w.env), 'yes');
+  assert.equal((await disconnect('claude-desktop', w.env)).ok, true);
+  assert.deepEqual(w.config().mcpServers, { other: { command: 'x' } });
+  assert.equal(existsSync(w.keyFile), false);
+  // The Mac: a symlink to the bridge program, and to the data folder, are the same place.
+  const c = claudeWorld(t);
+  c.env.platform = 'darwin';
+  await connect('claude-desktop', c.env, {});
+  const link = join(c.dir, 'link-cli.js');
+  symlinkSync(c.bridge.cli, link);
+  const dataLink = join(c.dir, 'data-link');
+  symlinkSync(c.bridge.dataDir, dataLink);
+  const own = c.config().mcpServers.brainai as { command: string; env: Record<string, string> };
+  c.f.write(CLAUDE_CONFIG, JSON.stringify({ mcpServers: { brainai: { ...own, args: [link, 'claude-bridge'], env: { ...own.env, BRAINAI_DATA_DIR: dataLink } } } }));
+  assert.equal((await stateOf(c.env, 'claude-desktop')).state, 'connected');
+  // Another data folder is another BrainAI, even with a program of its own.
+  const other = join(c.dir, 'other-cli.js');
+  writeFileSync(other, '');
+  const elsewhere = join(c.dir, 'elsewhere');
+  mkdirSync(elsewhere);
+  c.f.write(CLAUDE_CONFIG, JSON.stringify({ mcpServers: { brainai: { ...own, args: [other, 'claude-bridge'], env: { ...own.env, BRAINAI_DATA_DIR: elsewhere } } } }));
+  assert.equal((await stateOf(c.env, 'claude-desktop')).state, 'other-brainai');
+});
+
+test("Claude (desktop app): another BrainAI's entry is left alone, but our own leftover key is revoked and deleted", async (t) => {
+  const c = claudeWorld(t);
+  await connect('claude-desktop', c.env, {});
+  const other = join(c.dir, 'other-cli.js');
+  writeFileSync(other, '');
+  const theirs = JSON.stringify({ mcpServers: { brainai: { command: c.bridge.node, args: [other, 'claude-bridge'], env: { BRAINAI_DATA_DIR: join(c.dir, 'elsewhere') } } } });
+  c.f.write(CLAUDE_CONFIG, theirs);
+  assert.equal((await stateOf(c.env, 'claude-desktop')).state, 'other-brainai');
+  assert.equal((await disconnect('claude-desktop', c.env)).ok, false);
+  assert.equal(c.f.read(CLAUDE_CONFIG), theirs);
+  assert.equal(existsSync(c.keyFile), false);
+  assert.deepEqual(c.log.revoked, ['grant-1']);
+});
+
+test("Claude (desktop app): a key file whose entry was removed by hand is still revoked and deleted by Disconnect", async (t) => {
+  const c = claudeWorld(t);
+  await connect('claude-desktop', c.env, {});
+  c.f.write(CLAUDE_CONFIG, JSON.stringify({ mcpServers: {} }));
+  assert.equal(await tracesOfThisBrain('claude-desktop', c.env), 'yes');
+  assert.equal((await disconnect('claude-desktop', c.env)).ok, true);
+  assert.deepEqual(c.log.revoked, ['grant-1']);
+  assert.equal(existsSync(c.keyFile), false);
+  assert.equal(await tracesOfThisBrain('claude-desktop', c.env), 'no');
+});
+
+test("Claude (desktop app): Connect is refused from a disk image or a translocated app, and nothing is issued", async (t) => {
+  for (const where of ['/Volumes/BrainAI/BrainAI.app/Contents/node', '/private/var/folders/x/AppTranslocation/ABC/d/BrainAI.app/Contents/node']) {
+    const c = claudeWorld(t);
+    c.env.bridge = { ...c.bridge, node: where };
+    const r = await connect('claude-desktop', c.env, {});
+    assert.deepEqual(r, { ok: false, reason: 'Move BrainAI to Applications first, then connect Claude.' });
+    assert.equal(c.log.issued, 0);
+    assert.equal(c.f.read(CLAUDE_CONFIG), null);
+  }
 });

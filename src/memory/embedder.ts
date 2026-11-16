@@ -11,10 +11,22 @@ export interface Embedder {
   embed(text: string, purpose: 'query' | 'passage'): Promise<Float32Array>;
 }
 
-/** Dot product; equals cosine similarity because vectors are L2-normalized. */
+/** True for the placeholder a row gets while no search model is ready (src/models/switchable.ts): all zeros. */
+export function isZeroVector(v: Float32Array): boolean {
+  for (let i = 0; i < v.length; i++) if (v[i] !== 0) return false;
+  return true;
+}
+
+/**
+ * Dot product; equals cosine similarity because vectors are L2-normalized. A zero vector (a placeholder) is 0 against
+ * anything, even against a vector of another length (one saved just before a model change).
+ */
 export function cosine(a: Float32Array, b: Float32Array): number {
-  // Vectors from two models never compare: fail loudly rather than rank by NaN.
-  if (a.length !== b.length) throw new Error(`vectors of different lengths (${a.length} and ${b.length}): were they made by different models?`);
+  if (a.length !== b.length) {
+    if (isZeroVector(a) || isZeroVector(b)) return 0;
+    // Vectors from two models never compare: fail loudly rather than rank by NaN.
+    throw new Error(`vectors of different lengths (${a.length} and ${b.length}): were they made by different models?`);
+  }
   let sum = 0;
   for (let i = 0; i < a.length; i++) sum += a[i]! * b[i]!;
   return sum;
@@ -24,6 +36,16 @@ export function cosine(a: Float32Array, b: Float32Array): number {
 export function embedderOptions(cores?: number): { dtype: 'q8'; session_options: ReturnType<typeof modelSessionOptions> } {
   return { dtype: 'q8', session_options: modelSessionOptions(cores) };
 }
+
+/** multilingual-e5-small, 8-bit (MIT). */
+export const E5_MODEL = 'Xenova/multilingual-e5-small';
+/** The bytes of the four files the loader opens for dtype q8; pinned by hash like the others. */
+export const E5_FILES: Record<string, string> = {
+  'config.json': 'cb99455288675345e1a4f411438d5d0adbba5fbd3a67ea4fb03c015433b996c1',
+  'tokenizer.json': '0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39',
+  'tokenizer_config.json': 'a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b',
+  'onnx/model_quantized.onnx': 'f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193',
+};
 
 /** EmbeddingGemma-300m as ONNX (Gemma Terms of Use: licenses/GEMMA-NOTICE.txt), 4-bit. */
 export const GEMMA_MODEL = 'onnx-community/embeddinggemma-300m-ONNX';
@@ -57,8 +79,8 @@ export function checkEmbedderFiles(modelDir: string, expected = GEMMA_FILES): vo
   }
 }
 
-async function createGemmaEmbedder(opts: { modelDir: string; allowRemote: boolean }): Promise<Embedder> {
-  if (!opts.allowRemote) checkEmbedderFiles(opts.modelDir);
+async function createGemmaEmbedder(opts: { modelDir: string; allowRemote: boolean; verified?: boolean }): Promise<Embedder> {
+  if (!opts.allowRemote && !opts.verified) checkEmbedderFiles(opts.modelDir);
   env.cacheDir = opts.modelDir;
   env.allowRemoteModels = opts.allowRemote;
   const tokenizer = await AutoTokenizer.from_pretrained(GEMMA_MODEL);
@@ -74,8 +96,21 @@ async function createGemmaEmbedder(opts: { modelDir: string; allowRemote: boolea
   };
 }
 
-/** The search model `model` names (default: the default profile's), from `modelDir`; offline unless `allowRemote`. */
-export async function createLocalEmbedder(opts: { modelDir: string; allowRemote: boolean; model?: EmbeddingProfile }): Promise<Embedder> {
+/**
+ * Whether every file the search model loads is in `modelDir` (presence only; loading checks the bytes). The app starts
+ * on keywords without them; a server refuses to start, as createLocalEmbedder does.
+ */
+export function embedderFilesPresent(modelDir: string, model: EmbeddingProfile): boolean {
+  const [dir, files] = model.id === 'gemma' ? [gemmaDir(modelDir), GEMMA_FILES] : [join(modelDir, E5_MODEL), E5_FILES];
+  return Object.keys(files).every((f) => existsSync(join(dir, f)));
+}
+
+/**
+ * The search model `model` names (default: the default profile's), from `modelDir`; offline unless `allowRemote`.
+ * `verified`: the caller has just checked the pinned files (the app's model manager, without blocking), so the
+ * blocking check here is skipped; a server always checks.
+ */
+export async function createLocalEmbedder(opts: { modelDir: string; allowRemote: boolean; model?: EmbeddingProfile; verified?: boolean }): Promise<Embedder> {
   const model = opts.model ?? profileFor(undefined);
   if (model.id === 'gemma') return createGemmaEmbedder(opts);
   if (model.id !== 'e5') throw new Error(`unknown embedding model ${model.id as string}`);

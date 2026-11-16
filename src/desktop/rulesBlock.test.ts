@@ -3,20 +3,20 @@ import assert from 'node:assert/strict';
 import { findBlock, putBlock, removeBlock } from './rulesBlock.js';
 import { setupText } from '../setup/texts.js';
 
-const block = setupText('claude-code', 'personal', 'http://localhost:3100/mcp');
+const block = setupText('claude-code', 'http://localhost:3100/mcp');
 
 test('the rules block is found with the host it names, for the full and the discussions-only texts', () => {
   const text = `# My notes\n\n${block}\n\nMore notes\n`;
   const found = findBlock(text)!;
   assert.equal(text.slice(found.start, found.end), block);
   assert.equal(found.host, 'localhost:3100');
-  assert.equal(findBlock(setupText('opencode', 'personal', 'https://memory.example.com/mcp'))!.host, 'memory.example.com');
+  assert.equal(findBlock(setupText('opencode', 'https://memory.example.com/mcp'))!.host, 'memory.example.com');
   assert.equal(findBlock('no block here\n'), null);
   assert.equal(findBlock('<!-- brain setup 2 -->\nI have a shared memory, the brain (x)\nno end marker\n'), null, 'an opening line with no closing one is no block');
 });
 
 test('putting the block replaces only the old block, byte for byte around it', () => {
-  const old = setupText('claude-code', 'personal', 'https://memory.example.com/mcp');
+  const old = setupText('claude-code', 'https://memory.example.com/mcp');
   const before = '# Mine\r\nkeep this\r\n\r\n';
   const after = '\r\n\r\nand this, exactly\r\n';
   const text = before + old.replace(/\n/g, '\r\n') + after;

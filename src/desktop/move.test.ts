@@ -11,6 +11,7 @@ import { openDb } from '../db.js';
 import { ImageStore } from '../images/store.js';
 import * as fx from '../testing/imageFixtures.js';
 import { makeService, seedSignIn } from '../testing/helpers.js';
+import { restoreInto } from '../saved/restore.js';
 import { deleteMoveFile, makeMoveFile, moveFile } from './move.js';
 
 const T = new Date('2026-11-06T10:00:00Z');
@@ -39,7 +40,7 @@ const count = (db: ReturnType<typeof openDb>, table: string) => (db.prepare(`SEL
 test('a moving file unpacks into a data folder the server opens, with every memory and picture and no sign-in data', async (t) => {
   const { dataDir, db, img, images } = await brain(t);
   const file = await makeMoveFile(db, dataDir, T);
-  assert.equal(file, join(dataDir, 'move', 'brainai-move-2026-11-06.tar.gz'));
+  assert.equal(file, join(dataDir, 'move', 'brainai-saved-2026-11-06.tar.gz'));
   assert.equal(statSync(file).mode & 0o777, 0o600, 'only the owner can read it');
   assert.equal(moveFile(dataDir), file);
   const server = unpack(t, file);
@@ -50,7 +51,7 @@ test('a moving file unpacks into a data folder the server opens, with every memo
   for (const table of ['owner', 'sessions', 'oauth_tokens', 'oauth_codes', 'known_devices']) assert.equal(count(moved, table), 0, table);
   // Made again: still one file.
   await makeMoveFile(db, dataDir, new Date('2026-11-07T10:00:00Z'));
-  assert.deepEqual(readdirSync(join(dataDir, 'move')), ['brainai-move-2026-11-07.tar.gz']);
+  assert.deepEqual(readdirSync(join(dataDir, 'move')), ['brainai-saved-2026-11-07.tar.gz']);
 });
 
 test('a moving file is the copy of the moment it was made', async (t) => {
@@ -79,22 +80,22 @@ test('deleting the moving file removes it and the folder holds nothing else', as
   assert.deepEqual(readdirSync(join(dataDir, 'move')), []);
 });
 
-test("the runbook's move steps give a server the moved brain", async (t) => {
+test("the runbook's restore command brings the moving file into a server's data folder", async (t) => {
   const { dataDir, db } = await brain(t);
   const file = await makeMoveFile(db, dataDir, T);
   const runbook = readFileSync(new URL('../../docs/RUNBOOK.md', import.meta.url), 'utf8');
   const section = /^## \d+\. Moving from the app\n([\s\S]*?)(?=^## )/m.exec(runbook)?.[1];
   assert.ok(section, 'the runbook has the section');
-  // The documented unpack command, run as written with this file and a fresh data folder.
-  const line = /^\s*tar -xzf (\S+) -C (\S+)\s*$/m.exec(section!);
-  assert.ok(line, 'it says how to unpack the file');
-  assert.equal(line![1], 'brainai-move-*.tar.gz');
-  assert.equal(line![2], 'data');
+  // The documented restore command: its file name and path are the ones the file really has, and it runs here as written.
+  const line = /^\s*docker compose run --rm app node dist\/cli\.js restore (\S+)\s*$/m.exec(section!);
+  assert.ok(line, 'it says how to bring the file in');
+  assert.equal(line![1], 'data/brainai-saved-<date>.tar.gz');
   const server = mkdtempSync(join(tmpdir(), 'brainai-server-'));
   t.after(() => rmSync(server, { recursive: true, force: true }));
   mkdirSync(join(server, 'data'));
-  copyFileSync(file, join(server, basename(file)));
-  execFileSync('sh', ['-c', line![0].trim()], { cwd: server });
+  copyFileSync(file, join(server, 'data', basename(file)));
+  assert.match(basename(file), /^brainai-saved-\d{4}-\d{2}-\d{2}\.tar\.gz$/);
+  await restoreInto(join(server, 'data', basename(file)), join(server, 'data'));
   const moved = openDb(join(server, 'data', 'memory.db'));
   t.after(() => moved.close());
   assert.equal((moved.prepare("SELECT COUNT(*) AS n FROM memories WHERE deleted_at IS NULL AND kind = 'profile'").get() as { n: number }).n, 3);
@@ -102,7 +103,16 @@ test("the runbook's move steps give a server the moved brain", async (t) => {
   // It also says to set the sign-in (the file has none) and to reconnect the apps from the server.
   assert.match(section!, /set-password/);
   assert.match(section!, /setup-totp/);
-  assert.match(section!, /chown/);
+  // The container sees only ./data, so the file is copied there, and deleted from there once the server works (it holds
+  // every memory in clear, beside the database). The same in Coming back from a saved copy.
+  const back = /^## Coming back from a saved copy\n([\s\S]*?)(?=^## )/m.exec(runbook)?.[1];
+  assert.ok(back, 'the runbook has Coming back');
+  for (const text of [section!, back!]) {
+    const scp = /`scp (\S+) you@server:(\S+)`/.exec(text);
+    assert.ok(scp, text);
+    assert.equal(scp![2], 'memory/data/');
+    assert.match(text, /`rm data\/brainai-saved-<date>\.tar\.gz`/);
+  }
 });
 
 test("a moving file carries no macOS file attributes, so a Linux server's tar unpacks it without warnings", async (t) => {

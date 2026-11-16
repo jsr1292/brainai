@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stages what the Windows app runs (D6, docs/DESKTOP.md), on the Mac: the compiled server with its production
-# dependencies (their Windows x64 binaries only) and the search model in desktop/src-tauri/resources/server-windows/,
+# dependencies (their Windows x64 binaries only, no models: the app downloads them) in resources/server-windows/,
 # and a checksum-verified Windows node.exe (Node 22) as the Tauri sidecar binaries/node-x86_64-pc-windows-msvc.exe.
 # Every native file in the staged tree is checked to be a Windows x64 binary.
 set -euo pipefail
@@ -13,12 +13,6 @@ NODE_MAJOR="${NODE_MAJOR:-22}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-[ -f "$ROOT/models/Xenova/multilingual-e5-small/onnx/model_quantized.onnx" ] || {
-  echo "The search model is missing: run  npm run model  first." >&2; exit 1; }
-[ -f "$ROOT/models/cross-encoder/mmarco-mMiniLMv2-L12-H384-v1/onnx/model_qint8_arm64.onnx" ] || {
-  echo "The reranker model is missing: run  npm run model  first." >&2; exit 1; }
-[ -f "$ROOT/models/onnx-community/embeddinggemma-300m-ONNX/onnx/model_q4.onnx_data" ] || {
-  echo "The Gemma search model is missing: run  npm run model  first." >&2; exit 1; }
 # The app must contain exactly a commit, so nothing uncommitted ships.
 if [ -n "$(cd "$ROOT" && git status --porcelain -- src package.json package-lock.json)" ] && [ "${ALLOW_DIRTY:-0}" != "1" ]; then
   echo "Uncommitted changes in the server: commit them first (or set ALLOW_DIRTY=1 for a throwaway build)." >&2; exit 1
@@ -28,10 +22,10 @@ echo "Building the server ..."
 (cd "$ROOT" && rm -rf dist && npm run build >/dev/null)
 rm -rf "$SERVER" && mkdir -p "$SERVER" "$TAURI/binaries"
 cp -R "$ROOT/dist" "$ROOT/package.json" "$ROOT/package-lock.json" "$SERVER/"
-cp -RL "$ROOT/models" "$SERVER/models"
-# EmbeddingGemma is distributed with its notice and terms (Gemma Terms of Use, section 3.1).
+# No models: the app downloads the ones the owner chooses into its data folder (src/models/manager.ts). The licences
+# stay with the app: a Gemma download gets its notice and terms from licenses/ (Gemma Terms of Use, section 3.1).
 cp -R "$ROOT/licenses" "$SERVER/licenses"
-cp "$ROOT/licenses/GEMMA-NOTICE.txt" "$SERVER/models/onnx-community/embeddinggemma-300m-ONNX/NOTICE"
+[ -f "$SERVER/licenses/GEMMA-NOTICE.txt" ] || { echo "licenses/GEMMA-NOTICE.txt is missing: a Gemma download needs it" >&2; exit 1; }
 
 echo "Installing the win32-x64 dependencies ..."
 (cd "$SERVER" && npm ci --omit=dev --ignore-scripts --os=win32 --cpu=x64 --no-audit --no-fund >/dev/null)
@@ -65,6 +59,9 @@ install -m 0755 "$WORK/node/node.exe" "$SIDECAR"
 cp "$WORK/node/LICENSE" "$SERVER/NODE-LICENSE"
 file "$SIDECAR" | grep -q 'PE32+ executable.*x86-64' || { echo "node.exe is not a Windows x64 binary" >&2; exit 1; }
 
+# The app ships no model (it downloads them): no models folder, and under 100 MB of model files (none, in fact).
+MODEL_BYTES="$(find "$SERVER" -type f \( -name '*.onnx' -o -name '*.onnx_data' -o -name '*.safetensors' \) -exec stat -f %z {} + | awk '{s+=$1} END {print s+0}')"
+[ ! -e "$SERVER/models" ] && [ "$MODEL_BYTES" -lt 100000000 ] || { echo "Model files are in the staged app ($MODEL_BYTES bytes): it must not ship them" >&2; exit 1; }
 echo "Staged the server ($(du -sh "$SERVER" | cut -f1)) and Node $VERSION for the Windows app."
 # B8: Microsoft's Visual C++ runtime in the folder of each native module that loads it (Windows looks there first, then
 # System32; never next to node.exe). The app checks the same folders (server.rs runtime_dirs).

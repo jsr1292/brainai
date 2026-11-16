@@ -282,14 +282,13 @@ const fold = (t) => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCa
 /**
  * The palette's Do group: only safe jumps (design §4.10). First, for a query of 1–140 characters, adding it as an idea
  * (which only fills the idea field: the owner presses Add idea); then Go to each place the query names (accents and
- * case aside; all of them for an empty query). Growth is not there in work mode. Nothing here posts.
+ * case aside; all of them for an empty query). Nothing here posts.
  */
-export function paletteDo(q, o) {
+export function paletteDo(q) {
   const t = String(q ?? '').trim();
   const out = [];
   if (t.length >= 1 && t.length <= 140) out.push({ label: `Add “${t}” as an idea`, idea: t });
   for (const [name, href, key, alias] of DO_PLACES) {
-    if (o.work && name === 'Growth') continue;
     if (t !== '' && !fold(name).includes(fold(t)) && !(alias && fold(alias).includes(fold(t)))) continue;
     out.push(key ? { label: `Go to ${name}`, href, key } : { label: `Go to ${name}`, href });
   }
@@ -447,7 +446,7 @@ function keysSheet() {
   dl.append(el('dt'), el('dd', { class: 'desk-muted', text: 'No single key approves, rejects or deletes.' }));
   keysDialog = add(el('dialog', { class: 'desk-keys', 'aria-labelledby': 'desk-keys-h' },
     el('h2', { id: 'desk-keys-h', text: 'Keys' }),
-    el('p', { text: 'Single keys only work outside a text field. Turn them off in Settings › This Mac.' }),
+    el('p', { text: `Single keys only work outside a text field. Turn them off in Settings › ${thisDeviceName()}.` }),
     dl));
   document.body.append(keysDialog);
   return keysDialog;
@@ -531,23 +530,22 @@ function addHint() {
 
 // ---- Settings › This Mac (design §4.9): two switches, stored per device ----
 
+/** What Settings calls this computer: "This Mac" on a Mac, "This computer" on Windows and anything else. */
+function thisDeviceName() {
+  const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || '';
+  return /mac/i.test(platform) ? 'This Mac' : 'This computer';
+}
+
 function thisMac() {
   if (location.pathname !== '/settings') return;
-  let section = document.getElementById('this-device');
-  if (!section) {
-    // Work mode has no This device section: desk.js adds one before Connections.
-    const connections = document.getElementById('connections');
-    if (!connections) return;
-    section = add(el('section', { id: 'this-device', class: 'panel' }, el('div', { class: 'panel-head' }, el('h2', { text: 'This Mac' }))));
-    connections.before(section);
-  }
-  if (section.querySelector('.desk-mac')) return;
+  const section = document.getElementById('this-device');
+  if (!section || section.querySelector('.desk-mac')) return;
   const status = document.querySelector('a[href="#this-device"] .st');
   if (status) {
     const before = [...status.childNodes];
     restores.push(() => status.replaceChildren(...before));
   }
-  // Looked up each time: on the desktop, Settings' index row for This Mac may be added after this (work mode).
+  // Looked up each time: on the desktop, mountSettings moves Settings' index after this.
   const showStatus = () => { const st = document.querySelector('a[href="#this-device"] .st'); if (st) st.textContent = prefs().keys ? 'Shortcuts on' : 'Shortcuts off'; };
   const row = (name, key, title, note) => {
     const noteId = `desk-mac-${key}`;
@@ -2173,10 +2171,6 @@ function mountSettings(signal) {
   const body = root?.querySelector(':scope > .settings-body');
   const index = body?.querySelector(':scope > ul.settings-index');
   if (!root || !body || !index) return;
-  // Work mode has no This device row: the This Mac section desk.js added gets one, before Connections.
-  if (document.getElementById('this-device') && !index.querySelector('a[href="#this-device"]')) {
-    index.prepend(el('li', {}, el('a', { class: 'row', href: '#this-device' }, el('span', { class: 'txt', text: 'This Mac' }), el('span', { class: 'st', text: prefs().keys ? 'Shortcuts on' : 'Shortcuts off' }), el('span', { class: 'chev' }))));
-  }
   const list = el('div', { class: 'desk-list', 'data-place': 'settings' }, ...[body.querySelector(':scope > h1'), index, body.querySelector(':scope > .lede'), body.querySelector(':scope > .error')].filter(Boolean));
   const s = buildSheet('settings');
   s.querySelector('.desk-hide')?.remove();
@@ -2236,7 +2230,6 @@ const palLatest = createLatest();
 let graphOverview = null;
 const AREA_NAMES = { apps: 'Apps', home: 'Home & infrastructure', tools: 'Tools & AI', work: 'Work', personal: 'Personal', start: 'Start here' };
 const onGraph = () => document.body.classList.contains('graph-on');
-const workMode = () => !document.querySelector('nav.side a.side-sub[href="/growth"]');
 
 function svgFind() {
   const NS = 'http://www.w3.org/2000/svg';
@@ -2319,7 +2312,7 @@ async function palSearch(q) {
   palAbort?.abort();
   const ctl = palAbort = new AbortController();
   const t = String(q).trim();
-  const doRows = paletteDo(t, { work: workMode() }).map((x) => ({ title: x.label, href: x.href, idea: x.idea, key: x.key, sub: '', meta: '' }));
+  const doRows = paletteDo(t).map((x) => ({ title: x.label, href: x.href, idea: x.idea, key: x.key, sub: '', meta: '' }));
   if (t === '') { palRender([{ label: 'Do', rows: doRows }], t); return; }
   let groups = [], failed = false, empty = false;
   try {

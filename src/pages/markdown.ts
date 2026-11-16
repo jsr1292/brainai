@@ -352,7 +352,7 @@ export function decisionItems(text: string, resolve: LinkResolver = () => null):
 /** The text of some Markdown without its markup, cut at a word boundary for search snippets. */
 export function plainText(md: string, max: number): string {
   // Only Markdown markers go: code spans are kept as written (set aside first), and a _, ~, * or > inside a word, a
-  // path or an expression stays, so a snippet quotes ~/Projects/x or MEMORY_MODE correctly.
+  // path or an expression stays, so a snippet quotes ~/Projects/x or LOCAL_MODE correctly.
   const code: string[] = [];
   // Only the start can reach a snippet of `max` characters. Scanning a bounded prefix keeps the marker patterns below
   // fast however a page is written (an unclosed _ or ` in a 100,000-character page made them quadratic).

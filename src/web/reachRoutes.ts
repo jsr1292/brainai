@@ -35,7 +35,7 @@ function tailscaleEnv(d: AppDeps): TailscaleEnv {
  * and the owner's own ~/.cloudflared is never read or changed (D5 review). Without the tools environment cloudflared
  * is never looked for (it has no fixed place to fall back to).
  */
-function cloudflaredEnv(d: AppDeps): CloudflaredEnv {
+export function cloudflaredEnv(d: AppDeps): CloudflaredEnv {
   if (!d.tools || !d.statusDir) return { home: '', path: '' };
   const home = join(d.statusDir, 'cloudflared', 'home');
   mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -57,14 +57,16 @@ export async function answersAt(url: URL, waitMs = 60_000): Promise<boolean> {
 }
 
 /** Turns Reach off and says how it went: forgotten and the door shut first (and a Cloudflare tunnel stopped), so
- * nothing answers at the public address even if Tailscale does not reply. */
+ * nothing answers at the public address even if Tailscale does not reply. With no address saved, Reach was never on:
+ * Tailscale is not asked at all, because its funnel command opens a browser page on a tailnet without Funnel. */
 export async function reachOff(d: AppDeps): Promise<string> {
   const via = d.reach?.via();
+  const wasOn = d.reach?.saved() != null;
   d.reach?.set(null);
-  if (via === 'cloudflare') return 'Off: BrainAI answers only on this Mac again. The name stays in Cloudflare, ready for next time.';
+  if (!wasOn || via === 'cloudflare') return 'Off: BrainAI answers only on this Mac again.' + (wasOn ? ' The name stays in Cloudflare, ready for next time.' : '');
   const r = await funnelOff(tailscaleEnv(d));
   return r.ok ? 'Off: BrainAI answers only on this Mac again.'
-    : `Off: BrainAI no longer answers at the public address, but Tailscale still lists it (${r.reason}). Press Turn off again, or turn Funnel off in Tailscale.`;
+    : `Off: BrainAI no longer answers at the public address, but Tailscale still lists it (${r.reason}). Turn Funnel off in Tailscale.`;
 }
 
 export function reachRoutes(d: AppDeps): Router {

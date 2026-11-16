@@ -348,3 +348,42 @@ test('a decision tagged status is a status: it is never indexed, as the calibrat
   assert.equal(rowsOf(w, r.memory.id).length, 0);
   assert.ok(rowsOf(w, f.a1).length > 0, 'the plain decisions are still linked');
 });
+
+test('a catch-up running when the stored vectors switch to another model stops: it never writes links from the old vectors', async () => {
+  const w = graphWorld();
+  await fixture(w);
+  clear(w);
+  w.db.prepare("INSERT OR REPLACE INTO embedding_model(id, model, dim, embedded_at) VALUES (1, 'e5', 384, '2026-11-13T10:00:00Z')").run();
+  let chunks = 0;
+  const r = await w.meaning.catchUp({
+    chunk: 1,
+    onChunk: () => {
+      if (++chunks > 1) return;
+      // The re-embed's switch, between two chunks: new vectors, a new stamp, the links emptied.
+      w.db.transaction(() => {
+        w.db.prepare("INSERT OR REPLACE INTO embedding_model(id, model, dim, embedded_at) VALUES (1, 'gemma', 768, '2026-11-13T10:05:00Z')").run();
+        w.db.exec('DELETE FROM meaning_links; DELETE FROM meaning_indexed;');
+      })();
+    },
+  });
+  assert.equal(chunks, 1, 'no chunk after the switch');
+  assert.equal(r.indexed, 1);
+  assert.equal(r.stopped, true);
+  assert.deepEqual(rows(w), []);
+  assert.equal((w.db.prepare('SELECT COUNT(*) AS n FROM meaning_indexed').get() as { n: number }).n, 0);
+});
+
+test('the thread floor can follow the search model in use', async () => {
+  let floor = 0.99;
+  const w = graphWorld();
+  const meaning = new MeaningIndex(w.db, { floor: () => floor, kinds: ['decision'], now: w.now });
+  w.service.setMeaningHook(meaning);
+  await fixture(w);
+  clear(w);
+  await meaning.catchUp();
+  assert.deepEqual(rows(w), [], 'nothing reaches 0.99');
+  clear(w);
+  floor = 0.5;
+  await meaning.catchUp();
+  assert.ok(rows(w).length > 0, 'the lower floor of the model now in use links them');
+});

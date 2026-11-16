@@ -12,6 +12,11 @@ import { modelSessionOptions } from './onnxOptions.js';
 export interface Reranker {
   /** One score per text, higher = answers the query better. */
   score(query: string, texts: string[]): Promise<number[]>;
+  /**
+   * All of one recall's phrasings from ONE source: `online` says the scores are an online service's (its own scale, so
+   * recall uses no rank prior and no weak-match note). Without it, recall scores each phrasing with `score`.
+   */
+  scoreMany?(queries: string[], texts: string[]): Promise<{ scores: number[][]; online: boolean }>;
 }
 
 /** cross-encoder/mmarco-mMiniLMv2-L12-H384-v1 (Apache-2.0), int8. */
@@ -94,9 +99,10 @@ export function rerankerSessionOptions(cores?: number): ReturnType<typeof modelS
   return { ...modelSessionOptions(cores), enableCpuMemArena: false };
 }
 
-export async function createLocalReranker(opts: { modelDir: string; allowRemote: boolean }): Promise<Reranker> {
+/** `verified`: the caller has just checked the pinned files (the app's model manager), so they are not hashed again. */
+export async function createLocalReranker(opts: { modelDir: string; allowRemote: boolean; verified?: boolean }): Promise<Reranker> {
   // Offline (the server), only the pinned bytes load, and a missing model says so plainly.
-  if (!opts.allowRemote) checkRerankerFiles(opts.modelDir);
+  if (!opts.allowRemote && !opts.verified) checkRerankerFiles(opts.modelDir);
   env.cacheDir = opts.modelDir;
   env.allowRemoteModels = opts.allowRemote;
   const tokenizer = await AutoTokenizer.from_pretrained(RERANK_MODEL);

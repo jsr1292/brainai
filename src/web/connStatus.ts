@@ -40,7 +40,7 @@ export function connStatuses(d: AppDeps, grants: readonly GrantInfo[]): Map<stri
     void server.close();
     return names;
   };
-  const apps = setupApps(d.mode ?? 'personal').map((a) => a.slug);
+  const apps = setupApps().map((a) => a.slug);
   const version = currentSetupVersion(d.setupOverlay);
   return new Map(grants.filter((g) => !g.revokedAt).map((g) => [g.id, connStatus(g, toolsFor(g), apps, version)]));
 }

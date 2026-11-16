@@ -106,13 +106,33 @@ class Mutex {
   }
 }
 
+const locks = new WeakMap<object, Mutex>();
+/** The one lock for every check of the owner's authenticator code against this limiter (login and Save a copy). */
+export function codeLock(limiter: object): Mutex {
+  let m = locks.get(limiter);
+  if (!m) locks.set(limiter, m = new Mutex());
+  return m;
+}
+
 type LoginOutcome = { kind: 'ok' } | { kind: 'failed' } | { kind: 'blocked'; retryAfterSec: number };
+
+/**
+ * The desktop app's key check, for the calls only the app's own HTTP client makes (header X-App-Key): local mode
+ * only, compared as hashes in constant time. False when there is no key to check against.
+ */
+export function appKeyCheck(d: Pick<AppDeps, 'localMode' | 'appSecret'>): (req: Request) => boolean {
+  const appKey = d.localMode && d.appSecret ? createHash('sha256').update(d.appSecret).digest() : null;
+  return (req) => {
+    const given = req.get('x-app-key') ?? '';
+    return appKey !== null && given !== '' && timingSafeEqual(createHash('sha256').update(given).digest(), appKey);
+  };
+}
 
 export function authRoutes(d: AppDeps): Router {
   const router = Router();
   // LoginLimiter.check doesn't consume points, so attempts must not overlap while argon2 awaits:
   // otherwise a parallel burst would all pass check() before any fail() lands.
-  const loginLock = new Mutex();
+  const loginLock = codeLock(d.limiter);
   const cookieOptions = sessionCookieOptions(d.publicUrl);
   // At the desktop app's public address (D4) the browser is on https: its cookies are Secure there.
   const optionsFor = (req: Request) => ({ ...cookieOptions, secure: cookieOptions.secure || viaDoor(req) });
@@ -135,12 +155,12 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
    * and the window opens /app/open?ticket=…. Local mode only. Anything wrong falls through to the unknown-page answer.
    */
   const appKey = d.localMode && d.appSecret ? createHash('sha256').update(d.appSecret).digest() : null;
+  const fromApp = appKeyCheck(d);
   const tickets = new Map<string, number>();
   const TICKET_MS = 60_000;
   const MAX_TICKETS = 20;
   router.post('/app/ticket', (req, res, next) => {
-    const given = req.get('x-app-key') ?? '';
-    if (!appKey || given === '' || !timingSafeEqual(createHash('sha256').update(given).digest(), appKey)) return next();
+    if (!fromApp(req)) return next();
     const now = d.now().getTime();
     for (const [t, until] of tickets) if (until < now) tickets.delete(t);
     while (tickets.size >= MAX_TICKETS) tickets.delete(tickets.keys().next().value!);
@@ -225,16 +245,15 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
 
   const consentPage = (res: Response, status: number, id: string, pending: PendingInfo, name: string, message?: string, access: Access | null = pending.suggestedAccess, picked: string[] = []) => {
     const origin = new URL(pending.redirectUri).origin;
-    const work = d.mode === 'work';
-    send(res, status, 'Allow access?', html`<h1>${pending.clientName} wants access to your ${work ? 'work memory' : 'shared memory'}</h1>
+    send(res, status, 'Allow access?', html`<h1>${pending.clientName} wants access to your shared memory</h1>
 <p>It will send you back to: <strong>${origin}</strong></p>
 ${message ? html`<p class="error" role="alert">${message}</p>` : ''}
 <form method="post" action="/consent/${id}">
   <p><label>Name <input type="text" name="name" value="${name}" maxlength="100" required></label></p>
-  ${work ? html`<input type="hidden" name="access" value="full">` : html`<p><label class="choice"><input type="radio" name="access" value="full" required${access === 'full' ? ' checked' : ''}> Full access: memory and discussions</label></p>
+  <p><label class="choice"><input type="radio" name="access" value="full" required${access === 'full' ? ' checked' : ''}> Full access: memory and discussions</label></p>
   <p><label class="choice"><input type="radio" name="access" value="discussions" required${access === 'discussions' ? ' checked' : ''}> Discussions only: no access to your profile or memories</label></p>
   <p><label class="choice"><input type="radio" name="access" value="projects" required${access === 'projects' ? ' checked' : ''}> Read only, chosen projects: no profile, no saving, no discussions</label></p>
-  ${projectChoices(d.service.listProjects().map((p) => p.project), picked)}`}
+  ${projectChoices(d.service.listProjects().map((p) => p.project), picked)}
   <div class="actions">
     <button type="submit" name="decision" value="approve" class="primary">Approve</button>
     <button type="submit" name="decision" value="deny" class="secondary" formnovalidate>Deny</button>
@@ -260,11 +279,11 @@ ${message ? html`<p class="error" role="alert">${message}</p>` : ''}
     const body = req.body as Record<string, unknown> | undefined;
     // Missing fields keep the defaults (current name, full access); a value that is present must be valid.
     // With no suggestion (one app connected at different levels), the owner must choose.
-    if (decision === 'approve' && body?.access === undefined && pending.suggestedAccess === null && d.mode !== 'work') {
+    if (decision === 'approve' && body?.access === undefined && pending.suggestedAccess === null) {
       return consentPage(res, 400, id, pending, field(body, 'name') || pending.clientName, 'Choose an access level.');
     }
     const access = body?.access === undefined ? 'full' : body.access;
-    if (decision === 'approve' && access !== 'full' && access !== 'discussions' && (access !== 'projects' || d.mode === 'work')) {
+    if (decision === 'approve' && access !== 'full' && access !== 'discussions' && access !== 'projects') {
       return send(res, 400, 'Bad request', html`<h1>Bad request</h1><p>Choose Full access, Discussions only or Read only.</p>`, true);
     }
     if (decision === 'approve' && body?.name !== undefined && typeof body.name !== 'string') {

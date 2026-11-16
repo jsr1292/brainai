@@ -14,14 +14,16 @@ import type { RedirectAllowlist } from '../auth/redirects.js';
 import { RefusedRedirects } from '../auth/refusedRedirects.js';
 import { fetchMetadataGuard, hostGuard } from './hostGuard.js';
 import { Reach } from '../desktop/reach.js';
+import { BackupCopy } from '../desktop/backupCopy.js';
 import { PublicDoor, viaDoor } from '../desktop/publicDoor.js';
 import { movedTo } from '../desktop/move.js';
 import { desktopRoutes } from './desktopRoutes.js';
 import { reachRoutes } from './reachRoutes.js';
 import { moveRoutes } from './moveRoutes.js';
+import { savedRoutes } from './savedRoutes.js';
+import { removeRoutes } from './removeRoutes.js';
 import type { SessionStore } from '../auth/sessions.js';
 import type { Clock } from '../clock.js';
-import type { Mode } from '../config.js';
 import type { GrowthService } from '../growth/service.js';
 import type { DeviceService } from '../folders/devices.js';
 import type { FolderService } from '../folders/match.js';
@@ -63,12 +65,14 @@ import { authRoutes, localSignIn, readCookie, SESSION_COOKIE } from './authRoute
 import { dashboardRoutes } from './dashboardRoutes.js';
 import { discussionRoutes } from './discussionRoutes.js';
 import { rateLimitKey, TRUST_CF_SETTING } from './clientIp.js';
-import { html, page, setPageMode, setMovedBanner } from './html.js';
+import { html, page, setMovedBanner } from './html.js';
 import { createSideStatus, setSideStatus } from './sideStatus.js';
 import { setViewClock } from './when.js';
 import type { GraphService } from '../graph/data.js';
 import { graphRoutes } from './graphRoutes.js';
 import { setComputer } from '../desktop/computer.js';
+import type { ModelManager } from '../models/manager.js';
+import type { Hardware } from '../models/hardware.js';
 
 export interface AppDeps {
   publicUrl: URL;
@@ -111,6 +115,10 @@ export interface AppDeps {
   learning: LearningService;
   /** How closely two projects' facts must match to be offered as one project (the embedding model's profile). */
   sameProjectFloor: number;
+  /** The app's models: the choice, downloads and switches (local mode only; a server's are in its image). */
+  models?: ModelManager;
+  /** This computer's chip, memory and free space, for the welcome's suggestion (default: read from the data folder). */
+  hardware?: () => Promise<Hardware>;
   /** The Graph tab's data: project cards from the home, threads from the stored meaning links (spec section 15). */
   graph: GraphService;
   provider: MemoryOAuthProvider;
@@ -121,10 +129,10 @@ export interface AppDeps {
   limiter: LoginLimiter;
   clients: ClientsStore;
   now: Clock;
-  /** Default 'personal'. 'work' renames the dashboard and uses the work instructions. */
-  mode?: Mode;
   /** Commands the opener of a discussion runs to ask the other assistants itself (see Config.askCommands). */
-  askCommands?: Record<string, string>;
+  askCommands?: () => Record<string, string>;
+  /** Looks at the tools again now (after Connect or Disconnect in the app), so the next session sees the change. */
+  refreshAskCommands?: () => Promise<void>;
   /** Default true (the Cloudflare tunnel is the only way in). False makes rate limits ignore cf-connecting-ip. */
   trustCfConnectingIp?: boolean;
   /** Where the backup runs record their outcome (the data folder); the home page shows it. None: no backup panel. */
@@ -135,6 +143,12 @@ export interface AppDeps {
   appSecret?: string | null;
   /** Local mode: the public address (Reach from phone and web, D4). Created by createApp when not given. */
   reach?: Reach;
+  /** Local mode: the second backup folder. Created by createApp when not given. */
+  backupCopy?: BackupCopy;
+  /** How many daily backups are kept (Config.backupKeep), also in the second folder; the Settings text says so. Defaults to DEFAULT_BACKUP_KEEP. */
+  backupKeep?: number;
+  /** Where the in-app backups go (Config.backupDir); POST /app/backup-now writes there before an update. */
+  backupDir?: string | null;
   /** Local mode: the public door Tailscale Funnel forwards to, open only while Reach is in use. Created by createApp. */
   door?: PublicDoor;
   /** Local mode: shows a file in Finder (Move to a server). Tests replace it. */
@@ -144,14 +158,14 @@ export interface AppDeps {
   /** The database itself, for the moving file's copy (local mode). */
   db?: DB;
   /** Local mode: where the owner's coding tools are (their HOME and the PATH to find their commands), for Connect (D3). */
-  tools?: { home: string; path: string; apps?: string; extraEnv?: Record<string, string>; /** Tailscale's app command (tests point it nowhere). */ tailscaleApp?: string; /** The computer's platform (tests pass win32); default process.platform. */ platform?: NodeJS.Platform };
+  tools?: { home: string; path: string; apps?: string; extraEnv?: Record<string, string>; /** Tailscale's app command (tests point it nowhere). */ tailscaleApp?: string; /** The computer's platform (tests pass win32); default process.platform. */ platform?: NodeJS.Platform; /** Where Claude's bridge program is (default: this server's own cli.js). */ bridgeCli?: string; /** Tests: Claude's settings file and the system variables, so nothing reads the real ones. */ claudeConfig?: string; system?: Record<string, string | undefined> };
 }
 
 const CSP = "default-src 'self'; frame-ancestors 'none'; form-action 'self' https: http://localhost:* http://127.0.0.1:*";
 const SCOPES = ['memory'];
-/** Called by OAuth/MCP clients without browser cookies, so they carry no Origin to check. /app/hello and /app/ticket:
- * the desktop app's own check and ticket, called by the app itself, never by a page (D2). */
-const CLIENT_ENDPOINTS = ['/mcp', '/authorize', '/token', '/register', '/revoke', '/app/hello', '/app/ticket', '/api/folder-report', '/api/image-upload', '/api/skills/report', '/api/skills/upload'];
+/** Called by OAuth/MCP clients without browser cookies, so they carry no Origin to check. /app/hello, /app/ticket and
+ * /app/removed/ready: the desktop app's own check, ticket and removal check, called by the app itself, never by a page (D2). */
+const CLIENT_ENDPOINTS = ['/mcp', '/authorize', '/token', '/register', '/revoke', '/app/hello', '/app/ticket', '/app/removed/ready', '/app/backup-now', '/api/folder-report', '/api/image-upload', '/api/skills/report', '/api/skills/upload'];
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const STATIC_DIR = join(dirname(fileURLToPath(import.meta.url)), 'static');
 
@@ -275,6 +289,7 @@ export function createApp(d: AppDeps): express.Express {
   const app = express();
   app.disable('x-powered-by');
   // The desktop app: its public address (D4), only in use with a password and an authenticator.
+  if (d.localMode && d.statusDir && !d.backupCopy) d.backupCopy = new BackupCopy(d.statusDir);
   if (d.localMode && !d.reach) d.reach = new Reach(d.statusDir, () => d.owner.isConfigured());
   const reachUrl = () => d.reach?.url() ?? null;
   d.provider.setExtraResource(() => { const r = reachUrl(); return r ? new URL('/mcp', r) : null; });
@@ -293,8 +308,6 @@ export function createApp(d: AppDeps): express.Express {
     });
   }
   app.set(TRUST_CF_SETTING, d.trustCfConnectingIp ?? true);
-  const mode = d.mode ?? 'personal';
-  setPageMode(mode);
   setSideStatus(createSideStatus(d));
   setViewClock(d.now);
   setMovedBanner(() => (d.localMode && d.statusDir ? movedTo(d.statusDir) : null));
@@ -346,7 +359,7 @@ export function createApp(d: AppDeps): express.Express {
         issuerUrl: origin,
         resourceServerUrl: resource,
         scopesSupported: SCOPES,
-        resourceName: mode === 'work' ? 'Work memory' : 'BrainAI',
+        resourceName: 'BrainAI',
         authorizationOptions: { rateLimit },
         tokenOptions: { rateLimit },
         // Secrets never expire: the SDK default (30 days) would silently disconnect confidential clients.
@@ -451,12 +464,13 @@ export function createApp(d: AppDeps): express.Express {
   app.use(desktopRoutes(d));
   app.use(reachRoutes(d));
   app.use(moveRoutes(d));
+  app.use(savedRoutes(d));
+  app.use(removeRoutes(d));
   app.use(skillRoutes(d));
   // Before the pages: /pages/:id would otherwise catch the picker's own address.
   app.use(linkRoutes(d));
   app.use(pageRoutes(d));
-  // Growth is the personal brain's only (spec section 11): the work memory has no Growth list.
-  if (mode !== 'work') app.use(growthRoutes(d));
+  app.use(growthRoutes(d));
   app.use(graphRoutes(d));
   app.use(dashboardRoutes(d));
   app.use(discussionRoutes(d));

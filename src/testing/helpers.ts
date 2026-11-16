@@ -79,10 +79,10 @@ const noNetwork = (async () => { throw new Error('no network in tests'); }) as u
  * Starts the full web app over real HTTP on a random port, with an in-memory DB, the fake embedder, the owner
  * password TEST_PASSWORD and the TOTP secret TEST_TOTP_SECRET. The app clock starts at `startAt` (default the real time);
  * nextTotp() moves it 30 s forward and returns the code for that step, so every login gets a fresh,
- * non-replayed code. `publicUrl` overrides PUBLIC_URL (default http://localhost:<port>); `mode` and
- * `trustCfConnectingIp` are passed to the app as given; `sectionMatch` to the page service (undefined: the constant).
+ * non-replayed code. `publicUrl` overrides PUBLIC_URL (default http://localhost:<port>);
+ * `trustCfConnectingIp` is passed to the app as given; `sectionMatch` to the page service (undefined: the constant).
  */
-export async function startTestApp(opts: { publicUrl?: string; mode?: AppDeps['mode']; trustCfConnectingIp?: boolean; statusDir?: string; startAt?: Date; sectionMatch?: number | null; setupOverlay?: SetupOverlay; localMode?: boolean; appSecret?: string | null; noPassword?: boolean; tools?: AppDeps['tools'] } = {}): Promise<{
+export async function startTestApp(opts: { publicUrl?: string; trustCfConnectingIp?: boolean; statusDir?: string; startAt?: Date; sectionMatch?: number | null; setupOverlay?: SetupOverlay; localMode?: boolean; appSecret?: string | null; backupDir?: string | null; noPassword?: boolean; tools?: AppDeps['tools']; models?: AppDeps['models']; hardware?: AppDeps['hardware'] } = {}): Promise<{
   baseUrl: string;
   deps: AppDeps;
   nextTotp(): string;
@@ -119,10 +119,9 @@ export async function startTestApp(opts: { publicUrl?: string; mode?: AppDeps['m
   const learning = new LearningService(db, now, folders, { get: (n) => registry.get(n), named: (n) => service.projectNamed(n), list: () => registry.list() });
   service.setProjectMoveHook((from, to) => learning.moveProject(from, to));
   const growth = makeGrowth({ db, store, service }, now);
-  // Work mode has no Growth, so its reviews have no growth part.
   const tidyItems = makeTidyItems({ store, service, now, sameProjectFloor: 0.88 });
   const reviews = new ReviewService({
-    store: new ReviewStore(db), memories: store, service, registry, folders, pages, growth: opts.mode === 'work' ? null : growth, grants: () => provider.listGrants(),
+    store: new ReviewStore(db), memories: store, service, registry, folders, pages, growth, grants: () => provider.listGrants(),
     tidy: () => tidySummary(tidyItems()),
   }, now, () => {});
   const projects = new ProjectsService(registry, service, store, discussions, pages, folders, learning);
@@ -134,10 +133,11 @@ export async function startTestApp(opts: { publicUrl?: string; mode?: AppDeps['m
   const deps: AppDeps = {
     allowlist,
     publicUrl, store, service, registry, projects, graph, discussions, growth, reviews, pages, images, diagramChecks: new DiagramChecks(db, now), uploadLinks: new UploadLinks(db, now), skills, skillSync: new SkillSync(db, now, skills), notes: new NoteService(db, pages, now), devices, folders, imports: new ImportLog(db, now), relatedSimilarity: 0.2, sameProjectFloor: 0.88, learning, provider, owner, sessions: new SessionStore(db, now), limiter: new LoginLimiter(), clients, now,
-    mode: opts.mode, trustCfConnectingIp: opts.trustCfConnectingIp, statusDir: opts.statusDir, setupOverlay: opts.setupOverlay,
-    localMode: opts.localMode, appSecret: opts.appSecret, db,
-    // Tests never reach the real Tailscale app on this computer, only a fake on the given PATH.
-    tools: opts.tools ? { tailscaleApp: '/nonexistent/Tailscale', ...opts.tools } : undefined,
+    trustCfConnectingIp: opts.trustCfConnectingIp, statusDir: opts.statusDir, setupOverlay: opts.setupOverlay,
+    localMode: opts.localMode, appSecret: opts.appSecret, backupDir: opts.backupDir, db, models: opts.models, hardware: opts.hardware,
+    // Tests never reach the real Tailscale app on this computer, only a fake on the given PATH, and never fall back to
+    // the real system variables or the real Claude config folder, on any OS.
+    tools: opts.tools ? { tailscaleApp: '/nonexistent/Tailscale', system: {}, claudeConfig: join(opts.tools.home ?? tmpdir(), 'brainai-test-claude', 'claude_desktop_config.json'), ...opts.tools } : undefined,
   };
   server.on('request', createApp(deps));
 

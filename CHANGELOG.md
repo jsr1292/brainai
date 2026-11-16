@@ -4,6 +4,64 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Backups and health shows the version you run.
 
+## 1.3.0 (2026-11-16)
+
+Updating needs nothing from you, except for the desktop app, which you install by hand once (see the first two bullets).
+
+- **The apps are downloads:** the Mac app (a `.dmg` for Apple silicon, built to be signed and notarised by Apple) and the Windows setup are on the release
+  page, with `SHA256SUMS`. No more building them yourself.
+- **One-click updates in the desktop app:** it checks once a day and tells you with a dot in the menu bar or tray and
+  a card on Home. *Update and restart* downloads, checks the signature, saves a backup first and reopens the app;
+  *Later* hides the card for that version (the dot stays; a newer version brings it back). If an update fails, the version you run stays. Your memories and settings stay too.
+- **Claude's desktop app in Connect:** Settings › Tools on this Mac (this computer on Windows) has a new row, *Claude (desktop app)*. Connect adds
+  BrainAI to Claude's config; quit Claude completely and open it again. Its key stays in BrainAI's data folder and can
+  be revoked in Settings › Connections. Disconnect, Remove BrainAI and the Windows uninstaller take it out.
+- **ChatGPT, explained in Connect:** a row says why ChatGPT's app cannot reach a brain that lives only on this
+  computer, and what to do: Reach from phone and web, or a server.
+- **Windows asks once** about an unknown publisher (SmartScreen): More info › Run anyway.
+- **If you run version 1.2 of the app,** it has no updater: install this version by hand once. Updates are automatic
+  after that.
+- **Save a copy of everything:** one button in Settings, in the app and on the dashboard. It makes a folder with the file
+  BrainAI reads back, every memory as Markdown, and a README. In the app it goes into your Documents (it asks first if
+  Documents syncs to iCloud or OneDrive). On a server the dashboard asks for the authenticator code and downloads a
+  `.tar.gz`.
+- **Remove BrainAI, in the app:** Settings › Remove BrainAI saves a copy, turns Reach off, disconnects your coding tools,
+  deletes the data and removes the app. Your tools' original settings go into the saved folder. It ends with a checklist
+  of what BrainAI cannot remove itself.
+- **The Windows uninstaller disconnects your tools** when you uninstall from Settings › Apps. Not during an upgrade.
+- **Coming back with a saved folder:** the app's welcome offers "I have a saved BrainAI folder"; on a server, run
+  `docker compose run --rm app node dist/cli.js restore data/<file>`. It only fills an empty brain.
+- **`scripts/remove.sh`** removes a server install: it saves a copy, lists what it will remove, waits for you to type
+  `remove`, and asks about each outside copy (default: keep).
+- **Import a backup file:** the app's welcome ("I have a saved BrainAI folder") and `cli restore` also take a backup file,
+  `memory-<date>.db`. Sign-in is always removed. It only fills an empty brain.
+- **A second backup folder:** Settings › Backups › "Also keep the daily backups in". The app warns when the folder
+  syncs to iCloud or OneDrive.
+- **Ask commands by default:** the app sets the commands that let Claude Code and Codex ask each other in a discussion.
+  `ASK_COMMANDS` still overrides them.
+- **The moving file now has the saved copy's format and name,** `brainai-saved-<date>.tar.gz`; older `brainai-move-…` files still restore.
+- **Four new general rules** in the assistants' instructions.
+- **The Windows zip is gone:** on Windows use the BrainAI app. If you installed the zip, see "Moving from the Windows
+  zip" in docs/DESKTOP.md. `MEMORY_MODE=work` is no longer accepted.
+- **The app asks how BrainAI finds things:** on first run it suggests search models for your computer ("Choose for me")
+  and downloads the ones you pick. Until they arrive, keyword search works; memories saved meanwhile get their
+  meaning added afterwards.
+- **Models are downloaded on demand and checked:** from Hugging Face, with a GitHub release as the fallback. Each file
+  is checked against a fixed fingerprint; one that does not match is deleted and reported. They use your computer's
+  proxy settings.
+- **A progress bar and a test search for the search models:** while they download, a bar shows how much is done; when
+  they are ready, BrainAI runs a real test search and says it is ready and working, with how long it took.
+- **Settings › Search:** change the search model and the reranker any time, remove a model to free its disk space, or
+  load model files from a folder when the computer cannot download. A new search model re-reads your memories once, in
+  the background.
+- **An online reranker, if you want one:** through OpenRouter, with your own key (Voyage rerank 2.5 or Qwen3
+  Reranker 8B). Each search sends your question and its best matches to the service; the key stays in the app's data
+  folder. If the service is slow or down, the local reranker is used.
+- **A smaller app:** the Mac app is about 281 MiB; it was about 550 MB with the models inside.
+- **Existing app users:** the first start of this version downloads the models your brain already uses, once, with no
+  question asked.
+- **Servers:** nothing changes.
+
 ## 1.2.0 (2026-11-12)
 
 Updating needs nothing from you: the database updates itself when the server starts (a copy is kept first). The first

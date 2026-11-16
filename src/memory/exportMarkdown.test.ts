@@ -18,8 +18,8 @@ test('exportMarkdown lists the profile, then each project, then memories with no
   add('decision', 'Newsletter every Friday.');
   store.softDelete(add('decision', 'Gone.', 'drafting-tool').id, 'owner');
 
-  assert.equal(exportMarkdown(store, 'Work memory', new Date('2026-10-20T09:00:00Z')), [
-    '# Work memory', '', 'Exported 2026-10-20: 6 memories.', '',
+  assert.equal(exportMarkdown(store, 'BrainAI', new Date('2026-10-20T09:00:00Z')), [
+    '# BrainAI', '', 'Exported 2026-10-20: 6 memories.', '',
     '## Profile', '', '- Works as a librarian. (2026-10-01, Codex)', '',
     '## drafting-tool', '',
     '### Statuses', '', '- New status. (2026-10-01, Codex)', '- Old status. (2026-10-01, Codex)', '',
@@ -41,7 +41,7 @@ test('each project lists its replaced facts under ### Replaced', () => {
   const y = add('Labels in Avenir.', 'labels');
   store.supersessions.add(x.id, y.id, 'owner');
   store.update(y.id, { content: 'Labels in Avenir.', project: 'drafting-tool', tags: [], embedding: new Float32Array(EMBEDDING_DIM), by: 'owner' });
-  const out = exportMarkdown(store, 'Work memory', new Date('2026-10-20T09:00:00Z'));
+  const out = exportMarkdown(store, 'BrainAI', new Date('2026-10-20T09:00:00Z'));
   assert.match(out, new RegExp(`## drafting-tool\\n\\n### Decisions\\n\\n- Use pnpm\\. \\(2026-10-01, Codex\\)\\n- Labels in Avenir\\. \\(2026-10-01, owner\\)\\n\\n### Replaced\\n\\n- Use npm\\. \\(2026-10-01, Codex\\) \\(replaced by ${b.id}\\)\\n`));
   assert.match(out, new RegExp(`## labels\\n\\n### Replaced\\n\\n- Labels in Futura\\. \\(2026-10-01, Codex\\) \\(replaced by ${y.id}\\)\\n`));
 });

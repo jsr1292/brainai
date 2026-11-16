@@ -15,6 +15,10 @@ import { needsWelcome } from './desktopRoutes.js';
 import { disagreementsView, type OpenDisagreement } from './disagreeViews.js';
 import { errorBlock } from './dashboardViews.js';
 import { healthOf } from './healthData.js';
+import { modelsLine, updateCard } from './desktopViews.js';
+import { laterVersion, readUpdate } from '../desktop/updateState.js';
+import { viaDoor } from '../desktop/publicDoor.js';
+import { BRAIN_VERSION } from '../version.js';
 import { projectList, projectsHomeView, type HomeViewInput, type WeekLine } from './projectsViews.js';
 import { weekRange } from '../review/sentence.js';
 import { deskSideView, projectLately } from './deskSide.js';
@@ -80,8 +84,8 @@ export function projectRoutes(d: AppDeps): Router {
     };
   };
   /** Everything the Projects screen is drawn from: the home, its list, and the open project when one is asked for. */
-  const homeData = (asked: string | undefined, error?: string): HomeViewInput => {
-    const backups = d.statusDir === undefined ? undefined : backupHealth(readBackupStatus(d.statusDir), d.now(), { offsite: d.mode !== 'work', jobs: d.mode !== 'work' });
+  const homeData = (asked: string | undefined, error?: string, req?: Request): HomeViewInput => {
+    const backups = d.statusDir === undefined ? undefined : backupHealth(readBackupStatus(d.statusDir), d.now(), { offsite: true, jobs: true });
     const backupProblem = backups && !backups.ok ? backups.problems[0] ?? null : null;
     const week = weekLine(backupProblem);
     return {
@@ -94,6 +98,12 @@ export function projectRoutes(d: AppDeps): Router {
       backupProblem,
       now: d.now(),
       error,
+      updateCard: (() => {
+        if (!d.localMode || !d.statusDir || (req && viaDoor(req))) return undefined;
+        const u = readUpdate(d.statusDir, BRAIN_VERSION);
+        return u ? updateCard(u, laterVersion(d.statusDir)) : undefined;
+      })(),
+      modelsLine: d.models ? modelsLine(d.models.status(), { onlyWhenBusy: true, dataDir: d.statusDir }) : undefined,
       connected: d.provider.listGrants().length > 0,
       disagreements: d.service.openDisagreements().length,
       // A brain with no memories yet has its own first steps: brain health waits until there is something to judge.
@@ -107,7 +117,7 @@ export function projectRoutes(d: AppDeps): Router {
   };
   const home = (req: Request, res: Response, status = 200, error?: string, select?: string) => {
     const asked = select ?? queryName(req);
-    res.status(status).type('html').send(page('Projects', projectsHomeView(homeData(asked, error)),
+    res.status(status).type('html').send(page('Projects', projectsHomeView(homeData(asked, error, req)),
       { nav: true, tab: 'projects', back: asked ? { href: '/', label: 'Projects' } : undefined, crumb: false }));
   };
   const notFound = (res: Response) => res.status(404).type('html').send(page('Not found', html`<h1>Not found</h1>`, { nav: true, tab: null }));
@@ -141,7 +151,7 @@ export function projectRoutes(d: AppDeps): Router {
     // The old memory map's Map / Globe choice used to live on the home page: old links land on the Graph tab in one hop.
     const view = req.query.view;
     if (view === 'map' || view === 'globe') return res.redirect(301, '/graph');
-    // Desktop only (desk.js): the list pane by itself, with the same data, filters and work mode as the home. ?project
+    // Desktop only (desk.js): the list pane by itself, with the same data and filters as the home. ?project
     // is ignored here: desk.js marks the selection.
     if (req.query.pane === 'projects') return res.type('html').send(projectList(homeData(undefined), 'list').value);
     // Desktop only (desk.js): the side fragment beside a project's sheet, its Lately. An unknown project is an empty 404.

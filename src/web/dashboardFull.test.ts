@@ -629,17 +629,6 @@ test('the Clients page shows when a read-only project no longer exists under tha
   assert.match(await (await f('/settings')).text(), /trellis \(no longer a project: tick its new name\)/);
 });
 
-test('work mode refuses read-only access on the Clients page', async (t) => {
-  const app = await startTestApp({ mode: 'work' });
-  t.after(() => app.close());
-  const f = await loggedIn(app);
-  await remember(app as any, 'Trellis app reads the harvest workbook', 'decision', 'trellis');
-  await connectClient(app.baseUrl, f, 'Codex');
-  const g = app.deps.provider.listGrants()[0]!;
-  assert.equal((await f(`/clients/${g.id}/access`, { method: 'POST', body: new URLSearchParams([['access', 'projects'], ['projects', 'trellis']]) })).status, 400);
-  assert.equal(app.deps.provider.grantAccess(g.id), 'full');
-});
-
 test('a memory form opened before an assistant saved a newer version does not overwrite it: the owner sees the current text and keeps the draft', async (t) => {
   const app = await start(t);
   const f = await loggedIn(app);

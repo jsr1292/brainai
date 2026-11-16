@@ -9,7 +9,7 @@ import { MemoryStore } from './store.js';
 import { createFakeEmbedder } from './fakeEmbedder.js';
 import type { Embedder } from './embedder.js';
 import { E5_PROFILE, GEMMA_PROFILE } from './embeddingProfile.js';
-import { ensureEmbeddings, staleOverrides, storedModel } from './reembed.js';
+import { embedPending, ensureEmbeddings, staleOverrides, storedModel } from './reembed.js';
 import { makePages } from '../testing/helpers.js';
 import { MemoryService } from './service.js';
 
@@ -160,23 +160,62 @@ test('a fact edited between two attempts is embedded again with its new text', a
   assert.ok(second.texts.includes('NAS is mounted at /mnt/storage'));
 });
 
-test('a vector of the old size written during the rebuild makes the switch roll back, never mixes sizes', async (t) => {
+test('a fact saved while the rebuild computes is embedded too before the switch: never two sizes', async (t) => {
   const b = await brain(t);
   const g = fakeGemma();
   const sneaky = {
     async embed(text: string, purpose: 'query' | 'passage') {
       const v = await g.embed(text, purpose);
-      // Another process (a CLI, an older server) saves a fact with e5 while the rebuild computes.
+      // The server keeps serving during a background re-read: a fact is saved (with the old size) meanwhile.
       if (g.texts.length === 6) new MemoryStore(b.db, now).insert({ kind: 'decision', content: 'saved meanwhile', project: null, tags: [], embedding: new Float32Array(384), by: 'x' });
       return v;
     },
   };
-  await assert.rejects(ensureEmbeddings(b.db, b.path, sneaky, GEMMA_PROFILE, () => {}), /changed while/);
-  assert.deepEqual(storedModel(b.db), { model: 'e5', dim: 384 });
-  assert.deepEqual(dims(b.db, 'memories'), [384]);
-  const r = await ensureEmbeddings(b.db, b.path, fakeGemma(), GEMMA_PROFILE, () => {});
-  assert.equal(r.reembedded && r.facts, 4, 'the next start finishes, the new fact included');
+  const r = await ensureEmbeddings(b.db, b.path, sneaky, GEMMA_PROFILE, () => {});
+  assert.equal(r.reembedded && r.facts, 4, 'the new fact included');
+  assert.ok(g.texts.includes('saved meanwhile'));
+  assert.deepEqual(storedModel(b.db), { model: 'gemma', dim: 768 });
   assert.deepEqual(dims(b.db, 'memories'), [768]);
+});
+
+test('an abort stops the rebuild with the old model in place; what it computed is kept for the next run', async (t) => {
+  const b = await brain(t);
+  const abort = new AbortController();
+  const g = fakeGemma();
+  const stopping = { async embed(text: string, purpose: 'query' | 'passage') { if (g.texts.length === 2) abort.abort(); return g.embed(text, purpose); } };
+  await assert.rejects(ensureEmbeddings(b.db, b.path, stopping, GEMMA_PROFILE, () => {}, { signal: abort.signal }), { name: 'AbortError' });
+  assert.deepEqual(storedModel(b.db), { model: 'e5', dim: 384 });
+  for (const table of ['memories', 'page_sections', 'observations']) assert.deepEqual(dims(b.db, table), [384], table);
+  const second = fakeGemma();
+  await ensureEmbeddings(b.db, b.path, second, GEMMA_PROFILE, () => {});
+  assert.equal(second.texts.length, 3, 'the 3 texts embedded before the abort are not embedded again');
+  for (const table of ['memories', 'page_sections', 'observations']) assert.deepEqual(dims(b.db, table), [768], table);
+});
+
+test('rows saved with a placeholder are listed as waiting, and embedPending embeds exactly those', async (t) => {
+  const b = await brain(t);
+  const store = new MemoryStore(b.db, now);
+  const waiting = store.insert({ kind: 'decision', content: 'Alex waters the tomatoes', project: 'home', tags: [], embedding: new Float32Array(384), by: 'x' });
+  new GrowthStore(b.db, now).insert({ kind: 'strength', area: 'testing', project: 'home', summary: 'Kept the garden-club-site tidy', practise: null, embedding: new Float32Array(384), by: 'x' });
+  const rows = () => b.db.prepare('SELECT tbl, key FROM embedding_pending ORDER BY tbl').all() as { tbl: string; key: string }[];
+  assert.deepEqual(rows().map((r) => r.tbl), ['m', 'o']);
+  const e5 = createFakeEmbedder();
+  const seen: string[] = [];
+  const counting = { async embed(text: string, purpose: 'query' | 'passage') { seen.push(text); return e5.embed(text, purpose); } };
+  let switched = 0;
+  assert.equal(await embedPending(b.db, counting, E5_PROFILE, { done: () => { switched = rows().length === 0 ? 1 : -1; } }), 2);
+  assert.deepEqual(seen.sort(), ['Alex waters the tomatoes', 'Kept the garden-club-site tidy']);
+  assert.equal(switched, 1, 'done runs once nothing is left waiting');
+  assert.deepEqual(rows(), []);
+  const v = new Float32Array((b.db.prepare('SELECT embedding FROM memories WHERE id = ?').get(waiting.id) as { embedding: Buffer }).embedding.buffer.slice(0));
+  assert.ok(v.some((x) => x !== 0));
+});
+
+test('embedPending refuses a model other than the one that made the stored vectors', async (t) => {
+  const b = await brain(t);
+  new MemoryStore(b.db, now).insert({ kind: 'decision', content: 'Alex waters the tomatoes', project: 'home', tags: [], embedding: new Float32Array(384), by: 'x' });
+  await ensureEmbeddings(b.db, b.path, createFakeEmbedder(), E5_PROFILE);
+  await assert.rejects(embedPending(b.db, fakeGemma(), GEMMA_PROFILE), /e5/);
 });
 
 test('progress is logged as the rebuild goes', async (t) => {

@@ -278,6 +278,10 @@ export interface HomeViewInput {
   disagreements?: number;
   /** B1: brain health, for its For you row. */
   health?: Health;
+  /** The search models' progress line (the app only), shown while they download or when a download failed. */
+  modelsLine?: SafeHtml;
+  /** The update card (the app only), above the models line. */
+  updateCard?: SafeHtml;
 }
 
 /**
@@ -305,7 +309,7 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   return html`<div class="plist">
   <h1>Projects${plain ? html`<span class="phome-date" hidden>${longDate(now)}</span>` : ''}</h1>
   ${errorBlock(v.error)}
-  ${banner}
+  ${banner}${v.updateCard ?? ''}${v.modelsLine ?? ''}
   <form method="post" action="/projects/ideas" class="idea"><label class="visually-hidden" for="idea-text">A new idea</label><input id="idea-text" name="text" maxlength="140" placeholder="An idea…" autocomplete="off"><button type="submit" class="primary">Add idea</button></form>
   ${forYou.value === '' ? '' : html`<h2 class="fy-h" id="foryou" hidden>For you</h2>`}${forYou}
   ${!empty ? '' : v.connected === false

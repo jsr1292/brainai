@@ -400,14 +400,13 @@ test('capLabel', () => {
 
 // ---- D34 Task 7: the ⌘K palette ----
 test('paletteDo never posts: only GET jumps and an idea that fills the field', () => {
-  const all = d.paletteDo('', { work: false });
+  const all = d.paletteDo('');
   assert.deepEqual(all.map((x: any) => x.label), ['Go to Projects', 'Go to Pages', 'Go to Facts', 'Go to Inbox', 'Go to Last week', 'Go to So far', 'Go to Growth', 'Go to Graph', 'Go to Settings']);
   for (const x of all) { assert.match(x.href, /^\/[\w/]*$/); assert.equal(x.idea, undefined); }
-  assert.deepEqual(d.paletteDo('lantern', { work: false })[0], { label: 'Add “lantern” as an idea', idea: 'lantern' });
-  assert.ok(!d.paletteDo('grow', { work: true }).some((x: any) => /Growth/.test(x.label)));
-  assert.deepEqual(d.paletteDo('week', { work: false }).map((x: any) => x.label), ['Add “week” as an idea', 'Go to Last week']);
-  assert.equal(d.paletteDo('x'.repeat(141), { work: false }).some((x: any) => x.idea), false);
-  assert.deepEqual(d.paletteDo('ápprov', { work: false }).map((x: any) => x.href).filter(Boolean), ['/approvals']);
+  assert.deepEqual(d.paletteDo('lantern')[0], { label: 'Add “lantern” as an idea', idea: 'lantern' });
+  assert.deepEqual(d.paletteDo('week').map((x: any) => x.label), ['Add “week” as an idea', 'Go to Last week']);
+  assert.equal(d.paletteDo('x'.repeat(141)).some((x: any) => x.idea), false);
+  assert.deepEqual(d.paletteDo('ápprov').map((x: any) => x.href).filter(Boolean), ['/approvals']);
 });
 test('createLatest keeps the newest only', () => {
   const l = d.createLatest(); const a = l.next(); const b = l.next();

@@ -4,10 +4,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { connect } from '../desktop/tools.js';
-import { fakeHome } from '../testing/fakeTools.js';
-import { toolEnv } from './desktopRoutes.js';
+import { join } from 'node:path';
 import { connectClient, loggedIn, startTestApp } from '../testing/helpers.js';
 import { moveFile } from '../desktop/move.js';
 import { revealCommand } from './moveRoutes.js';
@@ -43,7 +40,7 @@ test('Move to a server makes the moving file, shows it in Finder and deletes it,
   const file = moveFile(statusDir);
   assert.ok(file && existsSync(file));
   const after = await (await f('/settings/move')).text();
-  assert.match(after, /brainai-move-\d{4}-\d{2}-\d{2}\.tar\.gz/);
+  assert.match(after, /brainai-saved-\d{4}-\d{2}-\d{2}\.tar\.gz/);
   assert.match(after, /holds every memory/);
   await f('/settings/move/show', { method: 'POST', headers: FORM, body: '' });
   assert.deepEqual(shown, [file]);
@@ -117,15 +114,8 @@ test('Not moved after all brings it back', async (t) => {
   assert.doesNotMatch(await (await f('/')).text(), /This brain now lives at/);
 });
 
-test('Remove from this computer disconnects the tools connected to this BrainAI and says goodbye; the data stays', async (t) => {
-  const home = fakeHome();
-  t.after(() => home.cleanup());
-  const { app, statusDir, f } = await desktop(t, { tools: { home: home.home, path: `${home.bin}:${dirname(process.execPath)}:/usr/bin:/bin`, apps: home.apps } });
-  const env = toolEnv(app.deps)!;
-  assert.equal((await connect('claude-code', env, {})).ok, true);
-  assert.equal((await connect('codex', env, {})).ok, true);
-  const elsewhere = JSON.stringify({ mcp: { brainai: { type: 'remote', url: 'https://memory.example.com/mcp', enabled: true } } }, null, 2);
-  home.write('.config/opencode/opencode.json', elsewhere);
+test('after a move, Remove from this computer goes on to Remove BrainAI, and the goodbye page still answers', async (t) => {
+  const { statusDir, f } = await desktop(t);
   // Not moved: there is nothing to remove.
   assert.equal((await f('/settings/move/remove', { method: 'POST', headers: FORM, body: '' })).status, 404);
   assert.equal((await f('/app/goodbye')).status, 404);
@@ -133,10 +123,7 @@ test('Remove from this computer disconnects the tools connected to this BrainAI 
   assert.match(await (await f('/settings/move')).text(), /action="\/settings\/move\/remove"/);
   const removed = await f('/settings/move/remove', { method: 'POST', headers: FORM, body: '' });
   assert.equal(removed.status, 303);
-  assert.equal(removed.headers.get('location'), '/app/goodbye');
-  assert.deepEqual(home.servers('claude'), {}, 'Claude Code no longer points at this Mac');
-  assert.deepEqual(home.servers('codex'), {});
-  assert.equal(home.read('.config/opencode/opencode.json'), elsewhere, 'a tool on another BrainAI is left alone');
+  assert.equal(removed.headers.get('location'), '/settings/remove');
   assert.equal((await f('/app/goodbye')).status, 200);
   assert.ok(existsSync(join(statusDir, 'moved.json')));
 });

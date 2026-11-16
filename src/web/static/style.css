@@ -1869,6 +1869,8 @@ details.fold.filter-fold[open] > summary { margin-bottom: 1rem; }
 /* Settings › Tools on this Mac (D3): one row per coding tool, its state on the left and its button on the right. */
 .tools li.tool { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; }
 .tools form.inline { display: inline-block; margin: 0; }
+#search > form.inline { display: inline-block; margin: 0.5rem 0 0; }
+#search .notice { margin: 0.5rem 0; }
 .notice { padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--r-inset); background: var(--surface); }
 .setup-steps > li + li { margin-top: 1.25rem; }
 .setup-steps h2 { font-size: var(--t-headline); margin: 0 0 0.25rem; }
@@ -1891,3 +1893,80 @@ details.fold.filter-fold[open] > summary { margin-bottom: 1rem; }
 .sk-device form { flex: none; }
 .sk-changed { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .sk-changed form { flex-direction: row; }
+
+/* ---- The welcome's search step (models) ---- */
+.welcome .computer { margin: 0.125rem 0 1rem; font-weight: 600; }
+.welcome .lede + .meta { margin: 0.75rem 0 1.25rem; }
+.welcome .label { margin: 0; }
+.models-suggest { margin: 0 0 1rem; padding: 0.875rem 1rem; border: 1px solid var(--line); border-radius: var(--r-inset); background: var(--raised); }
+.models-suggest p { margin: 0 0 0.5rem; }
+.models-suggest p:last-child { margin: 0; }
+.models-all > summary { cursor: pointer; padding: 0.5rem 0; font-weight: 600; }
+.model-group { margin: 0 0 1rem; padding: 0; border: 0; min-width: 0; }
+.model-group > legend { padding: 0; margin: 0 0 0.375rem; font-weight: 600; }
+.model-group > legend .meta { display: inline; font-weight: 400; }
+.model-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.model-opt { position: relative; display: flex; gap: 0.625rem; align-items: flex-start; padding: 0.625rem 0.75rem; border: 1px solid var(--line); border-radius: var(--r-inset); }
+.model-opt:has(input:checked) { border-color: var(--accent); }
+.model-opt input { margin-top: 0.25rem; flex: none; }
+.model-opt label { display: grid; gap: 0.125rem; min-width: 0; cursor: pointer; }
+.model-opt .meta { display: block; font-weight: 400; }
+.model-rec { margin-left: 0.25rem; padding: 0 0.5rem; border-radius: var(--r-pill); background: var(--raised); border: 1px solid var(--line); color: var(--muted); font-size: var(--t-meta); font-weight: 600; }
+.model-off { opacity: 0.7; }
+.model-off label { cursor: default; }
+.models-line { margin: 1rem 0 0; }
+.models-line[hidden] { display: none; }
+.models-line .models-ok { margin-right: 0.375rem; font-weight: 700; color: var(--added); }
+/* The finished check reads as a confirmation, not as more small print. */
+.models-line:has(.models-ok) .models-text { color: var(--fg); }
+/* The download's bar: thin like .hp-bar, full width under the text, the accent as its fill. */
+.models-bar { display: block; width: 100%; height: 6px; margin: 0.5rem 0 0; border: 0; border-radius: var(--r-pill); background: var(--raised); overflow: hidden; appearance: none; -webkit-appearance: none; accent-color: var(--accent); }
+.models-bar::-webkit-progress-bar { background: var(--raised); border-radius: var(--r-pill); }
+.models-bar::-webkit-progress-value { background: var(--accent); border-radius: var(--r-pill); transition: width 0.4s ease; }
+.models-bar::-moz-progress-bar { background: var(--accent); border-radius: var(--r-pill); }
+/* No value (nothing to measure by): a short fill sliding along the track; still when motion is reduced. */
+.models-bar:not([value])::-webkit-progress-bar { background: linear-gradient(var(--accent), var(--accent)) -40% 0 / 35% 100% no-repeat var(--raised); animation: models-slide 1.4s ease-in-out infinite; }
+.models-bar:not([value])::-moz-progress-bar { width: 100%; background: linear-gradient(var(--accent), var(--accent)) -40% 0 / 35% 100% no-repeat var(--raised); animation: models-slide 1.4s ease-in-out infinite; }
+/* Always part of the fill on the track, so it never looks stopped. */
+@keyframes models-slide { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .models-bar::-webkit-progress-value { transition: none; }
+  /* Two rules: a browser drops a whole rule that names another browser's pseudo-element. */
+  .models-bar:not([value])::-webkit-progress-bar { animation: none; background: var(--accent); opacity: 0.45; }
+  .models-bar:not([value])::-moz-progress-bar { animation: none; background: var(--accent); opacity: 0.45; }
+}
+
+/* ---- The app's first-run setup: the steps on the left, the step on the right; one column on a narrow window. ---- */
+body.setup main { max-width: 64rem; padding-top: 0; padding-bottom: 0; }
+.setup-frame { display: grid; grid-template-columns: 12.5rem minmax(0, 1fr); column-gap: clamp(2.5rem, 6vw, 5rem); min-height: 100dvh; }
+.setup-rail { position: sticky; top: 0; align-self: start; padding: 2.75rem 0 2rem; }
+.setup-rail .brand { margin: 0 0 2.5rem; padding-left: 0.625rem; }
+.setup-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.125rem; counter-reset: none; }
+.setup-steps li { display: flex; align-items: center; gap: 0.75rem; min-height: 2.5rem; padding: 0 0.625rem; border-radius: var(--r-inset); color: var(--muted); font-size: var(--t-sub); }
+.setup-steps li.current { background: var(--raised); color: var(--fg); font-weight: 600; }
+.setup-steps li.done { color: var(--ink2); }
+.step-mark { flex: none; display: grid; place-items: center; width: 1.375rem; height: 1.375rem; border-radius: 50%; border: 1.5px solid var(--line-strong); font-size: var(--t-label); font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; }
+.setup-steps li.current .step-mark { border-color: var(--accent); background: var(--accent); color: var(--accent-fg); }
+.setup-steps li.done .step-mark { border-color: var(--added); background: var(--added); color: var(--surface); }
+.setup-main { max-width: 42rem; padding: 2.75rem 0 3.5rem; }
+.setup-main .step-count { display: none; }
+.setup-main h1 { margin-top: 0; }
+/* The step's buttons sit at its end, on the right, sized to their words; a side link waits on the left. */
+.setup-actions { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.75rem 1.25rem; margin: 2rem 0 0; }
+.setup-actions > .meta { margin-right: auto; }
+.setup-actions .meta a { color: var(--fg); text-decoration: underline; text-underline-offset: 2px; }
+/* Breathing room the single column never needed: after the lede, under the tools list, around the waiting line. */
+.setup-main .lede { margin-bottom: 0.75rem; }
+.setup-main .group + .meta { margin-top: 0.875rem; }
+.setup-main [data-setup-status] { margin: 0.625rem 0 1.25rem; }
+.setup-actions button.primary, .setup-actions .button.primary { min-width: 8.5rem; }
+/* The ChatGPT row's note is a sentence with a link in it, not a row of tags. */
+.meta.note { display: block; }
+@media (max-width: 47.99rem) {
+  .setup-frame { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .setup-rail { position: static; padding: max(1.25rem, env(safe-area-inset-top)) 0 0; }
+  .setup-rail .brand { margin: 0; padding: 0; }
+  .setup-steps { display: none; }
+  .setup-main { padding-top: 1.5rem; }
+  .setup-main .step-count { display: flex; }
+}

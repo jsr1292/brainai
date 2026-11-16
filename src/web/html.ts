@@ -41,15 +41,10 @@ export function asset(file: string): string {
   return `/static/${file}?v=${v}`;
 }
 
-/** Set once per app by createApp: work mode renames the dashboard. */
-let workMode = false;
-export function setPageMode(mode: 'personal' | 'work'): void {
-  workMode = mode === 'work';
-}
-export const memoryName = (): string => (workMode ? 'Work brain' : 'BrainAI');
+export const memoryName = (): string => 'BrainAI';
 /** How a pasted or asked request names this memory. It matches the setup texts' wording ("a shared memory"), on purpose not the
  * MCP server's name (brainai), so assistants set up with those texts recognise it. */
-export const memoryServerName = (): string => (workMode ? 'work-memory' : 'shared-memory');
+export const memoryServerName = (): string => 'shared-memory';
 
 /** The main destinations, as in the approved mockups. */
 const TABS: { href: string; label: string; tab: Tab }[] = [
@@ -68,7 +63,7 @@ const PHONE_PLACE: Partial<Record<Tab, Tab>> = { facts: 'pages', inbox: 'project
 /** A part of a place, lit in the desktop sidebar under its place: Week has three. */
 export type Section = 'last' | 'now' | 'growth';
 
-/** The desktop sidebar's places, each with its sections (desktop design §3). Growth is not in work mode. */
+/** The desktop sidebar's places, each with its sections (desktop design §3). */
 const PLACES: { href: string; label: string; tab: Tab; subs: { href: string; label: string; section: Section }[] }[] = [
   { href: '/', label: 'Projects', tab: 'projects', subs: [] },
   { href: '/pages', label: 'Pages', tab: 'pages', subs: [] },
@@ -88,7 +83,7 @@ function sidebar(opts: { tab?: Tab | null; section?: Section; query?: string }):
   const section = opts.section;
   const place = (p: (typeof PLACES)[number]) => {
     const here = opts.tab === p.tab;
-    const subs = workMode ? p.subs.filter((x) => x.section !== 'growth') : p.subs;
+    const subs = p.subs;
     const lit = here ? subs.find((x) => x.section === section) : undefined;
     const count = p.tab === 'inbox' && status.needsYouCount > 0 ? html`<span class="side-count" aria-label="${status.needsYouCount} waiting">${status.needsYouCount}</span>` : '';
     return html`<li><a class="side-place" href="${p.href}"${here ? raw(` aria-current="${lit ? 'true' : 'page'}"`) : ''}>${p.label}${count}</a>${subs.length > 0 ? html`<ul class="side-subs">${subs.map((x) => html`<li><a class="side-sub" href="${x.href}"${x === lit ? raw(' aria-current="page"') : ''}>${x.label}</a></li>`)}</ul>` : ''}</li>`;
@@ -113,7 +108,7 @@ export function setMovedBanner(fn: () => URL | null): void {
   movedTo = fn;
 }
 
-export function page(title: string, body: SafeHtml, opts: { nav?: boolean; query?: string; tab?: Tab | null; section?: Section; back?: Pick<Back, 'href' | 'label'>; crumb?: boolean } = {}): string {
+export function page(title: string, body: SafeHtml, opts: { nav?: boolean; query?: string; tab?: Tab | null; section?: Section; back?: Pick<Back, 'href' | 'label'>; crumb?: boolean; /** The app's first-run setup: its own frame, with the brand in its step list. */ shell?: 'setup' } = {}): string {
   const brand = html`<a class="brand" href="/"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></a>`;
   const link = (t: { href: string; label: string; tab: Tab }) =>
     html`<a href="${t.href}"${opts.tab === t.tab || PHONE_PLACE[opts.tab ?? 'projects'] === t.tab ? raw(' aria-current="page"') : ''}>${t.label}</a>`;
@@ -124,7 +119,7 @@ export function page(title: string, body: SafeHtml, opts: { nav?: boolean; query
 <form class="find" method="get" action="/search" role="search"><input name="q" type="search" placeholder="Search the brain" aria-label="Search" aria-keyshortcuts="Meta+K Control+K" title="Search (⌘K)" value="${opts.query ?? ''}"><button type="button" class="find-cancel">Cancel</button><div class="find-hints"><a href="/review/now#latest">Latest changes</a><a href="/facts">All facts</a><p>Or type: projects, facts and page sections.</p></div></form>
 ${settings}
 </header>`
-    : html`<header class="top solo">${brand}</header>`;
+    : opts.shell === 'setup' ? html`` : html`<header class="top solo">${brand}</header>`;
   return html`<!doctype html>
 <html lang="en">
 <head>
@@ -140,7 +135,7 @@ ${settings}
 <link rel="stylesheet" href="${asset('desk.css')}" media="screen and (min-width: 1100px)">
 <script src="${asset('app.js')}" defer></script>
 </head>
-<body class="${opts.nav ? 'app' : 'auth'}"${opts.nav ? html` data-desk="${asset('desk.js')}"` : ''}>
+<body class="${opts.nav ? 'app' : opts.shell === 'setup' ? 'setup' : 'auth'}"${opts.nav ? html` data-desk="${asset('desk.js')}"` : ''}>
 ${header}${opts.nav ? sidebar(opts) : ''}<main>
 ${(() => { const to = opts.nav ? movedTo() : null; return to ? html`<p class="notice" role="status">This brain now lives at <a href="${to.origin}">${to.origin}</a>. Changes made here are not copied there.</p>
 ` : ''; })()}${opts.nav && opts.back && opts.crumb !== false ? html`<p class="crumb back"><a href="${opts.back.href}">‹ ${opts.back.label}</a></p>` : ''}

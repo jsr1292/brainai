@@ -25,10 +25,12 @@ pub fn plain_path(p: &str) -> String {
     if plain.chars().count() > 259 || plain.split('\\').skip(1).any(special) { p.to_string() } else { plain }
 }
 
-/// Exactly what the server is started with: local mode on this port, data in the app-data folder, the bundled model,
-/// this start's key, and a pipe it watches so it stops when the app is gone.
+/// Exactly what the server is started with: local mode on this port, data in the app-data folder, the models it
+/// downloads in the app-data folder too (never in the app, which an update replaces), this start's key, a pipe it
+/// watches so it stops when the app is gone, and the system proxy (for those downloads).
 /// On Windows `system` carries the system variables Node and the tools need (empty on the Mac).
-pub fn env(app_data: &Path, resources: &Path, port: u16, secret: &str, timezone: Option<&str>, tmpdir: Option<&str>, tool_path: &str, system: &[(String, String)]) -> Vec<(String, String)> {
+#[allow(clippy::too_many_arguments)]
+pub fn env(app_data: &Path, port: u16, secret: &str, timezone: Option<&str>, tmpdir: Option<&str>, tool_path: &str, system: &[(String, String)], proxy: &Proxy) -> Vec<(String, String)> {
     let path = |p: &Path| p.to_string_lossy().into_owned();
     let mut env = vec![
         ("LOCAL_MODE".into(), "true".into()),
@@ -38,7 +40,7 @@ pub fn env(app_data: &Path, resources: &Path, port: u16, secret: &str, timezone:
         ("DATA_DIR".into(), path(&app_data.join("data"))),
         ("BACKUP_DIR".into(), path(&app_data.join("backups"))),
         ("OVERLAY_DIR".into(), path(&app_data.join("overlay"))),
-        ("MODEL_DIR".into(), path(&resources.join("server").join("models"))),
+        ("MODEL_DIR".into(), path(&app_data.join("models"))),
         ("APP_SECRET".into(), secret.into()),
         ("APP_PARENT".into(), "stdin".into()),
         ("NODE_ENV".into(), "production".into()),
@@ -60,7 +62,171 @@ pub fn env(app_data: &Path, resources: &Path, port: u16, secret: &str, timezone:
     if let Some((_, root)) = system.iter().find(|(k, _)| k == "SystemRoot") {
         env.push(("PATH".into(), format!("{root}\\System32;{root}")));
     }
+    env.extend(proxy_env(proxy));
     env
+}
+
+/// The system's web proxy, as Node's fetch takes it: proxy URLs for http and https, and the hosts that skip it.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Proxy {
+    pub http: Option<String>,
+    pub https: Option<String>,
+    pub no_proxy: Vec<String>,
+}
+
+/// The variables for `p` (none without an https proxy). Node 22's own fetch reads HTTPS_PROXY / HTTP_PROXY / NO_PROXY
+/// only with NODE_USE_ENV_PROXY=1; this computer's own addresses never go through the proxy. With only a proxy for
+/// plain http nothing is passed: Node would send https through it too (the system does not), and every download the
+/// server makes is https.
+pub fn proxy_env(p: &Proxy) -> Vec<(String, String)> {
+    if p.https.is_none() {
+        return Vec::new();
+    }
+    let mut env = Vec::new();
+    if let Some(u) = &p.https {
+        env.push(("HTTPS_PROXY".into(), u.clone()));
+    }
+    if let Some(u) = &p.http {
+        env.push(("HTTP_PROXY".into(), u.clone()));
+    }
+    let mut skip = p.no_proxy.clone();
+    for own in ["localhost", "127.0.0.1", "::1"] {
+        if !skip.iter().any(|s| s == own) {
+            skip.push(own.into());
+        }
+    }
+    env.push(("NO_PROXY".into(), skip.join(",")));
+    env.push(("NODE_USE_ENV_PROXY".into(), "1".into()));
+    env
+}
+
+/// `host` and `port` as a proxy URL (an address that already names its scheme is kept as it is).
+fn proxy_url(host: &str, port: Option<&str>) -> Option<String> {
+    let host = host.trim();
+    if host.is_empty() {
+        return None;
+    }
+    if host.contains("://") {
+        return Some(host.to_string());
+    }
+    let host = if host.contains(':') && !host.starts_with('[') && port.is_some() { format!("[{host}]") } else { host.to_string() };
+    Some(match port.map(str::trim).filter(|p| !p.is_empty() && *p != "0") {
+        Some(port) => format!("http://{host}:{port}"),
+        None => format!("http://{host}"),
+    })
+}
+
+/// A bypass entry as NO_PROXY writes it: `*.example.com` is `.example.com`; WinINet's `<local>` has no equivalent.
+fn bypass(entry: &str) -> Option<String> {
+    let e = entry.trim();
+    if e.is_empty() || e == "<local>" {
+        return None;
+    }
+    Some(e.strip_prefix('*').filter(|r| r.starts_with('.')).unwrap_or(e).to_string())
+}
+
+/// The Mac's proxy from `scutil --proxy` (System Settings › Network › Proxies). A proxy set up but switched off
+/// counts as none; an automatic configuration (PAC) is not read.
+pub fn proxy_from_scutil(out: &str) -> Proxy {
+    // Only the top-level dictionary counts: the per-interface dictionaries under __SCOPED__ come after it and would
+    // otherwise overwrite its values and add their exceptions.
+    let mut keys = std::collections::HashMap::new();
+    let mut exceptions = Vec::new();
+    let mut in_exceptions = false;
+    let mut depth = 0usize;
+    for line in out.lines() {
+        let line = line.trim();
+        if line == "}" {
+            depth = depth.saturating_sub(1);
+            if depth < 2 {
+                in_exceptions = false;
+            }
+            continue;
+        }
+        if depth == 1 && line.starts_with("ExceptionsList : <array>") {
+            in_exceptions = true;
+        } else if depth == 2 && in_exceptions {
+            if let Some((_, v)) = line.split_once(" : ") {
+                exceptions.extend(bypass(v));
+            }
+        } else if depth == 1 && !line.ends_with('{') {
+            if let Some((k, v)) = line.split_once(" : ") {
+                keys.insert(k.trim().to_string(), v.trim().to_string());
+            }
+        }
+        if line.ends_with('{') {
+            depth += 1;
+        }
+    }
+    let one = |scheme: &str| {
+        if keys.get(&format!("{scheme}Enable")).map(String::as_str) != Some("1") {
+            return None;
+        }
+        proxy_url(keys.get(&format!("{scheme}Proxy"))?, keys.get(&format!("{scheme}Port")).map(String::as_str))
+    };
+    let (http, https) = (one("HTTP"), one("HTTPS"));
+    if http.is_none() && https.is_none() {
+        return Proxy::default();
+    }
+    Proxy { http, https, no_proxy: exceptions }
+}
+
+/// Windows' proxy from the WinINet settings, as `reg query "HKCU\…\Internet Settings"` prints them: ProxyEnable,
+/// ProxyServer (`host:port` for everything, or `http=…;https=…`) and ProxyOverride (`;`-separated).
+pub fn proxy_from_wininet(out: &str) -> Proxy {
+    let mut values = std::collections::HashMap::new();
+    for line in out.lines() {
+        let mut parts = line.trim().splitn(2, char::is_whitespace);
+        let (Some(name), Some(rest)) = (parts.next(), parts.next()) else { continue };
+        let mut rest = rest.trim_start().splitn(2, char::is_whitespace);
+        let (Some(kind), Some(value)) = (rest.next(), rest.next()) else { continue };
+        if kind.starts_with("REG_") {
+            values.insert(name.to_string(), value.trim().to_string());
+        }
+    }
+    let enabled = values.get("ProxyEnable").map(|v| v.trim_start_matches("0x").trim_start_matches('0')).is_some_and(|v| !v.is_empty());
+    let Some(server) = values.get("ProxyServer").filter(|_| enabled) else { return Proxy::default() };
+    let (mut http, mut https) = (None, None);
+    if server.contains('=') {
+        for part in server.split(';') {
+            match part.split_once('=') {
+                Some((k, v)) if k.trim().eq_ignore_ascii_case("http") => http = proxy_url(v, None),
+                Some((k, v)) if k.trim().eq_ignore_ascii_case("https") => https = proxy_url(v, None),
+                _ => {}
+            }
+        }
+    } else {
+        http = proxy_url(server, None);
+        https = http.clone();
+    }
+    if http.is_none() && https.is_none() {
+        return Proxy::default();
+    }
+    let no_proxy = values.get("ProxyOverride").map(|o| o.split(';').filter_map(bypass).collect()).unwrap_or_default();
+    Proxy { http, https, no_proxy }
+}
+
+/// This computer's proxy, read at each server start. Anything that goes wrong reading it means no proxy: the app
+/// always starts.
+pub fn system_proxy() -> Proxy {
+    let run = |program: &str, args: &[&str]| -> Option<String> {
+        let mut cmd = std::process::Command::new(program);
+        cmd.args(args).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(creation_flags(true));
+        }
+        let out = cmd.output().ok()?;
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    if cfg!(target_os = "macos") {
+        run("/usr/sbin/scutil", &["--proxy"]).map(|o| proxy_from_scutil(&o)).unwrap_or_default()
+    } else if cfg!(windows) {
+        run("reg", &["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings"]).map(|o| proxy_from_wininet(&o)).unwrap_or_default()
+    } else {
+        Proxy::default()
+    }
 }
 
 /// How the server process is created: on Windows with no console window (the app is a window program, and a
@@ -265,6 +431,35 @@ pub fn ticket(port: u16, secret: &str) -> Result<String, String> {
     Err(last)
 }
 
+/// Before the app deletes anything for a removal: asks its own server (GET /app/removed/ready with X-App-Key) whether
+/// a removal finished there, and where its saved folder is. Any other answer, or none, is None: nothing is removed.
+/// Only called once the server proved it is ours.
+pub fn removal_ready(port: u16, secret: &str) -> Option<String> {
+    let resp = agent().get(&format!("http://localhost:{port}/app/removed/ready")).set("X-App-Key", secret).call().ok()?;
+    if resp.status() != 200 {
+        return None;
+    }
+    let body: serde_json::Value = resp.into_json().ok()?;
+    body.get("folder").and_then(|v| v.as_str()).filter(|f| !f.is_empty()).map(str::to_string)
+}
+
+/// Before an update is installed: a backup now (POST /app/backup-now with X-App-Key). A large brain can take a while,
+/// hence the long wait. Err carries the server's own plain sentence, or a fixed one when it did not answer. Only called
+/// once the server proved it is ours.
+pub fn backup_now(port: u16, secret: &str) -> Result<(), String> {
+    const NO_ANSWER: &str = "BrainAI's server did not answer.";
+    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(180)).redirects(0).build();
+    match agent.post(&format!("http://localhost:{port}/app/backup-now")).set("X-App-Key", secret).call() {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::Status(_, resp)) => {
+            let body: serde_json::Value = resp.into_json().unwrap_or_default();
+            let said = body.get("error").and_then(|v| v.as_str()).map(str::trim).filter(|e| !e.is_empty());
+            Err(said.unwrap_or("The backup did not finish.").to_string())
+        }
+        Err(ureq::Error::Transport(_)) => Err(NO_ANSWER.into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -325,7 +520,7 @@ mod tests {
         let system = windows_system_env(parent);
         let names: Vec<&str> = system.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(names, vec!["USERPROFILE", "LOCALAPPDATA", "TEMP", "SystemRoot"], "the list, in its order, missing ones skipped");
-        let env = env(&PathBuf::from("C:\\d"), &PathBuf::from("C:\\r"), 3100, "k", None, None, "C:\\npm", &system);
+        let env = env(&PathBuf::from("C:\\d"), 3100, "k", None, None, "C:\\npm", &system, &Proxy::default());
         let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
         assert_eq!(get("USERPROFILE"), Some("C:\\Users\\Ana"));
         assert_eq!(get("PATH"), Some("C:\\Windows\\System32;C:\\Windows"), "for tar and explorer");
@@ -349,7 +544,7 @@ mod tests {
 
     #[test]
     fn the_server_runs_in_local_mode_with_its_data_in_the_app_data_folder() {
-        let env = env(&PathBuf::from("/data/app"), &PathBuf::from("/bundle/Resources"), 3107, "k", None, None, "/opt/homebrew/bin:/usr/bin", &[]);
+        let env = env(&PathBuf::from("/data/app"), 3107, "k", None, None, "/opt/homebrew/bin:/usr/bin", &[], &Proxy::default());
         let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
         assert_eq!(get("LOCAL_MODE"), Some("true"));
         assert_eq!(get("HOST"), Some("127.0.0.1"));
@@ -358,7 +553,8 @@ mod tests {
         assert_eq!(get("DATA_DIR"), Some("/data/app/data"));
         assert_eq!(get("BACKUP_DIR"), Some("/data/app/backups"));
         assert_eq!(get("OVERLAY_DIR"), Some("/data/app/overlay"));
-        assert_eq!(get("MODEL_DIR"), Some("/bundle/Resources/server/models"));
+        assert_eq!(get("MODEL_DIR"), Some("/data/app/models"), "the models are downloaded into the app-data folder, not the bundle");
+        assert_eq!(get("HTTPS_PROXY"), None, "no system proxy, none passed");
         assert_eq!(get("APP_SECRET"), Some("k"));
         assert_eq!(get("APP_PARENT"), Some("stdin"));
         assert_eq!(get("TRUST_CF_CONNECTING_IP"), Some("false"));
@@ -369,7 +565,7 @@ mod tests {
 
     #[test]
     fn weeks_and_days_follow_the_macs_own_time_zone() {
-        let env = env(&PathBuf::from("/d"), &PathBuf::from("/r"), 3100, "k", Some("Europe/Berlin"), Some("/var/folders/ab/T/"), "/usr/bin", &[]);
+        let env = env(&PathBuf::from("/d"), 3100, "k", Some("Europe/Berlin"), Some("/var/folders/ab/T/"), "/usr/bin", &[], &Proxy::default());
         assert!(env.contains(&("TMPDIR".into(), "/var/folders/ab/T/".into())), "the owner's private temporary folder, not /tmp");
         assert!(env.contains(&("OWNER_TIMEZONE".into(), "Europe/Berlin".into())));
         assert_eq!(timezone_from_link("/var/db/timezone/zoneinfo/Europe/Berlin"), Some("Europe/Berlin".into()));
@@ -427,6 +623,127 @@ mod tests {
         assert_eq!(check_once(answer_once("200 OK", r#"{"proof":"0000"}"#), "k"), Err(StartError::NotOurs));
         assert_eq!(check_once(answer_once("404 Not Found", "{}"), "k"), Err(StartError::NotOurs));
         assert_eq!(check_once(answer_once("200 OK", "not json"), "k"), Err(StartError::NotOurs));
+    }
+
+    /// Like answer_once, and also hands back the request it got.
+    fn answer_once_seen(status: &str, body: &'static str) -> (u16, std::sync::mpsc::Receiver<String>) {
+        let l = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = l.local_addr().unwrap().port();
+        let status = status.to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok((mut s, _)) = l.accept() {
+                let mut buf = [0u8; 2048];
+                let n = s.read(&mut buf).unwrap_or(0);
+                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).into_owned());
+                let _ = write!(s, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            }
+        });
+        (port, rx)
+    }
+
+    #[test]
+    fn a_removal_is_ready_only_when_the_server_names_the_saved_folder() {
+        let (port, seen) = answer_once_seen("200 OK", r#"{"folder":"/Users/alex/Documents/BrainAI saved 2026-11-12"}"#);
+        assert_eq!(removal_ready(port, "k"), Some("/Users/alex/Documents/BrainAI saved 2026-11-12".into()));
+        let request = seen.recv().unwrap().to_lowercase();
+        assert!(request.starts_with("get /app/removed/ready "), "{request}");
+        assert!(request.contains("x-app-key: k\r\n"), "the app's key goes with it");
+        assert_eq!(removal_ready(answer_once("409 Conflict", r#"{"error":"No saved copy"}"#), "k"), None, "no removal finished");
+        assert_eq!(removal_ready(answer_once("404 Not Found", "{}"), "k"), None);
+        assert_eq!(removal_ready(answer_once("200 OK", "{}"), "k"), None);
+        assert_eq!(removal_ready(answer_once("200 OK", r#"{"folder":""}"#), "k"), None);
+        assert_eq!(removal_ready(answer_once("200 OK", "not json"), "k"), None);
+        let free = TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        assert_eq!(removal_ready(free, "k"), None, "nothing listening");
+    }
+
+    #[test]
+    fn a_backup_before_an_update_is_asked_of_the_server_with_the_apps_key() {
+        let (port, seen) = answer_once_seen("200 OK", r#"{"ok":true}"#);
+        assert_eq!(backup_now(port, "k"), Ok(()));
+        let request = seen.recv().unwrap().to_lowercase();
+        assert!(request.starts_with("post /app/backup-now "), "{request}");
+        assert!(request.contains("x-app-key: k\r\n"), "the app's key goes with it");
+        assert_eq!(backup_now(answer_once("500 Internal Server Error", r#"{"error":"The disk is full."}"#), "k"), Err("The disk is full.".into()), "the server's own plain sentence");
+        let free = TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        assert!(backup_now(free, "k").is_err(), "nothing listening");
+    }
+
+    #[test]
+    fn the_system_proxy_is_passed_to_the_server_for_its_downloads() {
+        let proxy = Proxy {
+            http: Some("http://proxy.example.test:8080".into()),
+            https: Some("http://secure-proxy.example.test:3128".into()),
+            no_proxy: vec![".local".into(), "intranet.example.test".into()],
+        };
+        let env = env(&PathBuf::from("/data/app"), 3107, "k", None, None, "/usr/bin", &[], &proxy);
+        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("MODEL_DIR"), Some("/data/app/models"));
+        assert_eq!(get("HTTPS_PROXY"), Some("http://secure-proxy.example.test:3128"));
+        assert_eq!(get("HTTP_PROXY"), Some("http://proxy.example.test:8080"));
+        assert_eq!(get("NO_PROXY"), Some(".local,intranet.example.test,localhost,127.0.0.1,::1"), "the server's own address never goes through it");
+        assert_eq!(get("NODE_USE_ENV_PROXY"), Some("1"), "Node's fetch reads the variables only with this");
+    }
+
+    #[test]
+    fn the_macs_proxy_is_read_from_scutil() {
+        let out = "<dictionary> {\n  ExceptionsList : <array> {\n    0 : *.local\n    1 : 169.254/16\n  }\n  FTPPassive : 1\n  HTTPEnable : 1\n  HTTPPort : 8080\n  HTTPProxy : proxy.example.test\n  HTTPSEnable : 1\n  HTTPSPort : 3128\n  HTTPSProxy : secure-proxy.example.test\n}\n";
+        assert_eq!(proxy_from_scutil(out), Proxy {
+            http: Some("http://proxy.example.test:8080".into()),
+            https: Some("http://secure-proxy.example.test:3128".into()),
+            no_proxy: vec![".local".into(), "169.254/16".into()],
+        });
+        let off = "<dictionary> {\n  HTTPEnable : 0\n  HTTPProxy : proxy.example.test\n  HTTPPort : 8080\n  HTTPSEnable : 0\n}\n";
+        assert_eq!(proxy_from_scutil(off), Proxy::default(), "set up but switched off");
+        assert_eq!(proxy_from_scutil("<dictionary> {\n  FTPPassive : 1\n}\n"), Proxy::default());
+        assert_eq!(proxy_from_scutil(""), Proxy::default());
+        assert!(proxy_env(&Proxy::default()).is_empty(), "no proxy: nothing added");
+    }
+
+    #[test]
+    fn only_the_top_level_scutil_settings_count_never_a_scoped_interfaces() {
+        // The global settings first, then __SCOPED__ with one dictionary per network interface (en0 here).
+        let scoped = |global: &str| format!("<dictionary> {{\n{global}  __SCOPED__ : <dictionary> {{\n    en0 : <dictionary> {{\n      ExceptionsList : <array> {{\n        0 : scoped.example.test\n      }}\n      HTTPEnable : 1\n      HTTPPort : 9090\n      HTTPProxy : scoped-proxy.example.test\n      HTTPSEnable : 1\n      HTTPSPort : 9443\n      HTTPSProxy : scoped-proxy.example.test\n    }}\n  }}\n}}\n");
+        assert_eq!(proxy_from_scutil(&scoped("  FTPPassive : 1\n")), Proxy::default(), "no global proxy: none, whatever en0 says");
+        let global = "  ExceptionsList : <array> {\n    0 : *.local\n  }\n  HTTPEnable : 1\n  HTTPPort : 8080\n  HTTPProxy : proxy.example.test\n  HTTPSEnable : 1\n  HTTPSPort : 3128\n  HTTPSProxy : secure-proxy.example.test\n";
+        assert_eq!(proxy_from_scutil(&scoped(global)), Proxy {
+            http: Some("http://proxy.example.test:8080".into()),
+            https: Some("http://secure-proxy.example.test:3128".into()),
+            no_proxy: vec![".local".into()],
+        }, "the global proxy and exceptions, not en0's");
+    }
+
+    #[test]
+    fn with_only_a_web_proxy_for_http_nothing_is_passed() {
+        // Node would send https through HTTP_PROXY when HTTPS_PROXY is unset; the Mac would not. Every download is https.
+        let http_only = Proxy { http: Some("http://proxy.example.test:8080".into()), https: None, no_proxy: vec![] };
+        assert!(proxy_env(&http_only).is_empty());
+        let out = "<dictionary> {\n  HTTPEnable : 1\n  HTTPPort : 8080\n  HTTPProxy : proxy.example.test\n}\n";
+        assert!(proxy_env(&proxy_from_scutil(out)).is_empty());
+        let both = Proxy { https: Some("http://secure.example.test:443".into()), ..http_only };
+        let env = proxy_env(&both);
+        assert!(env.contains(&("HTTPS_PROXY".into(), "http://secure.example.test:443".into())));
+        assert!(env.contains(&("HTTP_PROXY".into(), "http://proxy.example.test:8080".into())));
+    }
+
+    #[test]
+    fn the_windows_proxy_is_read_from_the_wininet_settings() {
+        let one = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\r\n    ProxyEnable    REG_DWORD    0x1\r\n    ProxyServer    REG_SZ    proxy.example.test:8080\r\n    ProxyOverride    REG_SZ    *.example.test;<local>\r\n";
+        assert_eq!(proxy_from_wininet(one), Proxy {
+            http: Some("http://proxy.example.test:8080".into()),
+            https: Some("http://proxy.example.test:8080".into()),
+            no_proxy: vec![".example.test".into()],
+        });
+        let each = "    ProxyEnable    REG_DWORD    0x1\n    ProxyServer    REG_SZ    http=web.example.test:80;https=secure.example.test:443;socks=socks.example.test:1080\n";
+        assert_eq!(proxy_from_wininet(each), Proxy {
+            http: Some("http://web.example.test:80".into()),
+            https: Some("http://secure.example.test:443".into()),
+            no_proxy: vec![],
+        });
+        let off = "    ProxyEnable    REG_DWORD    0x0\n    ProxyServer    REG_SZ    proxy.example.test:8080\n";
+        assert_eq!(proxy_from_wininet(off), Proxy::default(), "switched off");
+        assert_eq!(proxy_from_wininet("ERROR: The system was unable to find the specified registry key or value.\n"), Proxy::default());
     }
 
     #[test]

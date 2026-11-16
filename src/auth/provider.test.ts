@@ -535,3 +535,36 @@ test('read-only connections are not offered as discussion participants', async (
   await p.approvePending(await startAuthorize(p, work), { access: 'projects', projects: ['trellis'] });
   assert.deepEqual(p.activeConnections(), [{ name: 'Claude', access: 'full' }]);
 });
+
+test('issueLocalGrant: a long-lived key on its own full-access grant, stored only hashed', async () => {
+  const { p, db } = await setup();
+  const { grantId, token } = p.issueLocalGrant({ name: 'Claude (desktop app)', clientName: 'Claude (desktop app)' });
+  const info = await p.verifyAccessToken(token);
+  assert.equal(info.extra?.grantId, grantId);
+  assert.equal(info.resource!.href, RESOURCE.href, 'bound to this server\'s own MCP endpoint');
+  const fiveYears = Date.parse('2031-01-01T00:00:00Z') / 1000;
+  assert.ok(info.expiresAt! >= fiveYears, 'expires at least 5 years ahead');
+
+  const grant = p.listGrants().find((g) => g.id === grantId)!;
+  assert.equal(grant.clientName, 'Claude (desktop app)');
+  assert.equal(grant.access, 'full');
+  assert.equal(grant.revokedAt, null);
+
+  const raw = db.prepare('SELECT COUNT(*) AS n FROM oauth_tokens WHERE token_hash = ?').get(token) as { n: number };
+  assert.equal(raw.n, 0, 'the raw token is never stored');
+  const rows = db.prepare('SELECT token_hash, type FROM oauth_tokens WHERE grant_id = ?').all(grantId) as { token_hash: string; type: string }[];
+  assert.deepEqual(rows.map((r) => r.type), ['access'], 'one access token and no refresh token');
+  assert.notEqual(rows[0]!.token_hash, token);
+
+  p.revokeGrant(grantId);
+  await assert.rejects(p.verifyAccessToken(token), InvalidTokenError);
+});
+
+test('issueLocalGrant: years sets the lifetime; a bad name is refused before anything is written', async () => {
+  const { p, db } = await setup();
+  const { token } = p.issueLocalGrant({ name: 'Made-up helper', clientName: 'Made-up helper', years: 1 });
+  assert.equal((await p.verifyAccessToken(token)).expiresAt, Date.parse('2027-01-01T00:00:00Z') / 1000);
+  const before = (db.prepare('SELECT COUNT(*) AS n FROM oauth_grants').get() as { n: number }).n;
+  assert.throws(() => p.issueLocalGrant({ name: '  ', clientName: 'Made-up helper' }));
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM oauth_grants').get() as { n: number }).n, before);
+});

@@ -102,26 +102,78 @@ Only if `data/memory.db` is damaged or lost. **Done by hand by the owner; nothin
 For a brain that started in the BrainAI app on a computer and now moves to this server, keeping every memory, page and
 picture. The apps reconnect to the server's address afterwards.
 1. **On the computer:** BrainAI › Settings › Move to a server › **Make the moving file**, then Show in Finder. The file,
-   `brainai-move-<date>.tar.gz`, holds every memory in clear but no password, authenticator or app sign-in.
+   `brainai-saved-<date>.tar.gz`, holds every memory in clear but no password, authenticator or app sign-in.
 2. **The server:** do steps 1-4 of *One-time setup* (Docker, the clone, the tunnel, `.env`), but don't start it yet. If it already runs,
    stop it first: `docker compose stop app`. Its `data/` must not hold another brain (`data/memory.db`): this replaces it.
-3. **Copy the file** to the server's `~/memory` (for example `scp brainai-move-*.tar.gz you@server:memory/`), then, in
-   `~/memory`:
+3. **Copy the file** into the server's `~/memory/data/`, the only folder the container sees (for example
+   `scp brainai-saved-*.tar.gz you@server:memory/data/`), then, in `~/memory`:
    ```bash
-   tar -xzf brainai-move-*.tar.gz -C data
-   chown -R <PUID>:<PGID> data/memory.db data/images
+   docker compose run --rm app node dist/cli.js restore data/brainai-saved-<date>.tar.gz
    ```
-   (the values in `.env`; `data/images` is there only if the brain had pictures).
+   It checks the file, then brings every memory and picture into `data/`, owned by the right user. It only fills an empty
+   brain: if `data/` already holds memories it says so and changes nothing. An older `brainai-move-…` file works too.
 4. **Set the sign-in**, which the file does not carry: `docker compose run --rm app node dist/cli.js set-password`, then
    `docker compose run --rm app node dist/cli.js setup-totp`.
 5. **Start it:** `docker compose up -d --build`. The server brings the database up to its own version (a copy goes to
    `data/pre-migrate/` first). Sign in at your address: the memories are there. Then steps 7-8 of *One-time setup*
-   (the checks and the nightly backup).
+   (the checks and the nightly backup). Once the server works, delete the file from `data/`, where it holds every memory
+   in clear beside the database: `rm data/brainai-saved-<date>.tar.gz`.
 6. **Reconnect each app** from the server's Settings › Set up an app (`docs/CLIENTS.md`): the coding tools on the
    computer too, which pointed at the app.
 7. **On the computer:** Settings › Move to a server › **It's moved**, with the server's address. The app then tells any
-   app still pointed at it where the brain lives, and offers **Remove BrainAI from this Mac** (tools disconnected, start
-   at login off; the data folder stays). Delete the moving file once the server works.
+   app still pointed at it where the brain lives, and offers **Remove BrainAI from this Mac**: it saves a copy, disconnects the
+   tools and removes the app and its data. Delete the moving file once the server works.
+
+## Leaving BrainAI
+To take BrainAI off this server for good, run this in `~/memory`, as your own user (not with sudo):
+```bash
+scripts/remove.sh
+```
+1. **It saves a copy first** into your home folder (`BrainAI saved <date>`) and prints the `scp` line that fetches it to
+   your computer. You can also download one from the dashboard (Settings › Save a copy of everything: it asks for your
+   authenticator code and downloads a `.tar.gz`). It waits for Enter. If the save fails, nothing is removed.
+2. **It lists what it will remove** and waits for you to type `remove`. That is: BrainAI's lines in your crontab (backup,
+   Markdown export, off-site copy), its containers and volumes and its own image, the Markdown export (`~/git/brain-export.git`,
+   and the files it wrote in `~/brain-export`, nothing else there), and `~/memory` with its data. The git copy job also
+   backs up your own repositories in `~/git`, so its crontab line goes only if `~/git` holds nothing else. It never
+   touches anything it does not recognise as BrainAI's.
+3. **Outside copies** are asked about one at a time, and kept unless you answer `y`: the nightly snapshots on your other
+   drives, the copies of the export's git history, and the encrypted copies in Google Drive. Each question says what is there:
+   how many files and how new for snapshots and Drive, the last-changed date for the git copy. The rclone setup itself is left alone.
+4. **It ends with a checklist** of what only you can remove: the Cloudflare tunnel and its address, the connectors in
+   Claude, ChatGPT and Grok, the setup text pasted into each app, the uptime alert, and the off-site key on your own
+   computer. The same list is in the saved folder's `README.txt`.
+
+If `docker compose down` fails, it stops there and says how to finish: fix it, then run the script again. By then the
+crontab lines are already gone.
+
+## Coming back from a saved copy
+For a new install, or after the script above. Do steps 1-4 of *One-time setup* (but don't start it), copy the saved
+folder's `brainai-saved-<date>.tar.gz` into the server's `~/memory/data/` (for example
+`scp brainai-saved-*.tar.gz you@server:memory/data/`), then follow section 4, steps 3-5 (the `restore` command, the
+sign-in, start). Once the server works, delete the file from `data/`: `rm data/brainai-saved-<date>.tar.gz`. If you
+downloaded the copy from the dashboard, unpack it first (`tar -xzf "BrainAI saved <date>.tar.gz"`): the file you want
+is inside. The `Markdown/` folder is for reading; BrainAI does not read it back.
+
+## Settings you can set in `.env`
+- **Discussions without relaying (`ASK_COMMANDS`):** a JSON object of assistant (connection) name to shell command with
+  `{prompt}`, e.g. `{"Codex":"codex exec --skip-git-repo-check \"{prompt}\""}`. The assistant that opened a
+  discussion is told to give its own view first, then run the command for each asked assistant that has a command
+  and has not replied this round; the prompt holds only the discussion id. When everyone has replied in round 2 or
+  later, it is told to report to the owner, who decides or starts another round. Only the opener gets commands, and
+  only when it has a command itself (a command-line assistant on the owner's computer, not a chat app), never its
+  own, so an assistant it asks cannot ask the others in turn. Names match ignoring case, spaces and hyphens. The
+  server never runs a command itself. For example, for Claude Code and Grok Build on your computer:
+  `{"Claude Code":"claude -p \"{prompt}\" --allowedTools mcp__memory","Grok Build":"grok -p \"{prompt}\" --allow
+  \"MCPTool(memory__*)\" --permission-mode dontAsk"}`: each asked assistant may use only its memory tools. The
+  desktop app sets commands for Claude Code and Codex by default; `ASK_COMMANDS` overrides them.
+- **Held memories:** an AI save or update that reads like an instruction to assistants (`src/memory/instructionLike.ts`)
+  waits on the dashboard home for approval, like a profile change. The owner's own saves are never held.
+- **`BACKUP_DIR`** (off by default): a dated, integrity-checked single-file snapshot at start and every 24 hours;
+  the newest `BACKUP_KEEP` (default 14) are kept. The Docker setup keeps using `scripts/backup.sh`. Neither
+  backup holds sign-in data (password hash, authenticator secret, sessions, tokens, client secrets): after a restore,
+  run `set-password` and `setup-totp` again and reconnect the assistants.
+- **`cli export [file]`:** every active memory as readable Markdown.
 
 ## 5. Remote admin
 To reach your server from outside, connect to your home VPN first, then SSH to its local address. **Never open an SSH port, or any other port, to the internet.**

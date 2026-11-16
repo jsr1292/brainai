@@ -71,7 +71,7 @@ test('the unstripped snapshot is never written into the backup folder (a synced 
   const db = openDb(join(root, 'live.sqlite'));
   t.after(() => db.close());
   seedSignIn(db);
-  const dir = join(root, 'OneDrive', 'Work memory backups');
+  const dir = join(root, 'OneDrive', 'BrainAI backups');
   // What the backup folder holds at the moment the full snapshot has been written, before any stripping.
   const written: string[] = [];
   let seenInDir: string[] = [];
@@ -167,4 +167,59 @@ test('the in-app backup counts live pictures whose file is missing (audit F11)',
   writeFileSync(join(dir, 'images', 'ab', `${id}.png`), 'png');
   await runBackup(db, join(dir, 'copies'), 2, new Date('2026-11-06T08:00:00Z'), dir);
   assert.deepEqual(readBackupStatus(dir).nightly!.pictures, { missing: 0, stray: 0 });
+});
+
+test('a scheduled backup is also copied to the second folder, pruned there to the newest ones, touching only memory-*.db', async (t) => {
+  const { scheduleBackups } = await import('./backup.js');
+  const { BackupCopy } = await import('./desktop/backupCopy.js');
+  const dir = mkdtempSync(join(tmpdir(), 'mem-backup-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const db = openDb(join(dir, 'live.sqlite'));
+  t.after(() => db.close());
+  const main = join(dir, 'main');
+  const second = join(dir, 'second');
+  mkdirSync(second);
+  for (const day of ['2026-10-01', '2026-10-02', '2026-10-03']) writeFileSync(join(second, `memory-${day}.db`), '');
+  writeFileSync(join(second, 'notes.txt'), 'mine');
+  const copy = new BackupCopy(dir);
+  copy.set(second);
+  const timer = scheduleBackups(db, main, 2, () => new Date('2026-10-20T08:00:00Z'), dir, copy);
+  clearInterval(timer);
+  for (let i = 0; i < 100 && copy.lastResult() === null; i++) await new Promise((r) => setTimeout(r, 50));
+  assert.equal(copy.lastResult()?.ok, true);
+  assert.ok(existsSync(join(main, 'memory-2026-10-20.db')));
+  assert.deepEqual(readdirSync(second).sort(), ['memory-2026-10-03.db', 'memory-2026-10-20.db', 'notes.txt']);
+  assert.ok(readFileSync(join(second, 'memory-2026-10-20.db')).length > 0);
+});
+
+test('a missing second folder is recorded as a failed copy and never stops the normal backup', async (t) => {
+  const { runBackup } = await import('./backup.js');
+  const { BackupCopy } = await import('./desktop/backupCopy.js');
+  const dir = mkdtempSync(join(tmpdir(), 'mem-backup-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const db = openDb(join(dir, 'live.sqlite'));
+  t.after(() => db.close());
+  const gone = join(dir, 'unplugged-drive');
+  const copy = new BackupCopy(dir);
+  copy.set(gone);
+  await runBackup(db, join(dir, 'main'), 2, new Date('2026-10-20T08:00:00Z'), dir, copy);
+  assert.ok(existsSync(join(dir, 'main', 'memory-2026-10-20.db')));
+  const r = copy.lastResult();
+  assert.equal(r?.ok, false);
+  assert.equal(r && !r.ok ? r.folder : '', gone);
+  assert.equal(existsSync(gone), false);
+  assert.equal(readBackupStatus(dir).nightly?.ok, true);
+});
+
+test('runBackup resolves to the run it recorded', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'mem-backup-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const db = openDb(join(dir, 'live.sqlite'));
+  t.after(() => db.close());
+  const ok = await runBackup(db, join(dir, 'copies'), 2, new Date('2026-10-20T08:00:00Z'), dir);
+  assert.equal(ok.ok, true);
+  writeFileSync(join(dir, 'a-file'), 'x');
+  const bad = await runBackup(db, join(dir, 'a-file', 'sub'), 2, new Date('2026-10-21T08:00:00Z'), dir);
+  assert.equal(bad.ok, false);
+  assert.ok(bad.error);
 });

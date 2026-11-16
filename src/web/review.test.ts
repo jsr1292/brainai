@@ -120,11 +120,6 @@ test('Week has Last week, So far and Growth as quiet segments', async (t) => {
   }
   const older = await (await f('/review/2026-10-19')).text();
   assert.match(older, /<span class="subnav-extra">[\s\S]*‹ 12 – 18 Oct[\s\S]*All weeks/);
-  const work = await start(t, { mode: 'work' });
-  await seedWildlogWeek(work.deps, work.advance);
-  const wf = await loggedIn(work);
-  assert.doesNotMatch(await (await wf('/review')).text(), /href="\/growth"/);
-  assert.equal((await wf('/growth')).status, 404);
 });
 
 test('So far ends with Latest changes', async (t) => {
@@ -287,16 +282,6 @@ test('Read it opens the review and Not now goes home, both safe to send twice', 
   assert.equal((await post(f, '/review/garbage/open')).status, 404);
   await f('/review/2026-10-19');
   assert.deepEqual([(await post(f, '/review/2026-10-19/open')).headers.get('location')], ['/review/2026-10-19']);
-});
-
-test('in work mode there is no growth part and the header says Work brain', async (t) => {
-  const app = await start(t, { mode: 'work' });
-  await seedWildlogWeek(app.deps, app.advance);
-  const f = await loggedIn(app);
-  const body = await (await f('/review')).text();
-  assert.match(body, /Work brain/);
-  assert.doesNotMatch(body, /This week in your growth/);
-  assert.match(body, /3 steps done, all in wildlog/);
 });
 
 test('the review is under the Week tab', async (t) => {

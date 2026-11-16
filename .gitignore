@@ -7,6 +7,8 @@ data/
 backups/
 /models
 dist-windows/
+# Release files (scripts/publish/build-apps.sh): uploaded from here, never committed
+dist-release/
 .DS_Store
 offsite-recipient.txt
 

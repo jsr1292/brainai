@@ -13,6 +13,8 @@ export interface FakeCloudflaredState {
   recordExists?: boolean; otherZone?: string;
   /** `tunnel run` stops by itself after 200 ms. */
   dies?: boolean;
+  /** `tunnel delete` fails (connections still active). */
+  deleteFails?: boolean;
 }
 
 const SCRIPT = `#!/usr/bin/env node
@@ -53,6 +55,12 @@ if (cmd === 'route' && rest[2] === 'dns') {
   const name = s.otherZone ? host + '.' + s.otherZone : host;
   s.records = Object.assign(s.records || {}, { [name]: rest[3] }); save();
   console.error('2026-11-06T18:00:00Z INF Added CNAME ' + name + ' which will route to this tunnel tunnelID=' + rest[3]);
+  process.exit(0);
+}
+if (cmd === 'delete') {
+  if (s.deleteFails) { console.error('Error deleting tunnel: tunnel has active connections'); process.exit(1); }
+  s.deleted = (s.deleted || []).concat(rest[rest.length - 1]); save();
+  console.error('INF Tunnel ' + rest[rest.length - 1] + ' deleted');
   process.exit(0);
 }
 if (cmd === 'run') {

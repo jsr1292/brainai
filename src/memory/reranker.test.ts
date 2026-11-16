@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { checkRerankerFiles, createLocalReranker, oneAtATime, RERANK_FILES, rerankerDir, startReranker } from './reranker.js';
 
 test('checkRerankerFiles accepts the pinned bytes and refuses any others, naming both hashes', (t) => {
@@ -71,4 +71,16 @@ test('oneAtATime: a failing batch fails that call only; the next call still runs
   const r = oneAtATime({ async score(_q: string, texts: string[]) { if (calls++ === 0) throw new Error('boom'); return texts.map(() => 1); } }, 5);
   await assert.rejects(r.score('q', ['a']), /boom/);
   assert.deepEqual(await r.score('q', ['a', 'b']), [1, 1]);
+});
+
+test('a caller that has just checked the reranker\'s files can skip the second, blocking check', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'rerank-verified-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  for (const f of Object.keys(RERANK_FILES)) {
+    mkdirSync(dirname(join(rerankerDir(dir), f)), { recursive: true });
+    writeFileSync(join(rerankerDir(dir), f), 'damaged');
+  }
+  await assert.rejects(createLocalReranker({ modelDir: dir, allowRemote: false }), /does not match the pinned version/);
+  await assert.rejects(createLocalReranker({ modelDir: dir, allowRemote: false, verified: true }),
+    (e: Error) => !/does not match the pinned version|The reranker model is missing/.test(e.message), 'no hash check: it went on to load the files');
 });

@@ -307,3 +307,119 @@ for (const line of document.querySelectorAll('[data-setup-status]')) {
     } catch { /* offline for a moment: the next tick tries again */ }
   }, 10_000);
 }
+
+// The welcome's "I have a saved BrainAI folder": the chosen file goes up as the raw body, and the answer says where to go
+// next (the desktop app watches for that navigation) or why the file was refused.
+for (const form of document.querySelectorAll('[data-restore-form]')) {
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const file = form.querySelector('input[type=file]').files[0];
+    const err = form.querySelector('[data-restore-error]');
+    const busy = form.querySelector('[data-restore-busy]');
+    const button = form.querySelector('button[type=submit]');
+    if (!file) return;
+    err.hidden = true;
+    busy.hidden = false;
+    button.disabled = true;
+    try {
+      const r = await fetch('/welcome/restore', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file, credentials: 'same-origin' });
+      const answer = await r.json();
+      if (answer.next) { location.href = answer.next; return; }
+      err.textContent = answer.error || 'The saved file could not be brought in.';
+    } catch {
+      err.textContent = 'The saved file could not be sent. Try again.';
+    }
+    err.hidden = false;
+    busy.hidden = true;
+    button.disabled = false;
+  });
+}
+
+// The search models' progress line (welcome steps 3 and 4, Home): asks every 2 s while anything is downloading or
+// being re-read, and says what the server says in plain words. It stops when nothing is under way any more.
+for (const line of document.querySelectorAll('[data-models-progress]')) {
+  // The text, the ✓ of a finished check and the bar are separate children, so each can change on its own.
+  const text = line.querySelector('.models-text') ?? line.appendChild(Object.assign(document.createElement('span'), { className: 'models-text' }));
+  const show = (a) => {
+    text.textContent = a.line;
+    line.querySelector('.models-ok')?.remove();
+    line.querySelector('a')?.remove();
+    if (a.ready) {
+      const ok = document.createElement('span');
+      ok.className = 'ok models-ok';
+      ok.textContent = '✓';
+      line.prepend(ok);
+    }
+    if (a.failed) {
+      const link = document.createElement('a');
+      link.href = '/settings#search';
+      link.textContent = 'Look in Settings › Search';
+      text.after(' ', link);
+    }
+    let bar = line.querySelector('.models-bar');
+    if (a.bar) {
+      if (!bar) {
+        bar = document.createElement('progress');
+        bar.className = 'models-bar';
+        bar.max = 100;
+        bar.setAttribute('aria-label', 'Search models download progress');
+        line.append(bar);
+      }
+      if (a.bar.value === null) bar.removeAttribute('value'); else bar.value = a.bar.value;
+    } else bar?.remove();
+    line.hidden = a.line === '';
+  };
+  let errors = 0;
+  const tick = async () => {
+    try {
+      const r = await fetch(line.dataset.modelsProgress, { headers: { accept: 'application/json' }, credentials: 'same-origin', redirect: 'manual' });
+      // Signed out (a redirect to the login, or 401/403): nothing more to ask.
+      if (r.type === 'opaqueredirect' || r.redirected || r.status === 401 || r.status === 403 || (r.status >= 300 && r.status < 400)) return;
+      if (r.ok) {
+        errors = 0;
+        const a = await r.json();
+        show(a);
+        if (!a.busy) return;
+      } else errors++;
+    } catch { errors++; /* offline for a moment */ }
+    // Every 2 s; after repeated errors slower (up to 30 s), and after 10 in a row it stops.
+    if (errors >= 10) return;
+    setTimeout(tick, Math.min(30_000, 2000 * 2 ** Math.max(0, errors - 2)));
+  };
+  if (line.hasAttribute('data-busy')) setTimeout(tick, 2000);
+}
+
+// The update card on Home: while the app is backing up, downloading or installing, asks every second and swaps the text.
+// It stops when nothing is under way any more (it then loads the page again in place, so the card shows its buttons).
+for (const card of document.querySelectorAll('[data-update-state]')) {
+  if (!card.hasAttribute('data-busy')) continue;
+  const text = card.querySelector('.update-text');
+  let errors = 0;
+  const tick = async () => {
+    try {
+      const r = await fetch(card.dataset.updateState, { headers: { accept: 'application/json' }, credentials: 'same-origin', redirect: 'manual' });
+      if (r.type === 'opaqueredirect' || r.redirected || r.status === 401 || r.status === 403 || (r.status >= 300 && r.status < 400)) return;
+      if (r.ok) {
+        errors = 0;
+        const a = await r.json();
+        if (text) { text.textContent = a.text; text.hidden = a.text === ''; }
+        if (!a.busy) { location.replace(location.href); return; }
+      } else if (r.status === 404) { location.replace(location.href); return; } else errors++;
+    } catch { errors++; /* the app may be restarting */ }
+    if (errors >= 60) return;
+    setTimeout(tick, 1000);
+  };
+  setTimeout(tick, 1000);
+}
+
+// The welcome's "Choose the models myself": the button says how much will download for the pair picked.
+for (const form of document.querySelectorAll('[data-models-form]')) {
+  const button = form.querySelector('[data-models-button]');
+  const update = () => {
+    let total = 0;
+    for (const r of form.querySelectorAll('input[type=radio]:checked')) total += Number(r.dataset.mb || 0);
+    button.textContent = total === 0 ? 'Continue' : `Download ${total} MB and continue`;
+  };
+  form.addEventListener('change', update);
+  update();
+}

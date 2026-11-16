@@ -252,3 +252,23 @@ test('the rank prior (Gemma profile) keeps the search order unless the reranker 
   const got = await withPrior.service.recall({ query: QUERY, limit: 20, touch: false });
   assert.notEqual(got[0]!.memory.id, z1, 'a 0.5 preference does not lift the 15th search match over the first');
 });
+
+/** An online reranker's stand-in: scores on its own scale and says so through scoreMany. */
+function onlineLeansTo(word: string): Reranker {
+  const score = async (_q: string, texts: string[]) => texts.map((t) => (t.includes(word) ? 0.5 : 0));
+  return { score, async scoreMany(queries: string[], texts: string[]) { return { scores: await Promise.all(queries.map((q) => score(q, texts))), online: true }; } };
+}
+
+test('the online reranker is the only voice: no rank prior, and no weak-match note; the local one keeps both', async () => {
+  const seen: (number | null)[] = [];
+  const online = brain(onlineLeansTo('zebra'), 1);
+  const zo = await fifteen(online);
+  const got = await online.service.recall({ query: QUERY, limit: 20, touch: false, report: (r) => seen.push(r.bestScore) });
+  assert.equal(got[0]!.memory.id, zo, 'prior 0: the 0.5 preference decides');
+  assert.equal(seen[0], null, 'no weak-match note from the online scale');
+  const local = brain(leansTo('zebra'), 1);
+  const zl = await fifteen(local);
+  const got2 = await local.service.recall({ query: QUERY, limit: 20, touch: false, report: (r) => seen.push(r.bestScore) });
+  assert.notEqual(got2[0]!.memory.id, zl, 'local: the prior holds');
+  assert.equal(seen[1], 0.5, 'local: the best score is reported');
+});

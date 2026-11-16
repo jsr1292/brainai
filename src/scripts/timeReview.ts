@@ -53,7 +53,7 @@ const hasGrants = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' A
 const grants = () => (hasGrants
   ? db.prepare('SELECT COALESCE(g.name, c.display_name, c.client_name) AS clientName, g.created_at AS createdAt FROM oauth_grants g JOIN oauth_clients c ON c.client_id = g.client_id').all() as { clientName: string; createdAt: string }[]
   : []);
-const sources: BuildSources = { reviews, memories: store, registry, folders, grants, growth: true };
+const sources: BuildSources = { reviews, memories: store, registry, folders, grants };
 
 const time = (fn: () => unknown, runs: number): { median: number; max: number } => {
   for (let i = 0; i < 3; i++) fn();

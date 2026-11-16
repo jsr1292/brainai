@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fakeCloudflared, type FakeCloudflaredState } from '../testing/fakeCloudflared.js';
-import { cloudflaredState, prepareTunnel, startSignIn, stopLeftover, TunnelRunner, validHostname, type CloudflaredEnv } from './cloudflared.js';
+import { cloudflaredState, deleteTunnel, prepareTunnel, startSignIn, stopLeftover, TunnelRunner, validHostname, type CloudflaredEnv } from './cloudflared.js';
 
 function world(t: TestContext, state: FakeCloudflaredState | null) {
   const f = fakeCloudflared(state);
@@ -143,4 +143,30 @@ test("the owner's own cloudflared settings (~/.cloudflared/config.yml) never rea
   runner.start(p.tunnelId, p.credentials, 4123);
   await until(() => (f.state().running as { url?: string } | null)?.url === 'http://127.0.0.1:4123');
   for (const c of f.calls().filter((x) => /create|route dns| run /.test(x))) assert.ok(c.includes(`--config ${join(dir, 'cloudflared', 'config.yml')}`), c);
+});
+
+test('deleteTunnel deletes the tunnel by its id and returns the DNS name without deleting it', async (t) => {
+  const { env, f, dir } = world(t, {});
+  assert.equal((await startSignIn(env).done).ok, true);
+  const p = await prepareTunnel(env, dir, 'brain.example.net') as { tunnelId: string };
+  const r = await deleteTunnel(env, dir);
+  assert.deepEqual(r, { hostname: 'brain.example.net', deleted: true });
+  assert.ok(f.calls().some((c) => c.endsWith(`delete -f ${p.tunnelId}`) && c.includes('--origincert')), f.calls().join('\n'));
+  assert.ok(f.calls().every((c) => !/route dns .*delete|dns delete/.test(c)), 'the name is never deleted');
+});
+
+test('deleteTunnel says why when Cloudflare refuses, and when there is no tunnel or no cloudflared', async (t) => {
+  const { env, f, dir } = world(t, {});
+  assert.equal((await deleteTunnel(env, dir)).deleted, false, 'no tunnel saved');
+  assert.equal((await startSignIn(env).done).ok, true);
+  await prepareTunnel(env, dir, 'brain.example.net');
+  f.setState({ deleteFails: true });
+  const r = await deleteTunnel(env, dir);
+  assert.equal(r.deleted, false);
+  assert.equal(r.hostname, 'brain.example.net');
+  assert.match(r.reason!, /active connections/);
+  const none = world(t, null);
+  const missing = await deleteTunnel({ ...none.env, path: none.env.path }, dir);
+  assert.equal(missing.deleted, false);
+  assert.match(missing.reason!, /Install cloudflared/);
 });

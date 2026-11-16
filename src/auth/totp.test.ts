@@ -21,5 +21,5 @@ test('generateTotpSecret is 20 random bytes in base32; otpauthUri has issuer and
   assert.ok(uri.includes(`secret=${a}`));
   assert.ok(uri.startsWith('otpauth://totp/BrainAI:owner?'), uri);
   assert.ok(uri.includes('&issuer=BrainAI&'), uri);
-  assert.ok(otpauthUri(a, 'owner', 'Work memory').includes('&issuer=Work%20memory&'));
+  assert.ok(otpauthUri(a, 'owner', 'Home brain').includes('&issuer=Home%20brain&'));
 });

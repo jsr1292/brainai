@@ -102,14 +102,6 @@ test('the Growth list is marked as part of Week', async (t) => {
   assert.match(body, /aria-current="page">Week<\/a>/);
 });
 
-test('the work memory has no Growth in Settings and no Growth list', async (t) => {
-  const { f } = await start(t, { mode: 'work' });
-  const body = await (await f('/settings')).text();
-  assert.doesNotMatch(body, /<section id="growth"/);
-  assert.doesNotMatch(body, /href="#growth"/);
-  assert.equal((await f('/growth')).status, 404);
-});
-
 test('a reaction sent from a review returns to it; without back it returns to Growth', async (t) => {
   const { app, f } = await start(t);
   const { observation } = await app.deps.growth.note(strength, 'Claude Code');

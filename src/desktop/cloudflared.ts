@@ -131,6 +131,23 @@ export async function prepareTunnel(env: CloudflaredEnv, dir: string, hostname: 
   return { ok: true, tunnelId: saved.id, credentials: saved.credentials };
 }
 
+/**
+ * Deletes BrainAI's own tunnel in Cloudflare (`cloudflared tunnel delete -f <id>`, id from tunnel.json), for removing
+ * BrainAI. Run after the tunnel process has stopped. The DNS name is never deleted (it may be shared with other things):
+ * it is returned so the checklist can tell the owner to remove it.
+ */
+export async function deleteTunnel(env: CloudflaredEnv, dir: string): Promise<{ hostname: string | null; deleted: boolean; reason?: string }> {
+  let saved: Saved;
+  try { saved = JSON.parse(readFileSync(join(folder(dir), 'tunnel.json'), 'utf8')) as Saved; } catch { return { hostname: null, deleted: false, reason: 'BrainAI has no saved tunnel.' }; }
+  const hostname = typeof saved.routed === 'string' ? saved.routed : null;
+  const cli = findCli(env);
+  if (!cli) return { hostname, deleted: false, reason: INSTALL };
+  if (typeof saved.id !== 'string') return { hostname, deleted: false, reason: 'The saved tunnel has no id.' };
+  const r = await run(env, cli, ['tunnel', ...own(env, dir), 'delete', '-f', saved.id]);
+  if (r.code !== 0) return { hostname, deleted: false, reason: `Cloudflare could not delete the tunnel: ${lastLine(r.out) || `code ${r.code}`}` };
+  return { hostname, deleted: true };
+}
+
 /** Stops a tunnel an earlier BrainAI left running (from its pid file), so two never serve one tunnel. */
 export function stopLeftover(dir: string): void {
   const file = pidFile(dir);

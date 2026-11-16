@@ -1,8 +1,9 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import Database from 'better-sqlite3';
 import QRCode from 'qrcode';
 import { systemClock } from './clock.js';
 import { loadConfig } from './config.js';
@@ -28,6 +29,12 @@ import { PageStore } from './pages/store.js';
 import { freshnessReport } from './pages/freshnessReport.js';
 import { pageView, pagesHomeView, type NavEntry } from './web/pageViews.js';
 import { ProjectStore } from './projects/store.js';
+import { checklist, serverTunnel, webAppNames } from './saved/checklist.js';
+import { factsAndPages, makeSavedCopy } from './saved/savedCopy.js';
+import { plural } from './web/dashboardViews.js';
+import { restoreInto } from './saved/restore.js';
+import { disconnect, tracesOfThisBrain, type ToolEnv, type ToolId } from './desktop/tools.js';
+import { runClaudeBridge } from './desktop/claudeBridge.js';
 
 // One readline for the whole process: piped stdin delivers all lines at once, so a
 // per-prompt interface would lose the lines after the first.
@@ -74,7 +81,7 @@ async function setPassword({ owner }: CliContext): Promise<void> {
 
 async function setupTotp({ owner }: CliContext): Promise<void> {
   const secret = generateTotpSecret();
-  console.log(await QRCode.toString(otpauthUri(secret, 'owner', process.env.MEMORY_MODE === 'work' ? 'Work memory' : 'BrainAI'), { type: 'terminal', small: true }));
+  console.log(await QRCode.toString(otpauthUri(secret, 'owner', 'BrainAI'), { type: 'terminal', small: true }));
   console.log(`Scan the QR code, or enter this secret manually: ${secret}`);
   const code = (await prompt('Current 6-digit code: ')).trim();
   // Verify against a scratch DB so a wrong code never replaces a working secret.
@@ -192,8 +199,7 @@ async function recallTest({ db, args = [], embedder: given, reranker, dbPath }: 
 
 /** Writes every active memory as Markdown to the given file, or prints it. Changes nothing. */
 async function exportCommand({ db, args = [] }: CliContext): Promise<void> {
-  const title = process.env.MEMORY_MODE === 'work' ? 'Work memory' : 'BrainAI';
-  const markdown = exportMarkdown(new MemoryStore(db, systemClock), title, systemClock());
+  const markdown = exportMarkdown(new MemoryStore(db, systemClock), 'BrainAI', systemClock());
   if (args[0]) {
     writeFileSync(args[0], markdown);
     console.log(`Exported to ${args[0]}`);
@@ -218,6 +224,25 @@ async function exportBrain({ db, args = [] }: CliContext): Promise<void> {
   const factFiles = [...tree.keys()].filter((k) => k.startsWith('facts/')).length;
   console.log(`export-brain: ${pageFiles} pages, ${factFiles} fact files (written ${r.written}, removed ${r.removed})`);
   if (r.skipped.length > 0) console.log(`export-brain: left alone because of a link on the way: ${r.skipped.slice(0, 10).join(', ')}${r.skipped.length > 10 ? ` and ${r.skipped.length - 10} more` : ''}`);
+}
+
+/**
+ * Makes the saved folder (archive, Markdown, README) inside <parentDir> and prints its path on the last line. It runs on
+ * a server, so the checklist is the server's: the web apps from the grants and the tunnel from PUBLIC_URL's host.
+ * Like export-brain it only reads, so nothing here needs an embedding model.
+ */
+async function saveCopy({ db, args = [], dbPath }: CliContext): Promise<void> {
+  const parent = args[0];
+  if (!parent) throw new Error('Usage: cli save-copy <parentDir>');
+  if (!dbPath) throw new Error('save-copy needs the database file');
+  const memoryStore = new MemoryStore(db, systemClock);
+  const noModel: Embedder = { embed: async () => { throw new Error('save-copy never embeds'); } };
+  const memories = new MemoryService(memoryStore, noModel, { duplicateThreshold: 1, minRecallSimilarity: 1, recallConfidentSimilarity: 1 });
+  const pages = new PageService(new PageStore(db, systemClock), noModel, memories, new ProjectStore(db, systemClock), memoryStore, systemClock);
+  const lines = checklist({ install: 'server', webApps: webAppNames(db), tunnel: serverTunnel(process.env.PUBLIC_URL), leftTools: [], kept: [] });
+  const r = await makeSavedCopy({ db, dataDir: dirname(dbPath), pages, memoryStore, memories, skills: new SkillService(db, systemClock) }, parent, systemClock(), lines);
+  console.log(`save-copy: ${plural(r.facts, 'fact', 'facts')}, ${plural(r.pages, 'page', 'pages')}`);
+  console.log(r.folder);
 }
 
 /**
@@ -252,6 +277,7 @@ async function freshness({ db, args = [] }: CliContext): Promise<void> {
 export const COMMANDS: Record<string, (ctx: CliContext) => Promise<void>> = {
   freshness,
   'export-brain': exportBrain,
+  'save-copy': saveCopy,
   'set-password': setPassword,
   'setup-totp': setupTotp,
   redirects,
@@ -261,14 +287,87 @@ export const COMMANDS: Record<string, (ctx: CliContext) => Promise<void>> = {
   export: exportCommand,
 };
 
-/** `deps.embedder` and `deps.reranker` replace the local models (tests). */
-export async function main(argv: string[], deps: { embedder?: Embedder; reranker?: Reranker } = {}): Promise<number> {
-  const handler = COMMANDS[argv[0] ?? ''];
-  if (!handler) {
-    console.error(`Usage: cli <${Object.keys(COMMANDS).join('|')}>`);
+/**
+ * Brings a saved copy into an empty brain. It is not in COMMANDS because it must run before the database is opened:
+ * opening would migrate and hold the file that is about to be replaced.
+ */
+async function restoreCommand(args: string[], dataDir: string): Promise<number> {
+  if (!args[0]) {
+    console.error('Usage: cli restore <file>  (Stop BrainAI first. Brings a saved archive brainai-saved-….tar.gz, or a backup file memory-….db, into an empty brain.)');
     return 2;
   }
+  try {
+    const r = await restoreInto(args[0], dataDir);
+    console.log(`Restored ${factsAndPages(r.facts, r.pages)}. Now set the password and authenticator.`);
+    return 0;
+  } catch (e) {
+    console.error((e as Error).message);
+    return 1;
+  }
+}
+
+/**
+ * The Windows uninstaller's step: takes this brain's entries out of the owner's tools before the app goes. DATA_DIR is
+ * the app-data folder: the port is in its brainai.json, the server's data in its `data` folder. Claude's desktop app
+ * key is revoked with one UPDATE on that database, opened lightly (no migrations, no backups, no server needed). It
+ * never fails the uninstaller: no file means nothing to do, and every problem goes to stderr with exit code 0.
+ */
+async function disconnectToolsCommand(dataDir: string): Promise<number> {
+  try {
+    let port: unknown;
+    try { port = (JSON.parse(readFileSync(join(dataDir, 'brainai.json'), 'utf8')) as { port?: unknown }).port; } catch { return 0; }
+    if (typeof port !== 'number' || !Number.isInteger(port)) return 0;
+    const env: ToolEnv = {
+      home: process.env.USERPROFILE ?? process.env.HOME ?? '',
+      path: process.env.PATH ?? process.env.Path ?? '',
+      platform: process.platform,
+      mcpUrl: `http://localhost:${port}/mcp`,
+      rules: () => '',
+      // Claude's desktop app: the server's data is in <app data>/data (DATA_DIR here is the app data folder), and its key
+      // is revoked in that database directly, as no server is running.
+      bridge: { node: process.execPath, cli: fileURLToPath(import.meta.url), dataDir: join(dataDir, 'data'), portFile: join(dataDir, 'brainai.json') },
+      revokeKey: (grantId) => {
+        const file = join(dataDir, 'data', 'memory.db');
+        if (!existsSync(file)) return;
+        const db = new Database(file, { fileMustExist: true, timeout: 5000 });
+        try {
+          const now = new Date().toISOString();
+          db.prepare('UPDATE oauth_grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(now, grantId);
+          db.prepare('UPDATE oauth_tokens SET revoked_at = ? WHERE grant_id = ? AND revoked_at IS NULL').run(now, grantId);
+        } finally { db.close(); }
+      },
+    };
+    if (!env.home) return 0;
+    for (const id of ['claude-code', 'codex', 'opencode', 'cursor', 'claude-desktop'] as ToolId[]) {
+      try {
+        if ((await tracesOfThisBrain(id, env)) !== 'yes') continue;
+        const r = await disconnect(id, env);
+        if (!r.ok) console.error(`${id}: ${r.reason}`);
+      } catch (e) {
+        console.error(`${id}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+  }
+  return 0;
+}
+
+/** `deps.embedder` and `deps.reranker` replace the local models (tests). */
+export async function main(argv: string[], deps: { embedder?: Embedder; reranker?: Reranker } = {}): Promise<number> {
   const dir = process.env.DATA_DIR ?? './data';
+  if (argv[0] === 'restore') return restoreCommand(argv.slice(1), dir);
+  if (argv[0] === 'disconnect-tools') return disconnectToolsCommand(dir);
+  // Claude's desktop app runs this; stdout carries only MCP messages. It reads BRAINAI_DATA_DIR and BRAINAI_PORT_FILE.
+  if (argv[0] === 'claude-bridge') {
+    await runClaudeBridge(process.env);
+    return 0;
+  }
+  const handler = COMMANDS[argv[0] ?? ''];
+  if (!handler) {
+    console.error(`Usage: cli <${[...Object.keys(COMMANDS), 'restore', 'disconnect-tools', 'claude-bridge'].join('|')}>`);
+    return 2;
+  }
   mkdirSync(dir, { recursive: true });
   const db = openDb(`${dir}/memory.db`);
   try {

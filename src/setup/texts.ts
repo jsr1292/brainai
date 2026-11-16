@@ -5,11 +5,10 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Mode } from '../config.js';
 
 export const SETUP_VERSION = 2;
 /** sha256 of every text (not the menu lines) rendered at host HOST; texts.test.ts prints the new value when a text changes. */
-export const SETUP_HASH = '1d73cb916ed8cefcd1f31af79605a183ed6c6d9c839c0a3ccc82957625d522a5';
+export const SETUP_HASH = '1501c756530b7dcffdc25322d1402dd795ea498bba9b7972496157adddffc3ff';
 
 export interface SetupApp {
   slug: string;
@@ -26,7 +25,7 @@ export interface SetupApp {
   allow?: readonly string[];
 }
 
-const PERSONAL: SetupApp[] = [
+const APPS: SetupApp[] = [
   { slug: 'claude', name: 'Claude', file: false,
     connect: 'In Claude (claude.ai, the desktop app or the phone): Settings › Connectors › Add custom connector, and paste the address.',
     where: 'Settings › Profile, in “What personal preferences should Claude consider in responses?”. Replace any older brain text.' },
@@ -50,13 +49,8 @@ const PERSONAL: SetupApp[] = [
     where: 'In ~/.config/opencode/AGENTS.md: replace the part between the two brain-setup lines, or add it at the end.' },
 ];
 
-const WORK: SetupApp[] = [
-  { ...PERSONAL[4]!, where: 'In the work laptop’s ~/.claude/CLAUDE.md: replace the part between the two brain-setup lines, or add it at the end.' },
-  { ...PERSONAL[5]!, where: 'In the work laptop’s ~/.codex/AGENTS.md: replace the part between the two brain-setup lines, or add it at the end.' },
-];
-
-export function setupApps(mode: Mode): SetupApp[] {
-  return mode === 'work' ? WORK : PERSONAL;
+export function setupApps(): SetupApp[] {
+  return APPS;
 }
 
 const ask = (v: number) => `When you call load_profile, pass setup: ${v}.`;
@@ -75,11 +69,6 @@ const chatLayers = 'Facts are short (decisions, statuses, roadmaps, my profile);
 
 
 const wrap = (body: string, v: number) => `<!-- brain setup ${v} -->\n${body}\n<!-- /brain setup -->`;
-
-const workText = (host: string, extra: string, v: number) => `I have a work memory, the brain (${host}), connected to you as an MCP connector and shared by my coding assistants on this laptop. At the start of each session, load my profile from it. Before answering anything about past work, a repo or a job, recall from it. Save decisions, conclusions and lasting facts as we go, and update a short status when a task finishes with something still open. If the connector is missing, needs a login, or a call fails, tell me right away.
-- Never save financial figures, account numbers, colleagues' names, client data, passwords, keys or tokens.
-- Use the git repository's folder name as the project.
-${extra}${ask(v)}`;
 
 /**
  * The owner's own lines and setup number (overlay/setup.json): { "version": n, "extra": { "<app>": [lines],
@@ -108,15 +97,11 @@ export const currentSetupVersion = (o?: SetupOverlay): number => o?.version ?? S
 const CODING = new Set(['grok-build', 'claude-code', 'codex']);
 
 /** The text for one app, with the brain's MCP address and the owner's overlay lines in it. Throws for an unknown app. */
-export function setupText(slug: string, mode: Mode, mcpUrl: string, overlay?: SetupOverlay): string {
+export function setupText(slug: string, mcpUrl: string, overlay?: SetupOverlay): string {
   const host = new URL(mcpUrl).host;
   const v = currentSetupVersion(overlay);
   const lines = [...(overlay?.extra[slug] ?? []), ...(CODING.has(slug) ? overlay?.extra.coding ?? [] : [])];
   const extra = lines.length > 0 ? `${lines.join('\n')}\n` : '';
-  if (mode === 'work') {
-    if (slug === 'claude-code' || slug === 'codex') return wrap(workText(host, extra, v), v);
-    throw new Error(`No work setup text for ${slug}`);
-  }
   switch (slug) {
     case 'claude':
     case 'chatgpt':

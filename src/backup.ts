@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { writeBackupStatus, type BackupRun } from './backupStatus.js';
+import type { BackupCopy } from './desktop/backupCopy.js';
 import type { DB } from './db.js';
 
 const NAME = /^memory-\d{4}-\d{2}-\d{2}\.db$/;
@@ -51,9 +52,9 @@ function copyPictures(db: DB, dataDir: string, dir: string, now: Date): void {
 /**
  * Writes today's consistent snapshot to `dir` as memory-YYYY-MM-DD.db (local date) (replacing one from earlier today),
  * without the sign-in data (STRIP_SIGN_IN_SQL), checks it, then keeps only the newest `keep` snapshots. The in-app twin
- * of scripts/backup.sh, for a copy that runs without cron (work mode on Windows). The snapshot is made, stripped and
- * checked in a private temporary folder, and only the finished file goes into `dir`: at work `dir` is a synced
- * OneDrive folder, which must never see the sign-in data, not even for a moment or after a crash. In `dir` it only
+ * of scripts/backup.sh, for a copy that runs without cron (BACKUP_DIR, the app). The snapshot is made, stripped and
+ * checked in a private temporary folder, and only the finished file goes into `dir`: `dir` may be a synced cloud
+ * folder, which must never see the sign-in data, not even for a moment or after a crash. In `dir` it only
  * ever writes or deletes memory-YYYY-MM-DD.db files and its own .partial file. Returns the path.
  */
 export async function backupNow(db: DB, dir: string, keep: number, now: Date, dataDir?: string): Promise<string> {
@@ -108,13 +109,15 @@ export function missingPictures(db: DB, dataDir: string): number | null {
   return rows.filter((r) => !existsSync(join(dataDir, 'images', r.id.slice(0, 2), `${r.id}.${r.type === 'jpeg' ? 'jpg' : r.type}`))).length;
 }
 
-/** One backup run, logged and recorded in `statusDir` for the dashboard; failures are never thrown. */
-export async function runBackup(db: DB, dir: string, keep: number, now: Date, statusDir: string): Promise<void> {
+/** One backup run, logged and recorded in `statusDir` for the dashboard; failures are never thrown. Returns the run it recorded. */
+export async function runBackup(db: DB, dir: string, keep: number, now: Date, statusDir: string, copy?: BackupCopy): Promise<BackupRun> {
   let run: BackupRun;
   try {
     // statusDir is the data dir (index.ts), where the pictures live.
     const path = await backupNow(db, dir, keep, now, statusDir);
     console.log(`Backup written to ${path}`);
+    // The second folder gets this finished file; its failure is recorded by the copy itself and never touches this run.
+    try { copy?.run(path, keep, now); } catch (e) { console.error('Backup copy failed:', e); }
     run = { at: now.toISOString(), ok: true, copies: [{ where: dir, result: 'copied' }] };
     const missing = missingPictures(db, statusDir);
     if (missing !== null) run.pictures = { missing, stray: 0 };
@@ -128,11 +131,12 @@ export async function runBackup(db: DB, dir: string, keep: number, now: Date, st
   } catch (e) {
     console.error('Could not record the backup status:', e);
   }
+  return run;
 }
 
 /** Backs up now and then every day; failures are logged and recorded, never fatal. Returns the timer (unref'd). */
-export function scheduleBackups(db: DB, dir: string, keep: number, now: () => Date, statusDir: string): NodeJS.Timeout {
-  const run = () => { void runBackup(db, dir, keep, now(), statusDir); };
+export function scheduleBackups(db: DB, dir: string, keep: number, now: () => Date, statusDir: string, copy?: BackupCopy): NodeJS.Timeout {
+  const run = () => { void runBackup(db, dir, keep, now(), statusDir, copy); };
   run();
   return setInterval(run, BACKUP_INTERVAL_MS).unref();
 }

@@ -582,6 +582,44 @@ const MIGRATION_36 = `
 ALTER TABLE project_checks ADD COLUMN report_at_set TEXT;
 `;
 
+/**
+ * Rows saved while no search model was ready (src/models/switchable.ts) hold a zero vector of the stored size; each one
+ * is listed here until a model embeds it. Triggers keep the list: a zero vector written lists the row, a real one or the
+ * row's removal takes it off. Keys as embedding_staging's: a fact's or observation's id, a section's page id and anchor.
+ * A later migration that rebuilds memories, page_sections or observations (a table copy, as migration 11 did) drops
+ * these triggers with the old table: it must create them again, or placeholders saved after it are never embedded.
+ */
+const MIGRATION_37 = `
+CREATE TABLE embedding_pending(tbl TEXT NOT NULL, key TEXT NOT NULL, PRIMARY KEY(tbl, key));
+CREATE TRIGGER memories_pending_insert AFTER INSERT ON memories WHEN NEW.embedding = zeroblob(length(NEW.embedding))
+BEGIN INSERT OR IGNORE INTO embedding_pending(tbl, key) VALUES ('m', NEW.id); END;
+CREATE TRIGGER memories_pending_update AFTER UPDATE OF id, embedding ON memories
+BEGIN
+  DELETE FROM embedding_pending WHERE tbl = 'm' AND key = OLD.id;
+  INSERT OR IGNORE INTO embedding_pending(tbl, key) SELECT 'm', NEW.id WHERE NEW.embedding = zeroblob(length(NEW.embedding));
+END;
+CREATE TRIGGER memories_pending_delete AFTER DELETE ON memories
+BEGIN DELETE FROM embedding_pending WHERE tbl = 'm' AND key = OLD.id; END;
+CREATE TRIGGER sections_pending_insert AFTER INSERT ON page_sections WHEN NEW.embedding = zeroblob(length(NEW.embedding))
+BEGIN INSERT OR IGNORE INTO embedding_pending(tbl, key) VALUES ('s', NEW.page_id || char(10) || NEW.anchor); END;
+CREATE TRIGGER sections_pending_update AFTER UPDATE OF page_id, anchor, embedding ON page_sections
+BEGIN
+  DELETE FROM embedding_pending WHERE tbl = 's' AND key = OLD.page_id || char(10) || OLD.anchor;
+  INSERT OR IGNORE INTO embedding_pending(tbl, key) SELECT 's', NEW.page_id || char(10) || NEW.anchor WHERE NEW.embedding = zeroblob(length(NEW.embedding));
+END;
+CREATE TRIGGER sections_pending_delete AFTER DELETE ON page_sections
+BEGIN DELETE FROM embedding_pending WHERE tbl = 's' AND key = OLD.page_id || char(10) || OLD.anchor; END;
+CREATE TRIGGER observations_pending_insert AFTER INSERT ON observations WHEN NEW.embedding = zeroblob(length(NEW.embedding))
+BEGIN INSERT OR IGNORE INTO embedding_pending(tbl, key) VALUES ('o', NEW.id); END;
+CREATE TRIGGER observations_pending_update AFTER UPDATE OF id, embedding ON observations
+BEGIN
+  DELETE FROM embedding_pending WHERE tbl = 'o' AND key = OLD.id;
+  INSERT OR IGNORE INTO embedding_pending(tbl, key) SELECT 'o', NEW.id WHERE NEW.embedding = zeroblob(length(NEW.embedding));
+END;
+CREATE TRIGGER observations_pending_delete AFTER DELETE ON observations
+BEGIN DELETE FROM embedding_pending WHERE tbl = 'o' AND key = OLD.id; END;
+`;
+
 const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] = [
   { version: 1, sql: MIGRATION_1 },
   { version: 2, sql: MIGRATION_2 },
@@ -620,6 +658,7 @@ const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] 
   { version: 34, sql: MIGRATION_34 },
   { version: 35, sql: MIGRATION_35 },
   { version: 36, sql: MIGRATION_36 },
+  { version: 37, sql: MIGRATION_37 },
 ];
 
 /** `upTo` stops at that schema version (tests of a migration start from the one before it). */
@@ -670,6 +709,11 @@ export function backupBeforeReembedding(db: DB, path: string, from: string, to: 
   } catch (e) {
     throw new Error(`Could not back up the database before re-embedding it (${from} to ${to}): ${e instanceof Error ? e.message : String(e)}. Nothing was changed.`);
   }
+}
+
+/** The highest migration version: what a database from this BrainAI is at. */
+export function latestSchema(): number {
+  return MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);
 }
 
 export function openDb(path: string, opts: { upTo?: number } = {}): DB {

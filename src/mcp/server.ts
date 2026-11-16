@@ -12,7 +12,6 @@ import { deletedDay, MAX_CONTENT, MAX_ROADMAP, MemoryError, type MemoryService }
 import { KINDS, type Actor, type Memory, type Suggestion } from '../memory/types.js';
 import type { DiscussionService } from '../discussions/service.js';
 import type { Access } from '../discussions/types.js';
-import type { Mode } from '../config.js';
 import type { ProjectStore } from '../projects/store.js';
 import { AREAS, ProjectError, type Area, type Project } from '../projects/types.js';
 import type { GrowthService } from '../growth/service.js';
@@ -29,7 +28,7 @@ import type { PageService } from '../pages/service.js';
 import { PageError, type PageHeader } from '../pages/types.js';
 import { packByBudget } from './budget.js';
 import { isDay } from '../memory/timeRange.js';
-import { DISCUSSIONS_ONLY_INSTRUCTIONS, readOnlyInstructions, SERVER_INSTRUCTIONS, WORK_INSTRUCTIONS } from './instructions.js';
+import { DISCUSSIONS_ONLY_INSTRUCTIONS, readOnlyInstructions, SERVER_INSTRUCTIONS } from './instructions.js';
 import { WEAK_SCORE } from '../memory/reranker.js';
 
 export type ToolResult = { content: ({ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string })[]; isError?: boolean };
@@ -169,7 +168,7 @@ const areaJson = (a: AreaState) => ({
 export function buildMcpServer(
   service: MemoryService,
   actorName: string,
-  opts: { registry: ProjectStore; growth: GrowthService; /** The five areas and the handbook; without it the two tools and the brief's five_areas are left out. */ learning?: LearningService; pages: PageService; notes: NoteService; discussions?: DiscussionService; reviews?: ReviewService; access?: Access; projects?: string[]; mode?: Mode; askCommands?: Record<string, string>; clientId?: string; images?: ImageStore; diagramChecks?: DiagramChecks; uploadLinks?: UploadLinks; grantId?: string; publicUrl?: URL; /** B1: brain health as it is now, for weekly_review on a full connection. */ health?: () => Health;
+  opts: { registry: ProjectStore; growth: GrowthService; /** The five areas and the handbook; without it the two tools and the brief's five_areas are left out. */ learning?: LearningService; pages: PageService; notes: NoteService; discussions?: DiscussionService; reviews?: ReviewService; access?: Access; projects?: string[]; askCommands?: () => Record<string, string>; /** Local mode (the app): the memory is the connection named brainai. */ localMode?: boolean; clientId?: string; images?: ImageStore; diagramChecks?: DiagramChecks; uploadLinks?: UploadLinks; grantId?: string; publicUrl?: URL; /** B1: brain health as it is now, for weekly_review on a full connection. */ health?: () => Health;
     /** Guided setup (§17b): the setup number load_profile was given, for the grant to record. */
     onSetup?: (version: number) => void;
     /** Shared skills (§17c): listed, loaded and proposed by Full connections only. */
@@ -180,14 +179,13 @@ export function buildMcpServer(
   const roadmapToo = (m: Memory): string => (isStatus(m) && m.project !== null && service.roadmapOf(m.project) ? ROADMAP_TOO(m.project) : '');
   const access = opts.access ?? 'full';
   const limited = access === 'discussions';
-  const work = opts.mode === 'work';
   // A read-only connection's projects, exactly as granted: aliases are not followed, because merging a granted project
   // into another one would otherwise open that other project up. A project renamed since reads nothing (fails closed).
   const readable = access === 'projects' ? [...new Set(opts.projects ?? [])] : undefined;
   const readOnly = readable !== undefined;
   const visible = (project: string | null) => readable === undefined || (project !== null && readable.includes(project));
-  const instructions = readOnly ? readOnlyInstructions(readable) : work ? WORK_INSTRUCTIONS : limited ? DISCUSSIONS_ONLY_INSTRUCTIONS : SERVER_INSTRUCTIONS;
-  const server = new McpServer({ name: work ? 'work-memory' : 'brainai', version: '1.0.0' }, { instructions });
+  const instructions = readOnly ? readOnlyInstructions(readable) : limited ? DISCUSSIONS_ONLY_INSTRUCTIONS : SERVER_INSTRUCTIONS;
+  const server = new McpServer({ name: 'brainai', version: '1.0.0' }, { instructions });
   const WEAK_MATCH = 'None of these facts matches the question closely: they are the nearest ones and may be unrelated. ';
   const saveNudge = readOnly ? '' : SAVE_NUDGE;
   /** The facts each fact disagrees with (open pairs), only those this connection may see. Built once per call. */
@@ -311,7 +309,7 @@ export function buildMcpServer(
 
   if (opts.discussions && !readOnly) {
     registerDiscussionTools(server, opts.discussions, (model) => ({ name: actorName, model, access }), guard,
-      { commands: opts.askCommands ?? {}, memory: work ? 'work-memory' : 'shared-memory' });
+      { commands: opts.askCommands?.() ?? {}, memory: opts.localMode ? 'brainai' : 'shared-memory' });
   }
   if (limited) return server;
 
@@ -547,9 +545,8 @@ export function buildMcpServer(
       return withData(`Saved the info for project ${project}.`, projectInfoJson(p, service.isQuiet(project)));
     }));
 
-    // Only Full connections of the personal brain (spec section 11): never read-only or discussion guests, and never the
-    // work memory, whose data sits on the employer's laptop and its backups.
-    if (!work) server.registerTool('note_observation', {
+    // Only Full connections (spec section 11): never read-only or discussion guests.
+    server.registerTool('note_observation', {
       title: 'Note an observation',
       description: "Records a notable moment in the owner's way of working: a strength (something they do well) or something to improve "
         + '(something that cost time or quality). Only notable moments, both kinds, at most a couple per working session; '
@@ -702,7 +699,7 @@ export function buildMcpServer(
   }));
 
   if (opts.reviews) {
-    registerReviewTools(server, opts.reviews, { actorName, work, scope: readable === undefined ? { kind: 'full' } : { kind: 'read', projects: readable }, health: opts.health }, guard);
+    registerReviewTools(server, opts.reviews, { actorName, scope: readable === undefined ? { kind: 'full' } : { kind: 'read', projects: readable }, health: opts.health }, guard);
   }
 
   if (opts.skills && !readOnly && access === 'full') registerSkillTools(server, opts.skills, actorName, guard);

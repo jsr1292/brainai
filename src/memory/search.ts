@@ -1,4 +1,4 @@
-import { cosine } from './embedder.js';
+import { cosine, isZeroVector } from './embedder.js';
 import { STOPWORDS } from './stopwords.js';
 import type { MemoryStore } from './store.js';
 import type { Kind, Memory } from './types.js';
@@ -58,7 +58,12 @@ export function hybridSearch(
   const ftsQuery = toFtsQuery(q.text);
   const strict = q.time?.strict ? q.time.ids : undefined;
   const fts = (query: string) => { const hits = store.ftsSearch(query, filter, CANDIDATES); return strict ? hits.filter((id) => strict.has(id)) : hits; };
-  const live = strict ? store.activeEmbeddings(filter).filter((e) => strict.has(e.id)) : store.activeEmbeddings(filter);
+  const stored = strict ? store.activeEmbeddings(filter).filter((e) => strict.has(e.id)) : store.activeEmbeddings(filter);
+  // Keywords only while no search model is ready (a zero question vector, src/models/switchable.ts), or when the
+  // question's vector is not the stored vectors' model: meaning off, and a keyword rank counts fully.
+  const meaning = byMeaning(q.vector, stored);
+  if (!meaning) q = { ...q, keywordWeight: 1 };
+  const live = meaning ? stored : [];
   // The question and each other phrasing (B4) are ranked on their own, each with its own keywords and floor; their
   // fused scores add up, and a fact is sure when any of them would call it sure.
   const merged = merge([
@@ -68,7 +73,7 @@ export function hybridSearch(
       return rank(live, vq ? fts(vq) : [], { ...q, vector: v.vector });
     }),
   ]);
-  const current = q.time ? timeLane(merged, live, q.time.ids, q.vector, Math.max(q.minSimilarity, q.window === undefined ? -Infinity : merged.best - q.window)) : merged;
+  const current = q.time && meaning ? timeLane(merged, live, q.time.ids, q.vector, Math.max(q.minSimilarity, q.window === undefined ? -Infinity : merged.best - q.window)) : merged;
   const top = current.ranked.slice(0, Math.max(q.pool ?? q.limit, q.limit));
   const results: SearchHit[] = [];
   for (const [id, score] of top) {
@@ -82,7 +87,7 @@ export function hybridSearch(
   const all = { ...filter, replaced: 'include' as const };
   const embeddings = store.activeEmbeddings(all);
   const replacedIds = new Set(embeddings.filter((e) => e.replaced).map((e) => e.id));
-  const joint = rank(embeddings, ftsQuery ? store.ftsSearch(ftsQuery, all, CANDIDATES) : [], q, current.best);
+  const joint = rank(meaning ? embeddings : [], ftsQuery ? store.ftsSearch(ftsQuery, all, CANDIDATES) : [], q, current.best);
   const pool = q.replacedCut === 'joint-top' ? joint.ranked.slice(0, q.limit) : joint.ranked;
   const max = q.replacedLimit ?? DEFAULT_REPLACED;
   for (const [id, score] of pool) {
@@ -92,6 +97,15 @@ export function hybridSearch(
     if (memory) results.push({ memory, score, sure: false, replaced: true });
   }
   return results;
+}
+
+/**
+ * Whether a search can rank by meaning: the question has a real vector, and every real stored vector has its length (a
+ * zero placeholder of another length, saved just before a model change, compares as 0 and is no obstacle).
+ */
+export function byMeaning(vector: Float32Array, stored: readonly { embedding: Float32Array }[]): boolean {
+  if (isZeroVector(vector)) return false;
+  return !stored.some((e) => e.embedding.length !== vector.length && !isZeroVector(e.embedding));
 }
 
 /** A search result; `sure` is false for replaced hits, which are never marked recalled. */

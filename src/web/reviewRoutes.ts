@@ -14,7 +14,6 @@ const MONDAY = /^\d{4}-\d{2}-\d{2}$/;
 export function reviewRoutes(d: AppDeps): Router {
   const router = Router();
   const owner = requireOwner(d.sessions);
-  const work = d.mode === 'work';
   const send = (res: Response, body: ReturnType<typeof html>, status = 200, back?: { href: string; label: string }, section?: Section) => res.status(status).type('html').send(page(TITLE, body, { nav: true, tab: 'week', section, back }));
   const notFound = (res: Response) => res.status(404).type('html').send(page('Not found', html`<h1>Not found</h1>`, { nav: true, tab: null }));
   const prevOf = (monday: string): string | null => {
@@ -27,12 +26,12 @@ export function reviewRoutes(d: AppDeps): Router {
     if (last) r = d.reviews.withTidy(r);
     const view = d.reviews.present(r, last ? 'last' : 'older', { kind: 'owner' });
     // Last week's forms always return to /review, the one address it is kept under offline.
-    send(res, reviewView(view, { work, error: backError(req.query.error), prev: prevOf(r.monday), next: last ? null : shiftWeek(r.monday, 1), back: last ? '/review' : null, monday: { show: last && !view.empty && r.openedAt === null && r.dismissedAt === null } }), 200, last ? undefined : { href: '/review/all', label: 'All weeks' }, last ? 'last' : undefined);
+    send(res, reviewView(view, { error: backError(req.query.error), prev: prevOf(r.monday), next: last ? null : shiftWeek(r.monday, 1), back: last ? '/review' : null, monday: { show: last && !view.empty && r.openedAt === null && r.dismissedAt === null } }), 200, last ? undefined : { href: '/review/all', label: 'All weeks' }, last ? 'last' : undefined);
   };
 
   router.get('/review', owner, (req, res) => {
     const r = d.reviews.ensure(d.reviews.lastMonday(), 'owner');
-    if (!r) return send(res, noWeekYetView(work), 200, undefined, 'last');
+    if (!r) return send(res, noWeekYetView(), 200, undefined, 'last');
     showWeek(req, res, r);
   });
 
@@ -42,7 +41,7 @@ export function reviewRoutes(d: AppDeps): Router {
     const digest = weeklyDigest(d.store, week, { grants: d.provider.listGrants(), waiting: d.service.pendingSuggestions().length });
     const notes = digest.flags.filter((f) => f.kind === 'no-saves' || f.kind === 'changed-others' || f.kind === 'no-project');
     const activity = d.store.recentActivity(LATEST_MAX).filter((a) => a.at >= week.start.toISOString() && a.at < week.end.toISOString());
-    send(res, reviewView(view, { work, error: backError(req.query.error), prev: null, next: null, back: '/review/now', latest: { activity, notes } }), 200, undefined, 'now');
+    send(res, reviewView(view, { error: backError(req.query.error), prev: null, next: null, back: '/review/now', latest: { activity, notes } }), 200, undefined, 'now');
   });
 
   // Before /review/:date. Builds at most MAX_BUILDS_PER_LIST missing weeks per visit.
@@ -54,7 +53,7 @@ export function reviewRoutes(d: AppDeps): Router {
       const view = d.reviews.present(review, monday === last ? 'last' : 'older', { kind: 'owner' });
       return { monday, href, sentence: view.sentence, quiet: view.empty };
     });
-    send(res, allWeeksView(rows, work), 200, { href: '/review', label: 'Last week' });
+    send(res, allWeeksView(rows), 200, { href: '/review', label: 'Last week' });
   });
 
   router.get('/review/:date', owner, (req, res) => {

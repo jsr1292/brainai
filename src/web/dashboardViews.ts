@@ -531,20 +531,20 @@ function setupLine(s: ConnStatus): SafeHtml {
   return html`<p class="conn-setup">${text}${tools}</p>`;
 }
 
-export function grantCards(v: { grants: GrantInfo[]; work?: boolean; projects?: string[]; status?: Map<string, ConnStatus> }): SafeHtml {
+export function grantCards(v: { grants: GrantInfo[]; projects?: string[]; status?: Map<string, ConnStatus> }): SafeHtml {
   const forms = (g: GrantInfo) => html`<form method="post" action="/clients/${g.id}/name" class="actions">
     <label>Name <input type="text" name="name" value="${g.clientName}" maxlength="100" required></label>
     <button type="submit" class="secondary">Rename</button>
   </form>
-  ${v.work ? '' : html`<form method="post" action="/clients/${g.id}/access" class="actions">
+  <form method="post" action="/clients/${g.id}/access" class="actions">
     <label class="choice"><input type="radio" name="access" value="full"${g.access === 'full' ? ' checked' : ''}> Full access</label>
     <label class="choice"><input type="radio" name="access" value="discussions"${g.access === 'discussions' ? ' checked' : ''}> Discussions only</label>
     <label class="choice"><input type="radio" name="access" value="projects"${g.access === 'projects' ? ' checked' : ''}> Read only, chosen projects</label>
     <details class="project-picker"${g.access === 'projects' ? ' open' : ''}><summary>Projects for read only<span class="chev"></span></summary>${projectChoices(v.projects ?? [], g.projects)}</details>
     <button type="submit" class="secondary">Change access</button>
-  </form>`}`;
+  </form>`;
   const row = (g: GrantInfo) => html`<li class="conn">
-  <div class="conn-row"><span class="conn-name">${writer(g.clientName)}</span>${v.work ? '' : html`<span class="conn-access">${accessLabel(g, v.projects ?? [])}</span>`}<span class="meta">used ${g.lastUsedAt ? when(g.lastUsedAt) : 'never'}</span>
+  <div class="conn-row"><span class="conn-name">${writer(g.clientName)}</span><span class="conn-access">${accessLabel(g, v.projects ?? [])}</span><span class="meta">used ${g.lastUsedAt ? when(g.lastUsedAt) : 'never'}</span>
   <form method="post" action="/clients/${g.id}/revoke"><button type="submit" class="secondary" aria-label="Revoke ${g.clientName}">Revoke</button></form></div>
   ${v.status?.get(g.id) ? setupLine(v.status.get(g.id)!) : ''}
   <details class="conn-change"><summary>Change<span class="visually-hidden"> ${g.clientName}</span><span class="chev"></span></summary>${forms(g)}<p class="meta">Connected ${when(g.createdAt)}</p></details>

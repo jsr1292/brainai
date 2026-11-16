@@ -88,7 +88,7 @@ rclone copy "$WORK/$NAME" "$REMOTE"
 
 STEP="removing copies older than $KEEP_DAYS days from $REMOTE"
 # Deleted for good, not moved to the Drive trash, so old copies free their space.
-rclone delete "$REMOTE" --min-age "${KEEP_DAYS}d" --include 'memory-*.tar.gz.age' --drive-use-trash=false
+rclone delete "$REMOTE" --min-age "${KEEP_DAYS}d" --include '/memory-*.tar.gz.age' --drive-use-trash=false
 
 # Pictures (round 2 section 12) go one encrypted file each, outside the weekly pack: files never change, so each is
 # sent once, and those deleted for good more than KEEP_DAYS ago are removed there. Names are content hashes. A

@@ -4,6 +4,7 @@ import { EPOCH, factDates, parseTimeRange, todayIn } from './timeRange.js';
 import { cosine, type Embedder } from './embedder.js';
 import { findSimilar, hybridSearch, type SearchHit } from './search.js';
 import { RERANK_POOL, type Reranker } from './reranker.js';
+import { SwitchableReranker } from '../models/switchable.js';
 import { looksLikeInstruction } from './instructionLike.js';
 import { checkRoadmap, keepTicked, parseRoadmap, type Roadmap, type WaitingItem } from './roadmap.js';
 import { looksLikeSecret } from './secrets.js';
@@ -368,7 +369,7 @@ export class MemoryService {
     const alt = [...(unnamed.length > 0 ? [`${q.query} (${unnamed.join(', ')})`] : []), ...given].slice(0, MAX_PHRASINGS);
     const variants: { text: string; vector: Float32Array }[] = [];
     for (const text of alt) variants.push({ text, vector: await this.embedder.embed(text, 'query') });
-    const rerank = this.opts.reranker !== undefined && q.rerank !== false;
+    const rerank = this.rerankerOn() && q.rerank !== false;
     // B10: the time the question is about, from the caller or from its words.
     const now = this.store.nowDate();
     const read = q.range || !q.readTime ? null : parseTimeRange(q.query, now);
@@ -403,7 +404,7 @@ export class MemoryService {
       const reordered = await this.reordered([q.query, ...alt], current);
       bestScore = reordered.best;
       // A reranker that failed leaves the search's order, where the added facts would sit last: pin them as before.
-      if (reordered.best === null && competing.length > 0) pinned = competing;
+      if (!reordered.ran && competing.length > 0) pinned = competing;
       current = reordered.hits.slice(0, limit);
       if (q.touch !== false) this.store.markRecalled(current.filter((r) => r.sure).map((r) => r.memory.id));
     }
@@ -429,27 +430,43 @@ export class MemoryService {
     return ids;
   }
 
+  /** Whether recall reranks: a reranker was given and, when it is the app's switchable one, a model is in use. */
+  private rerankerOn(): boolean {
+    const r = this.opts.reranker;
+    return r !== undefined && !(r instanceof SwitchableReranker && !r.ready());
+  }
+
   /**
    * The hits in the reranker's order (ties keep the search's order); each phrasing is scored and a hit keeps its best
    * score; `best` is the highest score (null when the reranker did not run). On any reranker error, the search's order.
    */
-  private async reordered(queries: string[], hits: SearchHit[]): Promise<{ hits: SearchHit[]; best: number | null }> {
+  private async reordered(queries: string[], hits: SearchHit[]): Promise<{ hits: SearchHit[]; best: number | null; ran: boolean }> {
     // A single hit is scored too (a few milliseconds): only its score tells whether it matches the question at all.
-    if (hits.length === 0 || !this.opts.reranker) return { hits, best: null };
+    if (hits.length === 0 || !this.rerankerOn() || !this.opts.reranker) return { hits, best: null, ran: false };
     try {
       const best = hits.map(() => -Infinity);
-      for (const query of queries) {
-        const scores = await this.opts.reranker.score(query, hits.map((h) => h.memory.content));
+      const texts = hits.map((h) => h.memory.content);
+      const r = this.opts.reranker;
+      // One source for all phrasings: an online reranker answers them together (or falls back to the local one whole).
+      let many: { scores: number[][]; online: boolean };
+      if (r.scoreMany) many = await r.scoreMany(queries, texts);
+      else {
+        const scores: number[][] = []; // one at a time: the local model's memory is bounded by its batch
+        for (const q of queries) scores.push(await r.score(q, texts));
+        many = { scores, online: false };
+      }
+      for (const scores of many.scores) {
         if (scores.length !== hits.length || scores.some((x) => !Number.isFinite(x))) throw new Error(`${scores.length} scores for ${hits.length} facts`);
         scores.forEach((x, i) => { best[i] = Math.max(best[i]!, x); });
       }
       // The rank prior (Gemma profile): log(1 / rank) favours the search's own order, so the reranker changes it only
-      // where it clearly disagrees. `best` stays the reranker's raw score (the weak-match cut-off reads it).
-      const prior = this.opts.rerankPrior ?? 0;
-      return { hits: hits.map((h, i) => ({ h, s: best[i]! + prior * Math.log(1 / (i + 1)) })).sort((a, b) => b.s - a.s).map((x) => x.h), best: Math.max(...best) };
+      // where it clearly disagrees. `best` stays the reranker's raw score (the weak-match cut-off reads it). An online
+      // reranker is the only voice (prior 0, as measured) and its scale is not the local one's: no weak-match note.
+      const prior = many.online ? 0 : this.opts.rerankPrior ?? 0;
+      return { hits: hits.map((h, i) => ({ h, s: best[i]! + prior * Math.log(1 / (i + 1)) })).sort((a, b) => b.s - a.s).map((x) => x.h), best: many.online ? null : Math.max(...best), ran: true };
     } catch (e) {
       console.error(`reranker failed: ${e instanceof Error ? e.message : String(e)}`);
-      return { hits, best: null };
+      return { hits, best: null, ran: false };
     }
   }
 

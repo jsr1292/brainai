@@ -24,7 +24,7 @@ export interface HealthInput {
   profileFacts: number;
   /** Connected apps and what each reports of the setup text: the newest, an older one, or none yet. */
   apps: { name: string; setup: 'current' | 'older' | 'unknown'; href: string }[];
-  /** Null when this install has no backup jobs to check (the desktop app, work mode without them). */
+  /** Null when this install has no backup jobs to check (the desktop app). */
   backups: { ok: boolean; problems: string[] } | null;
   waiting: {
     approvals: number; disagreements: number;

@@ -1,5 +1,7 @@
+import { join } from 'node:path';
 import { nameKey } from './discussions/types.js';
 import { profileFor, type EmbeddingProfile } from './memory/embeddingProfile.js';
+import { readChoice, type ModelChoice } from './models/choice.js';
 
 // The default model's cut-offs (each one's calibration is in src/memory/embeddingProfile.ts). The four recall settings
 // can be overridden with DUPLICATE_THRESHOLD, RECALL_WINDOW, MIN_RECALL_SIMILARITY and RECALL_CONFIDENT_SIMILARITY.
@@ -8,9 +10,6 @@ export const DEFAULT_DUPLICATE_THRESHOLD = DEFAULT_PROFILE.duplicate;
 export const DEFAULT_RECALL_WINDOW = DEFAULT_PROFILE.window;
 export const DEFAULT_MIN_RECALL_SIMILARITY = DEFAULT_PROFILE.minRecall;
 export const DEFAULT_RECALL_CONFIDENT_SIMILARITY = DEFAULT_PROFILE.confident;
-
-/** 'personal' is the shared memory at home; 'work' is a separate copy on a work laptop (see docs/WORK.md). */
-export type Mode = 'personal' | 'work';
 
 export const DEFAULT_BACKUP_KEEP = 14;
 
@@ -23,8 +22,12 @@ export interface Config {
   embedModel: EmbeddingProfile;
   /** Recall's results reordered by the local reranker (B3); RERANK=off keeps the search's own order. */
   rerank: boolean;
-  mode: Mode;
-  /** Address to listen on. Work mode defaults to 127.0.0.1 so nothing else on the network can reach it. */
+  /**
+   * The app (local mode): the owner's choice of models from <data>/models.json, null before one is made. Its search
+   * model is `embedModel`; the app loads and downloads them (src/models/manager.ts). Always null on a server.
+   */
+  modelChoice: ModelChoice | null;
+  /** Address to listen on: 127.0.0.1 unless set, so nothing else on the network can reach it. */
   host: string;
   /** Trust cf-connecting-ip for rate limiting: only safe when the Cloudflare tunnel is the only way in. */
   trustCfConnectingIp: boolean;
@@ -106,7 +109,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
 
   const port = Number(env.PORT ?? 3000);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`PORT must be an integer from 1 to 65535, got ${env.PORT}`);
-  const embedModel = profileFor(env.EMBED_MODEL);
+  const localMode = flag('LOCAL_MODE', env.LOCAL_MODE, false);
+  const dataDir = env.DATA_DIR ?? './data';
+  // The app chooses its models in the app (models.json); a server keeps EMBED_MODEL and RERANK in .env.
+  const modelChoice = localMode ? readChoice(dataDir) : null;
+  const embedModel = profileFor(modelChoice?.search ?? env.EMBED_MODEL);
   const duplicateThreshold = unitInterval('DUPLICATE_THRESHOLD', env.DUPLICATE_THRESHOLD, embedModel.duplicate);
   const minRecallSimilarity = unitInterval('MIN_RECALL_SIMILARITY', env.MIN_RECALL_SIMILARITY, embedModel.minRecall);
   const recallConfidentSimilarity = unitInterval('RECALL_CONFIDENT_SIMILARITY', env.RECALL_CONFIDENT_SIMILARITY, embedModel.confident);
@@ -121,12 +128,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   }
   const rerankSetting = env.RERANK ?? 'on';
   if (rerankSetting !== 'on' && rerankSetting !== 'off') throw new Error(`RERANK must be on or off, got ${env.RERANK}`);
-  const mode = env.MEMORY_MODE ?? 'personal';
-  if (mode !== 'personal' && mode !== 'work') throw new Error(`MEMORY_MODE must be personal or work, got ${env.MEMORY_MODE}`);
-  const work = mode === 'work';
+  // BrainAI has one mode. A copy set up with the old setting stops here rather than start as something else.
+  if (given(env.MEMORY_MODE) !== undefined && env.MEMORY_MODE !== 'personal') {
+    throw new Error(`MEMORY_MODE was removed: BrainAI has one mode. Remove MEMORY_MODE=${env.MEMORY_MODE} from .env; to move a copy that used it into the app, see docs/DESKTOP.md, "Moving from the Windows zip".`);
+  }
   const host = env.HOST ?? '127.0.0.1';
   const trustCfConnectingIp = flag('TRUST_CF_CONNECTING_IP', env.TRUST_CF_CONNECTING_IP, false);
-  const localMode = flag('LOCAL_MODE', env.LOCAL_MODE, false);
   if (localMode) {
     // A local install has no password: it must never be reachable from anywhere but this computer.
     if (host !== '127.0.0.1') throw new Error(`LOCAL_MODE listens on 127.0.0.1 only, not HOST=${host}`);
@@ -138,9 +145,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const backupKeep = Number(env.BACKUP_KEEP ?? DEFAULT_BACKUP_KEEP);
   if (!Number.isInteger(backupKeep) || backupKeep < 1) throw new Error(`BACKUP_KEEP must be a whole number of at least 1, got ${env.BACKUP_KEEP}`);
   return {
-    publicUrl, dataDir: env.DATA_DIR ?? './data', modelDir: env.MODEL_DIR ?? './models', port,
-    duplicateThreshold, minRecallSimilarity, recallConfidentSimilarity, recallWindow, embedModel, rerank: rerankSetting === 'on',
-    mode,
+    // The app keeps its models in its data folder (it downloads them there); a server has them in its image.
+    publicUrl, dataDir, modelDir: env.MODEL_DIR ?? (localMode ? join(dataDir, 'models') : './models'), port,
+    duplicateThreshold, minRecallSimilarity, recallConfidentSimilarity, recallWindow, embedModel, rerank: rerankSetting === 'on', modelChoice,
     // This machine only, and no proxy header trusted, unless set: the Docker image sets HOST=0.0.0.0, and a deployment
     // behind a Cloudflare Tunnel (whose origin nothing else can reach) sets TRUST_CF_CONNECTING_IP=true.
     overlayDir: env.OVERLAY_DIR ?? 'overlay',

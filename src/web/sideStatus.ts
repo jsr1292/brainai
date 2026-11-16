@@ -8,15 +8,12 @@ import type { AppDeps } from './app.js';
  */
 export interface SideStatus { needsYouCount(): number; backupLate(): boolean; invalidate(): void }
 
-export function createSideStatus(d: Pick<AppDeps, 'service' | 'discussions' | 'statusDir' | 'mode' | 'now'> & Partial<Pick<AppDeps, 'skills'>>, ttlMs = 30_000): SideStatus {
-  const work = d.mode === 'work';
+export function createSideStatus(d: Pick<AppDeps, 'service' | 'discussions' | 'statusDir' | 'now'> & Partial<Pick<AppDeps, 'skills'>>, ttlMs = 30_000): SideStatus {
   let needs: { at: number; value: number } | null = null;
   let late: { at: number; value: boolean } | null = null;
   const stale = (c: { at: number } | null, t: number) => c === null || t > c.at + ttlMs;
   return {
     needsYouCount() {
-      // Work mode has no For you approvals or discussions to point at: the dot never shows there.
-      if (work) return 0;
       const t = d.now().getTime();
       if (stale(needs, t)) needs = { at: t, value: d.service.pendingSuggestions().length + (d.skills?.pendingProposals().length ?? 0) + d.discussions.waitingOnOwner().length };
       return needs!.value;
@@ -25,7 +22,7 @@ export function createSideStatus(d: Pick<AppDeps, 'service' | 'discussions' | 's
       if (d.statusDir === undefined) return false;
       const t = d.now().getTime();
       // The same check, with the same options, as the home's backup banner (projectRoutes.ts).
-      if (stale(late, t)) late = { at: t, value: !backupHealth(readBackupStatus(d.statusDir), d.now(), { offsite: !work, jobs: !work }).ok };
+      if (stale(late, t)) late = { at: t, value: !backupHealth(readBackupStatus(d.statusDir), d.now(), { offsite: true, jobs: true }).ok };
       return late!.value;
     },
     invalidate() {
@@ -35,7 +32,7 @@ export function createSideStatus(d: Pick<AppDeps, 'service' | 'discussions' | 's
   };
 }
 
-/** Set once per app by createApp, next to the page mode. */
+/** Set once per app by createApp. */
 let current: SideStatus | null = null;
 export function setSideStatus(s: SideStatus | null): void {
   current = s;

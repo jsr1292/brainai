@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { checkEmbedderFiles, cosine, createLocalEmbedder, GEMMA_FILES, GEMMA_MODEL, gemmaDir } from './embedder.js';
-import { GEMMA_PROFILE } from './embeddingProfile.js';
+import { dirname, join } from 'node:path';
+import { checkEmbedderFiles, cosine, createLocalEmbedder, E5_FILES, E5_MODEL, embedderFilesPresent, GEMMA_FILES, GEMMA_MODEL, gemmaDir } from './embedder.js';
+import { E5_PROFILE, GEMMA_PROFILE } from './embeddingProfile.js';
 
 test('cosine refuses vectors of different lengths instead of returning NaN', () => {
-  assert.throws(() => cosine(new Float32Array(384), new Float32Array(768)), /384 and 768/);
+  assert.throws(() => cosine(new Float32Array(384).fill(0.05), new Float32Array(768).fill(0.03)), /384 and 768/);
   assert.equal(cosine(Float32Array.from([1, 0]), Float32Array.from([1, 0])), 1);
 });
 
@@ -37,4 +37,28 @@ test('the Gemma pins cover the 4-bit model, its data and the files the tokenizer
 test('createLocalEmbedder refuses a model it does not know, and Gemma offline without its files', async () => {
   await assert.rejects(createLocalEmbedder({ modelDir: '/m', allowRemote: false, model: { ...GEMMA_PROFILE, id: 'bert' as never } }), /unknown embedding model bert/);
   await assert.rejects(createLocalEmbedder({ modelDir: join(tmpdir(), 'no-such-dir-embed'), allowRemote: false, model: GEMMA_PROFILE }), /The search model is missing/);
+});
+
+test('embedderFilesPresent: true only when every file the chosen search model loads is in the model folder', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'embed-present-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.equal(embedderFilesPresent(dir, E5_PROFILE), false);
+  const files = Object.keys(E5_FILES);
+  for (const f of files) { mkdirSync(join(dir, E5_MODEL, f, '..'), { recursive: true }); writeFileSync(join(dir, E5_MODEL, f), 'x'); }
+  assert.equal(embedderFilesPresent(dir, E5_PROFILE), true);
+  assert.equal(embedderFilesPresent(dir, GEMMA_PROFILE), false, 'the other model is still missing');
+  rmSync(join(dir, E5_MODEL, files.at(-1)!));
+  assert.equal(embedderFilesPresent(dir, E5_PROFILE), false);
+});
+
+test('a caller that has just checked the files (the app\'s model manager) can skip the second, blocking check', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'embed-verified-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  for (const f of Object.keys(GEMMA_FILES)) {
+    mkdirSync(dirname(join(gemmaDir(dir), f)), { recursive: true });
+    writeFileSync(join(gemmaDir(dir), f), 'damaged');
+  }
+  await assert.rejects(createLocalEmbedder({ modelDir: dir, allowRemote: false, model: GEMMA_PROFILE }), /does not match the pinned version/);
+  await assert.rejects(createLocalEmbedder({ modelDir: dir, allowRemote: false, model: GEMMA_PROFILE, verified: true }),
+    (e: Error) => !/does not match the pinned version|The search model is missing/.test(e.message), 'no hash check: it went on to load the files');
 });

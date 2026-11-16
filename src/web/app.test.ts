@@ -2,7 +2,6 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { accessOfToken } from './app.js';
-import { WORK_INSTRUCTIONS } from '../mcp/instructions.js';
 import { connectClient, loggedIn as loggedInFetch, startTestApp, TEST_PASSWORD } from '../testing/helpers.js';
 
 type App = Awaited<ReturnType<typeof startTestApp>>;
@@ -547,45 +546,7 @@ test('MCP requests carry attachments up to the per-file limit; a larger file get
   assert.match(big.result.content[0].text, /File "big\.txt" is larger than 200,000 bytes\./);
 });
 
-test('work mode: the MCP server is "work-memory" with the work instructions and the discussion tools', async (t) => {
-  const app = await start(t, { mode: 'work' });
-  const f = await loggedInFetch(app);
-  const { accessToken } = await connectClient(app.baseUrl, f, 'Codex');
-  const init = await mcp(app, accessToken, {
-    jsonrpc: '2.0', id: 1, method: 'initialize',
-    params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } },
-  });
-  assert.equal(init.result.serverInfo.name, 'work-memory');
-  assert.equal(init.result.instructions, WORK_INSTRUCTIONS);
-  const list = await mcp(app, accessToken, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
-  assert.deepEqual(list.result.tools.map((x: any) => x.name).sort(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'record_lesson', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_area', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
-});
-
-test('work mode: the dashboard is called "Work brain", with discussions and no access choice at consent', async (t) => {
-  const app = await start(t, { mode: 'work' });
-  const loginPage = await (await get(app, '/login')).text();
-  assert.match(loginPage, /<h1 class="login-mark"><span class="brand-dot" aria-hidden="true"><\/span>Work brain<\/h1>/);
-  const cookie = await loggedIn(app);
-  const home = await (await get(app, '/settings', cookie)).text();
-  assert.match(home, /<title>Settings<\/title>/);
-  assert.match(home, /<span>Work brain<\/span>/);
-  assert.equal((await get(app, '/discussions', cookie)).status, 200);
-  const graph = await (await get(app, '/graph', cookie)).text();
-  assert.match(graph, /<title>Graph<\/title>[\s\S]*<span>Work brain<\/span>[\s\S]*class="graph-list/);
-  const { id } = await pendingConsent(app, 'Codex');
-  const consent = await (await get(app, `/consent/${id}`, cookie)).text();
-  assert.match(consent, /Codex wants access to your work memory/);
-  assert.doesNotMatch(consent, /Discussions only/);
-  assert.match(consent, /<input type="hidden" name="access" value="full">/);
-  const f = await loggedInFetch(app);
-  await connectClient(app.baseUrl, f, 'Codex');
-  assert.doesNotMatch(await (await get(app, '/settings', cookie)).text(), /Discussions only/);
-  const grant = app.deps.provider.listGrants()[0]!;
-  assert.equal((await post(app, `/clients/${grant.id}/access`, { access: 'discussions' }, { cookie })).status, 400);
-  assert.equal(app.deps.provider.grantAccess(grant.id), 'full');
-});
-
-test('personal mode keeps discussions and the access choice', async (t) => {
+test('the dashboard is called BrainAI and keeps discussions and the access choice', async (t) => {
   const app = await start(t);
   const cookie = await loggedIn(app);
   const home = await (await get(app, '/settings', cookie)).text();

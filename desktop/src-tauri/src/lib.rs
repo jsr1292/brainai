@@ -4,6 +4,7 @@ pub mod nav;
 pub mod port;
 pub mod proof;
 pub mod server;
+pub mod update;
 
 use server::StartError;
 use std::fs::OpenOptions;
@@ -15,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -44,6 +45,48 @@ struct Running {
     secret: Mutex<String>,
     quitting: AtomicBool,
     restarts: AtomicU32,
+    /// Counts the starts the app chose to make (a restart after an import, or leaving): a watcher from an earlier
+    /// start sees it change and stops, so a stop the app asked for is never mistaken for a crash.
+    epoch: AtomicU32,
+    /// A restart is under way: another /app/restart is ignored and the crash watcher stands down.
+    restarting: AtomicBool,
+    /// The newer release the last check found, kept for Update and restart.
+    update: Mutex<Option<tauri_plugin_updater::Update>>,
+    /// Update and restart is under way: a second one is ignored, and so is /app/restart.
+    updating: AtomicBool,
+    /// Held by the update check (with its write) and by the whole Update and restart, on background threads only.
+    update_lock: Mutex<()>,
+}
+
+/// The tray's menu and its "BrainAI <v> is ready…" item, shown only while an update is known.
+struct Tray {
+    menu: Menu<Wry>,
+    update_item: MenuItem<Wry>,
+    shown: AtomicBool,
+}
+
+const TRAY_ID: &str = "brainai";
+/// The app icon with a red dot (scripts/make-icons.mjs).
+const TRAY_UPDATE_ICON: &[u8] = include_bytes!("../icons/tray-update.png");
+
+/// The tray's dot and its menu item for an update to `version`; the plain icon and no item for None.
+fn show_update_dot(app: &AppHandle, version: Option<&str>) {
+    let (Some(tray), Some(icon)) = (app.try_state::<Tray>(), app.tray_by_id(TRAY_ID)) else { return };
+    match version {
+        Some(v) => {
+            let _ = icon.set_icon(tauri::image::Image::from_bytes(TRAY_UPDATE_ICON).ok());
+            let _ = tray.update_item.set_text(format!("BrainAI {v} is ready…"));
+            if !tray.shown.swap(true, Ordering::SeqCst) {
+                let _ = tray.menu.insert(&tray.update_item, 0);
+            }
+        }
+        None => {
+            let _ = icon.set_icon(app.default_window_icon().cloned());
+            if tray.shown.swap(false, Ordering::SeqCst) {
+                let _ = tray.menu.remove(&tray.update_item);
+            }
+        }
+    }
 }
 
 /// ~/Library/Application Support/<id> on the Mac; %LOCALAPPDATA%\<id> on Windows (not the roaming folder, which
@@ -94,7 +137,7 @@ fn start_server(app: &AppHandle, port: u16, secret: &str) -> std::io::Result<Chi
         // Only what the server needs: nothing else from the owner's environment reaches it.
         .env_clear()
         .env("HOME", std::env::var("HOME").unwrap_or_default())
-        .envs(server::env(&data, &resources, port, secret, server::local_timezone().as_deref(), tmpdir.as_deref(), tool_path(), &system))
+        .envs(server::env(&data, port, secret, server::local_timezone().as_deref(), tmpdir.as_deref(), tool_path(), &system, &server::system_proxy()))
         // The server watches this pipe (APP_PARENT=stdin): when the app is gone, it closes and the server stops.
         .stdin(Stdio::piped())
         .stdout(Stdio::from(log.try_clone()?))
@@ -132,11 +175,156 @@ fn quit(app: &AppHandle) {
     app.exit(0);
 }
 
+/// After an import was staged (Task 7's /app/restart): stops the server and starts it again, which swaps the staged
+/// copy in, and lands on the welcome page's second step. Not a crash: the watcher of the old start stands down and
+/// the restart counter starts again from zero.
+fn restart_server(app: &AppHandle) {
+    let state = app.state::<Running>();
+    // Two restarts at once could start two servers and move BrainAI to another port, breaking the connected tools.
+    if state.restarting.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return;
+    }
+    // Never during an update (it stops and starts the server itself). Set first, then checked; the update does the
+    // reverse with `updating`, so the two never both go ahead.
+    if state.updating.load(Ordering::SeqCst) {
+        state.restarting.store(false, Ordering::SeqCst);
+        return;
+    }
+    state.epoch.fetch_add(1, Ordering::SeqCst);
+    stop_server(app);
+    state.restarts.store(0, Ordering::SeqCst);
+    launch_to(app.clone(), "/welcome?step=2");
+}
+
+/// The running app's `.app` folder, only when this is a real install (the same rule as the login item), so a copy run
+/// from a disk image or a translocated copy is never trashed.
+#[cfg(target_os = "macos")]
+fn installed_bundle() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?.to_string_lossy().into_owned();
+    if !nav::install_location_ok(&exe) {
+        return None;
+    }
+    nav::app_bundle(&exe).map(PathBuf::from)
+}
+
+/// Windows: once this app has exited, a hidden, detached command waits a moment, removes what the app could not
+/// (the data folder with WebView2's own files) and runs Tauri's silent uninstaller (`uninstall.exe` in the install
+/// folder). `ping` is the wait: `timeout` returns at once when its input is redirected.
+#[cfg(windows)]
+fn spawn_uninstaller(data: &std::path::Path) -> std::io::Result<()> {
+    use std::os::windows::process::CommandExt;
+    let dir = std::env::current_exe()?.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let uninstall = dir.join("uninstall.exe");
+    // CREATE_NO_WINDOW, and its own process group so it outlives this app.
+    const NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    Command::new("cmd")
+        .raw_arg(format!("/c ping -n 3 127.0.0.1 >nul & rmdir /s /q \"{}\" & \"{}\" /S", data.display(), uninstall.display()))
+        .creation_flags(server::creation_flags(true) | NEW_PROCESS_GROUP)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+}
+
+/// Deletes what is inside the app's data folder now (on Windows all but WebView2's own folder, which the detached
+/// command removes after exit); on the Mac the whole folder. The first thing that cannot be deleted is the error.
+fn delete_data(data: &std::path::Path) -> std::io::Result<()> {
+    if !data.exists() {
+        return Ok(());
+    }
+    if !cfg!(windows) {
+        return std::fs::remove_dir_all(data);
+    }
+    let mut first = Ok(());
+    for entry in std::fs::read_dir(data)?.flatten() {
+        if !nav::deletable_now(&entry.file_name().to_string_lossy(), true) {
+            continue;
+        }
+        let path = entry.path();
+        let r = if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+        if r.is_err() && first.is_ok() {
+            first = r;
+        }
+    }
+    first
+}
+
+/// After the removed page (D-remove): the server has already taken the tools and hooks out and saved a copy. The app
+/// stops the server, deletes the folder it made for its data (only that one), and removes itself: the Mac app goes
+/// to the Trash; on Windows the silent uninstaller is started as the app exits. Any link can lead the window to
+/// /app/removed, so first its own server must confirm, with the app's key, that a removal finished with a saved
+/// folder, and then the owner must say yes; otherwise nothing is touched.
+fn finish_removal(app: &AppHandle) {
+    let state = app.state::<Running>();
+    let port = state.port.load(Ordering::SeqCst);
+    let secret = state.secret.lock().unwrap().clone();
+    let ours = port != 0 && !secret.is_empty() && matches!(server::check_once(port, &secret), Ok(true));
+    let Some(folder) = (if ours { server::removal_ready(port, &secret) } else { None }) else {
+        tell(app, MessageDialogKind::Error, nav::NOT_SAVED.into());
+        return;
+    };
+    let remove = app
+        .dialog()
+        .message(nav::remove_confirm_text(cfg!(windows), &folder))
+        .title("BrainAI")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom("Remove BrainAI".into(), "Cancel".into()))
+        .blocking_show();
+    if !remove {
+        return;
+    }
+    state.quitting.store(true, Ordering::SeqCst);
+    state.epoch.fetch_add(1, Ordering::SeqCst);
+    let _ = app.autolaunch().disable();
+    stop_server(app);
+    // Only this app's own data folder, and only after the server (which holds the database) has stopped.
+    let data = app_data(app);
+    let mut problems = Vec::new();
+    if let Err(e) = delete_data(&data) {
+        problems.push(format!("BrainAI could not delete its data folder {} ({e}); delete it yourself.", data.display()));
+    }
+    #[cfg(target_os = "macos")]
+    match installed_bundle() {
+        Some(bundle) => {
+            // NSFileManager, not Finder: asking Finder needs an Automation permission this app does not have.
+            use trash::macos::TrashContextExtMacos;
+            let mut ctx = trash::TrashContext::default();
+            ctx.set_delete_method(trash::macos::DeleteMethod::NsFileManager);
+            if ctx.delete(&bundle).is_err() {
+                problems.push(format!("BrainAI could not move itself to the Trash: drag {} there yourself.", bundle.display()));
+            }
+        }
+        None => problems.push("Drag BrainAI to the Trash to finish.".into()),
+    }
+    let mut text = nav::removed_text(cfg!(windows));
+    for p in problems {
+        text.push_str("\n\n");
+        text.push_str(&p);
+    }
+    tell(app, MessageDialogKind::Info, text);
+    // After the message, so the uninstaller's two-second wait starts when the app is about to be gone.
+    #[cfg(windows)]
+    if spawn_uninstaller(&data).is_err() {
+        tell(app, MessageDialogKind::Info, "Uninstall BrainAI from Settings › Apps to finish.".into());
+    }
+    app.exit(0);
+}
+
 /// Shows the window. When it was hidden, or is on the login page, it also gets a fresh one-time ticket at the page it
 /// was on: once a password exists (Reach) a session may have ended, and the window must never be left on the login
 /// page (D4). A visible window on a page is only brought forward (D4 review: no reload, no extra session), and the
 /// app key goes only to a server that has just proved it is ours (D2).
 fn show_main(app: &AppHandle) {
+    show_window(app, false);
+}
+
+/// Shows the window on Home (the tray's update item: the card is there), with a fresh ticket.
+fn show_home(app: &AppHandle) {
+    show_window(app, true);
+}
+
+fn show_window(app: &AppHandle, home: bool) {
     let Some(w) = app.get_webview_window(MAIN) else { return };
     let was_visible = w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false);
     let _ = w.show();
@@ -149,7 +337,7 @@ fn show_main(app: &AppHandle) {
         return; // still starting: launch() opens it
     }
     let current = w.url().map(|u| u.to_string()).unwrap_or_default();
-    if !nav::needs_ticket(&current, port, was_visible) {
+    if !home && !nav::needs_ticket(&current, port, was_visible) {
         return;
     }
     std::thread::spawn(move || {
@@ -157,7 +345,8 @@ fn show_main(app: &AppHandle) {
             return;
         }
         if let Ok(ticket) = server::ticket(port, &secret) {
-            if let Ok(url) = nav::open_url(port, &ticket, &nav::next_path(&current, port)).parse() {
+            let next = if home { "/".to_string() } else { nav::next_path(&current, port) };
+            if let Ok(url) = nav::open_url(port, &ticket, &next).parse() {
                 let _ = w.navigate(url);
             }
         }
@@ -200,8 +389,15 @@ fn give_up(app: &AppHandle, why: &str) {
 
 /// Starts the server in the background; any failure, even a panic, ends in a message, never a stuck window.
 fn launch(app: AppHandle) {
+    launch_to(app, "/");
+}
+
+/// Like launch, landing on `page` once the server is up.
+fn launch_to(app: AppHandle, page: &'static str) {
     std::thread::spawn(move || {
-        if catch_unwind(AssertUnwindSafe(|| start_and_open(&app))).is_err() {
+        let result = catch_unwind(AssertUnwindSafe(|| start_and_open(&app, page)));
+        app.state::<Running>().restarting.store(false, Ordering::SeqCst);
+        if result.is_err() {
             give_up(&app, "BrainAI stopped unexpectedly while starting.");
         }
     });
@@ -209,7 +405,7 @@ fn launch(app: AppHandle) {
 
 /// Starts the server, waits until it proves it is ours, and opens the dashboard in the window with a fresh ticket.
 /// The key is never sent to anything that has not proved it is ours. A new port is saved only once it worked.
-fn start_and_open(app: &AppHandle) {
+fn start_and_open(app: &AppHandle, page: &str) {
     // Windows: the search engine and the password hashing need Microsoft's Visual C++ runtime, which Windows itself
     // does not include. The app ships its own copy in the folder of each native module that loads it (B8); should one
     // be gone and the PC lack the runtime too, say so plainly rather than "the server did not start".
@@ -245,7 +441,7 @@ fn start_and_open(app: &AppHandle) {
                 app.state::<Running>().port.store(port, Ordering::SeqCst);
                 *app.state::<Running>().secret.lock().unwrap() = secret.clone();
                 if let Some(w) = app.get_webview_window(MAIN) {
-                    let _ = w.navigate(nav::open_url(port, &ticket, "/").parse().expect("a localhost URL"));
+                    let _ = w.navigate(nav::open_url(port, &ticket, page).parse().expect("a localhost URL"));
                 }
                 if saved != Some(port) {
                     let _ = port::save(&data, port);
@@ -274,13 +470,18 @@ fn start_and_open(app: &AppHandle) {
 /// After a good start: if the server stops by itself, say so and start it again (a few times), so the window never
 /// just shows "could not connect".
 fn watch_server(app: AppHandle) {
+    let epoch = app.state::<Running>().epoch.load(Ordering::SeqCst);
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(3));
-        if quitting(&app) {
+        // The app itself restarted or removed the server: that start has its own watcher (or none).
+        if quitting(&app) || app.state::<Running>().epoch.load(Ordering::SeqCst) != epoch {
             return;
         }
         if !alive(&app) {
-            if quitting(&app) {
+            if app.state::<Running>().restarting.load(Ordering::SeqCst) {
+                continue;
+            }
+            if quitting(&app) || app.state::<Running>().epoch.load(Ordering::SeqCst) != epoch {
                 return;
             }
             let n = app.state::<Running>().restarts.fetch_add(1, Ordering::SeqCst) + 1;
@@ -330,6 +531,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(Running::default())
         .setup(|app| {
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             let handle = app.handle().clone();
             let port = app.state::<Running>().port.clone();
             let opener = handle.clone();
@@ -346,6 +548,25 @@ pub fn run() {
                         std::thread::spawn(move || goodbye(&app));
                         return true;
                     }
+                    if nav::is_removed(url.as_str(), port.load(Ordering::SeqCst)) {
+                        // Cancelled: the window keeps its page while the app checks and asks, so a refusal or a
+                        // Cancel leaves it where it was.
+                        let app = leaving.clone();
+                        std::thread::spawn(move || finish_removal(&app));
+                        return false;
+                    }
+                    if nav::is_restart(url.as_str(), port.load(Ordering::SeqCst)) {
+                        // Cancelled: the window keeps its page until the new server opens it with a ticket.
+                        let app = leaving.clone();
+                        std::thread::spawn(move || restart_server(&app));
+                        return false;
+                    }
+                    if nav::is_update(url.as_str(), port.load(Ordering::SeqCst)) {
+                        // Cancelled: the window stays on Home, where the card follows the update until it reopens.
+                        let app = leaving.clone();
+                        std::thread::spawn(move || update::update_and_restart(&app));
+                        return false;
+                    }
                     if nav::is_inside(url.as_str(), port.load(Ordering::SeqCst)) {
                         return true;
                     }
@@ -361,14 +582,17 @@ pub fn run() {
             let login = CheckMenuItem::with_id(app, "login", "Start at login", true, app.autolaunch().is_enabled().unwrap_or(false), None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit BrainAI", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &login, &PredefinedMenuItem::separator(app)?, &quit_item])?;
+            let update_item = MenuItem::with_id(app, "update", "BrainAI is ready…", true, None::<&str>)?;
+            app.manage(Tray { menu: menu.clone(), update_item, shown: AtomicBool::new(false) });
             let login_item = login.clone();
-            TrayIconBuilder::with_id("brainai")
+            TrayIconBuilder::with_id(TRAY_ID)
                 .icon(app.default_window_icon().expect("the app icon").clone())
                 .tooltip("BrainAI")
                 .menu(&menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "open" => show_main(app),
+                    "update" => show_home(app),
                     "login" => {
                         let on = login_item.is_checked().unwrap_or(false);
                         let _ = if on { app.autolaunch().enable() } else { app.autolaunch().disable() };
@@ -379,7 +603,16 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            launch(handle);
+            // Before the server starts, so it never shows the update that just ran. Right after an update the window
+            // shows even when this start is the login item's hidden one (the restart keeps its `--hidden`).
+            if update::settle_at_start(&handle) {
+                if let Some(w) = app.get_webview_window(MAIN) {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+            launch(handle.clone());
+            update::start_checker(handle);
             Ok(())
         })
         .on_window_event(|window, event| {

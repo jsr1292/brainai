@@ -135,8 +135,8 @@ test('decisionItems reads dated items, marks fact links, and gives null when any
 });
 
 test('plainText strips only Markdown markers: paths, identifiers and symbols in code or words stay as written', () => {
-  assert.equal(plainText('Set `MEMORY_MODE=work` and `PUBLIC_URL`; config in `~/.config/brain_env`. Run `ls -la > out.txt` then a->b, 2 * 3', 300),
-    'Set MEMORY_MODE=work and PUBLIC_URL; config in ~/.config/brain_env. Run ls -la > out.txt then a->b, 2 * 3');
+  assert.equal(plainText('Set `LOCAL_MODE=true` and `PUBLIC_URL`; config in `~/.config/brain_env`. Run `ls -la > out.txt` then a->b, 2 * 3', 300),
+    'Set LOCAL_MODE=true and PUBLIC_URL; config in ~/.config/brain_env. Run ls -la > out.txt then a->b, 2 * 3');
   assert.equal(plainText('The repo is ~/Projects/wildlog, file brain_env, snake_case_name.', 300), 'The repo is ~/Projects/wildlog, file brain_env, snake_case_name.');
   assert.equal(plainText('> Quoted line\n**Bold**, __strong__, *it*, _em_ and ~~gone~~.\n* item one\n- item two', 300), 'Quoted line Bold, strong, it, em and gone. item one item two');
   assert.equal(plainText('Code `[not a link](x)` and ``a `tick` b``.', 300), 'Code [not a link](x) and a `tick` b.');

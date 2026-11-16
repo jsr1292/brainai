@@ -51,7 +51,9 @@ test('every setting the app or docker-compose.yml reads is explained in .env.exa
     'OWNER_TIMEZONE',
   ]);
   assert.ok(names.size >= 15, `found only ${names.size} settings: the pattern is wrong`);
-  for (const name of names) assert.match(example, new RegExp(`^#? ?${name}=`, 'm'), `${name} is not in .env.example`);
+  // Read only to stop a start that still sets it, with where to go instead: no longer a setting to explain.
+  const removed = new Set(['MEMORY_MODE']);
+  for (const name of names) if (!removed.has(name)) assert.match(example, new RegExp(`^#? ?${name}=`, 'm'), `${name} is not in .env.example`);
 });
 
 test('the overlay example is valid: setup.json parses and scripts.env is KEY=value lines', () => {

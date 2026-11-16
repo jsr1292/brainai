@@ -19,8 +19,7 @@ export interface ReviewDeps {
   registry: ProjectStore;
   folders: FolderSource;
   pages: { get(id: string): { deletedAt: string | null } | undefined };
-  /** Null in work mode, which has no Growth. */
-  growth: GrowthService | null;
+  growth: GrowthService;
   grants: () => { clientName: string; createdAt: string }[];
   tidy?: () => TidySummary;
 }
@@ -40,7 +39,7 @@ export class ReviewService {
 
   private sources(): BuildSources {
     const d = this.deps;
-    return { reviews: d.store, memories: d.memories, registry: d.registry, folders: d.folders, grants: d.grants, growth: d.growth !== null };
+    return { reviews: d.store, memories: d.memories, registry: d.registry, folders: d.folders, grants: d.grants };
   }
 
   /** The Monday of the last finished week. */

@@ -55,7 +55,6 @@ const CHIP_LABELS: Record<Chip, string> = {
 };
 
 export interface ReviewPageOptions {
-  work: boolean;
   error?: string;
   /** The Monday before, when there is a week there. */
   prev: string | null;
@@ -77,7 +76,7 @@ function head(v: ReviewView, o: ReviewPageOptions): SafeHtml {
   return html`<div class="rv-head">
   <h1>${title}</h1>
   <p class="meta">${dates}</p>
-  ${weekNav(v.kind === 'last' ? 'last' : v.kind === 'now' ? 'now' : null, o.work, extra)}
+  ${weekNav(v.kind === 'last' ? 'last' : v.kind === 'now' ? 'now' : null, extra)}
 </div>`;
 }
 
@@ -214,7 +213,7 @@ function signals(finished: number, started: number): string {
 
 function growth(v: ReviewView, o: ReviewPageOptions): SafeHtml {
   const g = v.growth;
-  if (o.work || g === null) return html``;
+  if (g === null) return html``;
   const line = signals(g.finished, g.started);
   return html`<section class="panel growth">
   <div class="panel-head"><h2>This week in your growth</h2><a class="hint" href="/growth">All of Growth →</a></div>
@@ -286,18 +285,18 @@ export function reviewView(v: ReviewView, o: ReviewPageOptions): SafeHtml {
 }
 
 /** Before the first week has ended. */
-export function noWeekYetView(work = false): SafeHtml {
+export function noWeekYetView(): SafeHtml {
   return html`<div class="review">
-  <div class="rv-head"><h1>Last week</h1>${weekNav('last', work)}</div>
+  <div class="rv-head"><h1>Last week</h1>${weekNav('last')}</div>
   <p class="lede">There is no finished week yet.</p>
   <p class="also"><a href="/review/now">This week so far</a></p>
 </div>`;
 }
 
 /** All weeks, newest first: one line each, the week's own sentence. No unread marker. */
-export function allWeeksView(rows: { monday: string; href: string; sentence: string | null; quiet: boolean }[], work = false): SafeHtml {
+export function allWeeksView(rows: { monday: string; href: string; sentence: string | null; quiet: boolean }[]): SafeHtml {
   return html`<div class="review">
-  <div class="rv-head"><h1>All weeks</h1><p class="meta">One line per week. A week opens as it stood at its end.</p>${weekNav(null, work)}</div>
+  <div class="rv-head"><h1>All weeks</h1><p class="meta">One line per week. A week opens as it stood at its end.</p>${weekNav(null)}</div>
   ${rows.length === 0 ? html`<p class="quiet">No finished week yet.</p>` : html`<ul class="weeks">${rows.map((r) => html`<li><a class="wk" href="${r.href}">${weekRange(r.monday)}</a>${r.sentence === null
     ? html`<span class="ld q">Made when you open it.</span>`
     : html`<span class="ld${r.quiet ? ' q' : ''}">${r.sentence}</span>`}</li>`)}</ul>`}

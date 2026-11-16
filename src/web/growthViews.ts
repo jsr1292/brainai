@@ -46,7 +46,7 @@ export function growthView(items: { observation: Observation; evidence: Evidence
   return html`<div class="narrow"><div class="rv-head">
   <h1>Growth</h1>
   <p class="meta">What your assistants noticed so far.</p>
-  ${weekNav('growth', false, html`<a href="/review/all">All weeks</a>`)}
+  ${weekNav('growth', html`<a href="/review/all">All weeks</a>`)}
 </div>
 <p class="lede">The full Growth page, with your top strengths and what to improve, comes once there are a few weeks of these.</p>
 ${items.length === 0

@@ -7,7 +7,7 @@ export const TRUST_CF_SETTING = 'trust cf-connecting-ip';
 
 /**
  * The caller's address. cf-connecting-ip is trusted when the only way in is the cloudflared tunnel; createApp sets
- * TRUST_CF_SETTING to false when there is no tunnel (work mode), because then any local program could fake it.
+ * TRUST_CF_SETTING to false when there is no tunnel, because then any local program could fake it.
  */
 export function clientIp(req: Request): string {
   const trusted = req.app?.get(TRUST_CF_SETTING) !== false;
