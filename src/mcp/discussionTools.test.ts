@@ -11,7 +11,7 @@ import { makeGrowth, makePages, makeService } from '../testing/helpers.js';
 import { DISCUSSIONS_ONLY_INSTRUCTIONS, SERVER_INSTRUCTIONS } from './instructions.js';
 import { buildMcpServer } from './server.js';
 
-const TOOLS = ['close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'open_discussion', 'project_brief', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'whats_left', 'write_page'];
+const TOOLS = ['close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'open_discussion', 'project_brief', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'suggest_memories', 'update_memory', 'whats_left', 'write_page'];
 
 function setup(opts: { askCommands?: () => Record<string, string>; localMode?: boolean } = {}) {
   const given = makeService();
@@ -35,11 +35,11 @@ function setup(opts: { askCommands?: () => Record<string, string>; localMode?: b
 const dataOf = (text: string) => JSON.parse(text.slice(text.indexOf('<discussion>\n') + 13, text.lastIndexOf('\n</discussion>')));
 const idOf = (text: string) => /Opened discussion (\S+)\./.exec(text)![1]!;
 
-test('a full-access connection gets twenty-one tools; a discussions-only one gets exactly four discussion tools (no closing) and its own instructions', async () => {
+test('a full-access connection gets twenty-three tools; a discussions-only one gets exactly four discussion tools (no closing) and its own instructions', async () => {
   const { connect } = setup();
   const full = await connect('Claude Code');
   assert.equal(full.client.getInstructions(), SERVER_INSTRUCTIONS);
-  assert.deepEqual((await full.client.listTools()).tools.map((t) => t.name).sort(), ['close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'open_discussion', 'project_brief', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'update_memory', 'whats_left', 'write_page']);
+  assert.deepEqual((await full.client.listTools()).tools.map((t) => t.name).sort(), ['close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'open_discussion', 'project_brief', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'suggest_memories', 'update_memory', 'whats_left', 'write_page']);
   const limited = await connect('Grok', 'discussions');
   assert.equal(limited.client.getInstructions(), DISCUSSIONS_ONLY_INSTRUCTIONS);
   assert.deepEqual((await limited.client.listTools()).tools.map((t) => t.name).sort(),

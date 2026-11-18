@@ -6,6 +6,7 @@ import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { connect } from '../desktop/tools.js';
+import { installHooks } from '../desktop/hooksInstall.js';
 import { prepareTunnel, startSignIn } from '../desktop/cloudflared.js';
 import { fakeCloudflared } from '../testing/fakeCloudflared.js';
 import { fakeTailscale } from '../testing/fakeTailscale.js';
@@ -40,9 +41,13 @@ test('the page says what will happen and offers the same where-choice as Save a 
   const page = await (await f('/settings/remove')).text();
   assert.match(page, /What happens, in this order/);
   assert.match(page, /action="\/settings\/remove"/);
-  assert.match(page, /Save to Documents/);
+  assert.match(page, />Save a copy and start removing</);
+  assert.match(page, /Your tools are disconnected next\. Your memories stay until you press Finish on the last page\./);
+  assert.doesNotMatch(page, /Save to Documents/);
+  assert.match(page, /A saved copy of every memory and page is made in your Documents folder\./);
   mkdirSync(join(home.home, 'Library/Mobile Documents/com~apple~CloudDocs/Documents'), { recursive: true });
-  assert.match(await (await f('/settings/remove')).text(), /Save to your home folder/);
+  assert.match(await (await f('/settings/remove')).text(), /Save a copy to my home folder and start removing/);
+  assert.match(await (await f('/settings/remove')).text(), /A saved copy of every memory and page is made in the folder you choose below: your Documents folder or your home folder\./);
 });
 
 test('the page says the data folder and the app go, and only the saved copy is kept', async (t) => {
@@ -111,6 +116,27 @@ test('remove disconnects tools and moves their backups', async (t) => {
   assert.match(done, /Show in Finder/);
   await f('/settings/remove/show', { method: 'POST', headers: FORM, body: '' });
   assert.deepEqual(shown, [folder]);
+});
+
+test('Remove takes back save reminders left in a tool that is no longer connected, and never copies the settings.json backup into the saved folder', async (t) => {
+  const { f, home, env } = await desktop(t, { tools: ['claude', 'codex'] });
+  const built = mkdtempSync(join(tmpdir(), 'brainai-hooks-'));
+  for (const n of ['memoryStart.js', 'memorySave.js', 'memoryNudge.js']) writeFileSync(join(built, n), '//\n');
+  const withHooks = { ...env, hooksDir: built };
+  home.write('.claude/settings.json', JSON.stringify({ env: { TOKEN: 'sekret' }, theme: 'dark' }));
+  assert.equal(installHooks('claude-code', withHooks), null);
+  installHooks('codex', withHooks); // Codex has the reminders but no brainai server entry: its traces are 'no'
+  assert.ok(existsSync(join(home.home, '.claude/settings.json.brainai-backup')));
+  assert.ok(existsSync(join(home.home, '.brainai/hooks/memory-nudge.mjs')));
+  assert.equal((await post(f)).status, 303);
+  assert.equal(existsSync(join(home.home, '.codex/hooks.json')), false, 'created by BrainAI, now empty: deleted');
+  assert.equal(existsSync(join(home.home, '.brainai/hooks/memory-nudge.mjs')), false);
+  assert.deepEqual(JSON.parse(home.read('.claude/settings.json')!), { env: { TOKEN: 'sekret' }, theme: 'dark' });
+  assert.equal(existsSync(join(home.home, '.claude/settings.json.brainai-backup')), false, 'deleted, not left behind');
+  const folder = join(home.home, 'Documents', savedFolders(home.home)[0]!);
+  const all = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? all(join(dir, e.name)) : [join(dir, e.name)]));
+  assert.deepEqual(all(folder).filter((p) => p.includes('settings.json')), []);
+  assert.match(readFileSync(join(folder, 'README.txt'), 'utf8'), /Not copied into this folder[\s\S]*settings\.json/);
 });
 
 test('a tool that fails to disconnect is named on the done page and in the README', async (t) => {

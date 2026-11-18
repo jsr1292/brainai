@@ -273,3 +273,12 @@ test("writeTree writes nothing outside its folder for names with '..', backslash
   assert.deepEqual(readdirSync(join(dir, 'facts')), ['ok.md']);
   assert.equal(result.written, 1);
 });
+
+test('A12: the facts tree shows a fact\'s date and source under its text, and nothing for older facts', async () => {
+  const { deps } = await setup();
+  const set = await deps.memories.remember({ kind: 'decision', content: 'The permit expires', project: 'wildlog', meta: { validUntil: '2026-12-31', source: 'owner_said', sourceNote: 'by phone' } } as never, owner) as { memory: { id: string } };
+  await deps.memories.remember({ kind: 'decision', content: 'An older fact', project: 'wildlog' }, owner);
+  const file = exportTree(deps, new Date()).get('facts/wildlog.md')!;
+  assert.match(file, new RegExp(`${set.memory.id}\\n\\nThe permit expires\\n\\n_valid until 2026-12-31; source: owner_said \\(set by owner\\) \\(by phone\\)_\\n`));
+  assert.doesNotMatch(file.split('An older fact')[1]!.split('###')[0]!, /_valid|_source/);
+});

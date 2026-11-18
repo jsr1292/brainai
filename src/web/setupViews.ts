@@ -37,7 +37,13 @@ function allowBlock(app: SetupApp, a: { allowed: boolean; refused: readonly Refu
 }
 
 /** How the owner signs in: password and code when both are set; otherwise (local mode) BrainAI's window approves. */
-export interface SetupContext { needsReach: boolean; signIn: 'password' | 'window' }
+export interface SetupContext { needsReach: boolean; signIn: 'password' | 'window'; local?: boolean }
+
+/** The terminal tools that Tools on this Mac connects in one click; their manual steps are for another computer. */
+const TOOLS_APPS = new Set(['claude-code', 'codex', 'opencode']);
+export const toolsOnThisComputer = (app: SetupApp, ctx: SetupContext): boolean => !!ctx.local && TOOLS_APPS.has(app.slug);
+
+const toolsBox = () => html`<p class="notice">On this computer, use <a href="/settings/tools">Tools on ${thisComputer()}</a>: one click does all of this. The steps below are for another computer.</p>`;
 
 /** A cloud app on a brain with no public address: no localhost address, no steps, just the way to Reach. */
 function needsReachPage(app: SetupApp): SafeHtml {
@@ -52,16 +58,26 @@ ${note.length === 2 ? html`<p class="meta">${note[0]}<a href="/settings/tools">T
 
 export function setupPage(app: SetupApp, text: string, mcpUrl: string, status: SafeHtml, version = SETUP_VERSION, allow: { allowed: boolean; refused: readonly Refused[] } = { allowed: true, refused: [] }, ctx: SetupContext = { needsReach: false, signIn: 'password' }): SafeHtml {
   if (app.cloud && ctx.needsReach) return needsReachPage(app);
+  const tools = toolsOnThisComputer(app, ctx);
+  if (tools && ctx.needsReach) return html`<div class="narrow">
+<h1>Set up ${app.name}</h1>
+${toolsBox()}
+<p>Another computer can only reach this brain through Reach. Turn on Reach first, then come back here for the steps.</p>
+<p><a class="button primary" href="/settings/reach">Turn on Reach</a></p>
+</div>`;
+  // A local brain is named brainai in the tools, as Tools on this Mac names it; elsewhere the assistants' own habit, memory.
+  const connect = app.connect.replaceAll('NAME', ctx.local ? 'brainai' : 'memory').replace('ADDRESS', mcpUrl);
   return html`<div class="narrow">
 <h1>Set up ${app.name}</h1>
-<p class="lede">Three steps. This page knows when ${app.name} runs the newest setup text.</p>
+${tools ? toolsBox() : ''}
+<p class="lede">Three steps. This page shows when ${app.name} is connected and using this text.</p>
 <ol class="setup-steps">
-<li><h2>Connect</h2>${allowBlock(app, allow)}<p>${app.connect.replace('ADDRESS', mcpUrl)}</p>
+<li><h2>Connect</h2>${allowBlock(app, allow)}<p>${connect}</p>
 ${copyBox(mcpUrl, 'the address')}
 <p class="meta">${ctx.signIn === 'password' ? 'You sign in with your brain password and code, then pick its access.' : 'BrainAI’s window asks you to approve it, then you pick its access.'}</p></li>
 <li><h2>Paste the setup text</h2><p>${app.where}</p>
 ${copyBox(text, 'the setup text')}
-<p class="meta">Setup text ${version}. It holds no profile facts and no secrets.</p></li>
+<p class="meta">Version ${version} of the setup text. It holds no profile facts and no secrets.</p></li>
 <li><h2>Check</h2><p>Start a new chat or session and say <em>load my profile</em>.</p>
 <p class="conn-setup" data-setup-status="/settings/setup/${app.slug}/status">${status}</p>
 <p class="meta">This line updates by itself while the page is open.</p></li>

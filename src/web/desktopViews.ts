@@ -19,6 +19,7 @@ function toolRow(t: ToolState, back: 'welcome' | null = null): SafeHtml {
     html`<form method="post" action="/settings/tools/${t.id}/${what}" class="inline">${backField}${extra}<button type="submit" class="${cls}">${label}</button></form>`;
   const status = !t.installed ? html`<span class="meta">Not on ${thisComputer()}</span>`
     : t.state === 'not-connected' && t.detail ? html`<span class="attention">Needs connecting again</span>`
+    : t.state === 'connected' && t.signedIn === false ? html`<span class="attention"><span class="dot attention" aria-hidden="true"></span> Added · one step left: ${t.signIn}</span>`
     : t.state === 'connected' ? html`<span class="ok">Connected ✓</span>`
     : t.state === 'other-brainai' ? html`<span class="attention">Uses another BrainAI: ${t.detail}</span>`
     : html`<span class="meta">Not connected</span>`;
@@ -27,7 +28,12 @@ function toolRow(t: ToolState, back: 'welcome' | null = null): SafeHtml {
     : t.state === 'other-brainai' ? action('connect', 'Replace', html`<input type="hidden" name="replace" value="1">`)
     : action('connect', 'Connect', html``, 'primary');
   const note = t.id === 'claude-desktop' && t.installed ? html`<br><span class="meta">Connect adds BrainAI to Claude's settings. Then quit Claude completely and open it again.</span>` : '';
-  return html`<li class="tool"><div><strong>${t.name}</strong><br>${status}${note}</div><div>${buttons}</div></li>`;
+  // B1: the save reminders (hooks) of tools that have them; the others rely on the rules alone.
+  const reminders = !t.installed || t.state !== 'connected' || t.hooks === undefined ? ''
+    : t.hooks === 'on' ? html`<br><span class="meta">Save reminders: on</span>`
+    : t.hooks === 'off' ? html`<br><span class="meta">Save reminders: off. </span><form method="post" action="/settings/tools/${t.id}/reminders" class="inline"><button type="submit" class="secondary">Add save reminders</button></form>`
+    : html`<br><span class="meta">No save reminders: this tool has no hook BrainAI can use, so it relies on its rules.</span>`;
+  return html`<li class="tool"><div><strong>${t.name}</strong><br>${status}${note}${reminders}</div><div>${buttons}</div></li>`;
 }
 
 /** Information only: ChatGPT's app cannot reach a brain that lives on this computer, so there is nothing to connect. */
@@ -44,7 +50,7 @@ export function toolsPage(v: { tools: ToolState[]; windows: boolean; said: strin
 <p class="lede">For each coding tool, Connect adds BrainAI and its short rules to the tool's instructions, and the tool then signs in once: your browser asks you to Allow.</p>
 ${v.said ? html`<p class="notice" role="status">${v.said}</p>` : ''}
 <ul class="group tools">${v.tools.map((t) => toolRow(t))}${chatgptRow(v.windows)}</ul>
-<p class="meta">A tool that already uses another BrainAI is left as it is unless you press Replace. Files are backed up next to themselves (<code>.brainai-backup</code>) before any change.</p>
+<p class="meta">A tool that already uses another BrainAI is left as it is unless you press Replace. Before any change, a file is backed up next to itself as <code class="nowrap">.brainai-backup</code>.</p>
 ${cursor?.installed ? html`<h2>Rules for Cursor</h2><p>Cursor keeps its rules in its settings: paste this into Cursor › Settings › Rules.</p>${copyBox(v.cursorRules, 'the rules for Cursor')}` : ''}
 </div>`;
 }
@@ -201,10 +207,9 @@ export function modelGroups(o: GroupsInput): SafeHtml {
           <label for="rerank-none"><span class="model-name"><strong>None</strong>${rec && rec.rerank === null ? html` <span class="model-rec">recommended for this computer</span>` : ''}</span><span class="meta">No download · quickest · the first result is right less often</span></label></li>
         ${rerank.map((m) => modelOption(m, 'rerank', m.id === o.rerank, m.id === rec?.rerank, o.installed))}
       </ul></fieldset>
-    <fieldset class="model-group"><legend>Or online <span class="meta">nothing to download</span></legend>
-      <ul class="model-list">${o.online ? ONLINE_MODELS.map(onlineOption) : html`<li class="model-opt model-off"><input type="radio" id="rerank-online" name="online-later" value="" disabled>
-        <label for="rerank-online"><span class="model-name"><strong>Through OpenRouter</strong></span>
-        <span class="meta">Online: for each search, your question and about ${RERANK_POOL} best matches are sent to this service. Set it up later in Settings › Search.</span></label></li>`}</ul>${o.online && !o.online.keySaved ? html`<p class="meta">Save your OpenRouter key below to choose one of these.</p>` : ''}</fieldset>`;
+${o.online ? html`<fieldset class="model-group"><legend>Or online <span class="meta">nothing to download</span></legend>
+      <ul class="model-list">${ONLINE_MODELS.map(onlineOption)}</ul>${!o.online.keySaved ? html`<p class="meta">Save your OpenRouter key below to choose one of these.</p>` : ''}</fieldset>`
+      : html`<p class="meta online-later">Prefer an online reranker? Set it up later in Settings › Search.</p>`}`;
 }
 
 /** Step 2: what the two models do, this computer, the suggested pair (one click) and the full list. */
@@ -221,8 +226,9 @@ function modelsStep(v: ModelsStepInput): SafeHtml {
   <p><strong>Recommended for this computer:</strong> ${nameOf(pick.search)} search${pick.rerank ? html` and ${nameOf(pick.rerank)} reranker` : ' and no reranker'}.</p>
   <p><button type="submit" class="primary">${downloadLabel(pick.search, pick.rerank, v.installed)}</button> <span class="meta">Change any time in Settings › Search</span></p>
 </form>
+<p class="meta skip-models"><a href="/welcome?step=3">Skip for now. Search works on keywords until you choose.</a></p>
 <details class="models-all">
-  <summary>Choose the models myself</summary>
+  <summary>Choose the models myself<span class="chev"></span></summary>
   <form method="post" action="/welcome/models" class="stack" data-models-form>
     <input type="hidden" name="mode" value="custom">
     ${modelGroups({ search: pick.search, rerank: pick.rerank ?? 'none', installed: v.installed, recommended: pick })}
@@ -249,10 +255,20 @@ function setupFrame(step: 1 | 2 | 3 | 4, body: SafeHtml): SafeHtml {
 </aside>
 <div class="setup-main welcome">
 <p class="meta step-count">Step ${step} of 4</p>
+${step > 1 ? html`<p class="step-back"><a href="/welcome?step=${step - 1}">‹ Back</a></p>` : ''}
 ${body}
 </div>
 </div>`;
 }
+
+/** Where each tool signs in, in a few words, for step 4 when nothing has arrived yet. */
+const SIGN_IN_HINT: Record<ToolState['id'], string> = {
+  'claude-code': 'In Claude Code: /mcp › brainai › Authenticate.',
+  codex: 'In a terminal: codex mcp login brainai.',
+  opencode: 'In a terminal: opencode mcp auth brainai.',
+  cursor: 'Cursor asks you to sign in the first time it uses BrainAI.',
+  'claude-desktop': 'Quit Claude completely and open it again.',
+};
 
 export function welcomePage(v: {
   step: 1 | 2 | 3 | 4;
@@ -303,10 +319,21 @@ ${any ? html`<p>Found on ${thisComputer()}:</p>` : html`<p>No coding tools found
 ${v.modelsLine ?? ''}
 <p class="setup-actions"><a class="button primary" href="/welcome?step=4">Next</a></p>`);
   }
+  const added = v.tools.filter((t) => t.installed && t.state === 'connected');
+  const sentence = 'Save a note in BrainAI that I set it up today.';
+  if (added.length === 0) {
+    return setupFrame(4, html`<h1>Try it</h1>
+<p class="notice" role="status">No assistant is added yet. <a href="/welcome?step=3">Go back and connect one</a>, or open your brain and do it later.</p>
+${v.modelsLine ?? ''}
+<form method="post" action="/welcome/done" class="setup-actions"><button type="submit" class="primary">Open my brain</button></form>`);
+  }
+  // Only the tools that have not signed in yet need a hint; when all have, the list is the whole set.
+  const hintFor = (added.some((t) => t.signedIn === false) ? added.filter((t) => t.signedIn === false) : added).map((t) => SIGN_IN_HINT[t.id]);
   return setupFrame(4, html`<h1>Try it</h1>
 <p>Open one of the assistants you connected and say:</p>
-<div class="copy-box"><pre>Save a note in BrainAI that I set it up today.</pre></div>
+${copyBox(sentence, 'the sentence')}
 <p class="conn-setup" data-setup-status="/welcome/first">Waiting for your first memory…</p>
+<p class="meta" data-nothing-yet hidden>Nothing yet? Check that the tool signed in. ${hintFor.join(' ')}</p>
 <p>Then ask another assistant: <em>what do you know about me?</em></p>
 ${v.modelsLine ?? ''}
 <form method="post" action="/welcome/done" class="setup-actions"><button type="submit" class="primary">Open my brain</button></form>`);
@@ -334,7 +361,9 @@ export function searchSection(v: SearchSectionInput): SafeHtml {
   const online = c?.rerank === 'online' ? ONLINE_MODELS.find((m) => m.id === c.online?.model) : undefined;
   const rerankName = c === null ? 'none yet' : c.rerank === null ? 'none' : c.rerank === 'online' ? `online (${online?.label ?? 'OpenRouter'})` : byId(c.rerank).label;
   const current = c === null ? html`<p class="quiet">No search models chosen yet: search works on keywords.</p>`
-    : html`<p>In use: <strong>${byId(c.search).label}</strong> search · <strong>${rerankName}</strong> reranker.</p>`;
+    : c.rerank === null
+      ? html`<p>In use: <strong>${byId(c.search).label}</strong> search model, no reranker.</p>`
+      : html`<p>In use: <strong>${byId(c.search).label}</strong> search model, <strong>${rerankName}</strong> reranker.</p>`;
   const checked: GroupsInput['rerank'] = c?.rerank === 'online' ? (c.online ? `online:${c.online.model}` : 'none') : c?.rerank ?? 'none';
   const fallback = (id: ModelId) => c?.rerank === 'online' && id === 'mminilm';
   const inUse = (id: ModelId) => c?.search === id || c?.rerank === id;

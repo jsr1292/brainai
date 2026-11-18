@@ -167,7 +167,8 @@ export class Freshness {
         if (!m || (scope.canRead && !scope.canRead(m))) continue;
         const base = { id, text: m.content, isDecision: replaceableKind(m) === 'decision' };
         if (m.deletedAt !== null) {
-          if (m.deletedAt > t) out.push({ ...base, why: 'removed', at: m.deletedAt, replacedBy: null });
+          // A fact retired onto a page (tidy, move_to_page) still lives there as a line: it moved, it was not removed.
+          if (m.deletedAt > t && m.movedTo === null) out.push({ ...base, why: 'removed', at: m.deletedAt, replacedBy: null });
           continue;
         }
         const row = replaced.get(id);

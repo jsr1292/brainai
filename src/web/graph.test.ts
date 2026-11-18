@@ -46,7 +46,7 @@ test('the 3D page holds the list, and the window starts hidden', async (t) => {
   assert.match(page, /<script type="module" src="\/static\/graph3d\.js\?v=[0-9a-f]{10}"><\/script>/);
   assert.doesNotMatch(page, /map\.js|globe\.js|sky/);
   assert.match(page, /<title>Graph<\/title>/);
-  assert.match(page, /<a href="\/graph" aria-current="page">Graph<\/a>/);
+  assert.match(page, /<a href="\/" aria-current="page">Projects<\/a>/, 'the Graph is not in the phone bar: Projects stays lit');
   const win = page.slice(page.indexOf('<div class="graph"'));
   const firstControl = win.match(/<(a|button|input)\b[^>]*>([^<]*)/)!;
   assert.equal(firstControl[2], 'Show as list');
@@ -223,4 +223,10 @@ test('the list never names an unpinned Personal project outside its fold', async
   assert.doesNotMatch(li.slice(0, li.indexOf('</li>')), /finances/);
   const fold = page.slice(page.indexOf('<summary>Personal <span class="n">1</span><span class="chev"></span></summary>'));
   assert.match(fold.slice(0, fold.indexOf('</details>')), /finances/);
+});
+
+test('an empty graph says when its projects will appear', async (t) => {
+  const app = await startTestApp();
+  t.after(() => app.close());
+  assert.match(await (await (await loggedIn(app))('/graph')).text(), /Your projects appear here once assistants save facts about them\./);
 });

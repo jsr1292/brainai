@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fakeHome, type FakeHome } from '../testing/fakeTools.js';
 import { setupText } from '../setup/texts.js';
-import { backupFiles, tracesOfThisBrain, childEnv, commandLine, connect, disconnect, findCommand, toolStates, withCodexApproval, type Tool, type ToolEnv } from './tools.js';
+import { backupFiles, brainPluginInstalled, tracesOfThisBrain, childEnv, commandLine, connect, disconnect, findCommand, toolStates, withCodexApproval, type Tool, type ToolEnv } from './tools.js';
 import { findBlock } from './rulesBlock.js';
 
 const URL_ = 'http://localhost:3100/mcp';
@@ -49,6 +49,24 @@ test('Claude Code: connect adds the brainai server and the rules block; disconne
   assert.equal((await disconnect('claude-code', env)).ok, true);
   assert.deepEqual(f.servers('claude'), {});
   assert.equal(f.read('.claude/CLAUDE.md'), '# My own rules\nBe brief.\n');
+});
+
+test('Claude Code: with the BrainAI plugin installed, Connect adds no server entry, rules or reminders of its own', async (t) => {
+  const { f, env } = world(t);
+  f.write('.claude/CLAUDE.md', '# Mine\n');
+  f.write('.claude/plugins/installed_plugins.json', JSON.stringify({ version: 2, plugins: { 'brainai@brainai-plugins': [{ scope: 'user', version: '1.4.0' }] } }));
+  assert.equal(brainPluginInstalled(env), true);
+  const r = await connect('claude-code', env, {});
+  assert.equal(r.ok, true);
+  assert.match((r as { signIn: string }).signIn, /plugin is already installed/);
+  assert.ok(!f.calls().some((c) => c.includes(' add ')));
+  assert.deepEqual(f.servers('claude'), {});
+  assert.equal(f.read('.claude/CLAUDE.md'), '# Mine\n');
+  // Another plugin, or an unreadable record, does not count.
+  f.write('.claude/plugins/installed_plugins.json', JSON.stringify({ plugins: { 'github@claude-plugins-official': [{}] } }));
+  assert.equal(brainPluginInstalled(env), false);
+  f.write('.claude/plugins/installed_plugins.json', 'not json');
+  assert.equal(brainPluginInstalled(env), false);
 });
 
 test('a tool already on another BrainAI is left alone unless the owner presses Replace, and a memory server is never touched', async (t) => {

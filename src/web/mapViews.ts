@@ -7,7 +7,7 @@ import type { AreaSection } from '../projects/service.js';
 import { AREA_LABELS } from '../projects/types.js';
 import { CHECK_AREAS, CHECK_LABELS, STATUS_LABELS, type AreaState, type CheckArea, type ShownStatus } from '../learning/types.js';
 import { html, type SafeHtml } from './html.js';
-import { areaRing } from './projectsViews.js';
+import { areaKey, areaRing } from './projectsViews.js';
 import { timeAgo } from './when.js';
 
 export interface MapRow { name: string; areas: AreaState[]; next: string | null }
@@ -48,9 +48,9 @@ export function mapView(v: MapView): SafeHtml {
     ? html`${v.total} ${v.total === 1 ? 'project' : 'projects'} · next to learn: ${CHECK_LABELS[v.learnNext.area].name}, on <a href="${panelAreas(v.learnNext.project)}">${v.learnNext.project}</a>.`
     : html`${v.total} ${v.total === 1 ? 'project' : 'projects'} · Nothing waiting to learn.`;
   return html`<div class="mapv">
-<h1>Map</h1>
+<h1>Five areas</h1>
 <p class="map-lead">${lead} <a href="/?project=developer-handbook#panel">Your handbook</a></p>
-${v.total === 0 ? html`<p class="quiet empty">No project has the five areas yet: open projects outside Personal get them.</p>` : ''}
+${v.total === 0 ? html`<p class="quiet empty">Nothing here yet. This fills in when you have a project.</p>` : html`${areaKey()}<p class="map-hint quiet">The table scrolls sideways.</p>`}
 ${v.sections.map((s) => html`<section class="map-area" aria-labelledby="map-${s.area ?? 'unsorted'}">
 <h2 id="map-${s.area ?? 'unsorted'}">${areaRing(s.area)}${s.area ? AREA_LABELS[s.area] : 'Unsorted'}</h2>
 <div class="map-scroll"><table class="map-table">

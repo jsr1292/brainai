@@ -8,17 +8,18 @@ import type { Memory } from '../memory/types.js';
 import { AREAS, ProjectError, type Area, type ProjectStateName } from '../projects/types.js';
 import type { AppDeps } from './app.js';
 import { requireOwner } from './authRoutes.js';
-import { safeBack, withBackError } from './back.js';
+import { nextHref, safeBack, withBackError } from './back.js';
 import { html, page } from './html.js';
 import type { ApprovalSummary } from './forYou.js';
 import { needsWelcome } from './desktopRoutes.js';
-import { disagreementsView, type OpenDisagreement } from './disagreeViews.js';
-import { errorBlock } from './dashboardViews.js';
+import { noteDecision, takeStatusLine } from './inboxUndo.js';
+import { makeInbox } from './inboxPage.js';
 import { healthOf } from './healthData.js';
 import { modelsLine, offsiteCard, updateCard } from './desktopViews.js';
 import { laterVersion, offsiteNudgeDue, offsiteNudgeHidden, readUpdate } from '../desktop/updateState.js';
 import { viaDoor } from '../desktop/publicDoor.js';
 import { BRAIN_VERSION } from '../version.js';
+import { firstSteps, firstStepsDue, firstStepsHidden, firstStepsView, hideFirstSteps } from './firstSteps.js';
 import { projectList, projectsHomeView, type HomeViewInput, type WeekLine } from './projectsViews.js';
 import { weekRange } from '../review/sentence.js';
 import { deskSideView, projectLately } from './deskSide.js';
@@ -70,14 +71,16 @@ export function projectRoutes(d: AppDeps): Router {
     const pending = d.service.pendingSuggestions();
     // Skill proposals (§17c) count too; with any waiting, For you points to Approvals instead of one card.
     const proposals = d.skills.pendingProposals();
+    const tidyWaiting = d.tidy.pendingCount();
     const s = pending[0];
     const p = proposals[0];
     return {
-      count: pending.length + proposals.length,
+      count: pending.length + proposals.length + tidyWaiting,
       first: s ? { by: s.suggestedBy, kind: s.kind, action: s.action === 'add' ? 'create' : s.action } : p ? { by: p.proposedBy, kind: 'skill', action: p.skillId ? 'update' : 'create' } : null,
-      single: pending.length === 1 && proposals.length === 0 && s ? {
+      single: pending.length === 1 && proposals.length === 0 && tidyWaiting === 0 && s ? {
         suggestion: s,
         current: s.memoryId ? d.store.get(s.memoryId)?.content : undefined,
+        currentMeta: s.memoryId ? d.store.get(s.memoryId) : undefined,
         replaces: s.supersedes.map((id) => d.store.get(id)).filter((m): m is Memory => m !== undefined && m.deletedAt === null),
         deleted: s.deletedMatch ? d.store.get(s.deletedMatch) : undefined,
       } : undefined,
@@ -85,7 +88,7 @@ export function projectRoutes(d: AppDeps): Router {
   };
   /** Everything the Projects screen is drawn from: the home, its list, and the open project when one is asked for. */
   const homeData = (asked: string | undefined, error?: string, req?: Request): HomeViewInput => {
-    const backups = d.statusDir === undefined ? undefined : backupHealth(readBackupStatus(d.statusDir), d.now(), { offsite: true, jobs: true });
+    const backups = d.statusDir === undefined ? undefined : backupHealth(readBackupStatus(d.statusDir), d.now(), { offsite: !d.localMode, jobs: !d.localMode });
     const backupProblem = backups && !backups.ok ? backups.problems[0] ?? null : null;
     const week = weekLine(backupProblem);
     return {
@@ -102,6 +105,16 @@ export function projectRoutes(d: AppDeps): Router {
         if (!d.localMode || !d.statusDir || (req && viaDoor(req))) return undefined;
         const u = readUpdate(d.statusDir, BRAIN_VERSION);
         return u ? updateCard(u, laterVersion(d.statusDir)) : undefined;
+      })(),
+      firstSteps: (() => {
+        if (req && viaDoor(req)) return undefined;
+        const status = d.statusDir ? readBackupStatus(d.statusDir) : undefined;
+        const steps = firstSteps({
+          localMode: d.localMode === true, grants: d.provider.listGrants(), hasMemory: d.store.countCurrent() > 0,
+          backupElsewhere: (d.backupCopy?.folder() ?? null) !== null || status?.offsite !== undefined || status?.git !== undefined,
+          canHide: d.statusDir !== undefined,
+        });
+        return firstStepsDue(steps, firstStepsHidden(d.statusDir)) ? firstStepsView(steps, d.statusDir !== undefined, d.localMode === true) : undefined;
       })(),
       offsiteCard: (() => {
         if (!d.localMode || !d.statusDir || !d.backupCopy || (req && viaDoor(req))) return undefined;
@@ -126,7 +139,7 @@ export function projectRoutes(d: AppDeps): Router {
   };
   const home = (req: Request, res: Response, status = 200, error?: string, select?: string) => {
     const asked = select ?? queryName(req);
-    res.status(status).type('html').send(page('Projects', projectsHomeView(homeData(asked, error, req)),
+    res.status(status).type('html').send(page('Projects', html`${takeStatusLine(d.service, d.now().getTime()) ?? ''}${projectsHomeView(homeData(asked, error, req))}`,
       { nav: true, tab: 'projects', back: asked ? { href: '/', label: 'Projects' } : undefined, crumb: false }));
   };
   const notFound = (res: Response) => res.status(404).type('html').send(page('Not found', html`<h1>Not found</h1>`, { nav: true, tab: null }));
@@ -153,6 +166,12 @@ export function projectRoutes(d: AppDeps): Router {
     const raw = req.params.index as string;
     return /^\d{1,4}$/.test(raw) ? Number(raw) : undefined;
   };
+
+  // "Hide these steps" on Home's first-steps checklist: remembered in the data directory, for good.
+  router.post('/first-steps/hide', owner, (_req, res) => {
+    if (d.statusDir) hideFirstSteps(d.statusDir);
+    res.redirect(303, '/');
+  });
 
   router.get('/', owner, (req, res) => {
     // A new Mac install opens on the welcome (D3); a brain in use, or one past the welcome, never does.
@@ -243,30 +262,24 @@ export function projectRoutes(d: AppDeps): Router {
     return act(req, res, (name) => d.projects.completeWaiting(name, i, str(req, 'text'), d.now()));
   });
   // B1: every open disagreement, by project; settling one (owner only) comes back to where it was settled.
-  const disagreementsPage = (res: Response, status = 200, error?: string) => {
-    const groups = new Map<string | null, OpenDisagreement[]>();
-    for (const x of d.service.openDisagreements()) {
-      const raw = x.factA.project ?? x.factB.project;
-      const key = raw === null ? null : d.service.projectNamed(raw);
-      groups.set(key, [...(groups.get(key) ?? []), x]);
-    }
-    const sorted = [...groups].sort(([a], [b]) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b))).map(([project, list]) => ({ project, list }));
-    res.status(status).type('html').send(page('Facts that disagree', html`${errorBlock(error)}${disagreementsView(sorted, d.now())}`, { nav: true, tab: 'projects', back: { href: '/', label: 'Projects' } }));
-  };
-  router.get('/disagreements', owner, (_req, res) => disagreementsPage(res));
+  const inbox = makeInbox(d);
+  const disagreementsPage = (req: Request, res: Response, status = 200, error?: string) => inbox.disagreements(req, res, status, error);
+  router.get('/disagreements', owner, (req, res) => disagreementsPage(req, res));
   router.post('/disagreements/:id/settle', owner, (req: Request, res) => {
     const how = str(req, 'how');
-    if (how !== 'a' && how !== 'b' && how !== 'both') return disagreementsPage(res, 400, 'Choose which fact is right, or both.');
+    if (how !== 'a' && how !== 'b' && how !== 'both') return disagreementsPage(req, res, 400, 'Choose which fact is right, or both.');
     try {
       d.service.settleDisagreement(req.params.id as string, how, { type: 'owner' });
     } catch (e) {
       if (!(e instanceof MemoryError)) throw e;
-      return disagreementsPage(res, e.code === 'not_found' ? 404 : 400, e.message);
+      return disagreementsPage(req, res, e.code === 'not_found' ? 404 : 400, e.message);
     }
     // Only back to the list or a project's panel (a name as encodeURIComponent writes it): never anywhere else.
     const back = req.body?.back;
-    const ok = back === '/disagreements' || (typeof back === 'string' && /^\/\?project=[A-Za-z0-9%._~!*'()-]+#panel$/.test(back));
-    res.redirect(303, ok ? back : '/disagreements');
+    const ok = back === '/disagreements' || back === '/approvals' || (typeof back === 'string' && /^\/\?project=[A-Za-z0-9%._~!*'()-]+#panel$/.test(back));
+    noteDecision(d.service, { id: req.params.id as string, at: d.now().getTime(), message: 'Done.' });
+    const next = back === '/approvals' ? nextHref(req.body?.next) : null;
+    res.redirect(303, next ?? (ok ? back : '/disagreements'));
   });
 
   router.post('/projects/:name/done/:index/undo', owner, (req: Request, res) => {

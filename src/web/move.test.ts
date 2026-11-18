@@ -128,6 +128,18 @@ test('after a move, Remove from this computer goes on to Remove BrainAI, and the
   assert.ok(existsSync(join(statusDir, 'moved.json')));
 });
 
+test('the runbook is a link to the Moving from the app section, and It\'s moved waits for the moving file', async (t) => {
+  const { f } = await desktop(t);
+  const before = (await (await f('/settings/move')).text()).replaceAll('&#39;', "'");
+  assert.match(before, /<a href="https:\/\/github\.com\/jsr1292\/brainai\/blob\/main\/docs\/RUNBOOK\.md#4-moving-from-the-app"[^>]*>the runbook<\/a>/);
+  assert.match(before, /<button type="submit" class="primary" disabled>It's moved<\/button>/);
+  assert.match(before, /Make the moving file first\./);
+  await f('/settings/move/file', { method: 'POST', headers: FORM, body: '' });
+  const after = (await (await f('/settings/move')).text()).replaceAll('&#39;', "'");
+  assert.match(after, /<button type="submit" class="primary">It's moved<\/button>/);
+  assert.doesNotMatch(after, /Make the moving file first\./);
+});
+
 test('Show in Finder on the Mac, Show in Explorer on Windows', () => {
   assert.deepEqual(revealCommand('/Users/ana/x.tar.gz', 'darwin'), ['open', ['-R', '/Users/ana/x.tar.gz']]);
   assert.deepEqual(revealCommand('C:\\Users\\Ana\\x.tar.gz', 'win32'), ['explorer.exe', ['/select,C:\\Users\\Ana\\x.tar.gz']]);

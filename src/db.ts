@@ -655,6 +655,76 @@ CREATE TABLE embedding_pending(tbl TEXT NOT NULL, key TEXT NOT NULL, PRIMARY KEY
 ${OWN_TRIGGERS.map((t) => t.sql + ';').join('\n')}
 `;
 
+/**
+ * A12 (A1, A2): when a fact stops being true (valid_until, YYYY-MM-DD) and where it came from (source, with a short
+ * source_note, and source_by: who set the source, 'owner' or the assistant's app name). ADD COLUMN only, never a table rebuild: a rebuild would drop migration 37's triggers (see OWN_TRIGGERS).
+ * History keeps them so "Undo to this" restores them; a held save keeps them so approving it saves them. In a held
+ * save, NULL means "the assistant gave none" and an empty string means "clear it" (an update).
+ */
+const MIGRATION_38 = `
+ALTER TABLE memories ADD COLUMN valid_until TEXT;
+ALTER TABLE memories ADD COLUMN source TEXT;
+ALTER TABLE memories ADD COLUMN source_note TEXT;
+ALTER TABLE memory_history ADD COLUMN valid_until TEXT;
+ALTER TABLE memory_history ADD COLUMN source TEXT;
+ALTER TABLE memory_history ADD COLUMN source_note TEXT;
+ALTER TABLE profile_suggestions ADD COLUMN valid_until TEXT;
+ALTER TABLE profile_suggestions ADD COLUMN source TEXT;
+ALTER TABLE profile_suggestions ADD COLUMN source_note TEXT;
+ALTER TABLE memories ADD COLUMN source_by TEXT;
+ALTER TABLE memory_history ADD COLUMN source_by TEXT;
+ALTER TABLE profile_suggestions ADD COLUMN source_by TEXT;
+`;
+
+/** B1: held saves that an assistant harvested from a session (suggest_memories), and the built-in skills already offered to the owner. */
+const MIGRATION_39 = `
+ALTER TABLE profile_suggestions ADD COLUMN harvest_batch TEXT;
+ALTER TABLE profile_suggestions ADD COLUMN harvest_label TEXT;
+CREATE TABLE builtin_skills_offered(name TEXT PRIMARY KEY, offered_at TEXT NOT NULL);
+`;
+
+/**
+ * B2: assistant-run tidy sessions. tidy_proposals: what an assistant proposed for a cluster of facts, waiting for the
+ * owner (payload = the proposal as JSON, stamps = each fact's updated_at when it was proposed, result = what an
+ * approval did, for Undo). tidy_looked: facts the owner marked as looked at; a fact stays out of the clusters
+ * until its updated_at differs from the stamp. Nothing here touches memories.
+ */
+const MIGRATION_40 = `
+CREATE TABLE tidy_proposals(
+  id TEXT PRIMARY KEY, project TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL, stamps TEXT NOT NULL,
+  reason TEXT NOT NULL, proposed_by TEXT NOT NULL, proposed_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+  decided_at TEXT, result TEXT
+);
+CREATE INDEX tidy_proposals_pending ON tidy_proposals(status, proposed_at);
+CREATE TABLE tidy_looked(fact_id TEXT PRIMARY KEY, stamp TEXT NOT NULL, looked_at TEXT NOT NULL, looked_by TEXT NOT NULL);
+`;
+
+/** Phase B fixes: the existing fact a harvested near-duplicate is close to, and the built-in mark of a skill proposal (set only by the server). */
+const MIGRATION_41 = `
+ALTER TABLE profile_suggestions ADD COLUMN similar_id TEXT;
+ALTER TABLE skill_proposals ADD COLUMN builtin INTEGER NOT NULL DEFAULT 0;
+`;
+
+/**
+ * C2: control over what assistants save. oauth_grants.saves_wait: 1 = this connection's saves wait in the Inbox for the
+ * owner ("Saves wait for me"). brain_switches: the owner's global switches by name; 'saves_paused' (value = when it was
+ * switched on) stops every assistant write.
+ */
+const MIGRATION_42 = `
+ALTER TABLE oauth_grants ADD COLUMN saves_wait INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE brain_switches(name TEXT PRIMARY KEY, value TEXT NOT NULL, set_at TEXT NOT NULL);
+`;
+
+/** C14: a page made from an uploaded file says so (its file name and the day), whoever reads it. */
+const MIGRATION_43 = `
+CREATE TABLE page_file_imports(
+  page_id TEXT PRIMARY KEY REFERENCES pages(id),
+  file_name TEXT NOT NULL,
+  imported_at TEXT NOT NULL
+);
+`;
+
 const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] = [
   { version: 1, sql: MIGRATION_1 },
   { version: 2, sql: MIGRATION_2 },
@@ -694,6 +764,12 @@ const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] 
   { version: 35, sql: MIGRATION_35 },
   { version: 36, sql: MIGRATION_36 },
   { version: 37, sql: MIGRATION_37 },
+  { version: 38, sql: MIGRATION_38 },
+  { version: 39, sql: MIGRATION_39 },
+  { version: 40, sql: MIGRATION_40 },
+  { version: 41, sql: MIGRATION_41 },
+  { version: 42, sql: MIGRATION_42 },
+  { version: 43, sql: MIGRATION_43 },
 ];
 
 /** `upTo` stops at that schema version (tests of a migration start from the one before it). */

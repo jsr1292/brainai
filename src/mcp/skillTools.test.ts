@@ -70,7 +70,7 @@ test('load_skill of an Off or unknown skill says no skill by that name is on', a
 test('propose_skill sends a proposal and says it waits for the owner; a second from the same connection replaces it', async () => {
   const { call, skills } = await connect();
   const r = await call('propose_skill', deploy);
-  assert.match(r.text, /Sent to the owner: the skill "brain-deploy" waits in Approvals\. It is not on until the owner adds it\./);
+  assert.match(r.text, /Sent to the owner: the skill "brain-deploy" waits in the owner's Inbox\. It is not on until the owner adds it\./);
   await call('propose_skill', { ...deploy, body: 'Better.' });
   assert.deepEqual(skills.pendingProposals().map((p) => p.body), ['Better.']);
   assert.deepEqual(skills.list(), []);

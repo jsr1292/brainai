@@ -386,7 +386,8 @@ export class PageService {
     return (target) => {
       if (target.startsWith('fact:')) {
         const m = this.memoryStore.get(target.slice(5).trim());
-        if (!m || m.deletedAt !== null) return null;
+        // A fact retired onto a page (moved, not forgotten) still links to its own page, where it says where it went.
+        if (!m || (m.deletedAt !== null && m.movedTo == null)) return null;
         // A replaced fact still links to its own page, with a marker to the fact that holds now (or to its own page,
         // where the deleted replacement is named, when the chain ends in a deleted fact).
         const rep = this.memories.replacement(m.id);

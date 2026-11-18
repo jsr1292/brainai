@@ -5,7 +5,7 @@ import { currentSetupVersion, setupApps, setupText } from '../setup/texts.js';
 import type { AppDeps } from './app.js';
 import { requireOwner } from './authRoutes.js';
 import { html, page } from './html.js';
-import { setupPage, setupStatusLine } from './setupViews.js';
+import { setupPage, setupStatusLine, toolsOnThisComputer } from './setupViews.js';
 
 export function setupRoutes(d: AppDeps, refused: RefusedRedirects): Router {
   const router = Router();
@@ -16,11 +16,11 @@ export function setupRoutes(d: AppDeps, refused: RefusedRedirects): Router {
   router.get('/settings/setup/:app', owner, (req, res) => {
     const app = appOf(req.params.app as string);
     if (!app) return missing(res);
-    // While Reach is on (D4), apps on the web and the phone use the public address; tools on this Mac keep localhost.
+    // While Reach is on (D4), apps on the web and the phone use the public address; coding tools on this computer use it too, since their steps here are for another computer.
     const reach = d.reach?.url();
-    const mcpUrl = new URL('/mcp', reach && !app.file ? reach : d.publicUrl).href;
+    const mcpUrl = new URL('/mcp', reach && (!app.file || toolsOnThisComputer(app, { needsReach: false, signIn: 'password', local: !!d.localMode })) ? reach : d.publicUrl).href;
     // A cloud app is called from the vendor's servers: with no public address (local mode, Reach off) there is nothing to give it.
-    const ctx = { needsReach: !!d.localMode && !reach, signIn: d.owner.isConfigured() ? 'password' as const : 'window' as const };
+    const ctx = { needsReach: !!d.localMode && !reach, local: !!d.localMode, signIn: d.owner.isConfigured() || !!reach ? 'password' as const : 'window' as const };
     const v = currentSetupVersion(d.setupOverlay);
     // An address allowed since (here, another page or the terminal) leaves the list.
     const allow = { allowed: (app.allow ?? []).every((e) => d.allowlist.isAllowed(e)), refused: refused.list().filter((r) => !d.allowlist.isAllowed(r.uri)) };

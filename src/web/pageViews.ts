@@ -227,6 +227,8 @@ export function pageView(v: {
   pictures?: PictureLookup;
   /** The diagrams (by block) that couldn't be drawn when last viewed, while their text is unchanged. */
   diagramProblems?: number[];
+  /** C4: the file this page was made from, when it came from an upload. */
+  fileImport?: { fileName: string; importedAt: string };
 }): SafeHtml {
   const p = v.page;
   if (p.deletedAt !== null) {
@@ -278,7 +280,7 @@ ${notesPanel(p, v.notes, headings)}
   const freshness = flag
     ? staleLine({ page: p, flag, project: v.project, noteOpen: v.notes.some((n) => n.status === 'open'), keyAnchor: keyAnchorOf(v.sections), sections: toc, askForm: (o) => askForm(p, toc, undefined, o) })
     : stillTrueLine(p, localDay(viewNow()));
-  const main = html`${crumb}<h1>${p.title}</h1>${titleMarker}${meta}${freshness}${tocFold}${errorBlock(v.error)}${v.live ? liveBox(v.live, p.id, localDay(viewNow())) : ''}
+  const main = html`${crumb}<h1>${p.title}</h1>${titleMarker}${meta}${v.fileImport ? html`<p class="meta imported-from">Imported from <span class="path">${v.fileImport.fileName}</span> on ${localDay(new Date(v.fileImport.importedAt))}, not written by an assistant.</p>` : ''}${freshness}${tocFold}${errorBlock(v.error)}${v.live ? liveBox(v.live, p.id, localDay(viewNow())) : ''}
 <article class="art"${pics.length + diagrams > 0 ? html` data-viewer="${asset('viewer.js')}"` : ''}${diagrams > 0 ? html` data-diagrams="${asset('diagrams.js')}" data-renderer="${asset('diagram-frame.js')}" data-page="${p.id}" data-version="${p.version}"` : ''}>${numberDiagrams(v.sections.map((s) => section(p, s, v.resolve, linkDefinitions(p.body), noted, { flag, project: v.project, marks }, v.pictures)), new Set(v.diagramProblems ?? []))}</article>`;
   return layout(pagesNav(v.nav, p.id), main, aside, { onPage: true });
 }

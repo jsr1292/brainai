@@ -274,3 +274,14 @@ test('DCR with only an [::1] callback says IPv6 loopback is not supported, not a
     return true;
   });
 });
+
+test('the name BrainAI is reserved for registration, a remote client document and renames', async () => {
+  const db = openDb(':memory:');
+  const s = new ClientsStore(db, new RedirectAllowlist(db), () => new Date());
+  for (const name of ['BrainAI', ' brainai ', 'BRAINAI', 'Brain AI']) {
+    await assert.rejects(Promise.resolve(s.registerClient!({ redirect_uris: ['https://claude.ai/api/mcp/auth_callback'], client_name: name, token_endpoint_auth_method: 'none' } as any)), /BrainAI/, name);
+    assert.throws(() => validateDisplayName(name), /BrainAI/, name);
+    await assert.rejects(fetchClientMetadata(ID, (async () => json({ client_id: ID, client_name: name, redirect_uris: ['https://claude.ai/api/mcp/auth_callback'] })) as any), /BrainAI/, name);
+  }
+  assert.equal(validateDisplayName('BrainAI helper app'), 'BrainAI helper app');
+});

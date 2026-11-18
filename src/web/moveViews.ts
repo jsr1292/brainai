@@ -32,7 +32,7 @@ ${v.said ? html`<p class="notice" role="status">${v.said}</p>` : ''}
 ${v.missingPictures > 0 ? html`<p class="notice">${v.missingPictures === 1 ? '1 picture is' : `${v.missingPictures} pictures are`} missing on ${thisComputer()} and cannot come along.</p>` : ''}
 <ol class="setup-steps">
 <li><h2>Make the moving file</h2>${file}</li>
-<li><h2>Set up the server</h2><p>Follow "Moving from the app" in the runbook (<code>docs/RUNBOOK.md</code> in BrainAI's repository): set the server up, unpack the file there, set a password and an authenticator, and start it. Then connect each app from the server's own Settings pages.</p></li>
+<li><h2>Set up the server</h2><p>Follow "Moving from the app" in <a href="https://github.com/jsr1292/brainai/blob/main/docs/RUNBOOK.md#4-moving-from-the-app" target="_blank" rel="noopener">the runbook</a> (<code>docs/RUNBOOK.md</code> in BrainAI's repository): set the server up, unpack the file there, set a password and an authenticator, and start it. Then connect each app from the server's own Settings pages.</p></li>
 <li><h2>It's moved</h2>${v.movedTo
     ? html`<p><span class="ok">Moved ✓</span> This brain now lives at <a href="${v.movedTo.origin}">${v.movedTo.origin}</a>. Apps that still use ${thisComputer()} are told to connect there.</p>
 <div class="row-actions">
@@ -43,7 +43,7 @@ ${v.missingPictures > 0 ? html`<p class="notice">${v.missingPictures === 1 ? '1 
     : html`<p>Once the server runs with your memories, give its address. ${ThisComputer()} then stops answering its apps and tells them where the brain lives, and Reach from phone and web is turned off.</p>
 <form method="post" action="/settings/move/done" class="stack">
   <label for="address">The server's address</label><input id="address" name="address" type="url" placeholder="https://brain.example.com" required>
-  <p><button type="submit" class="primary">It's moved</button></p>
+  <p><button type="submit" class="primary"${v.file ? '' : ' disabled'}>It's moved</button></p>${v.file ? '' : html`\n  <p class="meta">Make the moving file first.</p>`}
 </form>`}</li>
 </ol>
 </div>`;

@@ -64,7 +64,12 @@ export function keyAction(e, ctx) {
   const backslash = e.code === 'Backslash' || e.key === '\\';
   // ⌘K opens the palette from anywhere: typing, shortcuts off, on Graph (design §6).
   if (mod && e.code === 'KeyK' && !e.shiftKey && !e.altKey) return 'palette';
-  if (mod && (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter')) return ctx.typing && ctx.inSheetForm ? 'submit' : null;
+  if (mod && (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter')) {
+    if (ctx.typing && ctx.inSheetForm) return 'submit';
+    // The Inbox: ⌘↵ approves the item beside the list from anywhere in that pane or on the page itself, but not while typing in a field outside the pane.
+    if (ctx.screen === 'inbox' && (ctx.inPane || !ctx.typing)) return 'approve';
+    return null;
+  }
   if (e.metaKey && backslash) return ctx.screen === 'panes' ? 'hide-list' : null;
   if (e.key === 'Escape' || e.code === 'Escape') return ctx.typing ? 'blur' : 'esc';
   if (mod || e.altKey) return null;
@@ -84,11 +89,13 @@ export function keyAction(e, ctx) {
     if (ctx.screen === 'week') return ctx.peek ? dir : null;
     if (ctx.screen === 'overview') return dir === 'down' ? 'down' : null;
     if (ctx.screen === 'panes' && ctx.inList) return dir;
+    // The Inbox: ↑ ↓ step its rows, unless focus is in the item beside it (there they scroll it).
+    if (ctx.screen === 'inbox') return ctx.inPane ? null : dir;
     return null;
   }
   if (e.code === 'KeyX') return ctx.screen === 'panes' || ctx.screen === 'week' ? 'tick' : null;
   if (e.code === 'KeyZ') return ctx.toast ? 'undo' : null;
-  if (e.code === 'KeyE') return ctx.screen === 'panes' ? 'edit' : null;
+  if (e.code === 'KeyE') return ctx.screen === 'panes' || ctx.screen === 'inbox' ? 'edit' : null;
   return null;
 }
 
@@ -111,7 +118,7 @@ export function sheetKind(href, base) {
     if (u.hash === '#notyet' && !q.has('project')) return 'notyet';
     return null;
   }
-  if (u.pathname === '/approvals') return 'approval';
+  // /approvals is the Inbox's own page (grouped list + item, server-rendered): a plain navigation, never a sheet.
   if (/^\/discussions\/[^/]+$/.test(u.pathname)) return 'discussion';
   if (/^\/pages\/[0-9a-f-]{36}$/.test(u.pathname)) return 'page';
   const fact = /^\/memories\/([^/]+)$/.exec(u.pathname);
@@ -132,7 +139,7 @@ export function placeOfPath(pathname) {
   if (p === '/') return 'projects';
   if (p === '/pages' || p.startsWith('/pages/')) return 'pages';
   if (p === '/facts' || p.startsWith('/facts/') || p.startsWith('/memories/')) return 'facts';
-  if (p === '/review' || p.startsWith('/review/') || p === '/growth') return 'week';
+  if (p === '/review' || p.startsWith('/review/') || p === '/growth' || p === '/activity') return 'week';
   if (p === '/graph') return 'graph';
   if (p === '/settings') return 'settings';
   return 'other';
@@ -150,7 +157,7 @@ export function listSource(place, href) {
 
 /** Do this sheet's forms post by fetch (true), or natively (Settings, anything else)? */
 export function postScope(kind) {
-  return ['project', 'approval', 'discussion', 'notyet', 'page', 'fact'].includes(kind);
+  return ['project', 'discussion', 'notyet', 'page', 'fact'].includes(kind);
 }
 
 /** A #link to the page already shown (path and query `shown`): the browser jumps inside the sheet, nothing loads. */
@@ -177,10 +184,9 @@ export function spyIndex(tops, line) {
 }
 
 /** The side fragment of the same route (?pane=side), or null when the sheet has none. */
-export function sideUrl(kind, href, base, approvalId) {
+export function sideUrl(kind, href, base) {
   const u = new URL(href, base);
   if (kind === 'project') return `/?project=${encodeURIComponent(u.searchParams.get('project') ?? '')}&pane=side`;
-  if (kind === 'approval') return `/approvals?pane=side${approvalId ? `&id=${encodeURIComponent(approvalId)}` : ''}`;
   if (kind === 'discussion' || kind === 'fact') return `${u.pathname}?pane=side`;
   return null;
 }
@@ -188,7 +194,6 @@ export function sideUrl(kind, href, base, approvalId) {
 /** The sheet bar's crumb. For a discussion, `title` is its project (or empty: "Discussions"). */
 export function crumbParts(kind, title) {
   if (kind === 'project') return ['Projects', title];
-  if (kind === 'approval') return title ? ['Inbox', title] : ['Inbox'];
   if (kind === 'discussion') return ['Projects', title || 'Discussions', 'Discussion'];
   return ['Projects', 'Not in the brain yet'];
 }
@@ -209,15 +214,6 @@ export function listFocus(a, landing) {
 /** Where ↑ ↓ count from: the list row with keyboard focus, else the selected row. */
 export function stepStart(focusedAt, selectedAt) {
   return focusedAt >= 0 ? focusedAt : selectedAt;
-}
-
-/** The approval sheet shows one suggestion: the one asked for (?id=) while it still waits, else the first. */
-export function approvalPick(ids, wanted) {
-  return wanted !== undefined && ids.includes(wanted) ? wanted : ids[0];
-}
-/** The suggestion an approval sheet's URL asks for (/approvals?id=), if any. */
-export function approvalIdOf(href) {
-  try { return new URL(href, 'https://desk.invalid/').searchParams.get('id') ?? undefined; } catch { return undefined; }
 }
 
 /** The next row's index, clamped to the list; from no row, the first. */
@@ -276,7 +272,7 @@ export function toastText(text) {
 
 /** The places the palette's Do group jumps to (GET only), in the sidebar's order; the digit where one exists, and another name it answers to. */
 const DO_PLACES = [['Projects', '/', '1'], ['Pages', '/pages', '2'], ['Facts', '/facts'], ['Inbox', '/approvals', undefined, 'Approvals'],
-  ['Last week', '/review', '3'], ['So far', '/review/now'], ['Growth', '/growth'], ['Graph', '/graph', '4'], ['Settings', '/settings']];
+  ['Last week', '/review', '3'], ['So far', '/review/now'], ['Growth', '/growth'], ['Activity', '/activity'], ['Graph', '/graph', '4'], ['Settings', '/settings']];
 const fold = (t) => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 /**
@@ -284,7 +280,7 @@ const fold = (t) => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCa
  * (which only fills the idea field: the owner presses Add idea); then Go to each place the query names (accents and
  * case aside; all of them for an empty query). Nothing here posts.
  */
-export function paletteDo(q) {
+export function paletteDo(q, extra = []) {
   const t = String(q ?? '').trim();
   const out = [];
   if (t.length >= 1 && t.length <= 140) out.push({ label: `Add “${t}” as an idea`, idea: t });
@@ -292,6 +288,16 @@ export function paletteDo(q) {
     if (t !== '' && !fold(name).includes(fold(t)) && !(alias && fold(alias).includes(fold(t)))) continue;
     out.push(key ? { label: `Go to ${name}`, href, key } : { label: `Go to ${name}`, href });
   }
+  // The pages beside the sidebar's places (Skills, Map, the Settings subpages), offered once something is typed.
+  if (t !== '') {
+    for (const { label, href, alias } of extra) {
+      if (!fold(label).includes(fold(t)) && !(alias && fold(alias).includes(fold(t)))) continue;
+      out.push({ label: `Go to ${label}`, href });
+    }
+  }
+  // A place named exactly as typed comes first, above adding the text as an idea: Enter opens it.
+  const exact = out.findIndex((r) => r.href !== undefined && fold(r.label.slice('Go to '.length)) === fold(t));
+  if (t !== '' && exact > 0) out.unshift(...out.splice(exact, 1));
   return out;
 }
 
@@ -409,6 +415,7 @@ const listPane = () => frame()?.querySelector(':scope > .desk-list') ?? null;
 const framePlace = () => frame()?.dataset.place ?? null;
 
 function screen() {
+  if (document.querySelector('main > .inbox')) return 'inbox';
   if (frame() || document.querySelector('main > .phome.has-panel')) return 'panes';
   if (document.querySelector('main > .phome') || factsOverview()) return 'overview';
   if (document.querySelector('main > .review')) return 'week';
@@ -436,7 +443,7 @@ function keysSheet() {
     [['n'], 'Write an idea (Projects)'],
     [['/'], 'Filter the list (Facts)'],
     [['←', '→'], 'Older or newer week (Week)'],
-    [[MOD + '↵'], 'Approve or decide, inside the sheet'],
+    [[MOD + '↵'], 'Approve or decide, inside the sheet or the Inbox'],
     [['?'], 'This sheet'],
   ];
   const dl = el('dl');
@@ -461,12 +468,12 @@ const dialogOpen = () => !!document.querySelector('dialog.desk-keys[open], dialo
 function keyContext() {
   const a = document.activeElement;
   const form = a && a.form ? a.form : null;
-  const sheetForm = !!(form && form.closest('.desk-sheet, .phome.has-panel > .ppanel') && cmdEnterForm(form.getAttribute('action') ?? ''));
+  const sheetForm = !!(form && form.closest('.desk-sheet, .phome.has-panel > .ppanel, .inbox-pane') && cmdEnterForm(form.getAttribute('action') ?? ''));
   const inList = listFocus(a, landing);
   const shown = (n) => !!n && n.getClientRects().length > 0;
   const filter = [...document.querySelectorAll('.desk-list input[name="q"], main > .narrow details.filter-fold input[name="q"], main > .narrow form.frow-filters input[name="q"]')].some(shown);
   return {
-    typing: isTyping(a), keysOn: prefs().keys, screen: screen(), inSheetForm: sheetForm, inList, toast: hooks.toastOpen(), dialog: dialogOpen(),
+    typing: isTyping(a), keysOn: prefs().keys, screen: screen(), inSheetForm: sheetForm, inList, inPane: !!(a && a.closest && a.closest('.inbox-pane')), toast: hooks.toastOpen(), dialog: dialogOpen(),
     filter, peek: !!document.querySelector('dialog.desk-peek[open]'), palette: !!document.querySelector('dialog.desk-palette[open]'),
   };
 }
@@ -486,8 +493,7 @@ const hooks = {
   filled: [],
   /** A post's answer, before the usual outcome (Not in the brain yet): true when handled. */
   posted: [],
-  /** After a post swapped the sheet, and after its side fragment came. */
-  swapped: [],
+  /** After a post swapped the sheet and its side fragment came. */
   sided: [],
   mountNotyet: null,
   /** Per place: focus on the overview row after the kept overview is back (Projects: focusReturn). */
@@ -534,6 +540,8 @@ function addHint() {
 
 /** What Settings calls this computer: "This Mac" on a Mac, "This computer" on Windows and anything else. */
 function thisDeviceName() {
+  // A server's Settings names the same section for the browser, not a computer.
+  if (typeof document !== 'undefined' && document.body && document.body.dataset.server !== undefined) return 'This browser';
   const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || '';
   return /mac/i.test(platform) ? 'This Mac' : 'This computer';
 }
@@ -583,11 +591,11 @@ let listCache = null;
 let shownKey = null;
 
 const pathKey = (href) => { const u = new URL(href, location.href); return u.pathname + u.search; };
-/** Does a list link open the sheet shown (path and query `key`, of `kind`)? Every approval link opens the one sheet. */
+/** Does a list link open the sheet shown (path and query `key`, of `kind`)? */
 function sameSheet(href, key, kind) {
   const k = sheetKind(href, location.href);
   if (!k || kind === 'notyet') return false;
-  return kind === 'approval' ? k === 'approval' : pathKey(href) === key;
+  return pathKey(href) === key;
 }
 const sheet = () => document.getElementById('desk-sheet');
 const besideOn = () => prefs().beside;
@@ -676,62 +684,8 @@ function keyline() {
     el('span', {}, el('kbd', { text: 'Esc' }), ' back to the overview'));
 }
 
-const rootOf = (doc) => doc.querySelector('#panel') ?? doc.querySelector('main > .approvals, main > .discussion, main > .pages-wrap.on-page')
+const rootOf = (doc) => doc.querySelector('#panel') ?? doc.querySelector('main > .discussion, main > .pages-wrap.on-page')
   ?? doc.querySelector('main > .narrow:has(> h1.fact-text)');
-const cardId = (n) => (n.querySelector('form[action^="/suggestions/"]')?.getAttribute('action') ?? '').split('/')[2] || undefined;
-/** The suggestion the approval sheet shows for this page and URL (approvalPick over the page's cards). */
-const shownApprovalId = (root, href) => approvalPick([...root.querySelectorAll('.approval-card')].map(cardId).filter(Boolean), approvalIdOf(href));
-
-/**
- * The approval sheet as the mockup's After view (design §4.3), from today's /approvals page: only the suggestion shown
- * (`id`), its sentence as the h1, the writer leading the meta line, a Suggested inset, then what it Replaces struck
- * through, and the keys on the pills. Returns the suggestion's kind for the crumb (Projects › For you › Profile).
- */
-function shapeApproval(node, id) {
-  const items = [...node.querySelectorAll(':scope > ul.cards > li')];
-  const keep = items.find((li) => cardId(li) === id) ?? items[0];
-  for (const li of items) if (li !== keep) li.remove();
-  const card = keep?.querySelector('.approval-card');
-  if (!card) return '';
-  node.querySelector(':scope > h1')?.remove();
-  const meta = card.querySelector(':scope > .meta-line');
-  const kindLabel = meta?.children[1]?.textContent.trim() ?? '';
-  const head = card.querySelector(':scope > .approval-head');
-  if (head) {
-    const h1 = el('h1', { class: 'approval-head' });
-    h1.append(...head.childNodes);
-    head.replaceWith(h1);
-    const who = h1.querySelector('.writer');
-    if (meta && who) meta.prepend(el('li', {}, who.cloneNode(true)));
-  }
-  const label = (text, cls) => el('p', { class: cls ? `label ${cls}` : 'label', text });
-  const proposed = card.querySelector(':scope > blockquote.proposed');
-  const current = card.querySelector(':scope > blockquote.current');
-  const also = [...card.querySelectorAll(':scope > p.label')].find((p) => p.nextElementSibling?.matches('blockquote.dim'));
-  if (proposed) {
-    proposed.before(label('Suggested', 'desk-suggested'));
-    if (current) {
-      if (current.previousElementSibling?.matches('p.label')) current.previousElementSibling.remove(); // "Currently:"
-      current.classList.add('replaced');
-      proposed.after(label('Replaces'), current);
-    }
-  }
-  for (const q of card.querySelectorAll(':scope > blockquote.dim')) q.classList.add('replaced');
-  if (also) { if (current && proposed) also.remove(); else also.textContent = 'Replaces'; }
-  const form = card.querySelector('form[action$="/approve"]');
-  const approve = form?.querySelector('button.primary');
-  // ⌘↵ approves from the form's text field (Edit first); a delete has none, so no hint there.
-  if (approve && form.querySelector('textarea[name="content"]')) {
-    approve.setAttribute('aria-keyshortcuts', 'Meta+Enter Control+Enter');
-    approve.append(el('kbd', { 'aria-hidden': 'true', text: MOD + '↵' }));
-  }
-  const edit = card.querySelector('.edit-first > summary');
-  if (edit && prefs().keys) {
-    edit.setAttribute('aria-keyshortcuts', 'E');
-    edit.append(el('kbd', { 'aria-hidden': 'true', text: 'E' }));
-  }
-  return kindLabel;
-}
 /** The crumb's middle part: a project's name, or a discussion's project (the page's back link names it). */
 function crumbTitle(kind, doc, root) {
   if (kind === 'project') return root.querySelector('#panel-title')?.textContent.trim() ?? '';
@@ -744,17 +698,15 @@ function crumbTitle(kind, doc, root) {
 function sheetTitle(kind, root) {
   if (kind === 'project') return root.querySelector('#panel-title')?.textContent.trim() ?? '';
   if (kind === 'discussion') return root.querySelector(':scope > h1')?.textContent.trim() ?? 'the discussion';
-  if (kind === 'approval') return root.querySelector('h1.approval-head')?.textContent.trim() ?? 'Inbox';
   if (kind === 'page') return root.querySelector('.pmain > h1')?.textContent.trim() ?? 'the page';
   if (kind === 'fact') return root.querySelector(':scope > h1.fact-text')?.textContent.trim() ?? 'the fact';
   return 'Not in the brain yet';
 }
 
 /**
- * Puts a canonical page's root (and the side fragment) in the sheet. Later parts hook in through hooks.filled. `href`,
- * the sheet's URL, says which suggestion an approval sheet shows.
+ * Puts a canonical page's root (and the side fragment) in the sheet. Later parts hook in through hooks.filled.
  */
-function fillSheet(kind, root, sideText, crumb, href) {
+function fillSheet(kind, root, sideText, crumb) {
   const s = sheet();
   const main = s.querySelector('.desk-main'), aside = s.querySelector('.desk-aside'), head = s.querySelector('.desk-head');
   for (const old of s.querySelectorAll('.desk-acts > details.manage')) old.remove();
@@ -762,7 +714,6 @@ function fillSheet(kind, root, sideText, crumb, href) {
   aside.replaceChildren();
   head.replaceChildren();
   const node = root.ownerDocument === document ? root : document.importNode(root, true);
-  if (kind === 'approval') crumb = shapeApproval(node, shownApprovalId(node, href ?? location.href)) || crumb;
   const title = sheetTitle(kind, node);
   const crumbs = kind === 'page' ? pageCrumbOf(node) : null;
   if (kind === 'page') placePage(node, main, aside);
@@ -793,7 +744,7 @@ function failLine(href) {
 function focusSheet(kind) {
   const s = sheet();
   if (!s) return;
-  const sel = { project: '#panel-title', discussion: '.discussion > h1', notyet: '.desk-notyet h1', approval: 'h1.approval-head, .approvals > h1', page: '.pmain > h1', fact: 'h1.fact-text' }[kind];
+  const sel = { project: '#panel-title', discussion: '.discussion > h1', notyet: '.desk-notyet h1', page: '.pmain > h1', fact: 'h1.fact-text' }[kind];
   let t = sel ? s.querySelector(sel) : null;
   if (!t || t.getClientRects().length === 0) t = s;
   else t.setAttribute('tabindex', '-1');
@@ -851,7 +802,6 @@ function markProject(href) {
   const key = pathKey(href);
   const kind = sheetKind(href, location.href);
   let row = [...pl.querySelectorAll('a[href]')].find((a) => sameSheet(a.href, key, kind));
-  if (!row && kind === 'approval') row = pl.querySelector('details.fy-approval > summary');
   if (!row && kind === 'notyet') row = pl.querySelector('#notyet > summary');
   if (!row) return;
   row.classList.add('is-selected');
@@ -943,15 +893,13 @@ function focusRow(kind) {
 
 /** Loads a canonical page (and its side fragment) for the sheet. Resolves null when superseded or sent away. */
 async function load(kind, url, gen, signal) {
-  const sideP = kind === 'approval' ? null : fetchSide(sideUrl(kind, url, location.href), signal);
+  const sideP = fetchSide(sideUrl(kind, url, location.href), signal);
   // Watched here too: when the page fails or is superseded first, nothing else awaits it (an abort is no page error).
-  sideP?.catch(() => {});
+  sideP.catch(() => {});
   const page = await fetchPage(url, signal);
   if (!page || gen !== sheetGen) return null;
   const root = rootOf(page.doc);
-  let side = null;
-  if (kind === 'approval' && root) side = await fetchSide(sideUrl(kind, url, location.href, shownApprovalId(root, page.res.redirected ? page.res.url : url)), signal);
-  else if (sideP) side = await sideP;
+  const side = await sideP;
   if (gen !== sheetGen) return null;
   const href = page.res.redirected ? page.res.url : url;
   return { root, side, doc: page.doc, href };
@@ -988,7 +936,7 @@ async function openInSheet(href, opts = {}) {
   }
   if (!got) return;
   if (!got.root) { failLine(url); setHistory(push, kind, url); return; }
-  const title = fillSheet(kind, got.root, got.side, crumbTitle(kind, got.doc, got.root), got.href);
+  const title = fillSheet(kind, got.root, got.side, crumbTitle(kind, got.doc, got.root));
   setHistory(push, kind, kind === 'project' ? got.href.split('#')[0] + '#panel' : got.href);
   settle(kind, url, title, focus);
 }
@@ -1026,7 +974,7 @@ async function mountPanes(kind, url, opts = {}) {
   if (typeof openFold === 'number') { const fold = plist.querySelectorAll('.pfolds details')[openFold]; if (fold) fold.open = true; }
   if (kind === 'notyet') return hooks.mountNotyet?.(opts);
   if (!got.root) { failLine(url); setHistory(push, kind, url); return; }
-  const title = fillSheet(kind, got.root, got.side, crumbTitle(kind, got.doc, got.root), got.href);
+  const title = fillSheet(kind, got.root, got.side, crumbTitle(kind, got.doc, got.root));
   setHistory(push, kind, kind === 'project' ? got.href.split('#')[0] + '#panel' : got.href);
   settle(kind, url, title, focus);
 }
@@ -1060,20 +1008,20 @@ function adoptPanes() {
 }
 
 /**
- * A load of /approvals or /discussions/:id on a wide window (a reload, a link from elsewhere, typed): the canonical page,
+ * A load of /discussions/:id on a wide window (a reload, a link from elsewhere, typed): the canonical page,
  * mounted into the panes, however the URL was reached.
  */
 async function mountFromPage() {
   if (!besideOn()) return;
   const kind = sheetKind(location.href, location.href);
-  if (kind !== 'approval' && kind !== 'discussion') return;
-  const root = document.querySelector('main > .approvals, main > .discussion');
+  if (kind !== 'discussion') return;
+  const root = document.querySelector('main > .discussion');
   if (!root) return;
   history.replaceState({ desk: { kind, place: 'projects' } }, '');
   const gen = ++sheetGen;
   let list, side;
   try {
-    [list, side] = await Promise.all([listPartial(undefined), fetchSide(sideUrl(kind, location.href, location.href, kind === 'approval' ? shownApprovalId(root, location.href) : undefined), undefined)]);
+    [list, side] = await Promise.all([listPartial(undefined), fetchSide(sideUrl(kind, location.href, location.href), undefined)]);
   } catch { return; }
   if (gen !== sheetGen) return;
   const plist = listNode(list);
@@ -1085,7 +1033,7 @@ async function mountFromPage() {
   const f = el('div', { class: 'phome wide has-panel desk-mounted desk-panes', 'data-place': 'projects' }, plist, buildSheet());
   mainEl.replaceChildren(f);
   applyNolist(f);
-  const title = fillSheet(kind, root, side, crumb, location.href);
+  const title = fillSheet(kind, root, side, crumb);
   touched = true;
   shownKey = pathKey(location.href);
   settle(kind, location.href, title, 'keep');
@@ -1124,7 +1072,6 @@ function focusReturn(home, href) {
   const kind = sheetKind(href, location.href);
   const links = [...home.querySelectorAll('a[href]')].filter((a) => a.getClientRects().length > 0 && sameSheet(a.href, key, kind));
   let t = links.find((a) => a.closest('.pcards')) ?? links[0];
-  if (!t && kind === 'approval') t = home.querySelector('details.fy-approval > summary');
   if (!t && kind === 'notyet') t = home.querySelector('#notyet > summary');
   t?.focus();
 }
@@ -1302,10 +1249,10 @@ function hideToast() {
   toast = null;
   toastUndo = null;
 }
-function showToast(text, undo) {
+function showToast(text, undo, said = false) {
   hideToast();
   const button = undo ? el('button', { type: 'button', text: 'Undo' }) : null;
-  toast = add(el('div', { class: 'desk-toast', role: 'status' }, el('span', { text: toastText(text) }), button, button && prefs().keys ? el('kbd', { text: 'z' }) : null));
+  toast = add(el('div', { class: 'desk-toast', role: 'status' }, el('span', { text: said ? text : toastText(text) }), button, button && prefs().keys ? el('kbd', { text: 'z' }) : null));
   toastUndo = undo;
   button?.addEventListener('click', () => runUndo());
   document.body.append(toast);
@@ -1318,10 +1265,27 @@ function showToast(text, undo) {
 let undoing = false;
 function runUndo() {
   const form = toastUndo;
-  hideToast();
-  if (!form || !form.isConnected) return;
+  if (!form || !form.isConnected) { hideToast(); return; }
   undoing = true;
   form.requestSubmit();
+  // A form of the Inbox's own status line is not in the panes: onSubmit leaves it to the browser (a plain post to /inbox/undo).
+  undoing = false;
+  hideToast();
+}
+
+/**
+ * The Inbox's status line ("Approved. Undo") rides on the page a post answers with, and the desktop layout swaps only the
+ * sheet from that answer, so the line would never be seen: it shows as a toast, with its Undo form kept inside it.
+ */
+function undoLineToast(doc) {
+  const line = doc.querySelector('.undo-line');
+  const text = line?.querySelector('span')?.textContent.trim();
+  if (!line || !text) return;
+  const form = line.querySelector('form[action="/inbox/undo"]');
+  const mine = form ? document.importNode(form, true) : null;
+  if (mine) mine.hidden = true;
+  showToast(text, mine, true);
+  if (mine) toast.append(mine);
 }
 hooks.toastOpen = () => toast !== null;
 
@@ -1363,6 +1327,7 @@ async function onSubmit(e) {
       refreshList();
       return;
     }
+    undoLineToast(doc);
     if (gen !== sheetGen) { refreshList(); sidebarFrom(doc); return; }
     for (const h of hooks.posted) if (h(form, res, doc)) { refreshList(); sidebarFrom(doc); return; }
     const out = postOutcome(res, location.href, framePlace() ?? 'projects');
@@ -1373,13 +1338,13 @@ async function onSubmit(e) {
       const kind = sheetKind(out.url, location.href);
       if (!root) { failLine(location.href); }
       else {
-        const title = fillSheet(kind, root, null, crumbTitle(kind, doc, root), out.url);
+        const title = fillSheet(kind, root, null, crumbTitle(kind, doc, root));
         const href = kind === 'project' ? `${out.url.split('#')[0]}#panel` : out.url;
         setHistory(historyMode(location.href, href) === 'push', kind, href);
         markSelected(href);
         if (kindBefore !== kind || title) liveSay(`Opened ${title}`);
         const g2 = sheetGen;
-        const side = sideUrl(kind, href, location.href, kind === 'approval' ? shownApprovalId(root, href) : undefined);
+        const side = sideUrl(kind, href, location.href);
         fetchSide(side, undefined).then((text) => {
           if (g2 !== sheetGen || !text) return;
           const s2 = sheet();
@@ -1388,10 +1353,9 @@ async function onSubmit(e) {
           if (kl) s2.querySelector('.desk-main').append(kl);
           for (const h of hooks.sided) h(kind);
         }).catch(() => {});
-        for (const h of hooks.swapped) h(kind, root);
       }
     } else if (root) {
-      fillSheet(kindBefore ?? sheetKind(location.href, location.href) ?? 'project', root, null, crumbTitle(kindBefore ?? 'project', doc, root), location.href);
+      fillSheet(kindBefore ?? sheetKind(location.href, location.href) ?? 'project', root, null, crumbTitle(kindBefore ?? 'project', doc, root));
     } else {
       failLine(location.href);
     }
@@ -1521,33 +1485,23 @@ function notyetArrival() {
 }
 setups.push(() => notyetArrival());
 
-// ---- For you in the sheet: the approval (design §4.3) ----
+// ---- The Inbox (grouped list + the item beside it, server-rendered): its keys ----
 
+/** For you's single approval opens the Inbox with it, a page of its own (never a sheet). */
 hooks.clicks.push((summary, e) => {
   if (!summary.parentElement?.matches('details.fy-approval') || !summary.closest('main > .phome')) return false;
   e.preventDefault();
-  openInSheet('/approvals');
+  location.assign('/approvals');
   return true;
 });
 
-/** After approve or reject the sheet shows /approvals again; with nothing left it moves on to what waits next. */
-hooks.swapped.push((kind, root) => {
-  if (kind !== 'approval' || root.querySelector('.approval-card')) return;
-  const gen = sheetGen;
-  fetchSide('/approvals?pane=side', undefined).then((text) => {
-    if (gen !== sheetGen) return;
-    const next = text ? new DOMParser().parseFromString(text, 'text/html').querySelector('.desk-next a[href]') : null;
-    if (next) openInSheet(new URL(next.getAttribute('href'), location.href).href, { push: false });
-    else if (homeNode) restoreOverview(null);
-    else location.assign('/');
-  }).catch(() => {});
-});
+/** The Inbox's list rows, in order: the items that open in the frame (a discussion's row is its own page, still a row). */
+const inboxRows = () => [...document.querySelectorAll('main > .inbox .inbox-list a.ir')];
 
 hooks.actions.push((action, e) => {
-  const s = sheet();
+  if (screen() !== 'inbox') return false;
   if (action === 'edit') {
-    if (s?.dataset.kind !== 'approval') return false;
-    const edit = s.querySelector('.approval-card details.edit-first');
+    const edit = document.querySelector('.inbox-pane .approval-card details.edit-first');
     const area = edit?.closest('form')?.querySelector('textarea[name="content"]');
     if (!edit || !area) return false;
     e.preventDefault();
@@ -1556,11 +1510,34 @@ hooks.actions.push((action, e) => {
     area.setSelectionRange(area.value.length, area.value.length);
     return true;
   }
+  if (action === 'down' || action === 'up') {
+    // ↑ ↓ go to the neighbouring row of the list: the item opens beside it (a full page load, as a click on the row).
+    const rows = inboxRows();
+    const at = rows.findIndex((r) => r.classList.contains('is-selected'));
+    const next = rows[at < 0 ? (action === 'down' ? 0 : rows.length - 1) : at + (action === 'down' ? 1 : -1)];
+    if (!next) return false;
+    e.preventDefault();
+    location.assign(next.href);
+    return true;
+  }
+  return false;
+});
+
+hooks.actions.push((action, e) => {
+  if (action === 'approve') {
+    // The open item's Approve form (its first plain submit); nothing when the item has none (a tidy-up, a disagreement).
+    const form = document.querySelector('.inbox-pane form[action$="/approve"]');
+    const primary = form && form.querySelector('button[type="submit"]:not([formaction]), button:not([type]):not([formaction])');
+    if (!form || !primary || !cmdEnterForm(form.getAttribute('action') ?? '')) return false;
+    e.preventDefault();
+    form.requestSubmit(primary);
+    return true;
+  }
   if (action === 'submit') {
-    // keyAction gave submit only with focus in a text field of an allowlisted form in the sheet: its first plain submit
-    // (Approve, Save decision), never a formaction button (Reject).
+    // keyAction gave submit only with focus in a text field of an allowlisted form in the sheet or the Inbox's pane: its
+    // first plain submit (Approve, Save decision), never a formaction button (Reject).
     const form = document.activeElement?.form;
-    if (!form || !form.closest('.desk-sheet') || !cmdEnterForm(form.getAttribute('action') ?? '')) return false;
+    if (!form || !form.closest('.desk-sheet, .inbox-pane') || !cmdEnterForm(form.getAttribute('action') ?? '')) return false;
     const primary = form.querySelector('button[type="submit"]:not([formaction]), button:not([type]):not([formaction])');
     if (!primary) return false;
     e.preventDefault();
@@ -1739,7 +1716,7 @@ function mountPage(signal) {
   wrap.replaceWith(f);
   applyNolist(f);
   watchSpy(s, signal);
-  fillSheet('page', wrap, null, '', location.href);
+  fillSheet('page', wrap, null, '');
   touched = true;
   shownKey = pathKey(location.href);
   markSelected(location.href);
@@ -2143,8 +2120,10 @@ function settingsSpy(byHash = null) {
   const tops = sections.map((x) => x.getBoundingClientRect().top - top);
   let at = spyIndex(tops, 80);
   // At the foot a short section cannot reach the top: the one asked for (the hash), while in view, else the last.
-  const asked = sections.findIndex((x) => x.id === (byHash ?? location.hash.slice(1)));
-  if (byHash) at = Math.max(0, asked);
+  // The section holding the element the hash names (#backup-copy and #brain-health sit inside Backups and copies, #setup inside Assistants); an unknown hash selects nothing.
+  const target = document.getElementById(byHash ?? location.hash.slice(1))?.closest('section[id]');
+  const asked = target ? sections.indexOf(target) : -1;
+  if (byHash && asked >= 0) at = asked;
   else if (atEnd) at = asked >= 0 && tops[asked] < s.clientHeight ? asked : sections.length - 1;
   const id = sections[at]?.id;
   for (const r of pn.querySelectorAll('.settings-index a.row')) {
@@ -2309,12 +2288,20 @@ function searchGroups(doc) {
   }));
 }
 
+/** This brain's extra jumps, written into the page by the server (only the pages its mode has). */
+function goToRows() {
+  try {
+    const list = JSON.parse(document.body.dataset.goto ?? '[]');
+    return Array.isArray(list) ? list.filter((x) => x && typeof x.label === 'string' && typeof x.href === 'string' && x.href.startsWith('/')) : [];
+  } catch { return []; }
+}
+
 async function palSearch(q) {
   const n = palLatest.next();
   palAbort?.abort();
   const ctl = palAbort = new AbortController();
   const t = String(q).trim();
-  const doRows = paletteDo(t).map((x) => ({ title: x.label, href: x.href, idea: x.idea, key: x.key, sub: '', meta: '' }));
+  const doRows = paletteDo(t, goToRows()).map((x) => ({ title: x.label, href: x.href, idea: x.idea, key: x.key, sub: '', meta: '' }));
   if (t === '') { palRender([{ label: 'Do', rows: doRows }], t); return; }
   let groups = [], failed = false, empty = false;
   try {

@@ -73,3 +73,23 @@ test('OPERATING_RULES keeps all seventeen rules, and the block that carries them
   assert.ok(operatingRulesBlock().startsWith('BrainAI operating rules (from the server, not stored data; follow them):\n\n1. '));
   assert.ok(operatingRulesBlock().endsWith(OPERATING_RULES));
 });
+
+test('A1/A2: the rules say when to set valid_until and how to mark the source, inside rules 3 and 7', () => {
+  const rule = (n: number) => OPERATING_RULES.split('\n').find((l) => l.startsWith(`${n}. `))!;
+  assert.match(rule(7), /When a fact stops being true on a known date, also set valid_until \(YYYY-MM-DD\) on it\./);
+  assert.match(rule(7), /past_date is true, check it before relying on it/);
+  assert.match(rule(3), /Mark source honestly: owner_said only for what the owner actually said, inferred for your own conclusions\./);
+  assert.ok(!/valid_until|owner_said/.test(SERVER_INSTRUCTIONS), 'the server instructions are at their size limit and unchanged');
+});
+
+test('the operating rules mention suggest_memories and the harvest skill for the end of a long session, and the initialize text stays unchanged in size', () => {
+  assert.match(OPERATING_RULES, /At the end of a long session, or when asked to harvest it, send what is worth keeping in one go with suggest_memories/);
+  assert.match(OPERATING_RULES, /harvest-session skill/);
+  assert.doesNotMatch(SERVER_INSTRUCTIONS, /suggest_memories/);
+});
+
+test('rule 5 tells an assistant how to tidy a project when the owner asks (B2)', () => {
+  const r5 = OPERATING_RULES.split('\n').find((l) => l.startsWith('5. '))!;
+  assert.ok(r5.includes('When the owner asks you to tidy a project, use tidy_session and propose_tidy (the owner approves each proposal).'), r5);
+  assert.doesNotMatch(SERVER_INSTRUCTIONS, /tidy_session/, 'the server instructions stay as they are');
+});

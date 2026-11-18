@@ -45,3 +45,16 @@ test('each project lists its replaced facts under ### Replaced', () => {
   assert.match(out, new RegExp(`## drafting-tool\\n\\n### Decisions\\n\\n- Use pnpm\\. \\(2026-10-01, Codex\\)\\n- Labels in Avenir\\. \\(2026-10-01, owner\\)\\n\\n### Replaced\\n\\n- Use npm\\. \\(2026-10-01, Codex\\) \\(replaced by ${b.id}\\)\\n`));
   assert.match(out, new RegExp(`## labels\\n\\n### Replaced\\n\\n- Labels in Futura\\. \\(2026-10-01, Codex\\) \\(replaced by ${y.id}\\)\\n`));
 });
+
+test('A12: a fact with a date or a source says so in the export, an older fact without them is unchanged', () => {
+  const store = new MemoryStore(openDb(':memory:'), () => new Date('2026-10-01T00:00:00Z'));
+  const add = (content: string, meta?: { validUntil: string | null; source: 'owner_said' | 'inferred' | null; sourceNote: string | null; sourceBy: string | null }) =>
+    store.insert({ kind: 'decision', content, project: 'casa', tags: [], embedding: new Float32Array(EMBEDDING_DIM), by: 'Codex', meta });
+  add('Plain fact.');
+  add('Permit expires.', { validUntil: '2026-12-31', source: 'owner_said', sourceNote: 'by phone', sourceBy: 'Codex' });
+  add('Anna covers the desk.', { validUntil: null, source: 'inferred', sourceNote: null, sourceBy: 'owner' });
+  const out = exportMarkdown(store, 'BrainAI', new Date('2026-10-20T09:00:00Z'));
+  assert.match(out, /- Plain fact\. \(2026-10-01, Codex\)\n/);
+  assert.match(out, /- Permit expires\. \(2026-10-01, Codex; valid until 2026-12-31; source: owner_said \(set by Codex\) \(by phone\)\)/);
+  assert.match(out, /- Anna covers the desk\. \(2026-10-01, Codex; source: inferred \(set by owner\)\)/);
+});

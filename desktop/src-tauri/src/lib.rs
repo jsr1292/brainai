@@ -353,6 +353,44 @@ fn show_window(app: &AppHandle, home: bool) {
     });
 }
 
+/// Settings › Choose folder…: the system's folder picker. The page cannot call the app; it only navigates to
+/// /app/choose-folder, which the window's navigation handler turns into this (the same way as Update and restart). The
+/// window then goes to Settings with the path in the address, which only fills the box: nothing is saved or run.
+fn choose_folder(app: &AppHandle) {
+    // One picker at a time: a second click (or a second navigation) while it is open does nothing.
+    static PICKING: AtomicBool = AtomicBool::new(false);
+    if PICKING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return;
+    }
+    struct Release;
+    impl Drop for Release {
+        fn drop(&mut self) {
+            PICKING.store(false, Ordering::SeqCst);
+        }
+    }
+    let _release = Release;
+    let Some(w) = app.get_webview_window(MAIN) else { return };
+    // Parented to the BrainAI window, so the picker opens in front of it and is modal to it.
+    let Some(picked) = app.dialog().file().set_title("Choose a folder for the second copy").set_parent(&w).blocking_pick_folder() else { return };
+    let Ok(path) = picked.into_path() else { return };
+    let state = app.state::<Running>();
+    let port = state.port.load(Ordering::SeqCst);
+    if port == 0 {
+        return;
+    }
+    if let Ok(url) = nav::folder_page(port, &path.to_string_lossy()).parse() {
+        let _ = w.navigate(url);
+    }
+}
+
+/// Settings › Show in Finder/Explorer: opens the folder the daily backups are made in.
+fn reveal_backups(app: &AppHandle) {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = app_data(app).join("backups");
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = app.opener().open_path(dir.to_string_lossy(), None::<&str>);
+}
+
 /// After a move to a server (D5): the server has disconnected the tools and shows its goodbye page; the app asks,
 /// then stops starting at login and quits. The data folder stays where it is.
 fn goodbye(app: &AppHandle) {
@@ -565,6 +603,17 @@ pub fn run() {
                         // Cancelled: the window stays on Home, where the card follows the update until it reopens.
                         let app = leaving.clone();
                         std::thread::spawn(move || update::update_and_restart(&app));
+                        return false;
+                    }
+                    if nav::is_choose_folder(url.as_str(), port.load(Ordering::SeqCst)) {
+                        // Cancelled: the window keeps its page; a chosen folder is sent to Settings to fill a box.
+                        let app = leaving.clone();
+                        std::thread::spawn(move || choose_folder(&app));
+                        return false;
+                    }
+                    if nav::is_reveal_backups(url.as_str(), port.load(Ordering::SeqCst)) {
+                        let app = leaving.clone();
+                        std::thread::spawn(move || reveal_backups(&app));
                         return false;
                     }
                     if nav::is_inside(url.as_str(), port.load(Ordering::SeqCst)) {

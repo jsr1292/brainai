@@ -34,7 +34,7 @@ function setup() {
     return service.remember({ kind: kind as never, content, project, allowDuplicate: true, keys }, owner);
   };
   const tick = () => { t += 60_000; };
-  return { connect, save, registry, pages, notes, tick };
+  return { connect, save, registry, pages, notes, tick, service };
 }
 const dataOf = (text: string) => JSON.parse(text.slice(text.indexOf('<memories>\n') + 11, text.lastIndexOf('\n</memories>')));
 const roadmap = 'Now: ' + 'r'.repeat(1400) + '\nNext: ship';
@@ -93,7 +93,10 @@ test('the handbook shows this project\'s topics in full and the others as title 
   const { c } = await bigProject();
   const d = dataOf(await c('project_brief', { project: 'big' }));
   assert.deepEqual(d.handbook.map((t: any) => t.title), ['Topic of big']);
-  assert.deepEqual(d.handbook_other_topics.map((t: any) => [t.title, t.level]).sort(), [['Topic of alpha', 'helped'], ['Topic of beta', 'helped'], ['Topic of gamma', 'helped']]);
+  // The first 2 pages are part of the floor now, so on a brief this full some other topics are counted instead of listed.
+  const listed = d.handbook_other_topics.map((t: any) => [t.title, t.level]).sort();
+  assert.ok(listed.length >= 1 && listed.every((x: any) => ['Topic of alpha', 'Topic of beta', 'Topic of gamma'].includes(x[0]) && x[1] === 'helped'));
+  assert.equal(listed.length + (d.shortened.handbook_topics_not_listed ?? 0), 3);
   assert.ok(d.handbook_other_topics.every((t: any) => Object.keys(t).sort().join() === 'level,title'));
 });
 
@@ -240,4 +243,54 @@ test('all_decisions does not shorten statuses: a small project shows all 3 statu
     assert.ok(d.statuses.every((m: any) => !m.excerpt && m.content.length === 400), JSON.stringify(args));
     assert.equal(d.shortened, undefined);
   }
+});
+
+test('the first 2 pages are part of the floor: a brief with an out-of-date page never lists none, and the notice names that page', async () => {
+  const s = await withDecisions(0);
+  const flagged = await s.pages.create({ title: 'big — overview', project: 'big', body: 'Lead.\n\n## Key decisions\n- x' }, 'owner');
+  s.tick();
+  // Far more long decisions than the budget holds: the brief is over its limit with the floor alone, so every
+  // optional part gives way. 5 newer pages are created after the flagged one, so recency alone would list those.
+  for (let i = 0; i < 40; i++) await s.save('decision', pad(`DECISION${String(i).padStart(2, '0')}`, 1000), 'big', Array(15).fill('abcdefghijkl').join(' '));
+  for (let p = 0; p < 5; p++) {
+    s.tick();
+    await s.pages.create({ title: `big page ${p}`, project: 'big', body: `Lead of page ${p}, long enough to read.\n\n## Stack\nSomething.` }, 'owner');
+  }
+  const text = await (await s.connect())('project_brief', { project: 'big' });
+  const d = dataOf(text);
+  assert.equal(d.pages.length >= 2, true, `${d.pages.length} pages listed`);
+  assert.equal(d.pages[0].id, flagged.id, 'the out-of-date page comes first');
+  assert.ok(d.pages[0].may_be_out_of_date);
+  assert.equal(d.shortened?.pages_not_listed, 6 - d.pages.length);
+  assert.match(text, new RegExp(`May be out of date: page ${flagged.id}\\.`), 'the notice names the page by id');
+  assert.doesNotMatch(text.slice(0, text.indexOf('<memories>')), /big — overview/, 'titles stay out of the sentence');
+});
+
+test('the lead says "Pages ... may be out of date" when more than one page is flagged, "A page" for one', async () => {
+  const s = await withDecisions(0);
+  const fact: any = await s.save('decision', 'Billing runs nightly through cron');
+  s.tick();
+  await s.pages.create({ title: 'big — overview', project: 'big', body: `Lead.\n\n## Billing\nSee [[fact:${fact.memory.id}]].` }, 'owner');
+  s.tick();
+  await s.service.update(fact.memory.id, { content: 'Billing runs hourly through cron' }, { type: 'owner' });
+  const one = await (await s.connect())('project_brief', { project: 'big' });
+  assert.match(one, /A page of this project may be out of date/);
+  s.tick();
+  await s.pages.create({ title: 'big — setup', project: 'big', body: `Lead.\n\n## Jobs\nCron: [[fact:${fact.memory.id}]].` }, 'owner');
+  s.tick();
+  await s.service.update(fact.memory.id, { content: 'Billing runs every ten minutes through cron' }, { type: 'owner' });
+  const two = await (await s.connect())('project_brief', { project: 'big' });
+  assert.match(two, /Pages of this project may be out of date/);
+  assert.doesNotMatch(two, /A page of this project may/);
+});
+
+test('with notes or no flag, the floor pages are the ones with open notes first, then the most recent', async () => {
+  const s = await withDecisions(0);
+  const old = await s.pages.create({ title: 'big — old', project: 'big', body: 'Lead of the old page.\n\n## A\nx' }, 'owner');
+  for (let p = 0; p < 3; p++) { s.tick(); await s.pages.create({ title: `big page ${p}`, project: 'big', body: `Lead of page ${p}.\n\n## A\nx` }, 'owner'); }
+  s.notes.add(old.id, { text: 'Please fix the stack section' });
+  const d = dataOf(await (await s.connect())('project_brief', { project: 'big' }));
+  assert.equal(d.pages[0].id, old.id, 'the page with a note first');
+  assert.equal(d.pages[1].title, 'big page 2', 'then the most recent');
+  assert.doesNotMatch(JSON.stringify(d), /May be out of date/);
 });

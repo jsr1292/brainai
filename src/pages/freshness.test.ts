@@ -243,6 +243,18 @@ test('a linked fact deleted after the page counts as removed; deleted and brough
   assert.deepEqual(w.pages.freshness.forPage(p)!.linked.map((l) => [l.id, l.why, l.at]), [[a.id, 'removed', '2026-10-28T10:00:00.000Z']]);
 });
 
+test('a linked fact retired onto a page (moved, not removed) does not make the page out of date', async () => {
+  const w = await world();
+  const a = w.decision('2026-10-14T10:00:00.000Z', 'A', 'wildlog');
+  const b = w.decision('2026-10-15T10:00:00.000Z', 'B', 'wildlog');
+  w.at('2026-10-25T09:00:00.000Z');
+  const p = await w.pages.save(w.main.id, { base: 1, body: withLink(MAIN_BODY, a.id, b.id) }, 'Claude Code');
+  w.at('2026-10-28T10:00:00.000Z');
+  w.store.softDelete(a.id, 'owner', { movedTo: 'Wildlog › Key decisions' });
+  w.remove('2026-10-29T10:00:00.000Z', b.id);
+  assert.deepEqual(w.pages.freshness.forPage(p)!.linked.map((l) => [l.id, l.why]), [[b.id, 'removed']], 'only the really removed fact counts');
+});
+
 test('a removed linked fact keeps the page flagged after an edit to another section', async () => {
   const w = await world();
   const x = w.decision('2026-10-14T10:00:00.000Z', 'X', 'wildlog');

@@ -30,14 +30,22 @@ test('page escapes the title, links the stylesheet and has no inline script', ()
 test('the header is brain, four places, search and Settings', () => {
   const out = page('Projects', html``, { nav: true, tab: 'projects' });
   const header = out.slice(out.indexOf('<header'), out.indexOf('</header>'));
-  assert.match(header, /<nav class="tabs" aria-label="Main"><a href="\/" aria-current="page">Projects<\/a><a href="\/pages">Pages<\/a><a href="\/review">Week<\/a><a href="\/graph">Graph<\/a><\/nav>/);
+  assert.match(header, /<nav class="tabs" aria-label="Main"><a href="\/" aria-current="page">Projects<\/a><a href="\/pages">Pages<\/a><a href="\/approvals">Inbox<\/a><a href="\/review">Week<\/a><\/nav>/);
   assert.match(header, /placeholder="Search the brain"/);
   assert.match(header, /<form class="find" method="get" action="\/search" role="search"><input name="q" type="search"/);
   assert.match(header, /<a class="settings-link" href="\/settings"/);
   assert.doesNotMatch(header, /More|class="more|\/overview|\/left|\/memories|\/clients|\/activity/);
   // Log out lives in Settings › Your login now.
   assert.doesNotMatch(header, /action="\/logout"/);
-  assert.match(page('Graph', html``, { nav: true, tab: 'graph' }), /<a href="\/graph" aria-current="page">Graph<\/a>/);
+  // The Graph is not in the bar: its page lights Projects. Inbox lights for everything the desktop files under it.
+  const lit = (o: Parameters<typeof page>[2], title = 'X') => [...page(title, html``, { nav: true, ...o }).split('</header>')[0]!.matchAll(/<a href="[^"]+" aria-current="page">([A-Za-z]+)/g)].map((m) => m[1]);
+  assert.deepEqual(lit({ tab: 'graph' }), ['Projects']);
+  assert.deepEqual(lit({ tab: 'facts' }), ['Pages']);
+  assert.deepEqual(lit({ tab: 'inbox' }), ['Inbox']);
+  assert.deepEqual(lit({ tab: 'projects', sideTab: 'inbox' }), ['Inbox']);
+  assert.deepEqual(lit({ tab: 'facts' }, 'Tidy up'), ['Inbox']);
+  assert.deepEqual(lit({ tab: 'week' }), ['Week']);
+  assert.deepEqual(lit({ tab: 'settings' }), []);
   assert.match(page('Settings', html``, { nav: true, tab: 'settings' }), /<a class="settings-link" href="\/settings" aria-current="page"/);
 });
 

@@ -37,7 +37,7 @@ test('approve with edit, reject, and escaping', async (t) => {
   assert.equal(ok.headers.get('location'), '/approvals');
   assert.equal((await f(`/suggestions/${b.id}/reject`, { method: 'POST' })).status, 303);
   assert.deepEqual(deps.service.loadProfile().map((m) => m.content), ['Has a Synology NAS']);
-  assert.match(await (await f('/approvals')).text(), /Nothing waits for you\. Suggestions from assistants, discussions that need your answer and possible tidy-ups land here\./);
+  assert.match(await (await f('/approvals')).text(), /Nothing waits for you\. Suggestions from assistants, facts that disagree, possible tidy-ups and discussions that need your answer land here\./);
 });
 
 test('an invalid edit re-renders Approvals with the message and status 400', async (t) => {
@@ -60,7 +60,7 @@ test('shows current and new text for update, and current text for delete', async
   const d = deps.store.insert({ kind: 'profile', content: 'Fact to drop', project: null, tags: [], embedding: new Float32Array(4), by: 'owner' });
   deps.store.addSuggestion({ action: 'update', memoryId: m.id, content: 'New fact', tags: [], suggestedBy: 'Grok' });
   deps.store.addSuggestion({ action: 'delete', memoryId: d.id, content: null, tags: [], suggestedBy: 'Grok' });
-  const page = await (await f('/approvals')).text();
+  const page = (await Promise.all(deps.service.pendingSuggestions().map(async (s) => (await f(`/approvals?id=${s.id}`)).text()))).join('');
   assert.match(page, /Old fact/);
   assert.match(page, /New fact/);
   assert.match(page, /Fact to drop/);

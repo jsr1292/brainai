@@ -23,6 +23,8 @@ import { ImageStore } from './images/store.js';
 import { DiagramChecks } from './pages/diagramChecks.js';
 import { UploadLinks } from './images/uploadLinks.js';
 import { SkillService } from './skills/service.js';
+import { offerBuiltinSkills } from './skills/builtin.js';
+import { TidyService } from './memory/tidyService.js';
 import { loadSetupOverlay } from './setup/texts.js';
 import { SkillSync } from './skills/sync.js';
 import { PageService } from './pages/service.js';
@@ -114,6 +116,8 @@ const notes = new NoteService(db, pages, now);
 const images = new ImageStore(db, config.dataDir, now);
 const diagramChecks = new DiagramChecks(db, now);
 const skills = new SkillService(db, now);
+// B1: the harvest-session skill reaches the owner once, as a proposal from BrainAI in the Inbox.
+offerBuiltinSkills(db, skills, now);
 const uploadLinks = new UploadLinks(db, now);
 pages.setPictureStore(images);
 const projects = new ProjectsService(registry, service, store, discussions, pages, folders, learning);
@@ -139,7 +143,9 @@ cleanup();
 const timer = setInterval(cleanup, CLEANUP_INTERVAL_MS).unref();
 if (config.backupDir) scheduleBackups(db, config.backupDir, config.backupKeep, now, config.dataDir, config.localMode ? new BackupCopy(config.dataDir) : undefined);
 
+const tidy = new TidyService({ db, store, service, pages, now, cuts: () => ({ related: cut().related, duplicate: cut().duplicate }) });
 const deps: AppDeps = {
+  tidy,
   statusDir: config.dataDir, backupKeep: config.backupKeep, backupDir: config.backupDir, db,
   publicUrl: config.publicUrl, allowlist, store, service, registry, projects, discussions, growth, reviews, pages, images, diagramChecks, uploadLinks, setupOverlay: loadSetupOverlay(config.overlayDir), skills, skillSync: new SkillSync(db, now, skills), notes, devices, folders, imports: new ImportLog(db, now), learning, graph, provider, owner, sessions, limiter, clients, now,
   trustCfConnectingIp: config.trustCfConnectingIp, askCommands: () => config.askCommands, localMode: config.localMode, appSecret: config.appSecret,

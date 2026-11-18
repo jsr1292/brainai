@@ -25,6 +25,8 @@ export interface SkillProposal {
   /** The skill's version when the change was proposed; null for a new skill. */
   baseVersion: number | null;
   proposedBy: string; proposedAt: string;
+  /** Set only by the server for a skill BrainAI ships; no actor can set it, so it (not the proposer's name) marks a built-in offer. */
+  builtin: boolean;
   status: 'pending' | 'added' | 'applied' | 'rejected';
 }
 

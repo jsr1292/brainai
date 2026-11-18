@@ -4,8 +4,27 @@
  * what belongs to another brain.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+
+/**
+ * Writes a config in one step: a temp file in the same directory, renamed over the real file (a symlink is followed, so
+ * it stays a symlink), so a crash never leaves half a config. The file keeps its permissions.
+ */
+export function writeAtomic(path: string, text: string): void {
+  let target = path;
+  try { target = realpathSync(path); } catch { /* new file */ }
+  const tmp = join(dirname(target), `.${basename(target)}.brainai-${process.pid}.tmp`);
+  let mode: number | undefined;
+  try { mode = statSync(target).mode & 0o777; } catch { /* new file */ }
+  try {
+    writeFileSync(tmp, text, mode === undefined ? undefined : { mode });
+    renameSync(tmp, target);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+}
 
 const HOOK_FILES = ['memory-start.mjs', 'memory-save.mjs'];
 
@@ -14,9 +33,10 @@ const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null 
 /** Only our two scripts in ~/.claude/hooks: team-memory-save.mjs, or a memory-save.mjs elsewhere, is someone else's. */
 const OURS = /\.claude[\\/]hooks[\\/]memory-(?:start|save)\.mjs/;
 const namesOurs = (command: unknown) => typeof command === 'string' && OURS.test(command);
+export const matcherFor = (re: RegExp) => (command: unknown): boolean => typeof command === 'string' && re.test(command);
 
 /** A `hooks` value without the commands that name our scripts; null when nothing in it did. */
-function withoutOurHooks(hooks: Json): Json | null {
+export function withoutOurHooks(hooks: Json, namesOurs: (command: unknown) => boolean = (c) => typeof c === 'string' && OURS.test(c)): Json | null {
   let changed = false;
   const out: Json = {};
   for (const [event, groups] of Object.entries(hooks)) {
@@ -63,7 +83,7 @@ export function removeHooks(env: { home: string }, stillConnected: boolean): { r
         const next = withoutOurHooks(json.hooks);
         if (next) {
           const { hooks: _old, ...others } = json;
-          writeFileSync(settings, `${JSON.stringify(Object.keys(next).length > 0 ? { ...others, hooks: next } : others, null, 2)}\n`);
+          writeAtomic(settings, `${JSON.stringify(Object.keys(next).length > 0 ? { ...others, hooks: next } : others, null, 2)}\n`);
           rewritten = true;
         }
       }

@@ -1,35 +1,40 @@
-import type { Memory, Suggestion } from '../memory/types.js';
-import { errorBlock, plural, suggestionCard } from './dashboardViews.js';
-import type { Skill, SkillProposal } from '../skills/types.js';
-import { proposalCard } from './skillViews.js';
+import { errorBlock } from './dashboardViews.js';
 import { html, type SafeHtml } from './html.js';
+import type { InboxGroup, InboxItem, InboxModel } from './inboxModel.js';
 
 /** The answer when a suggestion no longer waits (answered on another device in the meantime). */
 export const ALREADY_ANSWERED = 'That suggestion was already answered.';
 
+/** What the Inbox says when nothing waits (also the first line of the empty page). */
+export const INBOX_EMPTY = 'Nothing waits for you.';
+
+const row = (it: InboxItem, selected: boolean): SafeHtml =>
+  html`<li><a class="ir${selected ? ' is-selected' : ''}" href="${it.href}"${selected ? html` aria-current="true"` : ''}><span class="ir-dot d-${it.kind}" aria-hidden="true"></span><span class="ir-txt"><span class="ir-t">${it.title}</span><span class="ir-s">${it.sub}</span></span></a></li>`;
+
+const group = (g: InboxGroup, selectedKey: string | null): SafeHtml =>
+  html`<section class="ig${g.kind === 'tidy' ? ' ig-quiet' : ''}"><h2 class="ig-h"><a href="${g.href}">${g.kind === 'tidy' ? html`${g.title} · ${g.items.length} · when you have time` : html`${g.title} · ${g.items.length}`}</a></h2><ul class="ig-list">${g.items.map((it) => row(it, it.key === selectedKey))}</ul></section>`;
+
+/** "N things wait for you" under the list's heading. */
+const waits = (n: number, tidy: number): string => {
+  const needs = n === 0 ? 'Nothing waits for you' : n === 1 ? '1 thing waits for you' : `${n} things wait for you`;
+  return tidy === 0 ? needs : `${needs} · ${tidy} ${tidy === 1 ? 'tidy-up' : 'tidy-ups'} when you have time`;
+};
+
 /**
- * The Inbox (its own place in the sidebar): what waits for the owner — suggestions, proposals, discussions that need
- * their answer, and possible tidy-ups — with the held suggestions as the full cards, each returning here.
+ * The Inbox: everything that waits for the owner, grouped with counts, in one list; the chosen item (or group) beside it
+ * on the desktop. On the phone the list is a page of its own and a row opens the item's page (`explicit` says an item was
+ * asked for: the stylesheet shows the pane, not the list, then; without it the list, not the pane).
  */
-export function approvalsView(v: { pending: { suggestion: Suggestion; current: string | undefined; replaces: Memory[]; deleted?: Memory }[]; proposals?: { proposal: SkillProposal; current: Skill | undefined }[]; waiting?: { id: string; title: string }[]; tidy?: string | null; notice?: string; error?: string }): SafeHtml {
-  const proposals = v.proposals ?? [];
-  const waiting = v.waiting ?? [];
-  const tidy = v.tidy ?? null;
-  /** One line per thing that waits, above the cards: the discussions first, then the tidy-ups. */
-  const lines: SafeHtml[] = [];
-  if (waiting.length > 0) {
-    const titles = waiting.map((w, i) => html`${i > 0 ? ', ' : ''}<a href="/discussions/${w.id}">${w.title}</a>`);
-    lines.push(html`<li><span class="il-k">Discussions</span><span>${plural(waiting.length, 'discussion waits', 'discussions wait')} for your reply: ${titles}</span></li>`);
+export function inboxView(v: { model: InboxModel; selectedKey: string | null; explicit: boolean; crumb: string; pos: string | null; pane: SafeHtml; notice?: string; error?: string; status?: SafeHtml | null}): SafeHtml {
+  const head = html`${errorBlock(v.error)}${v.status ?? ''}${v.notice ? html`<p class="notice" role="status">${v.notice}</p>` : ''}`;
+  if (v.model.items.length === 0) {
+    return html`<div class="narrow approvals inbox-empty"><h1>Inbox</h1>${head}<p class="quiet">${INBOX_EMPTY} Suggestions from assistants, facts that disagree, possible tidy-ups and discussions that need your answer land here.</p></div>`;
   }
-  if (tidy !== null) lines.push(html`<li><span class="il-k">Facts</span><span><a href="/facts/tidy">Tidy up: ${tidy}</a></span><span class="il-m">Possible tidy-ups</span></li>`);
-  const cards = v.pending.length > 0 || proposals.length > 0
-    ? html`<ul class="cards">${v.pending.map((p) => html`<li>${suggestionCard(p.suggestion, p.current, { back: '/approvals', replaces: p.replaces, deleted: p.deleted })}</li>`)}${proposals.map((p) => html`<li>${proposalCard(p.proposal, p.current)}</li>`)}</ul>`
-    : lines.length > 0 ? '' : html`<p class="quiet">Nothing waits for you. Suggestions from assistants, discussions that need your answer and possible tidy-ups land here.</p>`;
-  return html`<div class="narrow approvals">
-<h1>Inbox</h1>
-${errorBlock(v.error)}
-${v.notice ? html`<p class="notice" role="status">${v.notice}</p>` : ''}
-${lines.length > 0 ? html`<h2 class="ib-h">Waiting for you</h2><ul class="inbox-lines">${lines}</ul>` : ''}
-${cards}
+  // The status, notice and error line is the frame's first child, so it shows on the phone too (the pane is hidden there until an item is open).
+  return html`<div class="inbox${v.explicit ? ' has-item' : ''}">
+${head.value.trim() === '' ? '' : html`<div class="inbox-head">${head}</div>`}
+<nav class="inbox-list" aria-label="Inbox"><h1>Inbox</h1><p class="il-sub">${waits(v.model.total, v.model.tidyCount)}</p>${v.model.groups.map((g) => group(g, v.selectedKey))}</nav>
+<section class="inbox-pane" aria-label="${v.crumb}"><div class="inbox-bar"><a class="inbox-back" href="/approvals">‹ Inbox</a><span class="inbox-crumb">Inbox › <b>${v.crumb}</b></span>${v.pos ? html`<span class="inbox-pos">${v.pos}</span>` : ''}</div>
+${v.pane}</section>
 </div>`;
 }

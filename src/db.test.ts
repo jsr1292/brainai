@@ -23,7 +23,7 @@ test('openDb is idempotent on an existing file', (t) => {
   t.after(() => { for (const s of ['', '-wal', '-shm']) rmSync(path + s, { force: true }); });
   openDb(path).close();
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 37);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 43);
   assert.equal((db.prepare('SELECT count(*) c FROM redirect_allowlist').get() as any).c, 3);
 });
 
@@ -161,7 +161,7 @@ test('migration 13 backfills projects from memories and moves parked/done out of
   old.close();
 
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 37);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 43);
   const rows = db.prepare('SELECT name, state, area, created_by FROM projects ORDER BY name').all().map((r: any) => ({ ...r }));
   assert.deepEqual(rows, [
     { name: 'career', state: 'open', area: 'personal', created_by: 'migration' },
@@ -191,7 +191,7 @@ test('migration 20 adds weekly_reviews and the shared indexes and keeps existing
   old.close();
 
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 37);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 43);
   const names = db.prepare(`SELECT name FROM sqlite_master WHERE type IN ('table', 'index')`).all().map((r: any) => r.name);
   assert.ok(names.includes('weekly_reviews'));
   for (const i of ['memory_history_memory', 'memory_history_changed', 'memory_history_project', 'memories_created',
@@ -210,7 +210,7 @@ test('migration 21 adds runs_on and the meaning tables and keeps existing projec
   old.close();
 
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 37);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 43);
   assert.equal((db.prepare("SELECT runs_on FROM projects WHERE name = 'wildlog'").get() as any).runs_on, '[]');
   const names = db.prepare(`SELECT name FROM sqlite_master WHERE type IN ('table', 'index')`).all().map((r: any) => r.name);
   for (const n of ['meaning_links', 'meaning_indexed', 'meaning_links_b']) assert.ok(names.includes(n), `missing ${n}`);
@@ -229,7 +229,7 @@ test('migration 22 adds supersessions and keeps waiting suggestions', (t) => {
   old.close();
 
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 37);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 43);
   assert.equal((db.prepare("SELECT supersedes FROM profile_suggestions WHERE id = 's'").get() as any).supersedes, '[]');
   const names = db.prepare(`SELECT name FROM sqlite_master WHERE type IN ('table', 'index')`).all().map((r: any) => r.name);
   for (const n of ['supersessions', 'supersessions_live', 'supersessions_by_new']) assert.ok(names.includes(n), `missing ${n}`);
@@ -265,7 +265,7 @@ test('migration 23 starts unsaved Outline imports from Outline\'s date, in milli
   old.close();
 
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 37);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 43);
   const row = (id: string) => ({ ...(db.prepare('SELECT caught_up_at, caught_up_how, caught_up_by FROM pages WHERE id = ?').get(id) as any) });
   assert.deepEqual(row('A'), { caught_up_at: '2026-10-21T09:00:00.000Z', caught_up_how: 'imported', caught_up_by: 'Outline import' });
   assert.deepEqual(row('B'), { caught_up_at: '2026-11-02T08:00:00.000Z', caught_up_how: 'migrated', caught_up_by: 'owner' });
@@ -310,7 +310,7 @@ test('migration 25 adds the picture and diagram tables and keeps existing pages'
     VALUES ('P', 'P', 'p', NULL, 'start', 'Body.', 1, '2026-11-01T08:00:00.000Z', 'owner', '2026-11-01T08:00:00.000Z', 'owner', '2026-11-01T08:00:00.000Z', 'created', 'owner')`).run();
   old.close();
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 37);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 43);
   assert.equal((db.prepare("SELECT title FROM pages WHERE id = 'P'").get() as any).title, 'P');
   assert.deepEqual((db.prepare('PRAGMA table_info(images)').all() as { name: string }[]).map((c) => c.name),
     ['id', 'type', 'bytes', 'width', 'height', 'frames', 'alt', 'created_at', 'created_by', 'page_id', 'removed_at', 'removed_by']);
@@ -386,7 +386,7 @@ test('a pre-migration copy that cannot be written stops the migration', (t) => {
   const path = join(dir, 'memory.db');
   openDb(path, { upTo: 28 }).close();
   writeFileSync(join(dir, 'pre-migrate'), 'a file where the folder should be');
-  assert.throws(() => openDb(path), /Could not back up the database before migrating it \(version 28 to 37\).*Nothing was changed\./);
+  assert.throws(() => openDb(path), /Could not back up the database before migrating it \(version 28 to 43\).*Nothing was changed\./);
   rmSync(join(dir, 'pre-migrate'));
   mkdirSync(join(dir, 'pre-migrate'));
   // A copy that fails its check is removed, never kept as if it were good.
@@ -435,7 +435,7 @@ test('migration 37 lists rows saved with a placeholder vector as waiting for a m
   fact.run('old', Buffer.alloc(16));
   before.close();
   const db = openDb(path);
-  assert.equal((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version, 37);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version, 43);
   const waiting = () => db.prepare('SELECT tbl, key FROM embedding_pending ORDER BY tbl, key').all();
   assert.deepEqual(waiting(), [], 'rows from before the migration are left as they are');
   const real = Buffer.from(new Float32Array([0, 0.6, 0.8, 0]).buffer);
@@ -454,6 +454,38 @@ test('migration 37 lists rows saved with a placeholder vector as waiting for a m
   db.prepare("DELETE FROM observations WHERE id = 'o1'").run();
   db.prepare("DELETE FROM page_sections WHERE page_id = 'p1'").run();
   assert.deepEqual(waiting(), [{ tbl: 'm', key: 'm2' }]);
+  db.close();
+});
+
+test('migration 38 adds valid_until, source, source_note and source_by to facts, history and held saves without touching the old rows or the triggers', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'memtest-m38-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'memory.db');
+  const before = openDb(path, { upTo: 37 });
+  before.prepare("INSERT INTO memories(id, kind, content, project, tags, embedding, created_at, created_by, updated_at, updated_by) VALUES ('old', 'decision', 'The beds', NULL, '[]', ?, 'x', 'owner', 'x', 'owner')").run(Buffer.alloc(16));
+  before.prepare("INSERT INTO memory_history(memory_id, action, content, project, tags, changed_at, changed_by) VALUES ('old', 'update', 'Before', NULL, '[]', 'x', 'owner')").run();
+  before.prepare("INSERT INTO profile_suggestions(id, action, content, suggested_at, suggested_by) VALUES ('s1', 'add', 'x', 'x', 'Claude')").run();
+  const triggersBefore = (before.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name").all() as { name: string }[]).map((r) => r.name);
+  const tables = ['memories', 'memory_history', 'profile_suggestions'];
+  const rootpages = (d: ReturnType<typeof openDb>) => Object.fromEntries(tables.map((n) => [n, (d.prepare("SELECT rootpage FROM sqlite_master WHERE type = 'table' AND name = ?").get(n) as { rootpage: number }).rootpage]));
+  const pagesBefore = rootpages(before);
+  before.close();
+  const logged: string[] = [];
+  const log = console.log;
+  console.log = (...a: unknown[]) => { logged.push(a.join(' ')); };
+  let db: ReturnType<typeof openDb>;
+  try { db = openDb(path); } finally { console.log = log; }
+  assert.deepEqual(rootpages(db), pagesBefore, 'ADD COLUMN only: no table was rebuilt, so each keeps its root page');
+  assert.ok(!logged.some((l) => /restored \d+ of BrainAI's own database triggers/.test(l)), `no trigger had to be put back: ${logged.join(' | ')}`);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version, 43);
+  for (const table of tables) {
+    const cols = (db.pragma(`table_info(${table})`) as { name: string }[]).map((c) => c.name);
+    for (const c of ['valid_until', 'source', 'source_note', 'source_by']) assert.ok(cols.includes(c), `${table}.${c}`);
+  }
+  assert.deepEqual(db.prepare("SELECT valid_until, source, source_note, source_by FROM memories WHERE id = 'old'").get(), { valid_until: null, source: null, source_note: null, source_by: null });
+  assert.deepEqual(db.prepare('SELECT valid_until, source, source_note, source_by FROM memory_history').get(), { valid_until: null, source: null, source_note: null, source_by: null });
+  assert.deepEqual(db.prepare('SELECT valid_until, source, source_note, source_by FROM profile_suggestions').get(), { valid_until: null, source: null, source_note: null, source_by: null });
+  assert.deepEqual((db.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name").all() as { name: string }[]).map((r) => r.name), triggersBefore, 'no table was rebuilt: migration 37\'s triggers are all still there');
   db.close();
 });
 
@@ -538,5 +570,35 @@ test('an own trigger whose SQL differs is replaced by ours; other triggers are l
   const now = triggerRows(db);
   assert.deepEqual(now.filter((r) => r.name !== 'someone_elses'), ours);
   assert.ok(now.some((r) => r.name === 'someone_elses'));
+  db.close();
+});
+
+test('migration 42 adds saves_wait to grants (off for every old grant, without a table rebuild) and the brain_switches table', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'memtest-m42-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'memory.db');
+  const before = openDb(path, { upTo: 41 });
+  before.prepare("INSERT INTO oauth_grants(id, client_id, created_at) VALUES ('g-old', 'c', 'x')").run();
+  const rootBefore = (before.prepare("SELECT rootpage FROM sqlite_master WHERE type = 'table' AND name = 'oauth_grants'").get() as { rootpage: number }).rootpage;
+  before.close();
+  const db = openDb(path, { upTo: 42 });
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version, 42);
+  assert.equal((db.prepare("SELECT rootpage FROM sqlite_master WHERE type = 'table' AND name = 'oauth_grants'").get() as { rootpage: number }).rootpage, rootBefore, 'ADD COLUMN only');
+  assert.equal((db.prepare("SELECT saves_wait FROM oauth_grants WHERE id = 'g-old'").get() as { saves_wait: number }).saves_wait, 0, 'saves wait is off by default');
+  assert.deepEqual((db.pragma('table_info(brain_switches)') as { name: string }[]).map((c) => c.name), ['name', 'value', 'set_at']);
+  assert.equal((db.prepare('SELECT count(*) c FROM brain_switches').get() as { c: number }).c, 0, 'nothing is paused');
+  db.close();
+});
+
+test('migration 43 adds page_file_imports (a page made from an uploaded file remembers its file name and day)', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'memtest-m43-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'memory.db');
+  const before = openDb(path, { upTo: 42 });
+  assert.equal(before.prepare("SELECT count(*) c FROM sqlite_master WHERE name = 'page_file_imports'").pluck().get(), 0);
+  before.close();
+  const db = openDb(path);
+  assert.equal((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version, 43);
+  assert.deepEqual((db.pragma('table_info(page_file_imports)') as { name: string }[]).map((c) => c.name), ['page_id', 'file_name', 'imported_at']);
   db.close();
 });

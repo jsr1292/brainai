@@ -21,6 +21,19 @@ async function world(t: TestContext) {
   return { a, grant, p, link, put };
 }
 
+test('an upload is refused while all saves are paused or the connection\'s saves wait, and works again after', async (t) => {
+  const { a, grant, link, put } = await world(t);
+  a.deps.service.setSavesPaused(true);
+  const paused = await put(link(), await fx.jpegWithGps());
+  assert.equal(paused.status, 403);
+  a.deps.service.setSavesPaused(false);
+  a.deps.provider.setGrantSavesWait(grant.id, true);
+  const waiting = await put(link(), await fx.jpegWithGps());
+  assert.equal(waiting.status, 403);
+  a.deps.provider.setGrantSavesWait(grant.id, false);
+  assert.equal((await put(link(), await fx.jpegWithGps())).status, 201);
+});
+
 test('a shell assistant uploads through its one-use link and gets the Markdown line', async (t) => {
   const { a, p, link, put } = await world(t);
   const token = link('Reading a Rioja label');

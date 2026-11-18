@@ -12,7 +12,7 @@ export const SAME_PROJECT_FLOOR = 0.88;
 
 export interface ProjectCount { project: string; count: number }
 export interface Overlap { smaller: ProjectCount; larger: ProjectCount; similarity: number }
-export interface TidySummary { duplicates: number; statuses: { project: string; old: number }[]; overlaps: number; stale: number; gone: number }
+export interface TidySummary { duplicates: number; statuses: { project: string; old: number }[]; overlaps: number; stale: number; gone: number; /** A1: facts past their date (left out when none). */ pastDate?: number }
 
 const pairs = <T>(xs: T[]): [T, T][] => xs.flatMap((x, i) => xs.slice(i + 1).map((y): [T, T] => [x, y]));
 

@@ -253,11 +253,11 @@ test('Replace and Load model files are openable details with the house chevron, 
   assert.doesNotMatch(sec, /sends your best matches/);
 });
 
-test('the welcome describes Online with the same warning', async (t) => {
+test('the welcome offers no online reranker of its own and points to Settings › Search for it', async (t) => {
   const s = await setup(t, { installed: [] });
   const body = (await open(s.app.baseUrl, '/welcome?step=2', s.cookie)).body;
-  assert.doesNotMatch(body, /your best matches are sent|sends your best matches/);
-  assert.match(body, /your question and about 20 best matches are sent to this service/);
+  assert.doesNotMatch(body, /your best matches are sent|sends your best matches|best matches are sent to this service/);
+  assert.match(body, /Prefer an online reranker\? Set it up later in Settings › Search\./);
 });
 
 test('Load model files: a folder with the right files makes the model ready; a wrong file is refused and copies nothing', async (t) => {

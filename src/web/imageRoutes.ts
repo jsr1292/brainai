@@ -61,6 +61,7 @@ export function imageRoutes(d: AppDeps): Router {
 
   // Assistants with a shell: PUT the file to a one-use link (begin_image_upload). No session and no Origin (curl sends
   // none): the token is the key, checked with its connection before the body is read.
+  const SAVES_REFUSED = 'Saving is paused, or this connection\'s saves wait for the owner: pictures cannot be added right now. Tell the owner.';
   const USED_UP = { error: 'This upload link is used up or expired. Ask for a new one with begin_image_upload.' };
   const perIp = new RateLimiterMemory({ points: 100, duration: 15 * 60 });
   const limit: RequestHandler = async (req, res, next) => {
@@ -72,6 +73,9 @@ export function imageRoutes(d: AppDeps): Router {
     if (!d.provider.grantLive(link.grantId) || d.provider.grantAccess(link.grantId) !== 'full') {
       return void res.status(403).json({ error: 'This connection can no longer add pictures.' });
     }
+    if (d.service.savesPausedSince() !== null || d.provider.grantSavesWait(link.grantId)) {
+      return void res.status(403).json({ error: SAVES_REFUSED });
+    }
     const page = d.pages.get(link.pageId);
     if (!page || page.deletedAt !== null) return void res.status(410).json(USED_UP);
     res.locals.link = link;
@@ -82,6 +86,9 @@ export function imageRoutes(d: AppDeps): Router {
     // Checked again now the body has arrived (a slow upload), and the link claimed in the same step as the store.
     if (!d.provider.grantLive(link.grantId) || d.provider.grantAccess(link.grantId) !== 'full') {
       return void res.status(403).json({ error: 'This connection can no longer add pictures.' });
+    }
+    if (d.service.savesPausedSince() !== null || d.provider.grantSavesWait(link.grantId)) {
+      return void res.status(403).json({ error: SAVES_REFUSED });
     }
     if (!d.uploadLinks.claim(link.tokenHash)) return void res.status(410).json(USED_UP);
     try {

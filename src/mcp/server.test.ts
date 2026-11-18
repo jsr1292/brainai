@@ -47,7 +47,7 @@ test('advertises instructions and exactly the seventeen tools', async () => {
   const { client } = await connect();
   assert.equal(client.getInstructions(), SERVER_INSTRUCTIONS);
   assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(),
-    ['edit_page_section', 'flag_disagreement', 'forget', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'project_brief', 'read_page', 'recall', 'recent_work', 'remember', 'resolve_note', 'set_project_info', 'update_memory', 'weekly_review', 'whats_left', 'write_page']);
+    ['edit_page_section', 'flag_disagreement', 'forget', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'project_brief', 'read_page', 'recall', 'recent_work', 'remember', 'resolve_note', 'set_project_info', 'suggest_memories', 'update_memory', 'weekly_review', 'whats_left', 'write_page']);
 });
 
 test('save tool listings state content limits and update guidance', async () => {
@@ -1193,7 +1193,7 @@ test('every tool carries annotations: reads are read-only, forget is destructive
   const { client, cleanup } = await connectEverything();
   t.after(cleanup);
   const tools = (await client.listTools()).tools;
-  assert.equal(tools.length, 31, tools.map((x) => x.name).join(', '));
+  assert.equal(tools.length, 32, tools.map((x) => x.name).join(', '));
   const by = (n: string) => tools.find((x) => x.name === n)!;
   for (const x of tools) {
     assert.ok(x.annotations && x.annotations.readOnlyHint !== undefined, `${x.name} has no annotations`);
@@ -1201,12 +1201,12 @@ test('every tool carries annotations: reads are read-only, forget is destructive
   }
   const reads = ['recall', 'project_brief', 'list_projects', 'recent_work', 'whats_left', 'list_pages', 'read_page', 'list_skills', 'list_discussions', 'read_discussion', 'view_image'];
   for (const name of reads) assert.equal(by(name).annotations?.readOnlyHint, true, name);
-  for (const name of ['remember', 'update_memory', 'forget', 'load_profile', 'weekly_review', 'write_page', 'edit_page_section', 'set_project_info', 'flag_disagreement', 'note_observation', 'resolve_note']) {
+  for (const name of ['remember', 'update_memory', 'forget', 'load_profile', 'weekly_review', 'write_page', 'edit_page_section', 'set_project_info', 'flag_disagreement', 'note_observation', 'resolve_note', 'suggest_memories']) {
     assert.equal(by(name).annotations?.readOnlyHint, false, name);
   }
   assert.equal(by('forget').annotations?.destructiveHint, true);
   for (const name of ['update_memory', 'write_page', 'edit_page_section']) assert.notEqual(by(name).annotations?.destructiveHint, false, `${name} stays destructive`);
-  for (const name of ['load_profile', 'weekly_review', 'set_project_info', 'resolve_note', 'close_discussion']) assert.equal(by(name).annotations?.destructiveHint, false, name);
+  for (const name of ['load_profile', 'weekly_review', 'set_project_info', 'resolve_note', 'close_discussion', 'suggest_memories']) assert.equal(by(name).annotations?.destructiveHint, false, name);
   for (const name of ['load_profile', 'weekly_review']) assert.equal(by(name).annotations?.idempotentHint, true, name);
   assert.match(by('load_skill').description ?? '', /records which assistant loaded the skill and when/);
 });

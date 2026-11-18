@@ -29,6 +29,8 @@ export function mcpServerFor(d: AppDeps, o: { actorName: string; access: Access;
     projects: o.projects,
     onSetup: o.onSetup,
     skills: d.skills,
+    tidy: d.tidy,
+    savesWait: (id) => d.provider.grantSavesWait(id),
     health: () => healthOf(d, d.now()),
   });
 }

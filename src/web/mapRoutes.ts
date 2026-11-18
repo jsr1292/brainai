@@ -33,7 +33,7 @@ export function mapRoutes(d: AppDeps): Router {
       .filter((x): x is { project: string; area: CheckArea } => x.area !== null);
     for (const area of CHECK_AREAS) { const hit = nexts.find((x) => x.area === area); if (hit) { learnNext = hit; break; } }
     const view: MapView = { sections, total: sections.reduce((n, s) => n + s.rows.length, 0), learnNext, history: d.learning.history(MAP_WEEKS), now };
-    res.type('html').send(page('Map', mapView(view), { nav: true, tab: 'projects', back: { href: '/', label: 'Projects' } }));
+    res.type('html').send(page('Five areas', mapView(view), { nav: true, tab: 'projects', back: { href: '/', label: 'Projects' } }));
   });
   return router;
 }

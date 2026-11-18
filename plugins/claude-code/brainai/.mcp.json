@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "brainai": {
+      "type": "http",
+      "url": "${user_config.brainai_url}"
+    }
+  }
+}

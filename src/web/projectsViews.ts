@@ -151,6 +151,12 @@ function leftOff(text: string): SafeHtml {
 const areaStatus = (s: ShownStatus): SafeHtml =>
   s === 'not_needed' ? html`<span class="adash" aria-hidden="true">–</span>` : html`<span class="pdot a-st-${s}" aria-hidden="true"></span>`;
 
+/** The key to the area marks, drawn with the marks themselves (the panel's and the Five areas page's). */
+export const areaKey = (): SafeHtml => html`<p class="key area-key" aria-label="Key to the marks"><span><span class="pdot a-st-done" aria-hidden="true"></span> done</span><span><span class="pdot a-st-look" aria-hidden="true"></span> worth a look</span><span><span class="pdot a-st-todo" aria-hidden="true"></span> not started</span><span><span class="pdot a-st-unknown" aria-hidden="true"></span> unknown</span><span><span class="adash" aria-hidden="true">–</span> not needed</span></p>`;
+
+/** The key to the state dots on the project cards: the words are the ones the dots carry as their labels. */
+const dotKey = (): SafeHtml => html`<p class="key dot-key" aria-label="Key to the dots"><span><span class="pdot d-wait" aria-hidden="true"></span> ${DOT_LABEL.wait}</span><span><span class="pdot d-on" aria-hidden="true"></span> ${DOT_LABEL.on}</span><span><span class="pdot d-quiet" aria-hidden="true"></span> ${DOT_LABEL.quiet}</span></p>`;
+
 /**
  * The project's five areas (spec 2026-11-11): each with its status, the developer term, the note and when, the why one tap
  * away, and a small form for the owner; then the handbook topics applied on the project.
@@ -160,6 +166,8 @@ function fiveAreas(name: string, d: ProjectDetail, now: Date): SafeHtml {
   // No status is preselected: one Save without choosing must never mark an area done.
   const option = (v: CheckStatus) => html`<option value="${v}">${STATUS_LABELS[v]}</option>`;
   return html`<h3 id="p-areas">Five areas</h3>
+  <p class="area-intro">Five things that make a project safe to leave alone. Your assistants fill these in as you work together.</p>
+  ${areaKey()}
   <ul class="areas plain-list">${d.areas.map((a) => html`<li class="area-row">
     <div class="area-head">${areaStatus(a.status)}<b>${CHECK_LABELS[a.area].name}</b><span class="area-term">${CHECK_LABELS[a.area].term}</span><span class="area-st">${STATUS_LABELS[a.status]}${a.snoozedUntil ? html` · not now until ${longDate(new Date(a.snoozedUntil))}` : ''}</span></div>
     ${a.note ? html`<p class="area-note">${a.note}${a.setAt ? html` <span class="quiet">· ${a.setBy === 'owner' ? 'you' : a.setBy}, ${timeAgo(a.setAt, now)}</span>` : ''}</p>` : ''}
@@ -171,7 +179,14 @@ function fiveAreas(name: string, d: ProjectDetail, now: Date): SafeHtml {
       </form>
     </details>
   </li>`)}</ul>
-  ${d.handbook.length > 0 ? html`<h3 id="p-handbook">Handbook</h3><ul class="plain-list handbook">${d.handbook.map((t) => html`<li>${t.pageId ? html`<a href="/pages/${t.pageId}">${t.title}</a>` : t.title} <span class="quiet">· ${{ seen: 'seen', helped: 'done with help', alone: 'done alone' }[t.level]}</span></li>`)}</ul>` : ''}`;
+  ${d.handbook.length > 0 ? html`<h3 id="p-handbook">What you learned here</h3><ul class="plain-list handbook">${d.handbook.map((t) => html`<li>${t.pageId ? html`<a href="/pages/${t.pageId}">${t.title}</a>` : t.title} <span class="quiet">· ${{ seen: 'seen', helped: 'done with help', alone: 'done alone' }[t.level]}</span></li>`)}</ul>` : ''}`;
+}
+
+/** The roadmap's Now line above what waits on the owner: "NOW · step · step 3 of 4", with the week review's small bar. */
+function nowLine(r: { now: string | null; progress: { done: number; total: number } | null } | null | undefined): SafeHtml {
+  if (!r?.now) return html``;
+  const p = r.progress;
+  return html`<p class="pnow"><span class="eyebrow">Now</span> · <span class="pnow-step">${r.now}</span>${p ? html` · <span class="progress"><progress value="${p.done}" max="${p.total}">${p.done} of ${p.total}</progress>step ${p.done} of ${p.total}</span>` : ''}</p>`;
 }
 
 function panel(d: ProjectDetail, now: Date, error?: string): SafeHtml {
@@ -209,6 +224,7 @@ function panel(d: ProjectDetail, now: Date, error?: string): SafeHtml {
   ${jump}
   <h3>Where you left off${d.leftOff ? html` <span class="quiet">· ${pastLabel(d.leftOff.updatedAt, now)}</span>` : ''}</h3>
   ${d.leftOff ? leftOff(d.leftOff.content) : d.card.roadmap?.now ? html`<p class="leftoff">${d.card.roadmap.now}</p>` : html`<p class="quiet">No status saved yet.</p>`}
+  ${d.leftOff ? nowLine(d.card.roadmap) : ''}
   ${waiting}
   ${disagreeGroup(p.name, d.disagreements, now)}
   ${doneToday}
@@ -282,8 +298,10 @@ export interface HomeViewInput {
   modelsLine?: SafeHtml;
   /** The update card (the app only), above the models line. */
   updateCard?: SafeHtml;
-  /** The off-site backup nudge (the app only), under the update card. */
+  /** The off-site backup nudge (the app only), under the update card; the first-steps checklist replaces it while it shows. */
   offsiteCard?: SafeHtml;
+  /** The first-steps checklist, on the plain home, until every step is done or the owner hides it. */
+  firstSteps?: SafeHtml;
 }
 
 /**
@@ -308,16 +326,21 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   const forYou = forYouCard(forYouRows({ approvals: v.approvals, disagreements: v.disagreements ?? 0, health: v.health, discussions: v.discussionsWaiting ?? [], weekLine: v.weekLine ?? null, suggestions: home.suggestions }));
   const empty = home.sections.length === 0;
   const plain = mode === 'home';
+  // The plain home reaches the map and the discussions through its links row: its card of the same two rows would only repeat them.
+  // Beside an open project (the list pane) the rows stay: the links row is not drawn there.
+  const notIn = notInBrain(home.folders, v.ignored ?? [], plain);
+  const pextra = plain
+    ? (notIn.value.trim() === '' ? html`` : html`<ul class="group pfolds pextra">${notIn}</ul>`)
+    : html`<ul class="group pfolds pextra"><li><a class="row nolead map-link" href="/map"><span class="txt"><b>Five areas</b> · every project against the five areas</span><span class="chev"></span></a></li>${notIn}${allDiscussions(v.discussions ?? [], mode)}</ul>`;
   return html`<div class="plist">
   <h1>Projects${plain ? html`<span class="phome-date" hidden>${longDate(now)}</span>` : ''}</h1>
   ${errorBlock(v.error)}
-  ${banner}${v.updateCard ?? ''}${v.offsiteCard ?? ''}${v.modelsLine ?? ''}
+  ${banner}${v.updateCard ?? ''}${plain && v.firstSteps ? v.firstSteps : v.offsiteCard ?? ''}${v.modelsLine ?? ''}
   <form method="post" action="/projects/ideas" class="idea"><label class="visually-hidden" for="idea-text">A new idea</label><input id="idea-text" name="text" maxlength="140" placeholder="An idea…" autocomplete="off"><button type="submit" class="primary">Add idea</button></form>
   ${forYou.value === '' ? '' : html`<h2 class="fy-h" id="foryou" hidden>For you</h2>`}${forYou}
-  ${!empty ? '' : v.connected === false
-    ? html`<div class="quiet empty"><p>No projects yet. Connect an assistant, and what it saves appears here.</p><p class="first-step"><a class="button" href="/settings#setup">Connect your first assistant</a></p></div>`
-    : html`<p class="quiet empty">No projects yet. They appear here as soon as an assistant saves something about one.</p>`}
-  ${home.sections.length > 0 ? html`<div class="pareas">${home.sections.map((sec) => areaSection(sec, now, sel, mode))}</div>` : ''}
-  <ul class="group pfolds pextra"><li><a class="row nolead map-link" href="/map"><span class="txt"><b>Map</b> · every project against the five areas</span><span class="chev"></span></a></li>${notInBrain(home.folders, v.ignored ?? [], plain)}${allDiscussions(v.discussions ?? [], mode)}</ul>
+  ${!empty ? '' : html`<p class="quiet empty">No projects yet. They appear here as soon as an assistant saves something about one.</p>`}
+  ${home.sections.length > 0 ? html`<div class="pareas">${dotKey()}${home.sections.map((sec) => areaSection(sec, now, sel, mode))}</div>` : ''}
+  ${pextra}
+  <p class="home-links">${empty ? '' : html`<a href="/map">Five areas</a>`}<a href="/graph">Graph</a><a href="/discussions">Discussions</a></p>
 </div>`;
 }

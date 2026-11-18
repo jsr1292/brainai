@@ -4,6 +4,7 @@ import type { MemoryService } from '../memory/service.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { Supersession } from '../memory/supersessions.js';
 import type { Memory } from '../memory/types.js';
+import { metaExportText } from '../memory/factMeta.js';
 import type { PageService } from './service.js';
 import type { SkillService } from '../skills/service.js';
 
@@ -57,11 +58,13 @@ export function fileName(title: string, taken: Set<string>): string {
 }
 
 const day = (iso: string) => iso.slice(0, 10);
-const factBlock = (m: Memory) => `### ${m.kind} · ${day(m.updatedAt)} · ${m.id}\n\n${m.content.replace(/\s+$/, '')}\n`;
+/** The fact's date and source (A1, A2) as an italic line under its text, when it has either. */
+const metaLine = (m: Memory) => (metaExportText(m) === '' ? '' : `\n_${metaExportText(m)}_\n`);
+const factBlock = (m: Memory) => `### ${m.kind} · ${day(m.updatedAt)} · ${m.id}\n\n${m.content.replace(/\s+$/, '')}\n${metaLine(m)}`;
 
 /** A replaced fact, with the day it was replaced and the fact that replaced it. */
 const replacedBlock = (r: { m: Memory; row: Supersession }) =>
-  `### ${r.m.kind} · ${day(r.m.updatedAt)} · ${r.m.id} · replaced ${day(r.row.createdAt)} by ${r.row.newId}\n\n${r.m.content.replace(/\s+$/, '')}\n`;
+  `### ${r.m.kind} · ${day(r.m.updatedAt)} · ${r.m.id} · replaced ${day(r.row.createdAt)} by ${r.row.newId}\n\n${r.m.content.replace(/\s+$/, '')}\n${metaLine(r.m)}`;
 
 /** `replaced` ends the file under "## Replaced", oldest replacement first, so the nightly diff only grows at the end. */
 function factFile(title: string, ms: Memory[], replaced: { m: Memory; row: Supersession }[] = []): string {

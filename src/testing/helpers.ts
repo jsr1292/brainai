@@ -6,6 +6,7 @@ import { DiagramChecks } from '../pages/diagramChecks.js';
 import { UploadLinks } from '../images/uploadLinks.js';
 import { SkillService } from '../skills/service.js';
 import { SkillSync } from '../skills/sync.js';
+import { TidyService } from '../memory/tidyService.js';
 import type { SetupOverlay } from '../setup/texts.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -58,6 +59,11 @@ export function makeService(opts: { now?: Clock; threshold?: number } = {}): { d
   const store = new MemoryStore(db, opts.now ?? (() => new Date()));
   const service = new MemoryService(store, createFakeEmbedder(), { duplicateThreshold: opts.threshold ?? 0.9, minRecallSimilarity: 0.2, recallConfidentSimilarity: 0.2 });
   return { db, store, service };
+}
+
+/** B2: the tidy service on a test database. The fake embedder's vectors are bags of words, so the cut-offs are low: 0.5 related, 0.95 duplicate. */
+export function makeTidy(given: { db: DB; store: MemoryStore; service: MemoryService; pages?: PageService }, now: Clock = () => new Date(), cuts = { related: 0.5, duplicate: 0.95 }): TidyService {
+  return new TidyService({ db: given.db, store: given.store, service: given.service, pages: given.pages ?? makePages(given, now), now, cuts: () => cuts });
 }
 
 /** The Growth service on a test database (fake embedder, the same 0.9 merge threshold as makeService). */
@@ -130,7 +136,9 @@ export async function startTestApp(opts: { publicUrl?: string; trustCfConnecting
   const images = new ImageStore(db, imagesDir, now);
   pages.setPictureStore(images);
   const skills = new SkillService(db, now);
+  const tidy = makeTidy({ db, store, service, pages }, now);
   const deps: AppDeps = {
+    tidy,
     allowlist,
     publicUrl, store, service, registry, projects, graph, discussions, growth, reviews, pages, images, diagramChecks: new DiagramChecks(db, now), uploadLinks: new UploadLinks(db, now), skills, skillSync: new SkillSync(db, now, skills), notes: new NoteService(db, pages, now), devices, folders, imports: new ImportLog(db, now), relatedSimilarity: 0.2, sameProjectFloor: 0.88, learning, provider, owner, sessions: new SessionStore(db, now), limiter: new LoginLimiter(), clients, now,
     trustCfConnectingIp: opts.trustCfConnectingIp, statusDir: opts.statusDir, setupOverlay: opts.setupOverlay,

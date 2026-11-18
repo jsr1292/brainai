@@ -6,6 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
+import { BRAINAI_NAME, posesAsBrainAI } from '../memory/types.js';
 import { findSecret } from '../memory/secrets.js';
 import { MAX_BODY } from '../pages/types.js';
 import { SkillStore } from './store.js';
@@ -133,15 +134,26 @@ export class SkillService {
 
   /** An assistant's new skill, or a change to one: it waits for the owner. One per (name, proposer). */
   propose(input: SkillInput, by: string): SkillProposal {
+    if (posesAsBrainAI(by)) throw new SkillError('invalid', 'Not sent: that connection name is kept for BrainAI itself.');
+    return this.send(input, by, false);
+  }
+
+  /** A skill BrainAI ships, offered to the owner (src/skills/builtin.ts only; no tool or route reaches it). Marked built-in by the server. */
+  proposeBuiltin(input: SkillInput): SkillProposal {
+    return this.send(input, BRAINAI_NAME, true);
+  }
+
+  private send(input: SkillInput, by: string, builtin: boolean): SkillProposal {
     return this.store.atomic(() => {
       const existing = this.store.byName(input.name.trim());
       const s = this.check(input, existing?.id);
-      const mine = this.store.pendingProposals().filter((p) => p.name === s.name && p.proposedBy === by);
+      // One waiting proposal per (name, proposer, origin): an assistant never replaces a built-in offer, nor the other way round.
+      const mine = this.store.pendingProposals().filter((p) => p.name === s.name && p.proposedBy === by && p.builtin === builtin);
       for (const p of mine) this.store.resolveProposal(p.id, 'rejected');
       if (this.store.pendingProposals().length >= MAX_PENDING_PROPOSALS) {
         throw new SkillError('invalid', `Not sent: ${MAX_PENDING_PROPOSALS} skill proposals already wait for the owner.`);
       }
-      return this.store.addProposal({ skillId: existing?.id ?? null, ...s, baseVersion: existing?.version ?? null, proposedBy: by });
+      return this.store.addProposal({ skillId: existing?.id ?? null, ...s, baseVersion: existing?.version ?? null, proposedBy: by, builtin });
     });
   }
 
@@ -179,6 +191,20 @@ export class SkillService {
       this.store.resolveProposal(id, 'applied');
       return s;
     });
+  }
+
+  /** Undo a rejection: the proposal waits again. */
+  reopenRejected(id: string): void {
+    const p = this.store.proposal(id);
+    if (!p || p.status !== 'rejected') throw new SkillError('invalid', 'That proposal was not rejected.');
+    const waiting = this.store.pendingProposals();
+    if (waiting.some((w) => w.name === p.name && w.proposedBy === p.proposedBy)) {
+      throw new SkillError('invalid', `That can no longer be undone: ${p.proposedBy} sent a newer proposal for "${p.name}", which waits in the Inbox.`);
+    }
+    if (waiting.length >= MAX_PENDING_PROPOSALS) {
+      throw new SkillError('invalid', `That can no longer be undone: ${MAX_PENDING_PROPOSALS} skill proposals already wait in the Inbox. Answer some first.`);
+    }
+    this.store.resolveProposal(id, 'pending');
   }
 
   rejectProposal(id: string): void {

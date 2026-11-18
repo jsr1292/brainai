@@ -17,7 +17,7 @@ test('an empty brain looks right', async (t) => {
     ['/pages', /No pages yet\./],
     ['/facts', /No facts yet\./],
     ['/discussions', /No discussions yet\. Ask an assistant to open one when you want several opinions\./],
-    ['/approvals', /Nothing waits for you\. Suggestions from assistants, discussions that need your answer and possible tidy-ups land here\./],
+    ['/approvals', /Nothing waits for you\. Suggestions from assistants, facts that disagree, possible tidy-ups and discussions that need your answer land here\./],
     ['/review', /There is no finished week yet\./],
     ['/review/now', /No changes yet this week\./],
     ['/growth', /Nothing noticed yet\./],

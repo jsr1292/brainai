@@ -78,7 +78,7 @@ test('waiting on you: 100 less 10 for each thing, never below 0, each with where
   assert.equal(h.waiting.score, 50);
   assert.deepEqual(h.waiting.reasons, [
     { text: '2 changes wait for your approval', href: '/approvals' },
-    { text: '2 facts disagree', href: '/disagreements' },
+    { text: '1 pair of facts disagrees', href: '/disagreements' },
     { text: 'homelab: "swap the disk" was due 3 Nov', href: '/?project=homelab#panel' },
     { text: 'Pick a DB waits on you', href: '/discussions/d1' },
   ]);

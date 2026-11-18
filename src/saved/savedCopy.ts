@@ -42,7 +42,7 @@ function claimFolder(parentDir: string, day: string): string {
 /** "1 fact and 2 pages": how every place that reports a saved copy counts it. */
 export const factsAndPages = (facts: number, pages: number): string => `${plural(facts, 'fact', 'facts')} and ${plural(pages, 'page', 'pages')}`;
 
-export function savedReadme(i: { day: string; facts: number; pages: number; checklist: string[]; originals: string[] }): string {
+export function savedReadme(i: { day: string; facts: number; pages: number; checklist: string[]; originals: string[]; /** Files BrainAI dealt with itself instead of copying here (they can hold tokens). */ handled?: string[] }): string {
   const lines = [
     `BrainAI saved ${i.day}`,
     '',
@@ -58,12 +58,13 @@ export function savedReadme(i: { day: string; facts: number; pages: number; chec
     '* A server: docs/RUNBOOK.md, Coming back from a saved copy.',
   ];
   if (i.originals.length > 0) lines.push('', 'Your original tool settings (as they were before BrainAI changed them):', ...i.originals.map((o) => `* Original tool settings/${o}`));
+  if (i.handled?.length) lines.push('', 'Not copied into this folder (they can hold secrets):', ...i.handled.map((h) => `* ${h}`));
   if (i.checklist.length > 0) lines.push('', 'Things BrainAI could not remove:', ...i.checklist.map((c) => `* ${c}`));
   return lines.join('\n') + '\n';
 }
 
 /** Writes README.txt whole (never appended to), so the final checklist and originals replace any earlier version. */
-export function writeReadme(folder: string, i: { day: string; facts: number; pages: number; checklist: string[]; originals: string[] }): void {
+export function writeReadme(folder: string, i: { day: string; facts: number; pages: number; checklist: string[]; originals: string[]; /** Files BrainAI dealt with itself instead of copying here (they can hold tokens). */ handled?: string[] }): void {
   writeFileSync(join(folder, 'README.txt'), savedReadme(i), { mode: 0o600 });
 }
 

@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { writeBackupStatus } from '../backupStatus.js';
 import { contrast, palettes, parse, propIn, rgb } from '../testing/css.js';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
-import { html, page } from './html.js';
+import { html, page, setGoTo } from './html.js';
 import { setSideStatus } from './sideStatus.js';
 
 const deskCss = readFileSync(new URL('./static/desk.css', import.meta.url), 'utf8');
@@ -71,10 +71,10 @@ test('the sidebar comes right after the header, hidden, labelled Main, with ever
   assert.deepEqual(links(side).map(([c, h, t]) => [c, h, t]), [
     ['brand', '/', 'BrainAI'],
     ['side-place', '/', 'Projects'],
-    ['side-place', '/pages', 'Pages'],
+    ['side-place', '/pages', 'Pages'], ['side-sub', '/skills', 'Skills'],
     ['side-place', '/facts', 'Facts'],
     ['side-place', '/approvals', 'Inbox'],
-    ['side-place', '/review', 'Week'], ['side-sub', '/review', 'Last week'], ['side-sub', '/review/now', 'So far'], ['side-sub', '/growth', 'Growth'],
+    ['side-place', '/review', 'Week'], ['side-sub', '/review', 'Last week'], ['side-sub', '/review/now', 'So far'], ['side-sub', '/growth', 'Growth'], ['side-sub', '/activity', 'Activity'],
     ['side-place', '/graph', 'Graph'],
     ['side-place side-settings', '/settings', 'Settings'],
   ]);
@@ -89,7 +89,10 @@ test('the sidebar lights the place and the section in view', async (t) => {
   assert.deepEqual(await lit('/'), ['place:Projects:page']);
   assert.deepEqual(await lit('/pages'), ['place:Pages:page']);
   assert.deepEqual(await lit('/facts'), ['place:Facts:page']);
-  assert.deepEqual(await lit('/facts/tidy'), ['place:Facts:page']);
+  assert.deepEqual(await lit('/facts/tidy'), ['place:Inbox:page']);
+  assert.deepEqual(await lit('/disagreements'), ['place:Inbox:page']);
+  assert.deepEqual(await lit('/skills'), ['place:Pages:true', 'sub:Skills:page']);
+  for (const path of ['/settings/pictures']) assert.deepEqual(await lit(path), ['place side-settings:Settings:page'], path);
   assert.deepEqual(await lit('/approvals'), ['place:Inbox:page']);
   assert.deepEqual(await lit('/review'), ['place:Week:true', 'sub:Last week:page']);
   assert.deepEqual(await lit('/review/now'), ['place:Week:true', 'sub:So far:page']);
@@ -100,8 +103,8 @@ test('the sidebar lights the place and the section in view', async (t) => {
   assert.deepEqual(await lit('/search?q=x'), []);
   const p = (await a.deps.service.remember({ kind: 'profile', content: 'Prefers short answers' }, { type: 'owner' }) as any).memory;
   assert.deepEqual(await lit(`/memories/${p.id}`), ['place:Facts:page']);
-  // A section lights only under its own place: a project's fact goes back to its project, so Projects is lit, alone.
-  assert.deepEqual(await lit(`/memories/${m.id}`), ['place:Projects:page']);
+  // A fact page lights Facts, also for a fact with a project (its back link still goes to the project).
+  assert.deepEqual(await lit(`/memories/${m.id}`), ['place:Facts:page']);
 });
 
 test('the sidebar search keeps the query', async (t) => {
@@ -270,7 +273,8 @@ test('the sidebar search has a magnifier and a bordered ⌘K key cap', () => {
 
 test('pages with the app nav carry data-desk with the fingerprinted desk.js; login pages do not', () => {
   setSideStatus(null);
-  assert.match(page('P', html``, { nav: true }), /<body class="app" data-desk="\/static\/desk\.js\?v=\w{10}">/);
+  setGoTo([]);
+  assert.match(page('P', html``, { nav: true }), /<body class="app" data-desk="\/static\/desk\.js\?v=\w{10}"(?: data-server)?>/);
   assert.doesNotMatch(page('P', html``, {}), /data-desk/);
 });
 
@@ -445,30 +449,24 @@ test('in the list pane the folds end with Not in the brain yet, counts on the ri
   assert.equal(propIn(deskRules, '.phome.has-panel > .plist .pfolds :is(details.fold > summary, a.row) .n', 'margin-left', D), 'auto');
 });
 
-// ---- Task 9: the approval in the sheet ----
+// ---- Task 9: the approval, in the Inbox's pane (it was a sheet before the Inbox became its own page) ----
 
-test('the approval reads as in the mockup: the sentence as the title, insets on raised, Reject pushed right', () => {
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-head', 'font-size', D), 'var(--t-title)');
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-head', 'font-weight', D), '700');
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card > .meta-line', 'order', D), '-1');
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card blockquote', 'background', D), 'var(--raised)');
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card blockquote', 'border-radius', D), 'var(--r-inset)');
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card blockquote', 'padding', D), '14px 16px');
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card .push-right', 'margin-left', D), 'auto');
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card form', 'margin-top', D), '20px');
+test('the approval reads as in the mockup: one heading size, insets on raised, Reject pushed right', () => {
+  // The writer's name is the heading's own size and weight, not a chip of its own (QA 2026-11-18 #4).
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .approval-head', 'font-size', D), 'var(--t-section)');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .approval-head', 'font-weight', D), '700');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .approval-head .writer', 'font', D), 'inherit');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card blockquote', 'background', D), 'var(--raised)');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card blockquote', 'border-radius', D), 'var(--r-inset)');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card blockquote', 'padding', D), '14px 16px');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .push-right', 'margin-left', D), 'auto');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card form', 'margin-top', D), '20px');
   assert.equal(propIn(deskRules, '.desk-sheet .desk-next', 'margin', D), '28px 0 14px');
-});
-
-test('with one card the Approvals heading is visually hidden, never display: none', () => {
-  const sel = '.desk-sheet .approvals:has(> ul.cards > li:only-child) > h1';
-  assert.equal(propIn(deskRules, sel, 'clip-path', D), 'inset(50%)');
-  assert.equal(propIn(deskRules, sel, 'position', D), 'absolute');
-  for (const r of deskRules) if (r.selectors.some((s) => /approvals[^,]*> h1/.test(s))) assert.notEqual(r.decls.display, 'none');
 });
 
 test('no desk rule hides the Held because line', () => {
   for (const r of deskRules) if (r.selectors.some((s) => /\.held\b/.test(s))) assert.notEqual(r.decls.display, 'none');
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card .held', 'color', D), 'var(--error)');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .held', 'color', D), 'var(--error)');
 });
 
 // ---- Task 10: the discussion in the sheet ----
@@ -489,33 +487,109 @@ test('the keys sheet has no focus ring of its own (it is the dialog, not a contr
   assert.equal(propIn(deskRules, '.desk-keys:focus-visible', 'outline', D), 'none');
 });
 
-test('in the sheet Edit first is a quiet outlined pill and Save decision and close is the one black pill, as in the mockup', () => {
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card .edit-first > summary', 'border', D), '1px solid var(--line-strong)');
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card .edit-first > summary', 'background', D), 'var(--surface)');
+test('in the pane Edit first is a quiet outlined pill, opening its text above the buttons; Save decision and close is the one black pill in a sheet', () => {
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .edit-first > summary', 'border', D), '1px solid var(--line-strong)');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .edit-first > summary', 'background', D), 'var(--surface)');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card form:has(.edit-first[open]) .edit-text', 'display', D), 'flex');
   assert.equal(propIn(deskRules, '.desk-sheet .decide .actions button[type="submit"]', 'background', D), 'var(--primary)');
   assert.equal(propIn(deskRules, '.desk-sheet .decide .actions button[type="submit"]', 'color', D), 'var(--primary-fg)');
+});
+
+test('the side column headings are eyebrows, and the parts moved out of the panel keep their look', () => {
+  assert.equal(propIn(deskRules, ':is(.desk-aside, .desk-main) :is(h3, .desk-side h3)', 'text-transform', D), 'uppercase');
+  assert.equal(propIn(deskRules, '.desk-aside > a.row', 'padding-inline', D), '0');
+  assert.equal(propIn(deskRules, '.desk-fail', 'color', D), 'var(--muted)');
+});
+
+// ---- Task 7: the toast and the Manage menu ----
+
+test('the Undo toast is the black pill colour, centred under the content, above the panes', () => {
+  assert.equal(propIn(deskRules, '.desk-toast', 'background', D), 'var(--primary)');
+  assert.equal(propIn(deskRules, '.desk-toast', 'color', D), 'var(--primary-fg)');
+  assert.equal(propIn(deskRules, '.desk-toast', 'position', D), 'fixed');
+  assert.equal(propIn(deskRules, '.desk-toast', 'left', D), 'calc(var(--side-w) + (100vw - var(--side-w)) / 2)');
+  assert.equal(propIn(deskRules, '.desk-toast', 'bottom', D), '22px');
+});
+
+test('Manage opens as a menu card under the bar', () => {
+  const M = '.desk-acts > details.manage > .desk-menu';
+  assert.equal(propIn(deskRules, M, 'position', D), 'absolute');
+  assert.equal(propIn(deskRules, M, 'right', D), '14px');
+  assert.equal(propIn(deskRules, M, 'top', D), '48px');
+  assert.equal(propIn(deskRules, M, 'width', D), '22rem');
+  assert.equal(propIn(deskRules, M, 'max-height', D), 'min(70vh, 36rem)');
+  assert.equal(propIn(deskRules, M, 'overflow-y', D), 'auto');
+  assert.equal(propIn(deskRules, M, 'background', D), 'var(--elevated)');
+  assert.equal(propIn(deskRules, M, 'border-radius', D), 'var(--r-card)');
+  assert.equal(propIn(deskRules, M, 'box-shadow', D), 'var(--shadow-pop)');
+});
+
+// ---- Task 8: Not in the brain yet in the sheet ----
+
+test('in the sheet, Not in the brain yet rows are 48 px with the actions on the right and Add as project never black', () => {
+  assert.equal(propIn(deskRules, '.desk-notyet', 'max-width', D), '52rem');
+  assert.equal(propIn(deskRules, '.desk-notyet .nib > li', 'min-height', D), '48px');
+  assert.equal(propIn(deskRules, '.desk-notyet .nib > li', 'border-top', D), '1px solid var(--line)');
+  assert.equal(propIn(deskRules, '.desk-notyet .nib form:first-of-type', 'margin-left', D), 'auto');
+  assert.equal(propIn(deskRules, '.desk-notyet .nib button', 'height', D), '30px');
+  assert.equal(propIn(deskRules, '.desk-notyet .nib button.sm', 'background', D), 'var(--surface)');
+  assert.equal(propIn(deskRules, '.desk-notyet .nib-ignored', 'margin', D), '26px 0 6px');
+});
+
+test('in the list pane the folds end with Not in the brain yet, counts on the right as in the mockup', () => {
+  assert.equal(propIn(deskRules, '.phome.has-panel > .plist .pfolds > li:has(> #notyet)', 'order', D), '1');
+  assert.equal(propIn(deskRules, '.phome.has-panel > .plist .pfolds :is(details.fold > summary, a.row) .n', 'margin-left', D), 'auto');
+});
+
+// ---- Task 9: the approval, in the Inbox's pane (it was a sheet before the Inbox became its own page) ----
+
+test('the approval reads as in the mockup: one heading size, insets on raised, Reject pushed right', () => {
+  // The writer's name is the heading's own size and weight, not a chip of its own (QA 2026-11-18 #4).
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .approval-head', 'font-size', D), 'var(--t-section)');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .approval-head', 'font-weight', D), '700');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .approval-head .writer', 'font', D), 'inherit');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card blockquote', 'background', D), 'var(--raised)');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card blockquote', 'border-radius', D), 'var(--r-inset)');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card blockquote', 'padding', D), '14px 16px');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .push-right', 'margin-left', D), 'auto');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card form', 'margin-top', D), '20px');
+  assert.equal(propIn(deskRules, '.desk-sheet .desk-next', 'margin', D), '28px 0 14px');
+});
+
+test('no desk rule hides the Held because line', () => {
+  for (const r of deskRules) if (r.selectors.some((s) => /\.held\b/.test(s))) assert.notEqual(r.decls.display, 'none');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .held', 'color', D), 'var(--error)');
+});
+
+// ---- Task 10: the discussion in the sheet ----
+
+test('in a sheet 760 px or wider the latest replies sit in three columns', () => {
+  assert.equal(propIn(deskRules, '.desk-sheet .replies', 'grid-template-columns', `${D} @container (min-width: 760px)`), 'repeat(3, minmax(0, 1fr))');
+  assert.equal(propIn(deskRules, '.desk-sheet .replies', 'gap', `${D} @container (min-width: 760px)`), '14px');
+  assert.equal(propIn(deskRules, '.desk-sheet .reply', 'border-radius', D), 'var(--r-inset)');
+  assert.equal(propIn(deskRules, '.desk-sheet .reply', 'padding', D), '14px 16px');
+  assert.equal(propIn(deskRules, '.desk-sheet .reply', 'font-size', D), 'var(--t-sub)');
+  assert.equal(propIn(deskRules, '.desk-sheet .decide', 'max-width', D), '52rem');
+  assert.equal(propIn(deskRules, '.desk-sheet .decide', 'padding-top', D), '18px');
+});
+
+// ---- Task 11: what the look found ----
+
+test('the keys sheet has no focus ring of its own (it is the dialog, not a control)', () => {
+  assert.equal(propIn(deskRules, '.desk-keys:focus-visible', 'outline', D), 'none');
 });
 
 test('the side column\'s links read at the list size, not the body size', () => {
   assert.equal(propIn(deskRules, '.desk-aside > a.row', 'font-size', D), 'var(--t-sub)');
 });
 
-// ---- Review fix: the approval sheet as the mockup's After view ----
+// ---- The Inbox pane ----
 
-test('in the approval sheet the replaced text is struck through and muted, the writer leads the meta line, and the "brings you back here" foot is gone', () => {
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card blockquote.replaced', 'text-decoration', D), 'line-through');
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card blockquote.replaced', 'color', D), 'var(--muted)');
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card > .meta-line .writer', 'font-weight', D), '600');
-  // The sheet moves on to what comes next, so "Both buttons bring you back here" is not true there.
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card .approval-foot', 'display', D), 'none');
-  // Edit first turns the inset into the textarea: its Suggested label goes with the inset.
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card:has(.edit-first[open]) .desk-suggested', 'display', D), 'none');
-  assert.equal(propIn(deskRules, '.desk-sheet .approval-card .actions kbd', 'font-size', D), 'var(--t-meta)');
-});
-
-test('a suggestion with no profile beside it keeps the reading width: the approval and its Next for you stop at 52rem', () => {
-  assert.equal(propIn(deskRules, '.desk-sheet .approvals', 'max-width', D), '52rem');
-  assert.equal(propIn(deskRules, '.desk-sheet .approvals + .desk-next', 'max-width', D), '52rem');
+test('in the Inbox pane the "brings you back here" foot is gone, the hint is small, and the answer line spans both columns', () => {
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .approval-foot', 'display', D), 'none');
+  assert.equal(propIn(deskRules, '.inbox-pane .approval-card .kbd-hint', 'font-size', D), 'var(--t-meta)');
+  assert.equal(propIn(deskRules, '.inbox-head', 'grid-column', D), '1 / -1');
+  assert.equal(propIn(deskRules, '.inbox-pane .approvals', 'max-width', D), '52rem');
 });
 
 test('on the desktop a page loads without the cross-document cross-fade: a transition the next page skipped threw a page error', () => {
@@ -745,4 +819,37 @@ test('review I7: on the overview only the extras\' folds open the list pane; an 
   const js = readFileSync(new URL('./static/desk.js', import.meta.url), 'utf8');
   const fn = js.slice(js.indexOf('function foldFromOverview'), js.indexOf('\n}\n', js.indexOf('function foldFromOverview')));
   assert.match(fn, /fold\.matches\('\.pextra details\.fold'\)/);
+});
+
+test('the page carries the palette\'s extra Go to pages for this mode only', async (t) => {
+  const { f } = await app(t);
+  const body = await (await f('/')).text();
+  const goto = JSON.parse(body.match(/data-goto="([^"]*)"/)![1]!.replaceAll('&quot;', '"').replaceAll('&#39;', "'").replaceAll('&gt;', '>').replaceAll('&amp;', '&')) as { label: string; href: string }[];
+  const hrefs = goto.map((g) => g.href);
+  for (const h of ['/skills', '/map', '/discussions', '/disagreements', '/facts/tidy', '/settings#health']) assert.ok(hrefs.includes(h), h);
+  // The server install has no Tools, Reach, Search, Move or Remove pages.
+  for (const h of ['/settings/tools', '/settings/reach', '/settings#search', '/settings/move', '/settings/remove']) assert.ok(!hrefs.includes(h), h);
+});
+
+test('the phone bar lights Inbox for the Inbox, Facts that disagree and Tidy up, Pages for Facts and Skills, Projects for the Graph', async (t) => {
+  const { f } = await app(t);
+  const bar = async (path: string) => {
+    const head = (await (await f(path)).text()).split('</header>')[0]!;
+    return [...head.matchAll(/<a href="[^"]+" aria-current="page">([A-Za-z]+)/g)].map((m) => m[1]);
+  };
+  assert.deepEqual(await bar('/approvals'), ['Inbox']);
+  assert.deepEqual(await bar('/disagreements'), ['Inbox']);
+  assert.deepEqual(await bar('/facts/tidy'), ['Inbox']);
+  assert.deepEqual(await bar('/facts'), ['Pages']);
+  assert.deepEqual(await bar('/skills'), ['Pages']);
+  assert.deepEqual(await bar('/graph'), ['Projects']);
+  assert.deepEqual(await bar('/map'), ['Projects']);
+  assert.deepEqual(await bar('/review'), ['Week']);
+});
+
+test('the phone bar shows the Inbox count from the same source as the sidebar', async (t) => {
+  const { a, f } = await app(t);
+  await a.deps.service.remember({ kind: 'profile', content: 'Prefers short answers' }, { type: 'ai', name: 'Grok' });
+  a.advance(30_001);
+  assert.match((await (await f('/review')).text()).split('</header>')[0]!, /<a href="\/approvals">Inbox<span class="tab-count" aria-label="1 waiting">1<\/span><\/a>/);
 });

@@ -40,6 +40,7 @@ import type { Access } from '../discussions/types.js';
 import { servedToolNames } from '../mcp/server.js';
 import { mcpServerFor } from './mcpFor.js';
 import type { SkillService } from '../skills/service.js';
+import type { TidyService } from '../memory/tidyService.js';
 import type { SkillSync } from '../skills/sync.js';
 import type { SetupOverlay } from '../setup/texts.js';
 import { MAX_SKILL_BYTES, MAX_SKILL_DESCRIPTION } from '../skills/types.js';
@@ -48,15 +49,18 @@ import { projectRoutes } from './projectRoutes.js';
 import { mapRoutes } from './mapRoutes.js';
 import { reviewRoutes } from './reviewRoutes.js';
 import { growthRoutes } from './growthRoutes.js';
+import { activityRoutes } from './activityRoutes.js';
 import { deviceRoutes } from './deviceRoutes.js';
 import { imageRoutes } from './imageRoutes.js';
 import { diagramRoutes } from './diagramRoutes.js';
 import { pictureReviewRoutes } from './pictureReviewRoutes.js';
 import { setupRoutes } from './setupRoutes.js';
 import { skillRoutes } from './skillRoutes.js';
+import { tidyProposalRoutes } from './tidyProposalRoutes.js';
 import { pageRoutes } from './pageRoutes.js';
 import { linkRoutes } from './linkTargets.js';
 import { importRoutes } from './importRoutes.js';
+import { guidedImportRoutes, IMPORT_FORM_LIMIT, IMPORT_FORM_PARAMETERS, importFormTooLarge } from './guidedImportRoutes.js';
 import { searchRoutes } from './searchRoutes.js';
 import type { MemoryService } from '../memory/service.js';
 import type { MemoryStore } from '../memory/store.js';
@@ -65,12 +69,12 @@ import { authRoutes, readCookie, SESSION_COOKIE } from './authRoutes.js';
 import { dashboardRoutes } from './dashboardRoutes.js';
 import { discussionRoutes } from './discussionRoutes.js';
 import { rateLimitKey, TRUST_CF_SETTING } from './clientIp.js';
-import { html, page, setConsentPoller, setMovedBanner } from './html.js';
-import { createSideStatus, setSideStatus } from './sideStatus.js';
+import { html, page, setConsentPoller, setGoTo, setMovedBanner, setPausedBanner, setServerMode } from './html.js';
+import { createSideStatus, invalidateSideStatus, setSideStatus } from './sideStatus.js';
 import { setViewClock } from './when.js';
 import type { GraphService } from '../graph/data.js';
 import { graphRoutes } from './graphRoutes.js';
-import { setComputer } from '../desktop/computer.js';
+import { setComputer, thisComputer } from '../desktop/computer.js';
 import type { ModelManager } from '../models/manager.js';
 import type { Hardware } from '../models/hardware.js';
 
@@ -97,6 +101,8 @@ export interface AppDeps {
   uploadLinks: UploadLinks;
   /** Shared skills (round 2 §17c). */
   skills: SkillService;
+  /** B2: assistant-run tidy sessions: the proposals that wait in the Inbox. */
+  tidy: TidyService;
   /** The skills sync with devices (round 2 §17c). */
   skillSync: SkillSync;
   /** The owner's setup lines and setup number (overlay/setup.json), when there is one. */
@@ -160,7 +166,7 @@ export interface AppDeps {
   /** The database itself, for the moving file's copy (local mode). */
   db?: DB;
   /** Local mode: where the owner's coding tools are (their HOME and the PATH to find their commands), for Connect (D3). */
-  tools?: { home: string; path: string; apps?: string; extraEnv?: Record<string, string>; /** Tailscale's app command (tests point it nowhere). */ tailscaleApp?: string; /** The computer's platform (tests pass win32); default process.platform. */ platform?: NodeJS.Platform; /** Where Claude's bridge program is (default: this server's own cli.js). */ bridgeCli?: string; /** Tests: Claude's settings file and the system variables, so nothing reads the real ones. */ claudeConfig?: string; system?: Record<string, string | undefined> };
+  tools?: { home: string; path: string; apps?: string; extraEnv?: Record<string, string>; /** Tailscale's app command (tests point it nowhere). */ tailscaleApp?: string; /** Tests: the time limit of the status check the Reach page shows (default 5 s). */ tailscaleStatusMs?: number; /** The computer's platform (tests pass win32); default process.platform. */ platform?: NodeJS.Platform; /** Where Claude's bridge program is (default: this server's own cli.js). */ bridgeCli?: string; /** Tests: Claude's settings file and the system variables, so nothing reads the real ones. */ claudeConfig?: string; system?: Record<string, string | undefined> };
 }
 
 const CSP = "default-src 'self'; frame-ancestors 'none'; form-action 'self' https: http://localhost:* http://127.0.0.1:*";
@@ -312,9 +318,26 @@ export function createApp(d: AppDeps): express.Express {
   app.set(TRUST_CF_SETTING, d.trustCfConnectingIp ?? true);
   setSideStatus(createSideStatus(d));
   setViewClock(d.now);
+  setPausedBanner(() => d.service.savesPausedSince());
   setMovedBanner(() => (d.localMode && d.statusDir ? movedTo(d.statusDir) : null));
   setConsentPoller(d.localMode === true);
+  setServerMode(d.localMode !== true);
   setComputer(d.tools?.platform ?? process.platform);
+  // The palette's "Go to" rows beyond the sidebar's places: only the pages this mode has.
+  {
+    const app = d.localMode === true;
+    const files = !!d.db && !!d.statusDir;
+    setGoTo([
+      { label: 'Skills', href: '/skills' }, { label: 'Import', href: '/import', alias: 'Bring in memory' }, { label: 'Five areas', href: '/map', alias: 'Map' }, { label: 'Discussions', href: '/discussions' },
+      { label: 'Facts that disagree', href: '/disagreements', alias: 'disagreements' }, { label: 'Tidy up', href: '/facts/tidy' },
+      ...(app && d.tools ? [{ label: `Settings › Tools on ${thisComputer()}`, href: '/settings/tools' }] : []),
+      ...(app ? [{ label: 'Settings › Reach from phone and web', href: '/settings/reach', alias: 'Reach' }] : []),
+      ...(app && d.models ? [{ label: 'Settings › Search', href: '/settings#search' }] : []),
+      { label: 'Settings › Backups', href: '/settings#health' },
+      ...(files ? [{ label: 'Settings › Save a copy', href: '/settings/save' }] : []),
+      ...(app && files ? [{ label: 'Settings › Move', href: '/settings/move' }, { label: 'Settings › Remove', href: '/settings/remove' }] : []),
+    ]);
+  }
   const mcpUrl = new URL('/mcp', d.publicUrl);
 
   // 1. Security headers.
@@ -416,6 +439,8 @@ export function createApp(d: AppDeps): express.Express {
         // A note for Settings: losing it (a busy database) must never fail the assistant's request.
         try { d.provider.recordTools(grantId, servedToolNames(server)); } catch (e) { console.error('recording the tool list failed:', e); }
       }
+      // An assistant's save may hold a suggestion or flag a disagreement: the sidebar's number follows.
+      res.on('finish', invalidateSideStatus);
       res.on('close', () => {
         void transport.close();
         void server.close();
@@ -439,6 +464,9 @@ export function createApp(d: AppDeps): express.Express {
   const skillForms = express.urlencoded({ extended: false, limit: SKILL_FORM_LIMIT });
   const ownersSkillForms: RequestHandler = (req, res, next) => (d.sessions.isValid(readCookie(req, SESSION_COOKIE)) ? skillForms(req, res, next) : next());
   app.use('/skills', ownersSkillForms, pageFormTooLarge);
+  const importForms = express.urlencoded({ extended: false, limit: IMPORT_FORM_LIMIT, parameterLimit: IMPORT_FORM_PARAMETERS });
+  const ownersImportForms: RequestHandler = (req, res, next) => (d.sessions.isValid(readCookie(req, SESSION_COOKIE)) ? importForms(req, res, next) : next());
+  app.use('/import', ownersImportForms, importFormTooLarge(d));
   app.use(express.urlencoded({ extended: false }));
   app.use(authRoutes(d));
 
@@ -454,12 +482,16 @@ export function createApp(d: AppDeps): express.Express {
   });
 
   // 8. The dashboard; every route in it is guarded by requireOwner.
+  // Any owner answer changes what the Inbox holds: the sidebar's number is worked out again for the next page.
+  app.use((req, res, next) => { if (req.method === 'POST') res.on('finish', invalidateSideStatus); next(); });
   app.use(projectRoutes(d));
   app.use(mapRoutes(d));
   app.use(reviewRoutes(d));
+  app.use(activityRoutes(d));
   app.use(deviceRoutes(d));
   app.use(searchRoutes(d));
   app.use(importRoutes(d));
+  app.use(guidedImportRoutes(d));
   app.use(imageRoutes(d));
   app.use(diagramRoutes(d));
   app.use(pictureReviewRoutes(d));
@@ -470,6 +502,7 @@ export function createApp(d: AppDeps): express.Express {
   app.use(savedRoutes(d));
   app.use(removeRoutes(d));
   app.use(skillRoutes(d));
+  app.use(tidyProposalRoutes(d));
   // Before the pages: /pages/:id would otherwise catch the picker's own address.
   app.use(linkRoutes(d));
   app.use(pageRoutes(d));

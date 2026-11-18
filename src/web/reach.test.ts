@@ -47,7 +47,7 @@ const cookieAfter = (res: Response, before: string) => {
 
 test('the password and the authenticator are set from the dashboard, in order, and only a right code saves the authenticator', async (t) => {
   const app = await start(t);
-  assert.match((await openPage(app.baseUrl, '/settings')).body, /<a[^>]*href="\/settings\/reach"[^>]*>[\s\S]*Reach from phone and web/, 'Settings links to it');
+  assert.match((await openPage(app.baseUrl, '/settings')).body, /<a[^>]*href="\/settings\/reach"[^>]*>[\s\S]*Turn on Reach/, 'Settings links to it');
   const first = await openPage(app.baseUrl, '/settings/reach');
   assert.equal(first.status, 200);
   assert.match(first.body, /action="\/settings\/reach\/password"/);
@@ -297,11 +297,11 @@ test('a saved Reach comes back at start on its own door; if that port is taken i
 test('turning Reach on shares BrainAI at the public address and the web apps get it; turning it off takes it back', async (t) => {
   const ts = fakeTailscale({ backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' });
   t.after(() => ts.cleanup());
-  const app = await startTestApp({ localMode: true, statusDir: mkdtempSync(join(tmpdir(), 'brainai-reach-')), tools: { home: ts.home, path: `${ts.bin}:${dirname(process.execPath)}:/usr/bin:/bin` } });
+  const app = await startTestApp({ localMode: true, statusDir: mkdtempSync(join(tmpdir(), 'brainai-reach-')), tools: { home: ts.home, path: `${ts.bin}:${dirname(process.execPath)}:/usr/bin:/bin`, tailscaleStatusMs: 30_000 } });
   t.after(() => app.close());
   const f = await loggedIn(app);
-  const page1 = await (await f('/settings/reach')).text();
-  assert.match(page1, /action="\/settings\/reach\/on"/);
+  assert.match(await (await f('/settings/reach')).text(), /data-reach-tailscale/);
+  assert.match(await (await f('/settings/reach/tailscale')).text(), /action="\/settings\/reach\/on"/);
   const on = await f('/settings/reach/on', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: '' });
   assert.equal(on.status, 303);
   assert.equal(app.deps.reach!.url()?.origin, PUBLIC);
@@ -313,7 +313,11 @@ test('turning Reach on shares BrainAI at the public address and the web apps get
   assert.match(page2, /only while this Mac is on and awake/);
   assert.match(page2, /action="\/settings\/reach\/off"/);
   assert.match(await (await f('/settings/setup/claude')).text(), new RegExp(esc(`data-copy="${PUBLIC}/mcp"`)), 'web apps get the public address');
-  assert.match(await (await f('/settings/setup/claude-code')).text(), new RegExp(esc(`data-copy="${app.baseUrl}/mcp"`)), 'coding tools on this Mac keep localhost');
+  // Claude Code on this Mac connects from Tools on this Mac; the setup page's steps are for another computer, so with Reach on they use the public address.
+  const cc = await (await f('/settings/setup/claude-code')).text();
+  assert.match(cc, /href="\/settings\/tools"/, 'the coding-tool page points to Tools on this Mac');
+  assert.match(cc, new RegExp(esc(`${PUBLIC}/mcp`)), 'its steps for another computer use the public address');
+  assert.doesNotMatch(cc, new RegExp(esc(`${app.baseUrl}/mcp`)), 'never localhost, which another computer cannot reach');
   const off = await f('/settings/reach/off', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: '' });
   assert.equal(off.status, 303);
   assert.equal(app.deps.reach!.saved(), null);
@@ -458,7 +462,7 @@ test('no password or authenticator, no Cloudflare; and an app built without tool
   // cloudflared is installed on the owner's Mac: an app with no tools environment must not find it.
   const bare = await configuredApp(t);
   const page = await (await (await loggedIn(bare))('/settings/reach')).text();
-  assert.match(page, /Install cloudflared/);
+  assert.match(page, /Get cloudflared/);
 });
 
 test('Cloudflare Turn on checks BrainAI through its real door, as Cloudflare reaches it, and only then says On', async (t) => {
@@ -839,4 +843,87 @@ test('the second backup folder can only be chosen on this computer, never throug
   assert.notEqual(named.status, 303, "a request naming localhost is still refused");
   assert.equal(existsSync(join(statusDir, 'backup-copy.json')), false);
   assert.equal(app.deps.backupCopy!.folder(), null);
+});
+
+// The Reach page never waits for Tailscale: step 3 says "Checking Tailscale…" and a small request fills it in.
+async function reachApp(t: TestContext, ts: ReturnType<typeof fakeTailscale>, statusMs = 600) {
+  const app = await configuredApp(t, { statusDir: mkdtempSync(join(tmpdir(), 'brainai-reach-')), tools: { ...tsTools(ts), tailscaleStatusMs: statusMs } });
+  return { app, f: await loggedIn(app) };
+}
+
+test('the Reach page comes at once with "Checking Tailscale" even when Tailscale never answers; the status request gives the timeout message', async (t) => {
+  const ts = fakeTailscale({ hang: true });
+  t.after(() => ts.cleanup());
+  const { f } = await reachApp(t, ts);
+  const t0 = Date.now();
+  const body = await (await f('/settings/reach')).text();
+  assert.ok(Date.now() - t0 < 1000, `page took ${Date.now() - t0} ms`);
+  assert.match(body, /Checking Tailscale…/);
+  assert.match(body, /data-reach-tailscale="\/settings\/reach\/tailscale"/);
+  assert.match(body, /Works only while this Mac is on and awake\. For always-on, <a href="\/settings\/move">move to a server<\/a>\./);
+  assert.match(body, /Without a domain: Tailscale \(free\)/);
+  assert.match(body, /It gives this Mac a private web address\./);
+  assert.match(body, /<a href="https:\/\/tailscale\.com\/download"[^>]*>Get Tailscale<\/a> and sign in/);
+  assert.match(body, /Press Check again\./);
+  const t1 = Date.now();
+  const r = await f('/settings/reach/tailscale');
+  const frag = await r.text();
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('cache-control') ?? '', /no-store/);
+  assert.ok(Date.now() - t1 < 3000);
+  assert.match(frag, /Tailscale did not answer\. Open the Tailscale app, then press Check again\./);
+  assert.match(frag, /data-reach-recheck/);
+  assert.match(frag, />Check again</);
+});
+
+test('the status request says Turn on when Tailscale runs, and Check again asks afresh while a recent answer is reused', async (t) => {
+  const ts = fakeTailscale({ backend: 'NeedsLogin' });
+  t.after(() => ts.cleanup());
+  const { f } = await reachApp(t, ts);
+  const first = await (await f('/settings/reach/tailscale')).text();
+  assert.match(first, /Open the Tailscale app and sign in, then press Check again/);
+  setTs(ts, { backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' });
+  const cached = await (await f('/settings/reach/tailscale')).text();
+  assert.match(cached, /sign in/, 'an answer from the last few seconds is reused');
+  assert.equal(ts.calls().filter((c) => c.startsWith('status')).length, 1);
+  const again = await (await f('/settings/reach/tailscale?fresh=1')).text();
+  assert.match(again, /https:\/\/brainai-mac\.tail1234\.ts\.net/);
+  assert.match(again, /action="\/settings\/reach\/on"/);
+});
+
+test('status checks do not pile up: simultaneous requests share one Tailscale call', async (t) => {
+  const ts = fakeTailscale({ hang: true });
+  t.after(() => ts.cleanup());
+  const { f } = await reachApp(t, ts, 500);
+  const all = await Promise.all([f('/settings/reach/tailscale?fresh=1'), f('/settings/reach/tailscale?fresh=1'), f('/settings/reach/tailscale')]);
+  for (const r of all) assert.match(await r.text(), /did not answer/);
+  assert.equal(ts.calls().filter((c) => c.startsWith('status')).length, 1);
+});
+
+test('the status request is the owner\'s alone: a stranger, another site and the public door are refused', async (t) => {
+  const ts = fakeTailscale({ backend: 'Running' });
+  t.after(() => ts.cleanup());
+  const { app, f } = await reachApp(t, ts);
+  const stranger = await fetch(app.baseUrl + '/settings/reach/tailscale', { redirect: 'manual' });
+  assert.ok([302, 401, 403].includes(stranger.status), `stranger got ${stranger.status}`);
+  assert.doesNotMatch(await stranger.text(), /Turn on/);
+  assert.equal(ts.calls().length, 0, 'Tailscale was not asked for a stranger');
+  const cross = await f('/settings/reach/tailscale', { headers: { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'cors' } });
+  assert.equal(cross.status, 403);
+  const cookie = await appSession(app);
+  const door = await reachOn(app);
+  const viaDoor = await call(door, 'GET', '/settings/reach/tailscale', PUBLIC_HOST, { Cookie: cookie });
+  assert.equal(viaDoor.status, 404);
+  const named = await call(door, 'GET', '/settings/reach/tailscale', new URL(app.baseUrl).host, { Cookie: cookie });
+  assert.notEqual(named.status, 200);
+  assert.doesNotMatch(named.body, /Turn on/);
+});
+
+test('the client script fills step 3 from the status request and Check again asks afresh', () => {
+  const script = readFileSync(new URL('./static/app.js', import.meta.url), 'utf8');
+  assert.match(script, /querySelectorAll\('\[data-reach-tailscale\]'\)/);
+  assert.match(script, /opaqueredirect[\s\S]{0,80}Your session ended: reload the page\./, 'a redirect says the session ended');
+  assert.match(script, /data-reach-recheck|reachRecheck/);
+  assert.match(script, /fresh=1/);
+  assert.match(script, /redirect: 'manual'/);
 });

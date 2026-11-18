@@ -378,52 +378,14 @@
   .phome.has-panel > .plist .pfolds a.row .txt { display: flex; align-items: center; }
 }
 
-/* ---- For you in the sheet: the approval (design §4.3, the mockup's approvalDetail): the card's own content, wider ---- */
+/* ---- Next for you, at the foot of a discussion's sheet (desk-only, from the side fragment) ---- */
 @media (min-width: 1100px) {
-  /* The reading width, also when no profile column sits beside the suggestion (as the discussion's decide box). */
-  .desk-sheet .approvals { max-width: 52rem; margin: 0; padding: 0; }
-  .desk-sheet .approvals + .desk-next { max-width: 52rem; }
-  .desk-sheet .approvals:has(> ul.cards > li:only-child) > h1 { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-  .desk-sheet .approvals > h1 { margin: 6px 0 14px; font-size: var(--t-title); font-weight: 700; letter-spacing: -0.025em; }
-  .desk-sheet .approvals > ul.cards { margin: 0; padding: 0; list-style: none; }
-  .desk-sheet .approvals > ul.cards > li + li { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--line); }
-  .desk-sheet .approval-card { display: flex; flex-direction: column; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
-  .desk-sheet .approval-card > .meta-line { order: -1; margin-top: 0; margin-bottom: 0; }
-  .desk-sheet .approval-head { margin: 6px 0; font-family: var(--display); font-size: var(--t-title); font-weight: 700; line-height: 1.15; letter-spacing: -0.025em; }
-  .desk-sheet .approval-head .writer { font: inherit; color: inherit; }
-  .desk-sheet .approval-head .writer::before { display: none; }
-  .desk-sheet .approval-head:focus { outline: none; }
-  .desk-sheet .approval-card .held { margin: 4px 0 10px; color: var(--error); }
-  .desk-sheet .approval-card .label { margin: 16px 0 8px; font-family: var(--text); font-size: var(--t-label); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
-  .desk-sheet .approval-card blockquote { margin: 0 0 10px; padding: 14px 16px; border: 0; border-radius: var(--r-inset); background: var(--raised); font-size: var(--t-prose); }
-  .desk-sheet .approval-card blockquote.proposed { margin-top: 12px; }
-  .desk-sheet .approval-card form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
-  .desk-sheet .approval-card .actions { display: flex; flex: 1 1 100%; align-items: center; gap: 8px; }
-  .desk-sheet .approval-card form:has(.edit-first[open]) .edit-text { display: flex; flex: 1 1 100%; margin: 0 0 4px; }
-  .desk-sheet .approval-card .actions > :is(button, .edit-first > summary) { flex: none; width: auto; min-width: 0; height: 34px; min-height: 0; padding: 0 16px; font-size: var(--t-sub); }
-  .desk-sheet .approval-card .actions > .edit-first { margin: 0; }
-  .desk-sheet .approval-card .edit-first > summary { display: inline-flex; align-items: center; height: 34px; padding: 0 14px; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font-size: var(--t-sub); font-weight: 600; }
-  .desk-sheet .approval-card .push-right { margin-left: auto; color: var(--error); }
-  /* The sheet moves on to what comes next (Next for you), so "Both buttons bring you back here" is not true there. */
-  .desk-sheet .approval-card .approval-foot { display: none; }
-  /* desk.js shapes the card as the mockup: the writer leads the meta line, Suggested, then Replaces struck through. */
-  .desk-sheet .approval-card > .meta-line .writer { color: var(--fg); font-weight: 600; }
-  .desk-sheet .approval-card .label + blockquote { margin-top: 0; }
-  .desk-sheet .approval-card blockquote.replaced { color: var(--muted); text-decoration: line-through; }
-  .desk-sheet .approval-card blockquote.replaced a { color: inherit; }
-  .desk-sheet .approval-card:has(.edit-first[open]) .desk-suggested { display: none; }
-  .desk-sheet .approval-card .actions kbd { margin-left: 6px; font-family: var(--text); font-size: var(--t-meta); font-weight: 500; opacity: 0.6; }
-
-  /* Next for you, at the foot of the main column (desk-only, from the side fragment). */
   .desk-sheet .desk-next { display: flex; align-items: center; gap: 12px; margin: 28px 0 14px; padding-top: 14px; border-top: 1px solid var(--line); }
   .desk-sheet .desk-next > h3 { flex: none; margin: 0; }
   .desk-sheet .desk-next > a.row { display: flex; flex: 1; align-items: center; gap: 10px; min-height: 36px; padding: 0 8px; border-radius: var(--r-inset); color: var(--fg); font-size: var(--t-sub); }
   .desk-sheet .desk-next > a.row .txt { flex: 1; min-width: 0; }
   .desk-sheet .desk-next > a.row kbd { margin-left: auto; }
   .desk-sheet .desk-next > a.row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-  /* Your profile today, in the side column: the fact, then who and when; the one that would be replaced says so. */
-  .desk-profile .plain-list > li { display: flex; flex-direction: column; gap: 2px; }
-  .desk-profile .more-link { display: inline-block; margin-top: 8px; color: var(--ink2); font-size: var(--t-meta); font-weight: 600; }
 }
 @media (min-width: 1100px) {
   @media (hover: hover) and (pointer: fine) {
@@ -799,4 +761,92 @@
     .desk-list :is(a, summary, .row, li.card) { min-height: 44px; }
     .desk-pal-res [role="option"] { min-height: 44px; align-items: center; }
   }
+}
+
+/* ---- Home layout pass (2026-11-18): the first-steps checklist takes a row of its own under the banner, and everything
+   below moves down one; the dot key sits in the areas column; the links row closes the right column. ---- */
+@media (min-width: 1100px) {
+  .phome:not(.has-panel) > .plist > .first-steps { grid-row: 4; grid-column: 1 / -1; max-width: 44rem; margin: 0 0 28px; }
+  .phome:not(.has-panel) > .plist:has(> .first-steps) { grid-template-rows: repeat(7, auto) 1fr; }
+  .phome:not(.has-panel) > .plist:has(> .first-steps) > .fy-h { grid-row: 5; }
+  .phome:not(.has-panel) > .plist:has(> .first-steps) > .foryou { grid-row: 6; }
+  .phome:not(.has-panel) > .plist:has(> .first-steps) > .pextra { grid-row: 7; }
+  .phome:not(.has-panel) > .plist:has(> .first-steps):not(:has(> .foryou)) > .pextra { grid-row: 5; }
+  .phome:not(.has-panel) > .plist:has(> .first-steps) > .empty { grid-row: 5; }
+  .phome:not(.has-panel) > .plist:has(> .first-steps) > .pareas { grid-row: 5 / span 4; }
+  .phome:not(.has-panel) > .plist > .home-links { grid-row: 7; grid-column: 2; margin: 14px 4px 0; }
+  .phome:not(.has-panel) > .plist:has(> .foryou) > .home-links { grid-row: 7; }
+  .phome:not(.has-panel) > .plist:not(:has(> .foryou)) > .home-links { grid-row: 5; }
+  .phome:not(.has-panel) > .plist:has(> .first-steps):not(:has(> .foryou)) > .home-links { grid-row: 6; }
+  .phome:not(.has-panel) > .plist:has(> .first-steps):has(> .foryou) > .home-links { grid-row: 8; }
+  /* An empty brain has no right column: "No projects yet" lines up with the heading, and the links row sits under it on the left. */
+  .phome:not(.has-panel) > .plist > .empty { text-align: left; margin-left: 0; }
+  .phome:not(.has-panel) > .plist:has(> .empty) > .home-links { grid-column: 1; margin-left: 0; }
+  .phome:not(.has-panel) > .plist:has(> .empty):not(:has(> .first-steps)):not(:has(> .foryou)) > .home-links { grid-row: 5; }
+  .phome:not(.has-panel) > .plist:has(> .empty):has(> .first-steps):not(:has(> .foryou)) > .home-links { grid-row: 6; }
+}
+/* The Five areas row keeps its bold name and its words on one line of text beside an open project (a line-clamped box
+   would split them into two columns). */
+@media (min-width: 1100px) {
+  .phome.has-panel > .plist .map-link .txt { display: block; }
+}
+
+/* ---- Inbox, grouped: the list column and the item beside it (design: Inbox option A) ---- */
+@media (min-width: 1100px) {
+  body.app:has(main > .inbox) { overflow: hidden; }
+  body.app:has(main > .inbox) main { height: 100dvh; max-width: none; margin: 0; padding: 0; box-sizing: border-box; }
+  .inbox { display: grid; grid-template-columns: var(--list-w) minmax(0, 1fr); height: 100%; }
+  .inbox-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 22px 12px 28px; box-sizing: border-box; }
+  .inbox-list h1 { margin: 0 8px 4px; font-size: var(--t-section); }
+  .inbox-list .il-sub { margin: 0 8px 12px; }
+  .inbox-list .ig-h { margin: 14px 8px 2px; }
+  .inbox-pane { min-width: 0; min-height: 0; margin: 10px 10px 10px 0; padding: 22px 32px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); overflow-wrap: anywhere; }
+  .inbox-pane > .inbox-bar > .inbox-back { display: none; }
+  .inbox-pane > .inbox-bar > .inbox-crumb { display: inline; }
+  .inbox-pane .approvals { max-width: 52rem; }
+  .inbox-pane .approval-card { display: flex; flex-direction: column; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+  .inbox-pane .approval-card .approval-head { margin: 0 0 2px; font-size: var(--t-title); font-weight: 700; }
+  .inbox-pane .approval-card .approval-head .writer { color: var(--fg); }
+  .inbox-pane .approval-card .held { margin: 4px 0 10px; color: var(--error); }
+  .inbox-pane .approval-card .label { margin: 16px 0 8px; font-size: var(--t-label); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .inbox-pane .approval-card blockquote { margin: 0 0 10px; padding: 14px 16px; border: 0; border-radius: var(--r-inset); background: var(--raised); font-size: var(--t-prose); }
+  .inbox-pane .approval-card blockquote.replaced, .inbox-pane .approval-card blockquote.dim { color: var(--muted); }
+  .inbox-pane .approval-card form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
+  .inbox-pane .approval-card .actions { display: flex; flex: 1 1 100%; align-items: center; justify-content: flex-start; gap: 8px; }
+  .inbox-pane .approval-card .push-right { margin-left: auto; color: var(--error); }
+  .inbox-pane .approval-card .approval-foot { display: none; }
+  .inbox-pane .harvest > .actions { margin: 16px 0 8px; }
+  .inbox-pane .harvest > .approval-card { margin-top: 24px; padding-top: 22px; border-top: 1px solid var(--line); }
+  /* The answer line (Undo, a notice, an error) spans both columns, above the list and the item. */
+  .inbox:has(> .inbox-head) { grid-template-rows: auto minmax(0, 1fr); }
+  .inbox-head { grid-column: 1 / -1; justify-self: start; max-width: calc(100% - 24px); margin: 8px 12px 0; }
+  /* A status line ("Done.", "Added to your profile. Undo") is a small chip, not a bar across the whole page. */
+  .inbox-head > .notice { padding: 4px 12px; font-size: var(--t-meta); line-height: 1.4; }
+  .inbox-head > * { margin-top: 0; margin-bottom: 0; }
+  /* Edit first opens the text above the buttons (as the old sheet did), and the buttons keep one row. */
+  .inbox-pane .approval-card form:has(.edit-first[open]) .edit-text { display: flex; flex: 1 1 100%; margin: 0 0 4px; }
+  .inbox-pane .approval-card .actions > :is(button, .edit-first > summary) { flex: none; width: auto; min-width: 0; height: 34px; min-height: 0; padding: 0 16px; font-size: var(--t-sub); }
+  .inbox-pane .approval-card .actions > .edit-first { margin: 0; }
+  .inbox-pane .approval-card .edit-first > summary { display: inline-flex; align-items: center; height: 34px; padding: 0 14px; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font-size: var(--t-sub); font-weight: 600; }
+  .inbox-pane .approval-card .kbd-hint { display: inline; margin-left: 6px; font-family: var(--text); font-size: var(--t-meta); font-weight: 500; opacity: 0.6; }
+  /* One heading size: the writer's name takes the heading's own size and weight (the mockup's scale), not a chip of its own. */
+  .inbox-pane .approval-card .approval-head { font-size: var(--t-section); line-height: 1.2; letter-spacing: -0.02em; }
+  .inbox-pane .approval-card .approval-head .writer { font: inherit; letter-spacing: inherit; color: inherit; }
+  .inbox-pane .approval-card .approval-head .writer::before { display: none; }
+  /* Wide windows: Skills and the empty Inbox start at the same edge as the other pages. */
+  .pages-wrap.solo { margin-inline: 0; }
+  main > .narrow.inbox-empty { margin-inline: 0; }
+  /* Settings' index in the list pane: the label keeps its words whole and the status wraps under it. */
+  .desk-panes[data-place="settings"] .settings-index .row { grid-template-columns: minmax(0, 1fr) auto; }
+  .desk-panes[data-place="settings"] .settings-index .row .txt { grid-column: 1; grid-row: 1; overflow-wrap: normal; word-break: normal; }
+  .desk-panes[data-place="settings"] .settings-index .row .st { grid-column: 1; grid-row: 2; white-space: normal; overflow-wrap: normal; }
+  .desk-panes[data-place="settings"] .settings-index .row .chev { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+}
+@media (min-width: 1100px) {
+  .settings .desk-only { display: revert; }
+}
+
+/* ---- Settings › Assistants › Change: the buttons keep their own width beside a small field or box (QA 9) ---- */
+@media (min-width: 1100px) {
+  .conn-change .actions button { flex: none; width: auto; }
 }

@@ -623,7 +623,7 @@ test('the panel shows the five areas with notes and the why, and the handbook to
   for (const name of ['Work is safe', 'Clear finish line', 'Runs by itself', 'You&#39;d know if it broke', 'Kept up to date']) assert.ok(sec.includes(name), name);
   assert.match(sec, /Runs by itself[\s\S]*?CI\/CD, automation[\s\S]*?tests run on every push \(GitHub Actions\)/);
   assert.match(sec, /<summary>Why<span class="chev"><\/span><\/summary>[\s\S]*?Tests \(and for apps, the build or deploy\) run by themselves/);
-  assert.match(sec, /<h3[^>]*>Handbook<\/h3>[\s\S]*?What CI is/);
+  assert.match(sec, /<h3[^>]*>What you learned here<\/h3>[\s\S]*?What CI is/);
 });
 
 test('the owner sets an area from the panel and it shows at once; not needed without a reason is refused', async (t) => {
@@ -667,4 +667,20 @@ test('review M1 and M3: a snooze shows its date; the owner form makes you choose
   assert.match(page, /not now until (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) \d+ \w+/);
   assert.doesNotMatch(page, /not now until just now/);
   assert.match(page, /<select name="status" required><option value="" disabled selected>Choose…<\/option>/);
+});
+
+test('the project panel shows the roadmap\'s Now line with its small bar above Waiting on you', async (t) => {
+  const { app, f } = await panelFixture(t);
+  const body = await (await f('/?project=wildlog')).text();
+  const now = body.match(/<p class="pnow">[\s\S]*?<\/p>/)?.[0] ?? '';
+  assert.match(now, /<span class="eyebrow">Now<\/span> · <span class="pnow-step">[^<]+<\/span> · <span class="progress"><progress value="\d+" max="\d+">/);
+  assert.match(now, /step \d+ of \d+<\/span>/);
+  assert.ok(body.indexOf('class="pnow"') < body.indexOf('id="p-waiting"'), 'Now comes before Waiting on you');
+  await app.deps.service.remember({ kind: 'roadmap', project: 'seed-swap', content: 'Now: barcode scan\nNext: photos' }, ai);
+  const fallback = await (await f('/?project=seed-swap')).text();
+  assert.doesNotMatch(fallback, /class="pnow"/, 'no status saved: Where you left off already shows the roadmap Now, so no second Now line');
+  assert.match(fallback, /<p class="leftoff">barcode scan<\/p>/);
+  await app.deps.service.remember({ kind: 'summary', project: 'seed-swap', content: 'Scanner works on the test phone' }, ai);
+  const plain = (await (await f('/?project=seed-swap')).text()).match(/<p class="pnow">[\s\S]*?<\/p>/)?.[0] ?? '';
+  assert.match(plain, /barcode scan<\/span><\/p>/, 'no bar without a count');
 });

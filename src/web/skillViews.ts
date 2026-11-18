@@ -25,11 +25,11 @@ ${d.items.length === 0 ? html`<p class="quiet">Every skill there is shared.</p>`
 
 export function skillsListView(skills: Skill[], devices: DeviceFold[] = [], error?: string): SafeHtml {
   const rows = skills.map((s) => html`<li><a class="row nolead" href="/skills/${s.id}"><span class="txt"><b>${s.name}</b> ${chip(s.enabled)}<span class="sk-desc">${s.description}</span>${metaLine([origin(s), loaded(s)])}</span><span class="chev"></span></a></li>`);
-  return html`<div class="pages-wrap"><div class="pmain">${pagesSubnav('/skills')}<h1>Skills</h1>
+  return html`<div class="pages-wrap solo"><div class="pmain">${pagesSubnav('/skills')}<h1>Skills</h1>
 <p class="lede">How-tos every assistant can load. Only skills that are On reach them, and only you turn one on.</p>
 ${errorBlock(error)}
 <section><div class="panel-head"><h2>${skills.length === 1 ? '1 skill' : `${skills.length} skills`}</h2><a class="button primary" href="/skills/new">New skill</a></div>
-${skills.length === 0 ? html`<p class="quiet">No skills yet. Write one, or let an assistant propose one: it waits in Approvals.</p>` : html`<ul class="group">${rows}</ul>`}</section>
+${skills.length === 0 ? html`<p class="quiet">No skills yet. Write one, or let an assistant propose one: it waits in your Inbox.</p>` : html`<ul class="group">${rows}</ul>`}</section>
 ${devices.map(deviceFold)}
 </div></div>`;
 }
@@ -46,7 +46,7 @@ function deviceLine(s: Skill, d: DeviceLine): SafeHtml {
 }
 
 export function skillView(s: Skill, rendered: SafeHtml, versions: number, devices: DeviceLine[] = []): SafeHtml {
-  return html`<div class="pages-wrap"><div class="pmain"><p class="crumb back"><a href="/skills">‹ Skills</a></p><h1>${s.name}</h1>
+  return html`<div class="pages-wrap solo"><div class="pmain"><p class="crumb back"><a href="/skills">‹ Skills</a></p><h1>${s.name}</h1>
 <form method="post" action="/skills/${s.id}/enabled" class="skill-head"><input type="hidden" name="on" value="${s.enabled ? '0' : '1'}"><button type="submit" class="switch" role="switch" aria-checked="${s.enabled ? 'true' : 'false'}" aria-label="Skill on for assistants"><i aria-hidden="true"></i> Skill · ${s.enabled ? 'On' : 'Off'}</button><span class="meta">${s.enabled ? 'Assistants list it and load it when a task matches.' : 'Assistants don’t see it until you turn it on.'}</span></form>
 <p class="lede">${s.description}</p>
 ${metaLine([origin(s), loaded(s), versions === 1 ? '1 version' : `${versions} versions`])}
@@ -120,17 +120,18 @@ function fileChanges(before: SkillFile[], after: SkillFile[]): SafeHtml {
  * A proposal in Approvals: a new skill with its text and every file in full, or a change with a diff of the text and of
  * each file, so the owner never approves instructions they haven't seen. `changed`: the apply was refused, ask again.
  */
-export function proposalCard(p: SkillProposal, current: Skill | undefined, o: { changed?: string } = {}): SafeHtml {
+export function proposalCard(p: SkillProposal, current: Skill | undefined, o: { changed?: string; back?: '/approvals'; next?: string | null } = {}): SafeHtml {
   if (p.skillId === null || !current) {
     const files = p.files.length === 0 ? html`<p class="meta">No files.</p>` : html`${p.files.map((f) => html`<p class="label"><b>${f.path}</b></p><pre class="sk-text">${f.text}</pre>`)}`;
     return html`<article class="card suggestion approval-card"><p class="approval-head">${writer(p.proposedBy)} proposes a skill: <b>${p.name}</b></p>
 ${metaLine([when(p.proposedAt), 'Skill', 'new'])}
+${p.builtin ? html`<p class="meta">Built into BrainAI: this skill ships with the app. No assistant wrote it.</p>` : ''}
 <p class="label">When to use it:</p><blockquote class="proposed">${p.description}</blockquote>
 <p class="label">What it says:</p><pre class="sk-text">${p.body}</pre>
 ${files}
 <div class="actions"><form method="post" action="/skill-proposals/${p.id}/add"><input type="hidden" name="on" value="1"><button type="submit" class="primary">Add it and turn on</button></form>
 <form method="post" action="/skill-proposals/${p.id}/add"><input type="hidden" name="on" value="0"><button type="submit" class="secondary">Add it, Off</button></form>
-<form method="post" action="/skill-proposals/${p.id}/reject" class="push-right"><button type="submit" class="ghost">Reject</button></form></div>
+<form method="post" action="/skill-proposals/${p.id}/reject" class="push-right">${o.next ? html`<input type="hidden" name="next" value="${o.next}">` : ''}<button type="submit" class="ghost">Reject</button></form></div>
 <p class="meta approval-foot">Only you turn a skill on. Assistants see it once it is On.</p></article>`;
   }
   const rename = p.name !== current.name ? html`<p class="held">Renames ${current.name} → ${p.name}.</p>` : '';
@@ -142,6 +143,6 @@ ${o.changed ? html`<p class="held">${o.changed} Apply it anyway?</p>` : ''}
 ${rename}${desc}${text}
 ${fileChanges(current.files, p.files)}
 <div class="actions"><form method="post" action="/skill-proposals/${p.id}/apply">${o.changed ? html`<input type="hidden" name="confirm" value="1">` : ''}<button type="submit" class="primary">Apply it</button></form>
-<form method="post" action="/skill-proposals/${p.id}/reject" class="push-right"><button type="submit" class="ghost">Reject</button></form></div>
+<form method="post" action="/skill-proposals/${p.id}/reject" class="push-right">${o.next ? html`<input type="hidden" name="next" value="${o.next}">` : ''}<button type="submit" class="ghost">Reject</button></form></div>
 <p class="meta approval-foot">${current.enabled ? 'The skill stays On; assistants get the new text from their next load.' : 'The skill stays Off.'}</p></article>`;
 }

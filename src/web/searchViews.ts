@@ -1,15 +1,17 @@
 import type { Memory } from '../memory/types.js';
 import type { Page } from '../pages/types.js';
 import type { Project } from '../projects/types.js';
+import { roadmapOneLine } from '../memory/roadmap.js';
 import { withFrom } from './back.js';
 import { excerpt, when, writer } from './dashboardViews.js';
 import { html, type SafeHtml } from './html.js';
 import { metaLine } from './metaLine.js';
+import { pastChip } from './factMetaViews.js';
 import { staleChip } from './freshnessViews.js';
 import { stripProjectPrefix } from './stripProject.js';
 
 /** A fact found: its text (without a leading "<project>:", which the chip already says) and a meta line led by the project. */
-const factRow = (m: Memory, from: string): SafeHtml => html`<li><a class="row nolead" href="${withFrom(`/memories/${m.id}`, from)}"><span class="txt">${excerpt(m.project ? stripProjectPrefix(m.content, m.project) : m.content)}${metaLine([m.project ? html`<span class="chip plain">${m.project}</span>` : null, m.kind, writer(m.updatedBy), when(m.updatedAt)])}</span><span class="chev"></span></a></li>`;
+const factRow = (m: Memory, from: string): SafeHtml => html`<li><a class="row nolead" href="${withFrom(`/memories/${m.id}`, from)}"><span class="txt">${excerpt((m.kind === 'roadmap' ? roadmapOneLine(m.content) : null) ?? (m.project ? stripProjectPrefix(m.content, m.project) : m.content))}${metaLine([m.project ? html`<span class="chip plain">${m.project}</span>` : null, m.kind, writer(m.updatedBy), when(m.updatedAt), pastChip(m)])}</span><span class="chev"></span></a></li>`;
 const projectRow = (p: Project): SafeHtml => html`<li><a class="row nolead" href="/?project=${encodeURIComponent(p.name)}#panel"><span class="txt"><b>${p.name}</b>${p.oneLiner ? html`<span class="sub">${p.oneLiner}</span>` : ''}</span><span class="chev"></span></a></li>`;
 const pageRow = (r: { page: Page; anchor: string; heading: string; snippet: string; stale?: boolean }, from: string): SafeHtml => html`<li><a class="row nolead" href="${withFrom(`/pages/${r.page.id}#${r.anchor}`, from)}"><span class="txt"><b>${r.page.title}${r.anchor === 'top' ? '' : ` › ${r.heading}`}</b>${r.snippet ? html`<span class="sub">${r.snippet}</span>` : ''}${r.stale ? metaLine([staleChip()]) : ''}</span><span class="chev"></span></a></li>`;
 

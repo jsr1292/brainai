@@ -308,6 +308,49 @@ for (const line of document.querySelectorAll('[data-setup-status]')) {
   }, 10_000);
 }
 
+// Reach, step 3: the Tailscale check is a small request of its own (the page never waits for Tailscale); Check again asks afresh.
+for (const box of document.querySelectorAll('[data-reach-tailscale]')) {
+  const check = async (fresh) => {
+    box.innerHTML = '<p class="meta">Checking Tailscale…</p>';
+    try {
+      // An expired login redirects to the login page: say so rather than show that page in the box.
+      const r = await fetch(box.dataset.reachTailscale + (fresh ? '?fresh=1' : ''), { headers: { accept: 'text/html' }, credentials: 'same-origin', redirect: 'manual' });
+      if (r.ok && !r.redirected) box.innerHTML = await r.text();
+      else if (r.type === 'opaqueredirect') box.innerHTML = '<p class="meta">Your session ended: reload the page.</p>';
+      else box.innerHTML = '<p class="meta">Tailscale can only be checked from the window on the computer BrainAI runs on.</p>';
+    } catch { box.innerHTML = '<p class="meta">BrainAI did not answer. Reload this page to check Tailscale.</p>'; }
+  };
+  box.addEventListener('click', (e) => {
+    if (e.target instanceof Element && e.target.closest('[data-reach-recheck]')) check(true);
+  });
+  check(false);
+}
+
+// Settings › Connections: the "added, not signed in yet" line is a small request of its own (the tools' CLIs can be slow).
+// Without JavaScript the line is simply not shown.
+for (const box of document.querySelectorAll('[data-added-tools]')) {
+  fetch(box.dataset.addedTools, { headers: { accept: 'text/html' }, credentials: 'same-origin', redirect: 'manual' })
+    .then(async (r) => { if (r.ok && !r.redirected) box.innerHTML = await r.text(); })
+    .catch(() => { /* offline for a moment: the line stays out */ });
+}
+
+// Home's first steps (local mode): "Add an assistant" is also done when a tool was added but has not signed in yet. The
+// answer of the Settings line (the tools' CLIs can be slow, so it is a request of its own) is empty when none was.
+for (const step of document.querySelectorAll('[data-step-added]')) {
+  fetch('/settings/tools/added', { headers: { accept: 'text/html' }, credentials: 'same-origin', redirect: 'manual' })
+    .then(async (r) => { if (r.ok && !r.redirected && (await r.text()).trim() !== '') step.classList.add('is-done'); })
+    .catch(() => { /* the step stays open */ });
+}
+
+// The welcome's step 4: after a minute with no first memory, a hint about signing in appears under the waiting line.
+for (const hint of document.querySelectorAll('[data-nothing-yet]')) {
+  const started = Date.now();
+  setInterval(() => {
+    const waiting = document.querySelector('[data-setup-status] .attention') !== null || document.querySelector('[data-setup-status]')?.textContent.startsWith('Waiting');
+    hint.hidden = !(waiting && Date.now() - started >= 60_000);
+  }, 5000);
+}
+
 // The welcome's "I have a saved BrainAI folder": the chosen file goes up as the raw body, and the answer says where to go
 // next (the desktop app watches for that navigation) or why the file was refused.
 for (const form of document.querySelectorAll('[data-restore-form]')) {

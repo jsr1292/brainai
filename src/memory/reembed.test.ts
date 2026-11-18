@@ -122,7 +122,8 @@ test('an existing brain is stamped e5 by the migration', (t) => {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'memory.db');
   const old = openDb(path, { upTo: 32 });
-  new MemoryStore(old, now).insert({ kind: 'decision', content: 'x', project: null, tags: [], embedding: new Float32Array(384), by: 'x' });
+  // Raw SQL: MemoryStore writes the newest schema's columns, and this brain is still at version 32.
+  old.prepare("INSERT INTO memories(id, kind, content, project, tags, keys, embedding, created_at, created_by, updated_at, updated_by) VALUES ('m1', 'decision', 'x', NULL, '[]', '', ?, 'x', 'x', 'x', 'x')").run(Buffer.alloc(384 * 4));
   old.close();
   const db = openDb(path);
   assert.deepEqual(storedModel(db), { model: 'e5', dim: 384 });

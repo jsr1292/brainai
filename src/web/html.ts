@@ -50,26 +50,29 @@ export const memoryServerName = (): string => 'shared-memory';
 const TABS: { href: string; label: string; tab: Tab }[] = [
   { href: '/', label: 'Projects', tab: 'projects' },
   { href: '/pages', label: 'Pages', tab: 'pages' },
+  { href: '/approvals', label: 'Inbox', tab: 'inbox' },
   { href: '/review', label: 'Week', tab: 'week' },
-  { href: '/graph', label: 'Graph', tab: 'graph' },
 ];
 
 /**
- * The phone bar keeps its four places; the desktop's Facts and Inbox are their own places, so on a phone they sit under
- * Pages and Projects, as they did before they became places.
+ * The phone bar's four places are Projects, Pages, Inbox and Week. Facts sits under Pages, and the Graph (no longer in the
+ * bar; it is a link at the foot of Projects) under Projects. Everything the desktop files under its Inbox (approvals, facts
+ * that disagree, Tidy up) lights the Inbox tab: see `phoneTabOf`.
  */
-const PHONE_PLACE: Partial<Record<Tab, Tab>> = { facts: 'pages', inbox: 'projects' };
+const PHONE_PLACE: Partial<Record<Tab, Tab>> = { facts: 'pages', graph: 'projects' };
+const phoneTabOf = (tab: Tab | null | undefined, sideTab: Tab | null | undefined): Tab | null | undefined =>
+  sideTab === 'inbox' ? 'inbox' : tab == null ? tab : PHONE_PLACE[tab] ?? tab;
 
 /** A part of a place, lit in the desktop sidebar under its place: Week has three. */
-export type Section = 'last' | 'now' | 'growth';
+export type Section = 'last' | 'now' | 'growth' | 'activity' | 'skills';
 
 /** The desktop sidebar's places, each with its sections (desktop design §3). */
 const PLACES: { href: string; label: string; tab: Tab; subs: { href: string; label: string; section: Section }[] }[] = [
   { href: '/', label: 'Projects', tab: 'projects', subs: [] },
-  { href: '/pages', label: 'Pages', tab: 'pages', subs: [] },
+  { href: '/pages', label: 'Pages', tab: 'pages', subs: [{ href: '/skills', label: 'Skills', section: 'skills' }] },
   { href: '/facts', label: 'Facts', tab: 'facts', subs: [] },
   { href: '/approvals', label: 'Inbox', tab: 'inbox', subs: [] },
-  { href: '/review', label: 'Week', tab: 'week', subs: [{ href: '/review', label: 'Last week', section: 'last' }, { href: '/review/now', label: 'So far', section: 'now' }, { href: '/growth', label: 'Growth', section: 'growth' }] },
+  { href: '/review', label: 'Week', tab: 'week', subs: [{ href: '/review', label: 'Last week', section: 'last' }, { href: '/review/now', label: 'So far', section: 'now' }, { href: '/growth', label: 'Growth', section: 'growth' }, { href: '/activity', label: 'Activity', section: 'activity' }] },
   { href: '/graph', label: 'Graph', tab: 'graph', subs: [] },
 ];
 
@@ -99,6 +102,17 @@ function sidebar(opts: { tab?: Tab | null; section?: Section; query?: string }):
 }
 
 /**
+ * The place the desktop sidebar lights: every page under Settings lights Settings (they all go back to it), and the pages that
+ * belong to the Inbox light the Inbox (Tidy up, Facts that disagree). The phone's bar is not touched by this.
+ */
+function sideTabOf(title: string, opts: { tab?: Tab | null; sideTab?: Tab | null; back?: Pick<Back, 'href'> }): Tab | null | undefined {
+  if (opts.sideTab !== undefined) return opts.sideTab;
+  if (title === 'Tidy up') return 'inbox';
+  if (opts.tab == null && opts.back?.href.split(/[#?]/)[0]!.startsWith('/settings')) return 'settings';
+  return opts.tab;
+}
+
+/**
  * `tab` marks a main tab current whatever the title (a page's title is its own, not "Pages"); `section` marks the part
  * of it in the desktop sidebar (on the Pages tab it defaults to All pages).
  */
@@ -108,16 +122,39 @@ export function setMovedBanner(fn: () => URL | null): void {
   movedTo = fn;
 }
 
+let savesPaused: () => string | null = () => null;
+/** The banner never breaks a page: a database that is closing reads as not paused. */
+const pausedSince = (): string | null => { try { return savesPaused(); } catch { return null; } };
+/** C2: while the owner has paused every assistant save, every dashboard page says so, with Resume. Set by createApp. */
+export function setPausedBanner(fn: () => string | null): void {
+  savesPaused = fn;
+}
+
+/** Where the palette (Ctrl/⌘K) can jump besides the sidebar's places, for this brain's mode: set by createApp. */
+export interface GoTo { label: string; href: string; alias?: string }
+let goTo: GoTo[] = [];
+export function setGoTo(list: GoTo[]): void {
+  goTo = list;
+}
+
+let serverMode = false;
+/** A server (not the desktop app): desk.js names its two switches' place "This browser" (data-server on the body). Set by createApp. */
+export function setServerMode(on: boolean): void {
+  serverMode = on;
+}
+
 let consentPoller = false;
 /** Local mode: owner pages ask for tool sign-ins waiting for approval (data-consents-waiting on the body). Set by createApp. */
 export function setConsentPoller(on: boolean): void {
   consentPoller = on;
 }
 
-export function page(title: string, body: SafeHtml, opts: { nav?: boolean; query?: string; tab?: Tab | null; section?: Section; back?: Pick<Back, 'href' | 'label'>; crumb?: boolean; /** The app's first-run setup: its own frame, with the brand in its step list. */ shell?: 'setup' } = {}): string {
+export function page(title: string, body: SafeHtml, opts: { nav?: boolean; /** Which place the desktop sidebar lights, when it is not `tab` (the phone bar keeps using `tab`). */ sideTab?: Tab | null; query?: string; tab?: Tab | null; section?: Section; back?: Pick<Back, 'href' | 'label'>; crumb?: boolean; /** The app's first-run setup: its own frame, with the brand in its step list. */ shell?: 'setup' } = {}): string {
   const brand = html`<a class="brand" href="/"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></a>`;
+  const phoneTab = opts.nav ? phoneTabOf(opts.tab, sideTabOf(title, opts)) : null;
+  const waiting = opts.nav ? sideStatus().needsYouCount : 0;
   const link = (t: { href: string; label: string; tab: Tab }) =>
-    html`<a href="${t.href}"${opts.tab === t.tab || PHONE_PLACE[opts.tab ?? 'projects'] === t.tab ? raw(' aria-current="page"') : ''}>${t.label}</a>`;
+    html`<a href="${t.href}"${phoneTab === t.tab ? raw(' aria-current="page"') : ''}>${t.label}${t.tab === 'inbox' && waiting > 0 ? html`<span class="tab-count" aria-label="${waiting} waiting">${waiting}</span>` : ''}</a>`;
   const settings = html`<a class="settings-link" href="/settings"${opts.tab === 'settings' ? raw(' aria-current="page"') : ''} aria-label="Settings"><span class="settings-word">Settings</span><svg class="cog" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></a>`;
   const header = opts.nav
     ? html`<header class="top">${brand}${opts.back ? html`<a class="top-back" href="${opts.back.href}"><span>${opts.back.label}</span></a>` : ''}
@@ -143,9 +180,10 @@ ${settings}
 <link rel="stylesheet" href="${asset('desk.css')}" media="screen and (min-width: 1100px)">
 <script src="${asset('app.js')}" defer></script>
 </head>
-<body class="${opts.nav ? 'app' : opts.shell === 'setup' ? 'setup' : 'auth'}"${opts.nav ? html` data-desk="${asset('desk.js')}"` : ''}${consentPoller ? raw(' data-consents-waiting="/consents/waiting"') : ''}>
-${header}${opts.nav ? sidebar(opts) : ''}<main>
+<body class="${opts.nav ? 'app' : opts.shell === 'setup' ? 'setup' : 'auth'}"${opts.nav ? html` data-desk="${asset('desk.js')}"${goTo.length > 0 ? html` data-goto="${JSON.stringify(goTo)}"` : ''}` : ''}${opts.nav && serverMode ? raw(' data-server') : ''}${consentPoller ? raw(' data-consents-waiting="/consents/waiting"') : ''}>
+${header}${opts.nav ? sidebar({ ...opts, tab: sideTabOf(title, opts) }) : ''}<main>
 ${(() => { const to = opts.nav ? movedTo() : null; return to ? html`<p class="notice" role="status">This brain now lives at <a href="${to.origin}">${to.origin}</a>. Changes made here are not copied there.</p>
+` : ''; })()}${(() => { const since = opts.nav ? pausedSince() : null; return since ? html`<div class="notice undo-line" role="status"><span>Saving is paused: assistants cannot save, change or forget anything.</span><form method="post" action="/settings/pause/resume"><button type="submit" class="linklike">Resume</button></form></div>
 ` : ''; })()}${opts.nav && opts.back && opts.crumb !== false ? html`<p class="crumb back"><a href="${opts.back.href}">‹ ${opts.back.label}</a></p>` : ''}
 ${body}
 </main>

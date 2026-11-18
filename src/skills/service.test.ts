@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { openDb } from '../db.js';
 import { MAX_BODY } from '../pages/types.js';
 import { SkillError, SkillService } from './service.js';
+import { MAX_PENDING_PROPOSALS } from './types.js';
 
 function make() {
   let t = Date.parse('2026-11-05T10:00:00Z');
@@ -142,4 +143,19 @@ test('paths that would collide on a Mac (case only, or a file against a folder) 
   for (const files of [[{ path: 'A.txt', text: 'x' }, { path: 'a.txt', text: 'y' }], [{ path: 'Ref', text: 'x' }, { path: 'ref/b.md', text: 'y' }]]) {
     assert.throws(() => svc.create({ ...base, files }, 'owner'), code('invalid'), JSON.stringify(files));
   }
+});
+
+test('reopenRejected is refused when a newer proposal of the same name from the same proposer waits, or the Inbox is full', () => {
+  const svc = make();
+  const first = svc.propose(base, 'Claude');
+  svc.rejectProposal(first.id);
+  const again = svc.propose({ ...base, body: '# Release notes\n\n2. Newer.' }, 'Claude');
+  assert.throws(() => svc.reopenRejected(first.id), code('invalid', /newer proposal/));
+  assert.equal(svc.proposal(first.id)!.status, 'rejected');
+  svc.rejectProposal(again.id);
+  for (let i = 0; i < MAX_PENDING_PROPOSALS; i++) svc.propose({ ...base, name: `other-${i}` }, 'Claude');
+  assert.throws(() => svc.reopenRejected(first.id), code('invalid', /already wait/));
+  svc.rejectProposal(svc.pendingProposals()[0]!.id);
+  svc.reopenRejected(first.id);
+  assert.equal(svc.proposal(first.id)!.status, 'pending');
 });

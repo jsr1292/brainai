@@ -16,16 +16,72 @@ The server also sends its own instructions. The memory tools are `load_profile`,
 When you approve a sign-in, the consent page asks you to name the connection (for example "Grok Build") and to choose its access level (section 6). The name is what shows on discussion posts, new memories and Settings › Connections. You can rename a connection later in Settings › Connections.
 
 ## 2. Claude Code
-1. `claude mcp add --transport http --scope user memory https://memory.<domain>/mcp`
-2. In Claude Code run `/mcp`, pick `memory`, and log in. The browser shows the consent page: check the client name and redirect site, then approve (you sign in with your password and authenticator code).
+1. `claude mcp add --transport http --scope user brainai https://memory.<domain>/mcp`
+   (An install that already uses the name `memory` keeps working; only new installs use `brainai`.)
+2. In Claude Code run `/mcp`, pick `brainai`, and log in. The browser shows the consent page: check the client name and redirect site, then approve (you sign in with your password and authenticator code).
 3. Add the snippet above to `~/.claude/CLAUDE.md`.
 
 ### Hooks (load and save without relying on the assistant to remember)
 
-Two hooks make Claude Code use the memory on its own. Install or update them with `./scripts/install-claude-code-hooks.sh`, which copies them to `~/.claude/hooks`. They are wired up in `~/.claude/settings.json` under `"hooks"`:
+Hooks make a tool use the memory on its own. On the desktop app, **Settings › Tools on this computer › Connect** installs them for every tool below that has them, and Disconnect (or Remove BrainAI) takes them back; a tool connected earlier shows **Add save reminders**. On a server, `./scripts/install-claude-code-hooks.sh` builds the scripts and copies them (`~/.claude/hooks` and `~/.brainai/hooks`), and you wire them into the tools' hook files as shown below. Either way the tool's own hook file is read first and never rewritten when it is not plain JSON, it is backed up beside itself (`.brainai-backup`) before the first change, and only entries that name BrainAI's own scripts are ever added or removed.
 
-- **SessionStart** (`memory-start.mjs`, on startup, `/clear` and after compaction) tells the session to call `load_profile` and `project_brief` for the folder it was opened in (the git repository's folder name, so `~/Projects/wildlog` → `wildlog`). If the name doesn't match a project, `project_brief` suggests the closest ones.
-- **Stop** (`memory-save.mjs`) counts edits, writes and shell commands since the last `remember` or `update_memory`. After 12, it stops Claude once and asks it to save or update the project's status, or to carry on if nothing lasting happened. It never blocks twice for the same stretch of work, and any error lets Claude stop normally.
+All reminders say the same short thing: *if decisions were made or the status changed and are not saved yet, save them with `remember` (update the project's status rather than adding one), or run the `harvest-session` skill to suggest them for the owner's approval; if nothing lasting happened, carry on.* They fire once per stretch of work (12 changes since the last save), never twice in a row, and any error lets the tool carry on.
+
+What each tool offers (checked 2026-11-18 against the official documentation) and what BrainAI installs:
+
+| Tool | Events that can put a message in front of the model | Installed |
+| --- | --- | --- |
+| Claude Code | **SessionStart** (`additionalContext`), **Stop** (`decision: "block"` + `reason` continues the turn), **PreCompact** (plain stdout becomes instructions for the compaction summary; it can also block compaction). **SessionEnd** cannot: no decision control, JSON output is discarded, 1.5 s budget. | SessionStart: load profile and briefing. Stop: the reminder. PreCompact: the reminder, phrased as a to-do in the summary, only after at least 3 unsaved changes. No SessionEnd hook. The commands run plain `node` (an absolute path only when `node` is not on the PATH); on Windows Cursor runs hook commands through PowerShell (a quoted absolute interpreter needs `& `), Codex's docs do not say which shell. Scripts `memory-start.mjs`, `memory-save.mjs` in `~/.claude/hooks`, wired in `~/.claude/settings.json`. |
+| Codex CLI | **Stop** (`decision: "block"` starts a new continuation prompt from `reason`), SessionStart / UserPromptSubmit / PreToolUse / PostToolUse (`additionalContext`). **PreCompact** only stops compaction (no message to the model); **SessionEnd** is advisory (1 s, cannot keep the thread open). | Stop (the reminder) and PostToolUse (counts work; prints nothing) in `~/.codex/hooks.json`, script `~/.brainai/hooks/memory-nudge.mjs codex`. Codex asks you to trust new hooks once: type `/hooks`. |
+| Cursor | **stop** (`followup_message` is auto-submitted as the next user message; default cap 5 follow-ups), sessionStart / postToolUse (`additional_context`). **preCompact** only returns `user_message` (shown to the user, not the model); **sessionEnd** is fire-and-forget. | stop (the reminder) and postToolUse (counts work) in `~/.cursor/hooks.json` (`"version": 1`, flat entries), script `~/.brainai/hooks/memory-nudge.mjs cursor`. |
+| OpenCode | Plugins (not hook files): subscribe to events with `ctx.event.subscribe` (the event list includes `session.idle`, `session.deleted` and `session.compaction.*`) and send into a session with `ctx.session.prompt` / `ctx.session.synthetic`; a `compaction` session hook replaces the summary. | **Nothing yet.** The plugin API was reworked and its docs do not show a stable `session.idle` payload or a plugin that can be dropped in and loaded from `~/.config/opencode/plugins/`; shipping code that could not be run against it would risk breaking OpenCode at start. OpenCode relies on its rules and the `harvest-session` skill. |
+| Grok Build | Hook files `~/.grok/hooks/*.json` (and it also reads `.claude/settings.json` and `.cursor/hooks.json` of a project). Events: SessionStart, SessionEnd, UserPromptSubmit, PreToolUse, PostToolUse, Stop, PreCompact, PostCompact and more, **but only PreToolUse can block, and the docs name no event that adds text to the model's context**; stdout of the others is ignored. | **Nothing**: there is no documented way to put a message in front of the agent. Grok relies on its rules and the skill. |
+| Claude (desktop app, web, mobile) | No hooks. | Nothing: relies on the server instructions and the skill. |
+
+Documentation used: Claude Code <https://code.claude.com/docs/en/hooks> (PreCompact and SessionEnd sections; checked 2026-11-18: "On these events, your plain-text stdout reaches Claude or the compaction summary: PreCompact: your stdout becomes instructions for the compaction summary", so the PreCompact reminder does reach the model that writes the summary, not only the transcript view); Codex <https://developers.openai.com/codex/hooks> (now served from <https://learn.chatgpt.com/docs/hooks>; schemas in <https://github.com/openai/codex/tree/main/codex-rs/hooks/schema/generated>); Cursor <https://cursor.com/docs/hooks>; OpenCode <https://opencode.ai/docs/plugins/>, <https://opencode.ai/docs/build/plugins/server> and the event list at <https://opencode.ai/docs/server/>; Grok Build <https://docs.x.ai/build/features/hooks>.
+
+By hand (server users), the wiring is, for Claude Code in `~/.claude/settings.json`:
+
+```json
+{ "hooks": {
+  "SessionStart": [{ "hooks": [{ "type": "command", "command": "node /Users/you/.claude/hooks/memory-start.mjs" }] }],
+  "Stop":         [{ "hooks": [{ "type": "command", "command": "node /Users/you/.claude/hooks/memory-save.mjs" }] }],
+  "PreCompact":   [{ "hooks": [{ "type": "command", "command": "node /Users/you/.claude/hooks/memory-save.mjs" }] }]
+} }
+```
+
+for Codex in `~/.codex/hooks.json` the same shape with `Stop` and `PostToolUse` running `node /Users/you/.brainai/hooks/memory-nudge.mjs codex`, and for Cursor in `~/.cursor/hooks.json`: `{ "version": 1, "hooks": { "stop": [{ "command": "node /Users/you/.brainai/hooks/memory-nudge.mjs cursor" }], "postToolUse": [{ "command": "node /Users/you/.brainai/hooks/memory-nudge.mjs cursor" }] } }`.
+
+The two Claude Code scripts, in short: **SessionStart** (`memory-start.mjs`, on startup, `/clear` and after compaction) tells the session to call `load_profile` and `project_brief` for the folder it was opened in (the git repository's folder name, so `~/Projects/wildlog` → `wildlog`); **Stop** (`memory-save.mjs`) counts edits, writes and shell commands since the last `remember`, `update_memory` or `suggest_memories`.
+
+### Install as a plugin
+
+Instead of the three steps above plus the hooks, Claude Code can take everything from one plugin published in BrainAI's own public repository (no third-party marketplace). The plugin carries the MCP entry, the instruction text (as the `brainai-memory` skill), the save reminders (SessionStart, Stop, PreCompact) and the `harvest-session` skill.
+
+```
+claude plugin marketplace add jsr1292/brainai
+claude plugin install brainai@brainai-plugins
+```
+
+Claude Code then asks for **brainai_url**, your own address ending in `/mcp` (`https://memory.<domain>/mcp`, or the one the desktop app shows). It is stored in your settings (`claude plugin install brainai@brainai-plugins --config brainai_url=https://memory.<domain>/mcp` sets it without the prompt; change it later with `/plugin configure brainai@brainai-plugins`), and the plugin itself holds no address: its `.mcp.json` says `"url": "${user_config.brainai_url}"`. Before installing, remove any MCP server you added by hand (`claude mcp remove memory`, or `claude mcp remove brainai` if the desktop app's Connect added it), or you would have two connections to the same server. Then run `/mcp`, pick the `brainai` server that comes from the brainai plugin and log in as in step 2. Use the plugin or the desktop Connect for Claude Code, not both, or each reminder fires twice; with the plugin installed, the desktop Connect for Claude Code detects it (`~/.claude/plugins/installed_plugins.json` lists `brainai@brainai-plugins`) and adds nothing of its own. Add the custom instruction to `~/.claude/CLAUDE.md` only if you want it in every session regardless of the skill.
+
+The plugin is generated, never edited: `npm run build:plugins` writes `plugins/claude-code/brainai/` and `.claude-plugin/marketplace.json` from `src/hooks`, `src/skills/builtin` and `src/setup/texts.ts`, and `src/plugins/plugins.test.ts` fails when the committed copy has drifted, a version differs from `package.json`, or an owner-specific string slipped in. The release gate publishes `plugins/` with the rest of the tracked files. Check a build with `claude plugin validate plugins/claude-code/brainai` and `claude plugin validate .`.
+
+Plugin formats checked 2026-11-18, and why only Claude Code gets one:
+
+| Tool | Format found | Plugin built? |
+| --- | --- | --- |
+| Claude Code | Stable and fully documented: `.claude-plugin/plugin.json` (`userConfig`, `${user_config.KEY}` in MCP `url`, `${CLAUDE_PLUGIN_ROOT}`), `.mcp.json`, `hooks/hooks.json` (exec form), `skills/<name>/SKILL.md`, and a `.claude-plugin/marketplace.json` that `claude plugin marketplace add <owner>/<repo>` reads from any GitHub repository. <https://code.claude.com/docs/en/plugins-reference>, <https://code.claude.com/docs/en/plugin-marketplaces>, <https://code.claude.com/docs/en/hooks>, <https://code.claude.com/docs/en/mcp> | **Yes**, `plugins/claude-code/brainai`. |
+| Codex CLI | Documented: root `plugin.json` (or `.codex-plugin/plugin.json`), `skills/`, `mcp.json`, `hooks/hooks.json`, marketplace at `.agents/plugins/marketplace.json`; the CLI only manages marketplaces (`codex plugin marketplace add owner/repo`) and installs through `/plugins`. <https://developers.openai.com/codex/plugins/build> (served from <https://learn.chatgpt.com/docs/plugins>) | **No.** The docs give a plugin no way to ask the user for their own address, so the MCP entry would have to hold a fixed URL; plugin hooks are documented only for plugins installed by hand in the desktop app, and need a separate trust step. Use the manual route in section 2's tool steps and Connect's hooks. |
+| Cursor | Documented: `.cursor-plugin/plugin.json`, `mcp.json`, `hooks/hooks.json`, `.cursor-plugin/marketplace.json`. <https://cursor.com/docs/plugins>, <https://cursor.com/docs/reference/plugins> | **No.** Plugin variables (`variables` in the manifest) are filled in by an admin in the Cursor dashboard, and installing from a repository goes through a Team marketplace or Cursor's public one; the docs give a single owner no way to set their own address or install from their own repository. Use the manual route and Connect's hooks. |
+| OpenCode | Plugins are JavaScript/TypeScript packages listed under `plugin` in `opencode.json` (`opencode plugin add`); the docs mention tools, hooks, commands and agents, not MCP servers or skills. <https://opencode.ai/docs/plugins/> | **No.** A plugin cannot carry the MCP entry or the skill, and its event API has no documented stable save-reminder hook (see the hooks table above). Use the manual route. |
+| Grok Build, Claude (desktop, web, mobile), ChatGPT | No plugin format that bundles an MCP server with hooks or skills. | **No.** Manual route. |
+
+### Harvest: `suggest_memories` and the `harvest-session` skill
+
+Hooks only nudge; the assistant still has to go over its session. `suggest_memories` takes up to 20 items (`content`, `kind` decision, summary or profile, `project`, optional `keys`, `valid_until`, `source`, `source_note`) and one `session` label. Nothing is saved: each item becomes a held suggestion marked as harvested, goes through the same checks as a held `remember` (secrets refused, instruction-like text flagged, a close existing memory or a fact you deleted attached as a warning), and waits in the Inbox as the group **Harvested from <app> · <label> · N** under Approvals, with Approve all / Reject all and each item's own buttons. They count in the needs-you badge. Harvested suggestions have their own room (60 waiting), apart from the 20 plain held saves.
+
+The `harvest-session` skill (text in `src/skills/builtin/harvest-session.md`) tells the tool's own model how to do it. It reaches you once, on first start, as a skill proposal from "BrainAI" in the Inbox; only you add it (a skill with that name that already exists is never proposed over).
 
 ## 3. Claude (web, desktop, mobile)
 1. Customize → Connectors → Add custom connector.

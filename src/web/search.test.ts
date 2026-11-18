@@ -149,3 +149,13 @@ test('the "Also N" line and the page it opens agree', async (t) => {
     assert.equal((list.match(/<li class="card rep">/g) ?? []).length, n, q);
   }
 });
+
+test('a roadmap reads as one Now/Next line in search results and as the fact page heading, not as the raw Done: text', async (t) => {
+  const { app, f } = await start(t);
+  const m = (await app.deps.service.remember({ kind: 'roadmap', project: 'garden', content: 'Done: plot booking form (2026-11-01)\nNow: member sign-in (3/4)\nNext: newsletter signup; event calendar' }, ai) as any).memory;
+  const found = await (await f('/search?q=' + encodeURIComponent('newsletter signup'))).text();
+  assert.match(found, /<span class="txt">Now: member sign-in \(3\/4\) · Next: newsletter signup<ul class="meta-line">/);
+  assert.doesNotMatch(found, /Done: plot booking/);
+  const fact = await (await f(`/memories/${m.id}`)).text();
+  assert.match(fact, /<h1 class="fact-text">Now: member sign-in \(3\/4\) · Next: newsletter signup<\/h1>/);
+});

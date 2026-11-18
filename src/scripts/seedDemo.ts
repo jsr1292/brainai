@@ -200,6 +200,26 @@ export async function seedDemo(dataDir: string, embedder: Embedder, today = Date
   at(2, 15);
   discussions.reply({ name: 'Codex', model: 'GPT', access: 'full' }, d.id, { text: 'Agree for now. Add an unsubscribe link from day one, and switch to a service only if the list passes 500 or the mailbox starts bouncing.' });
 
+  // The Inbox: one of each thing that waits, so the demo's Inbox shows its groups (a held suggestion, two facts that
+  // disagree, a pair that look like duplicates; the discussion above waits on the owner too).
+  at(0, 9);
+  await service.remember({ kind: 'profile', content: 'Wants commit messages in the imperative mood, under 60 characters.' }, claudeCode);
+  const twoSaves = async (project: string, x: [Actor, string], y: [Actor, string]) => {
+    const ids: string[] = [];
+    for (const [actor, content] of [x, y]) {
+      const r = await service.remember({ kind: 'decision', content, project, allowDuplicate: true }, actor);
+      if (r.status !== 'saved') throw new Error(`demo fact not saved (${r.status}): ${content}`);
+      ids.push(r.memory.id);
+      facts++;
+    }
+    return ids as [string, string];
+  };
+  const [plotA, plotB] = await twoSaves('garden-club-site',
+    [claudeCode, 'garden-club-site draws the plot map as one SVG per bed.'], [codex, 'garden-club-site draws the plot map as one PNG per bed.']);
+  service.flagDisagreement(plotA, plotB, 'SVG or PNG for the plot map: they can’t both be the choice', claudeCode);
+  await twoSaves('garden-club-site',
+    [claudeCode, 'garden-club-site emails members a reminder the day before their plot booking.'], [codex, 'garden-club-site emails members a reminder the day before their plot booking.']);
+
   // The learning layer (spec 2026-11-11): a few areas set by assistants, with notes, and one lesson in the handbook.
   const learning = new LearningService(db, now, { match: () => ({ byProject: new Map(), unmatched: [], receivedAt: null, device: null }) },
     { get: (n) => registry.get(n), named: (n) => service.projectNamed(n), list: () => registry.list() });

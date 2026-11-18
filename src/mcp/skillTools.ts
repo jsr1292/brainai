@@ -1,6 +1,6 @@
 /**
  * Shared skills (round 2 §17c): list_skills, load_skill and propose_skill, for Full connections only. Only skills the
- * owner turned on are listed or loaded; a proposal never changes a skill, it waits in Approvals.
+ * owner turned on are listed or loaded; a proposal never changes a skill, it waits in the owner's Inbox.
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -46,7 +46,7 @@ export function registerSkillTools(server: McpServer, skills: SkillService, acto
   server.registerTool('propose_skill', {
     title: 'Propose skill',
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-    description: 'Proposes a new skill, or a change to one (same name), for the owner to add or apply in Approvals. It never changes a skill by itself. '
+    description: 'Proposes a new skill, or a change to one (same name), for the owner to add or apply in the owner\'s Inbox. It never changes a skill by itself. '
       + `name: lowercase letters, digits and hyphens. description: when to use it (at most ${MAX_SKILL_DESCRIPTION} characters). body: the SKILL.md text after the frontmatter. files: optional text files ({path, text}).`,
     inputSchema: {
       name: z.string().max(MAX_SKILL_NAME),
@@ -56,6 +56,6 @@ export function registerSkillTools(server: McpServer, skills: SkillService, acto
     },
   }, guard('propose_skill', (a: { name: string; description: string; body: string; files?: { path: string; text: string }[] }) => {
     const p = skills.propose(a, actorName);
-    return text(`Sent to the owner: the skill "${p.name}" waits in Approvals. It is not on until the owner adds it.`);
+    return text(`Sent to the owner: the skill "${p.name}" waits in the owner's Inbox. It is not on until the owner adds it.`);
   }));
 }

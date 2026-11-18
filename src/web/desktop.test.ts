@@ -63,6 +63,7 @@ test('Settings › Tools on this Mac lists the tools and connects and disconnect
   assert.equal(page.status, 200);
   for (const name of ['Claude Code', 'Codex', 'OpenCode', 'Cursor']) assert.match(page.body, new RegExp(name));
   assert.match(page.body, /action="\/settings\/tools\/claude-code\/connect"/);
+  assert.match(page.body, /backed up next to itself as <code class="nowrap">\.brainai-backup<\/code>\./, 'the file name cannot wrap');
   const r = await post(app.baseUrl, '/settings/tools/claude-code/connect', settings.cookie);
   assert.equal(r.status, 303);
   assert.equal(r.headers.get('location'), '/settings/tools?tool=claude-code');
@@ -131,7 +132,7 @@ test('a new Mac install opens on the welcome, and once it is done it never comes
   assert.match(w2.body, /Claude Code/);
   assert.match(w2.body, /<input type="hidden" name="back" value="welcome">/, 'Connect returns to the welcome');
   const w3 = await openPage(app.baseUrl, '/welcome?step=4', home.cookie);
-  assert.match(w3.body, /data-setup-status="\/welcome\/first"/);
+  assert.match(w3.body, /No assistant is added yet\./);
   const done = await post(app.baseUrl, '/welcome/done', home.cookie);
   assert.equal(done.headers.get('location'), '/');
   assert.equal((await openPage(app.baseUrl, '/', home.cookie)).status, 200, 'done sticks');
@@ -315,6 +316,31 @@ test('a successful Connect or Disconnect refreshes the ask commands at once, so 
   assert.deepEqual(reader(), {});
 });
 
+test('Settings loads without looking at the tools: the "added, not signed in yet" line comes from its own request, which is kept for a short while and cleared by Connect and Disconnect', async (t) => {
+  const { app, f } = await start(t);
+  const cookie = (await openPage(app.baseUrl, '/settings')).cookie;
+  await post(app.baseUrl, '/settings/tools/codex/connect', cookie);
+  const looks = () => f.calls().length;
+  const before = looks();
+  const page = await openPage(app.baseUrl, '/settings', cookie);
+  assert.match(page.body, /data-added-tools="\/settings\/tools\/added"/);
+  assert.doesNotMatch(page.body, /added, not signed in yet/);
+  assert.equal(looks(), before, 'the page itself ran no tool CLI');
+  const line = await openPage(app.baseUrl, '/settings/tools/added', cookie);
+  assert.equal(line.status, 200);
+  assert.match(line.body, /Codex: added, not signed in yet/);
+  const afterFirst = looks();
+  await openPage(app.baseUrl, '/settings/tools/added', cookie);
+  await openPage(app.baseUrl, '/settings/tools', cookie);
+  assert.equal(looks(), afterFirst, 'the tools were looked at once, then the answer was reused');
+  await post(app.baseUrl, '/settings/tools/codex/disconnect', cookie);
+  assert.doesNotMatch((await openPage(app.baseUrl, '/settings/tools/added', cookie)).body, /not signed in yet/, 'Disconnect cleared what was kept');
+  const anon = await fetch(app.baseUrl + '/settings/tools/added', { redirect: 'manual' });
+  assert.notEqual(anon.status, 200, 'only the owner gets it');
+  const server = await start(t, { localMode: false });
+  assert.notEqual((await fetch(server.app.baseUrl + '/settings/tools/added', { redirect: 'manual' })).status, 200);
+});
+
 // ---- Step 2: the search models (made-up computer, made-up manager: nothing is downloaded) ----
 
 const GB = 1024 ** 3;
@@ -383,11 +409,13 @@ test('step 2 explains the two models, shows this computer and the recommended pa
   assert.match(p.body, /MIT/);
   assert.match(p.body, /Gemma Terms of Use/);
   assert.match(p.body, /found 150 of 168 first/);
-  assert.match(p.body, /for each search, your question and about 20 best matches are sent to this service/);
-  assert.match(p.body, /Set it up later in Settings › Search/);
+  assert.match(p.body, /Prefer an online reranker\? Set it up later in Settings › Search\./);
+  assert.doesNotMatch(p.body, /Through OpenRouter|type="radio"[^>]*disabled/);
+  assert.match(p.body, /<a href="\/welcome\?step=3">Skip for now\. Search works on keywords until you choose\.<\/a>/);
+  assert.match(p.body, /<a href="\/welcome\?step=1">‹ Back<\/a>/);
   assert.doesNotMatch(p.body, /Strong/);
   assert.match(p.body, /Download 355 MB and continue/, 'Balanced + Standard');
-  assert.match(p.body, /Choose the models myself/);
+  assert.match(p.body, /Choose the models myself<span class="chev"><\/span>/);
 });
 
 test('step 3 says Continue when the suggested models are already installed, and suggests Light + none on a small computer', async (t) => {
@@ -818,8 +846,10 @@ test('the Tools page keeps its lede true for the new rows, and ChatGPT points at
 // ---- The off-site nudge on Home ----
 
 const NUDGE = /Your backups are only on this computer\. Keep a copy in OneDrive, Dropbox or another folder that syncs\./;
-async function startNudge(t: TestContext, opts: { localMode?: boolean; ageDays?: number } = {}) {
+async function startNudge(t: TestContext, opts: { localMode?: boolean; ageDays?: number; checklist?: boolean } = {}) {
   const r = await startUpdate(t, { localMode: opts.localMode ?? true });
+  // The first-steps checklist replaces the nudge while it shows (see firstSteps.test.ts); these tests are about the nudge.
+  if (!opts.checklist) writeFileSync(join(r.statusDir, 'first-steps-hidden'), '');
   await r.app.deps.service.remember({ kind: 'decision', content: 'The first thing saved here', project: 'demo' }, { type: 'owner' });
   r.app.advance((opts.ageDays ?? 5) * 86_400_000);
   return r;
@@ -831,6 +861,13 @@ test('Home nudges toward an off-site copy once the brain is three days old, with
   assert.match(home.body, NUDGE);
   assert.match(home.body, /<a[^>]*href="\/settings#backup-copy"/);
   assert.match(home.body, /<form[^>]*action="\/app\/offsite\/later"[^>]*>\s*<button[^>]*>Later<\/button>/);
+});
+
+test('the first-steps checklist stands in for the off-site nudge while it shows', async (t) => {
+  const { app } = await startNudge(t, { checklist: true });
+  const home = (await openPage(app.baseUrl, '/')).body;
+  assert.match(home, /Keep a backup somewhere other than this computer/);
+  assert.doesNotMatch(home, NUDGE);
 });
 
 test('the off-site nudge waits for a new brain', async (t) => {
@@ -893,4 +930,25 @@ test('Settings says when update checks have been failing for more than two days'
   // The Home page never carries it.
   writeFileSync(join(statusDir, 'update-check.json'), JSON.stringify({ failingSince: since, lastFailAt: since + 5 * 86_400 - 60 }));
   assert.doesNotMatch((await openPage(app.baseUrl, '/', cookie)).body, /able to check for updates/);
+});
+
+test('the welcome has Back on steps 2 to 4, a skip on the search step, and no disabled OpenRouter radio', async (t) => {
+  const { app } = await start(t);
+  const home = await openPage(app.baseUrl, '/');
+  const step = async (n: number) => (await openPage(app.baseUrl, `/welcome?step=${n}`, home.cookie)).body;
+  assert.doesNotMatch(await step(1), /‹ Back/);
+  for (const n of [2, 3, 4]) assert.match(await step(n), new RegExp(`<a href="/welcome\\?step=${n - 1}">‹ Back</a>`), `step ${n}`);
+});
+
+test('welcome step 4 has a Copy button, a hidden sign-in hint for the added tool, and says so when no tool is added', async (t) => {
+  const { app } = await start(t);
+  const home = await openPage(app.baseUrl, '/');
+  const none = (await openPage(app.baseUrl, '/welcome?step=4', home.cookie)).body;
+  assert.match(none, /No assistant is added yet\. <a href="\/welcome\?step=3">Go back and connect one<\/a>, or open your brain and do it later\./);
+  assert.doesNotMatch(none, /data-setup-status|Waiting for your first memory/);
+  await post(app.baseUrl, '/settings/tools/claude-code/connect', home.cookie, { back: 'welcome' });
+  const four = (await openPage(app.baseUrl, '/welcome?step=4', home.cookie)).body;
+  assert.match(four, /data-copy="Save a note in BrainAI that I set it up today\."/);
+  assert.match(four, /data-nothing-yet hidden>Nothing yet\? Check that the tool signed in\. In Claude Code: \/mcp › brainai › Authenticate\./);
+  assert.match(four, /data-setup-status="\/welcome\/first"/);
 });

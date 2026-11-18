@@ -336,9 +336,12 @@ export function registerPageTools(server: McpServer, d: PageToolDeps, access: { 
       + 'never live status, which belongs in facts. To change one part, use edit_page_section. Secrets are refused.',
     inputSchema: {
       id: z.string().optional(), base_version: z.number().int().min(1).optional(),
-      title: z.string(), project: z.string().optional(), area: area.optional().describe('Only for a page without a project.'), body: z.string(),
+      title: z.string().optional().describe('Required.'), project: z.string().optional(), area: area.optional().describe('Only for a page without a project.'), body: z.string().optional().describe('Required.'),
     },
-  }, guard('write_page', async (a: { id?: string; base_version?: number; title: string; project?: string; area?: PageArea; body: string }) => {
+  }, guard('write_page', async (input: { id?: string; base_version?: number; title?: string; project?: string; area?: PageArea; body?: string }) => {
+    // Both are required, but checked here and not by the schema: the pause and "saves wait" refusals come first.
+    if (input.title === undefined || input.body === undefined) return { ...text(`write_page needs a ${input.title === undefined ? 'title' : 'body'}.`), isError: true };
+    const a = { ...input, title: input.title, body: input.body };
     const project = givenProject(a.project);
     // Pages go only under an existing project: say how to create one, rather than a bare refusal.
     const unknown = project === undefined ? undefined : await unknownProjectHint(memories, project, 'write_page', { creating: true });

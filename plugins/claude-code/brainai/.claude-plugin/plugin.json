@@ -1,0 +1,25 @@
+{
+  "name": "brainai",
+  "displayName": "BrainAI",
+  "version": "1.5.0",
+  "description": "Connects Claude Code to your own BrainAI shared memory: MCP server, save reminders and the harvest-session skill.",
+  "author": {
+    "name": "BrainAI"
+  },
+  "homepage": "https://github.com/jsr1292/brainai",
+  "repository": "https://github.com/jsr1292/brainai",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "mcp",
+    "brainai"
+  ],
+  "userConfig": {
+    "brainai_url": {
+      "type": "string",
+      "title": "Your BrainAI address",
+      "description": "The address of your own BrainAI server, ending in /mcp (for example https://memory.example.com/mcp).",
+      "required": true
+    }
+  }
+}

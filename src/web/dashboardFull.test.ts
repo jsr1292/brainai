@@ -122,7 +122,7 @@ test('duplicates: keep both hides the pair; merge leaves one active', async (t) 
   let body = await (await f('/facts/tidy')).text();
   assert.match(body, /Possible duplicates/);
   assert.match(body, /Keep both/);
-  assert.match(body, /Keep this one/);
+  assert.match(body, /Keep this one, delete the other/);
   const kept = await f('/duplicates/keep-both', form({ a: b.id, b: a.id }));
   assert.equal(kept.status, 303);
   assert.equal(kept.headers.get('location'), '/facts/tidy');
@@ -147,7 +147,7 @@ test('merge can keep the older memory', async (t) => {
   app.advance(60_000);
   const newer = await remember(app, 'Same thing');
   const body = await (await f('/facts/tidy')).text();
-  assert.equal(body.match(/>Keep this one</g)!.length, 2);
+  assert.equal(body.match(/>Keep this one, delete the other</g)!.length, 2);
   // "side" is the sidebar's class (desk.css pins it to the left edge): the two halves of a pair must not use it.
   assert.equal(body.match(/class="side"/g)?.length ?? 0, 1, 'only the sidebar is class="side"');
   assert.equal(body.match(/class="dup-side"/g)?.length ?? 0, 2);
@@ -259,8 +259,8 @@ test('the tidy page needs a login and has nothing to do on a clean memory', asyn
   const res = await f('/facts/tidy');
   assert.equal(res.status, 200);
   const body = await res.text();
-  assert.match(body, /<title>Tidy up/);
-  assert.match(body, /Nothing to tidy/);
+  assert.match(body, /<title>Inbox/);
+  assert.match(body, /Nothing waits for you/);
 });
 
 test('several statuses for one project: delete one, or keep them all as current', async (t) => {
@@ -768,6 +768,8 @@ test('Replaced by a fact that\'s gone lists a replaced fact whose replacement wa
 
 test('the Tidy up lede says anything changed there can be undone', async (t) => {
   const app = await start(t);
+  await app.deps.service.remember({ kind: 'summary', content: 'The cellar is cold', project: 'wildlog' }, { type: 'owner' });
+  await app.deps.service.remember({ kind: 'summary', content: 'The cellar is dry', project: 'wildlog' }, { type: 'owner' });
   const f = await loggedIn(app);
   assert.match(await (await f('/facts/tidy')).text(), /<p class="lede">What could be cleaner in memory, so assistants find the right thing\. Anything you change here can be undone\.<\/p>/);
 });

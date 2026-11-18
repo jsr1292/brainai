@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { findBlock, putBlock, removeBlock, strayBrain } from './rulesBlock.js';
 import { thisComputer } from './computer.js';
 import { BRIDGE_KEY_FILE } from './claudeBridge.js';
+import { hasHooks, hooksState, installHooks, removeToolHooks } from './hooksInstall.js';
 
 export type ToolId = 'claude-code' | 'codex' | 'opencode' | 'cursor' | 'claude-desktop';
 export interface ToolEnv {
@@ -38,6 +39,8 @@ export interface ToolEnv {
   keyLive?: (grantId: string) => boolean;
   /** Ends the OAuth sign-in of every live grant whose app name starts with the tool's name; returns how many. Wired by the routes. */
   endSignIns?: (toolName: string) => number;
+  /** B1: where the built hook scripts are (dist/hooks). Without it Connect installs no save reminders. */
+  hooksDir?: string;
 }
 export interface ToolState {
   id: ToolId; name: string; installed: boolean;
@@ -46,8 +49,12 @@ export interface ToolState {
   detail?: string;
   /** The one step after Connect: how the tool signs in. */
   signIn: string;
+  /** For a connected tool: it has signed in (an OAuth grant exists). false: added, one step left. Filled in by the web layer. */
+  signedIn?: boolean;
+  /** Save reminders (hooks): on, off, or none (this tool has no hook BrainAI can use). */
+  hooks?: 'on' | 'off' | 'none';
 }
-export type Outcome = { ok: true; signIn: string; ended?: number } | { ok: false; reason: string };
+export type Outcome = { ok: true; signIn: string; ended?: number; /** Something about the save reminders the owner should know (not added, or Codex's one-time trust). */ hooksNote?: string } | { ok: false; reason: string };
 
 const NAME = 'brainai';
 const TIMEOUT_MS = 30_000;
@@ -498,8 +505,23 @@ export async function toolStates(env: ToolEnv, tools: Tool[] = TOOLS): Promise<T
     const installed = tool.installed(env);
     const base = { id: tool.id, name: tool.name, installed, signIn: tool.signIn };
     if (!installed) return { ...base, state: 'not-connected' };
-    return { ...base, ...stateFrom(tool, env, await look(tool, env)) };
+    return { ...base, ...stateFrom(tool, env, await look(tool, env)), hooks: hooksState(tool.id, env) };
   }));
+}
+
+/**
+ * Whether the BrainAI plugin for Claude Code is installed: Claude Code records installed plugins as "<name>@<marketplace>"
+ * in ~/.claude/plugins/installed_plugins.json. The plugin brings its own server entry, save reminders and instructions, so
+ * the desktop Connect must not add a second set.
+ */
+export function brainPluginInstalled(env: ToolEnv): boolean {
+  try {
+    const text = read(join(env.home, '.claude', 'plugins', 'installed_plugins.json'));
+    const plugins = text === null ? null : (JSON.parse(text) as { plugins?: Record<string, unknown> }).plugins;
+    return !!plugins && typeof plugins === 'object' && Object.keys(plugins).some((k) => k.startsWith('brainai@') && Array.isArray(plugins[k]) && (plugins[k] as unknown[]).length > 0);
+  } catch {
+    return false;
+  }
 }
 
 export async function connect(id: ToolId, env: ToolEnv, opts: { replace?: boolean }): Promise<Outcome> {
@@ -507,6 +529,9 @@ export async function connect(id: ToolId, env: ToolEnv, opts: { replace?: boolea
   if (!tool || !tool.installed(env)) return { ok: false, reason: `${tool?.name ?? id} is not installed on ${thisComputer()}.` };
   const blocked = tool.blocked?.(env);
   if (blocked) return { ok: false, reason: blocked };
+  if (id === 'claude-code' && brainPluginInstalled(env)) {
+    return { ok: true, signIn: 'The BrainAI plugin is already installed in Claude Code, so nothing was added here: the plugin brings its own connection, save reminders and instructions. In Claude Code, type /mcp, choose brainai and Authenticate. To connect from here instead, uninstall the plugin first.' };
+  }
   const l = await look(tool, env);
   if (l.refuse) return { ok: false, reason: l.refuse };
   const s = stateFrom(tool, env, l);
@@ -538,7 +563,8 @@ export async function connect(id: ToolId, env: ToolEnv, opts: { replace?: boolea
     }
   }
   tool.after?.(env);
-  return { ok: true, signIn: tool.signIn };
+  const hooksNote = installHooks(tool.id, env);
+  return { ok: true, signIn: tool.signIn, ...(hooksNote ? { hooksNote } : {}) };
 }
 
 export async function disconnect(id: ToolId, env: ToolEnv): Promise<Outcome> {
@@ -564,12 +590,14 @@ export async function disconnect(id: ToolId, env: ToolEnv): Promise<Outcome> {
   }
   // The desktop app's key is a grant that cleanup already revoked; every other tool signed in with OAuth.
   const ended = tool.id === 'claude-desktop' ? 0 : (env.endSignIns?.(tool.name) ?? 0);
-  return { ok: true, signIn: '', ended };
+  // The save reminders go with the connection (Claude Code's not while another brain may still use them).
+  const hooksNote = hasHooks(tool.id) ? removeToolHooks(tool.id, env, tool.id === 'claude-code' ? await claudeCodeHasBrainEntry(env) : otherBrainEntry(tool.id, env)) : null;
+  return { ok: true, signIn: '', ended, ...(hooksNote ? { hooksNote } : {}) };
 }
 
 /**
  * The `.brainai-backup` files BrainAI made beside the owner's originals (CLAUDE.md, Codex's config.toml and AGENTS.md,
- * OpenCode's opencode.json and AGENTS.md, Cursor's mcp.json) that exist now, as absolute paths. Removing BrainAI
+ * OpenCode's opencode.json and AGENTS.md, Cursor's mcp.json, the hook files of Codex and Cursor; not Claude Code's settings.json backup, see dropSettingsBackup) that exist now, as absolute paths. Removing BrainAI
  * moves them into the saved folder, so the owner's originals are kept in one place.
  */
 export function backupFiles(env: ToolEnv): string[] {
@@ -580,9 +608,30 @@ export function backupFiles(env: ToolEnv): string[] {
     join(OPENCODE_DIR(env), 'opencode.json'),
     join(OPENCODE_DIR(env), 'AGENTS.md'),
     join(env.home, '.cursor', 'mcp.json'),
+    join(env.home, '.codex', 'hooks.json'),
+    join(env.home, '.cursor', 'hooks.json'),
     claudeConfigPath(env),
   ];
   return originals.map((f) => `${f}.brainai-backup`).filter((f) => existsSync(f));
+}
+
+/**
+ * ~/.claude/settings.json.brainai-backup holds the owner's whole settings, which can include env tokens, so Remove never
+ * copies it into the saved folder (often iCloud-synced). Called after Claude Code's hooks are gone from settings.json:
+ * the backup is deleted (settings.json keeps the owner's later changes) and the returned line says so; null if none.
+ */
+export function dropSettingsBackup(env: ToolEnv): string | null {
+  const file = join(env.home, '.claude', 'settings.json.brainai-backup');
+  if (!existsSync(file)) return null;
+  try { rmSync(file, { force: true }); } catch (e) { return `~/.claude/settings.json.brainai-backup was left where it is (it can hold tokens; delete it by hand): ${(e as Error).message}`; }
+  return 'Claude Code: BrainAI deleted its backup of ~/.claude/settings.json (it can hold tokens, so it is not in this folder). Your settings.json keeps everything except BrainAI\'s save reminders.';
+}
+
+/** Whether Codex's or Cursor's config names another brain's `memory` server, whose hooks may share BrainAI's script. */
+function otherBrainEntry(id: ToolId, env: ToolEnv): boolean {
+  const file = id === 'codex' ? join(env.home, '.codex', 'config.toml') : id === 'cursor' ? join(env.home, '.cursor', 'mcp.json') : null;
+  const text = file ? read(file) : null;
+  return text !== null && /\[mcp_servers\.memory\]|"memory"\s*:/.test(text);
 }
 
 /**
@@ -628,4 +677,14 @@ export async function claudeCodeHasBrainEntry(env: ToolEnv): Promise<boolean> {
 export function dropLeftoverKey(id: ToolId, env: ToolEnv): void {
   const tool = TOOLS.find((t) => t.id === id);
   if (tool?.installed(env)) tool.cleanup?.(env);
+}
+
+/** Adds the save reminders to a tool that is already connected (the Tools page's "Add save reminders"). */
+export async function addReminders(id: ToolId, env: ToolEnv): Promise<Outcome> {
+  const tool = TOOLS.find((t) => t.id === id);
+  if (!tool || !tool.installed(env)) return { ok: false, reason: `${tool?.name ?? id} is not installed on ${thisComputer()}.` };
+  if (!hasHooks(id)) return { ok: false, reason: `${tool.name} has no hooks BrainAI can use.` };
+  if (!env.hooksDir) return { ok: false, reason: 'This BrainAI has no hook scripts to install.' };
+  const note = installHooks(id, env);
+  return note && !/trust the new hooks/.test(note) ? { ok: false, reason: note } : { ok: true, signIn: '', ...(note ? { hooksNote: note } : {}) };
 }

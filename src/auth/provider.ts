@@ -28,7 +28,7 @@ interface CodeRow { grant_id: string; client_id: string; redirect_uri: string; r
 interface TokenRow { grant_id: string; client_id: string; resource: string | null; expires_at: string; revoked_at: string | null; rotated_at: string | null; grant_revoked_at: string | null }
 interface GrantRow {
   id: string; client_id: string; name: string | null; created_at: string; last_used_at: string | null; revoked_at: string | null; access: Access; projects: string | null;
-  setup_version: number | null; setup_seen_at: string | null; tool_names: string | null; tools_seen_at: string | null;
+  setup_version: number | null; setup_seen_at: string | null; tool_names: string | null; tools_seen_at: string | null; saves_wait: number;
 }
 
 export interface PendingInfo {
@@ -43,6 +43,8 @@ export interface GrantInfo {
   setupVersion: number | null; setupSeenAt: string | null;
   /** The tool names it got from its last tools/list (sorted), and when; null before its first. */
   toolNames: string[] | null; toolsSeenAt: string | null;
+  /** C2: "Saves wait for me": this connection's saves are held in the Inbox for the owner. */
+  savesWait: boolean;
 }
 
 const isAccess = (v: unknown): v is Access => v === 'full' || v === 'discussions' || v === 'projects';
@@ -346,7 +348,7 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
   // ---- Grants (owner-facing) ----
 
   listGrants(): GrantInfo[] {
-    const rows = this.db.prepare('SELECT id, client_id, name, created_at, last_used_at, revoked_at, access, projects, setup_version, setup_seen_at, tool_names, tools_seen_at FROM oauth_grants ORDER BY created_at DESC, id')
+    const rows = this.db.prepare('SELECT id, client_id, name, created_at, last_used_at, revoked_at, access, projects, setup_version, setup_seen_at, tool_names, tools_seen_at, saves_wait FROM oauth_grants ORDER BY created_at DESC, id')
       .all() as GrantRow[];
     return rows.map((r) => ({
       id: r.id,
@@ -359,6 +361,7 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
       projects: parseProjects(r.projects),
       setupVersion: r.setup_version, setupSeenAt: r.setup_seen_at,
       toolNames: r.tool_names === null ? null : JSON.parse(r.tool_names) as string[], toolsSeenAt: r.tools_seen_at,
+      savesWait: r.saves_wait === 1,
     }));
   }
 
@@ -377,6 +380,16 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
     const r = this.db.prepare('SELECT client_id, name FROM oauth_grants WHERE id = ?').get(grantId) as { client_id: string; name: string | null } | undefined;
     if (!r) return 'Unknown client';
     return r.name ?? this.clients.clientName(r.client_id);
+  }
+
+  /** C2: whether a connection's saves wait for the owner. Read at every call, so a change applies to the very next one. */
+  grantSavesWait(grantId: string): boolean {
+    return (this.db.prepare('SELECT saves_wait FROM oauth_grants WHERE id = ?').get(grantId) as { saves_wait: number } | undefined)?.saves_wait === 1;
+  }
+
+  setGrantSavesWait(grantId: string, on: boolean): void {
+    const r = this.db.prepare('UPDATE oauth_grants SET saves_wait = ? WHERE id = ?').run(on ? 1 : 0, grantId);
+    if (r.changes !== 1) throw new Error(`Unknown grant ${grantId}`);
   }
 
   /** Renames one connection; other connections of the same app keep their names. */

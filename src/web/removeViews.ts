@@ -12,7 +12,7 @@ export function removePage(v: { documents: string; synced: 'iCloud' | 'OneDrive'
 ${v.said ? html`<p class="notice" role="alert">${v.said}</p>` : ''}
 <h2>What happens, in this order</h2>
 <ol>
-<li>A saved copy of every memory and page is made (where you choose below).</li>
+<li>${v.synced === null ? 'A saved copy of every memory and page is made in your Documents folder.' : 'A saved copy of every memory and page is made in the folder you choose below: your Documents folder or your home folder.'}</li>
 <li>Reach from phone and web is turned off, and the Cloudflare tunnel is deleted if you made one.</li>
 <li>Claude Code, Codex, OpenCode and Cursor are disconnected from this BrainAI. A tool that uses another BrainAI is left alone.</li>
 <li>${v.mac ? html`BrainAI's Claude Code hooks and the folder report on ${thisComputer()} are removed` : "BrainAI's Claude Code hooks are removed"}, unless they belong to another brain.</li>
@@ -22,7 +22,7 @@ ${v.said ? html`<p class="notice" role="alert">${v.said}</p>` : ''}
 </ol>
 <h2>What is kept</h2>
 <p>Only the saved copy, and anything the last page lists as left in place. Everything else BrainAI keeps on ${thisComputer()} goes.</p>
-${whereChoice({ ...v, action: '/settings/remove' })}
+${whereChoice({ ...v, action: '/settings/remove', start: true })}
 </div>`;
 }
 

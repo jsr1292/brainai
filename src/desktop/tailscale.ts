@@ -13,6 +13,8 @@ export interface TailscaleEnv {
   /** The command inside the Mac app, used when it is not on the PATH. */
   appPath?: string;
   timeoutMs?: number;
+  /** The shorter limit for the status check the Reach page shows (default 5 s); Turn on and Turn off keep timeoutMs. */
+  statusTimeoutMs?: number;
   extraEnv?: Record<string, string>;
 }
 /** `refused`: a definite no (Tailscale is not installed, or Funnel is not allowed for the account). Any other failure may pass. */
@@ -55,11 +57,12 @@ async function statusOf(env: TailscaleEnv, cli: string): Promise<{ running: bool
   }
 }
 
-export async function tailscaleState(env: TailscaleEnv): Promise<{ installed: boolean; running: boolean; host: string | null }> {
+/** What the Reach page shows: a status check with its own short limit (`timedOut`: Tailscale did not answer in time). */
+export async function tailscaleState(env: TailscaleEnv): Promise<{ installed: boolean; running: boolean; host: string | null; timedOut: boolean }> {
   const cli = findCli(env);
-  if (!cli) return { installed: false, running: false, host: null };
-  const { running, host } = await statusOf(env, cli);
-  return { installed: true, running, host };
+  if (!cli) return { installed: false, running: false, host: null, timedOut: false };
+  const { running, host, timedOut } = await statusOf({ ...env, timeoutMs: env.statusTimeoutMs ?? 5_000 }, cli);
+  return { installed: true, running, host, timedOut };
 }
 
 /**

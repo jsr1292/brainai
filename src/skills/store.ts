@@ -11,7 +11,7 @@ interface SkillRow {
 }
 interface ProposalRow {
   id: string; skill_id: string | null; name: string; description: string; body: string; files: string; base_version: number | null;
-  proposed_by: string; proposed_at: string; status: SkillProposal['status'];
+  proposed_by: string; proposed_at: string; status: SkillProposal['status']; builtin: number;
 }
 
 export class SkillStore {
@@ -78,12 +78,12 @@ export class SkillStore {
   }
 
   private toProposal(r: ProposalRow): SkillProposal {
-    return { id: r.id, skillId: r.skill_id, name: r.name, description: r.description, body: r.body, files: JSON.parse(r.files) as SkillFile[], baseVersion: r.base_version, proposedBy: r.proposed_by, proposedAt: r.proposed_at, status: r.status };
+    return { id: r.id, skillId: r.skill_id, name: r.name, description: r.description, body: r.body, files: JSON.parse(r.files) as SkillFile[], baseVersion: r.base_version, proposedBy: r.proposed_by, proposedAt: r.proposed_at, builtin: r.builtin === 1, status: r.status };
   }
   addProposal(p: Omit<SkillProposal, 'id' | 'proposedAt' | 'status'>): SkillProposal {
     const id = randomUUID();
-    this.db.prepare(`INSERT INTO skill_proposals(id, skill_id, name, description, body, files, base_version, proposed_by, proposed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, p.skillId, p.name, p.description, p.body, JSON.stringify(p.files), p.baseVersion, p.proposedBy, this.ts());
+    this.db.prepare(`INSERT INTO skill_proposals(id, skill_id, name, description, body, files, base_version, proposed_by, proposed_at, builtin)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, p.skillId, p.name, p.description, p.body, JSON.stringify(p.files), p.baseVersion, p.proposedBy, this.ts(), p.builtin ? 1 : 0);
     return this.proposal(id)!;
   }
   proposal(id: string): SkillProposal | undefined {

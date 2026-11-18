@@ -1,5 +1,6 @@
 import { DEFAULT_BACKUP_KEEP } from '../config.js';
-import { healthOf } from './healthData.js';
+import { runBackup } from '../backup.js';
+import { healthOf, profileHealth, quietAppsOf } from './healthData.js';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -17,26 +18,32 @@ import { weekContaining, weekOf } from '../memory/digest.js';
 import { makeTidyItems, tidySentence, tidySummary } from './tidyItems.js';
 import { keepStatuses } from '../memory/tidy.js';
 import { MemoryError } from '../memory/service.js';
+import { SkillError } from '../skills/service.js';
 import { factStory } from '../memory/factStory.js';
 import { replaceableKind } from '../memory/supersessions.js';
 import { KINDS, type Kind, type Memory } from '../memory/types.js';
 import type { AppDeps } from './app.js';
 import { PICK_A_PROJECT, pickedProjects, readCookie, requireOwner, SESSION_COOKIE, sessionCookieOptions } from './authRoutes.js';
 import {
-  detailView, groupFacts, listView, newView, NO_PROJECT, PAGE_SIZE, tidyView, valuesOf,
+  detailView, groupFacts, listView, newView, NO_PROJECT, PAGE_SIZE, valuesOf,
   type FactsShow, type MemoryFormValues, type ReplacedItem,
 } from './dashboardViews.js';
 import { deviceLabel } from './deviceLabel.js';
 import { FACT_RESULTS } from './searchRoutes.js';
 import { takeSearchSaid } from './searchSaid.js';
+import { saySettings, takeSettingsSaid } from './settingsSaid.js';
+import { timeOfDay } from '../timezone.js';
 import { readKey } from '../models/onlineKey.js';
 import { settingsView } from './settingsViews.js';
 import { html, page, type SafeHtml } from './html.js';
-import { backFrom, factBackDefault, suggestionBack, withFrom, type Back } from './back.js';
+import { backFrom, factBackDefault, nextHref, suggestionBack, withFrom, type Back } from './back.js';
 import { backLookups } from './backLookups.js';
-import { ALREADY_ANSWERED, approvalsView } from './approvalsViews.js';
+import { ALREADY_ANSWERED } from './approvalsViews.js';
+import { makeInbox } from './inboxPage.js';
+import { TidyError } from '../memory/tidyService.js';
 import { invalidateSideStatus } from './sideStatus.js';
-import { deskSideView, nearIt, nextForYou, profileToday } from './deskSide.js';
+import { noteDecision, takeStatusLine, undoable } from './inboxUndo.js';
+import { deskSideView, nearIt } from './deskSide.js';
 
 const OWNER = { type: 'owner' } as const;
 // The same number as the header search's facts, so its "Also N replaced facts" and this page's list agree.
@@ -56,7 +63,14 @@ const optStr = (req: Request, name: string): string | undefined => {
   return typeof v === 'string' ? v : undefined;
 };
 const formValues = (req: Request, kind: string): MemoryFormValues =>
-  ({ kind, content: str(req, 'content'), project: str(req, 'project').trim(), tags: str(req, 'tags'), keys: optStr(req, 'keys'), base: str(req, 'base') || undefined });
+  ({ kind, content: str(req, 'content'), project: str(req, 'project').trim(), tags: str(req, 'tags'), keys: optStr(req, 'keys'), base: str(req, 'base') || undefined,
+    validUntil: optStr(req, 'valid_until'), source: optStr(req, 'source'), sourceNote: optStr(req, 'source_note'),
+    origValidUntil: optStr(req, 'orig_valid_until'), origSource: optStr(req, 'orig_source'), origSourceNote: optStr(req, 'orig_source_note') });
+/** The New fact form's date and source (owner-set; the service checks them like any other write). Empty fields send nothing. */
+const newMeta = (v: MemoryFormValues): { validUntil?: string; source?: string; sourceNote?: string } => {
+  const validUntil = v.validUntil?.trim(), source = v.source?.trim(), sourceNote = v.sourceNote?.trim();
+  return { ...(validUntil ? { validUntil } : {}), ...(source ? { source, ...(sourceNote ? { sourceNote } : {}) } : {}) };
+};
 const tagList = (raw: string): string[] => raw.split(/[\s,]+/).filter((t) => t !== '');
 
 export function dashboardRoutes(d: AppDeps): Router {
@@ -67,7 +81,7 @@ export function dashboardRoutes(d: AppDeps): Router {
   const send = (res: Response, status: number, title: string, body: SafeHtml, back?: Back) => {
     const tab = title === 'Settings' ? 'settings' : title === 'Inbox' ? 'inbox' : ['Facts', 'Fact', 'Tidy up', 'New fact'].includes(title) ? 'facts' : title === 'Not found' || title === 'Bad request' ? null : 'pages';
     const fixed = title === 'Tidy up' ? { href: '/facts', label: 'Facts' } : title === 'Moved from Outline' ? { href: '/pages', label: 'Pages' } : title === 'New fact' ? { href: '/facts', label: 'Facts' } : title === 'Settings' ? { href: '/', label: 'Projects' } : undefined;
-    res.status(status).type('html').send(page(title, body, { nav: true, tab: back?.tab ?? tab, back: back ?? fixed, crumb: title === 'Settings' ? false : undefined }));
+    res.status(status).type('html').send(page(title, body, { nav: true, tab: back?.tab ?? tab, ...(title === 'Fact' && back?.tab !== 'inbox' ? { sideTab: 'facts' as const } : {}), back: back ?? fixed, crumb: title === 'Settings' ? false : undefined }));
   };
   const notFound = (res: Response) => send(res, 404, 'Not found', html`<h1>Not found</h1>`);
   const badRequest = (res: Response) => send(res, 400, 'Bad request', html`<h1>Bad request</h1>`);
@@ -90,8 +104,14 @@ export function dashboardRoutes(d: AppDeps): Router {
   };
 
   const tidyItems = makeTidyItems(d);
-  const tidy = (res: Response, status = 200, error?: string) => send(res, status, 'Tidy up', tidyView(tidyItems(), error, d.now()));
+  const inbox = makeInbox(d);
+  const tidy = (res: Response, status = 200, error?: string) => inbox.tidy(res, status, error);
   const look = backLookups(d);
+  /** After a tidy answer: a "Done." line on the next screen, then back to Tidy up, or to the Inbox when the card sat in its pane. */
+  const tidyDone = (req: Request, res: Response, message = 'Done.'): void => {
+    noteDecision(d.service, { id: 'tidy', at: d.now().getTime(), message });
+    res.redirect(303, str(req, 'back') === 'inbox' ? '/approvals' : '/facts/tidy');
+  };
   /** The origin a fact was opened from (its link's `from`, or the same field on its forms), kept only when `backFrom` accepts it. */
   const origin = (req: Request): { raw?: string; back?: Back } => {
     const v = req.method === 'GET' ? req.query.from : str(req, 'from');
@@ -102,17 +122,8 @@ export function dashboardRoutes(d: AppDeps): Router {
 
   // ---- Home ----
 
-  /** Every held suggestion as a full card, for the For-you sheet and the Approvals page. */
-  const pendingCards = () => d.service.pendingSuggestions().map((suggestion) => ({
-    suggestion,
-    current: suggestion.memoryId ? d.store.get(suggestion.memoryId)?.content : undefined,
-    replaces: suggestion.supersedes.map((id) => d.store.get(id)).filter((m): m is Memory => m !== undefined && m.deletedAt === null),
-    deleted: suggestion.deletedMatch ? d.store.get(suggestion.deletedMatch) : undefined,
-  }));
-
-  /** The Inbox (its own place): what waits for the owner, and the held suggestions as cards. */
-  const approvals = (res: Response, status = 200, error?: string, notice?: string) =>
-    send(res, status, 'Inbox', approvalsView({ pending: pendingCards(), proposals: d.skills.pendingProposals().map((proposal) => ({ proposal, current: proposal.skillId ? d.skills.get(proposal.skillId) : undefined })), waiting: d.discussions.waitingOnOwner(), tidy: tidySentence(tidySummary(tidyItems())), error, notice }), { href: '/', label: 'Projects', tab: null });
+  /** The Inbox (its own place): everything that waits, in one grouped list, with the first item (or the one asked for) beside it. */
+  const approvals = (res: Response, status = 200, error?: string, notice?: string) => inbox.approvals(res, status, error, notice);
 
   /** Settings: the owner's device, connections, devices, backups and health, and their login. */
   const settings = async (req: Request, res: Response, status = 200, error?: string, created?: { name: string; token: string }, ask?: { folder: string; cloud: string }) => {
@@ -127,6 +138,7 @@ export function dashboardRoutes(d: AppDeps): Router {
       localMode: d.localMode,
       search: d.localMode && d.models ? { status: d.models.status(), installed: installedNow, keySaved: !!d.statusDir && readKey(d.statusDir) !== null, said: takeSearchSaid(), dataDir: d.statusDir } : undefined,
       projects: d.service.listProjects().map((p) => p.project),
+      savesPausedSince: d.service.savesPausedSince(),
       version: { brain: BRAIN_VERSION, database: d.store.schemaVersion() },
       updateCheck: d.localMode && d.statusDir ? updateCheckProblem(readUpdateCheck(d.statusDir), d.now()) ?? undefined : undefined,
       brainUrl: d.publicUrl.origin,
@@ -137,24 +149,40 @@ export function dashboardRoutes(d: AppDeps): Router {
       device: deviceLabel(req.get('user-agent') ?? null),
       created,
       health: healthOf(d, d.now()),
-      copy: d.localMode && d.backupCopy ? { keep: d.backupKeep ?? DEFAULT_BACKUP_KEEP, folder: d.backupCopy.folder(), last: d.backupCopy.lastResult(), ask } : undefined,
+      profile: profileHealth(d),
+      quiet: { apps: quietAppsOf(d, d.now()), local: !!d.localMode },
+      said: { backupNow: takeSettingsSaid('backup-now'), copy: takeSettingsSaid('backup-copy') },
+      copy: d.localMode && d.backupCopy ? { keep: d.backupKeep ?? DEFAULT_BACKUP_KEEP, folder: d.backupCopy.folder(), last: d.backupCopy.lastResult(), ask, ...(pickedFolder(req) ? { picked: pickedFolder(req)! } : {}) } : undefined,
+      reach: d.localMode ? { on: d.reach?.url() != null } : undefined,
+      backupNow: d.localMode && !!d.db && !!d.backupDir && !!d.statusDir,
       backups: d.statusDir === undefined ? undefined : (() => {
         const status = readBackupStatus(d.statusDir);
-        return { status, health: backupHealth(status, d.now(), { offsite: true, jobs: true }), offsite: true, jobs: true };
+        // The app makes only the daily backup (and the second folder's copy): the off-site, git and Markdown jobs are a
+        // server's, so the app neither shows nor judges them.
+        const server = !d.localMode;
+        return { status, health: backupHealth(status, d.now(), { offsite: server, jobs: server }), offsite: server, jobs: server };
       })(),
     }));
   };
 
 
+  /** A UNC or network share (\\server\share, //server/share): never a backup copy's folder (slow, and the checks below cannot vouch for it). */
+  const isNetworkPath = (p: string): boolean => p.startsWith('\\\\') || p.startsWith('//');
+  /** The folder the shell's picker just chose, from /settings?folder=…: only to fill the box (nothing is saved until Save). */
+  const pickedFolder = (req: Request): string | undefined => {
+    const f = d.localMode ? query(req, 'folder') : undefined;
+    return f !== undefined && f.length <= 1000 && isAbsolute(f) && !isNetworkPath(f) && !/[\u0000-\u001f]/.test(f) ? f : undefined;
+  };
   // Settings › Backups (the app): the second folder for the daily backups.
   // Through the public door this page does not exist.
   const here: RequestHandler = (req, _res, next) => (viaDoor(req) ? next('router') : next());
   router.post('/settings/backup-copy', here, owner, (req, res, next) => {
     const copy = d.backupCopy;
     if (!d.localMode || !copy) return next();
-    if (str(req, 'action') === 'off') { copy.set(null); return res.redirect(303, '/settings#backup-copy'); }
+    if (str(req, 'action') === 'off') { copy.set(null); saySettings('backup-copy', 'Turned off. Backups stay on this computer only. ✓'); return res.redirect(303, '/settings#backup-copy'); }
     const folder = str(req, 'folder').trim();
     const refuse = (why: string) => settings(req, res, 400, why);
+    if (isNetworkPath(folder)) return refuse('A network address (\\\\server or //server) is not accepted here. Choose a folder on this computer, or one that is synced to it.');
     if (!isAbsolute(folder)) return refuse('Give the full path of the folder, starting with / (or the drive letter on Windows).');
     if (!existsSync(folder) || !statSync(folder).isDirectory()) return refuse(`${folder} doesn't exist. Make the folder first, then save it here.`);
     const real = (p: string) => { try { return realpathSync(p); } catch { return resolve(p); } };
@@ -163,8 +191,30 @@ export function dashboardRoutes(d: AppDeps): Router {
     const cloud = syncedCloud(folder, { home: d.tools?.home ?? homedir(), platform: d.tools?.platform ?? process.platform, env: { ...process.env, ...d.tools?.extraEnv } });
     if (cloud !== null && str(req, 'confirm') !== '1') return settings(req, res, 200, undefined, undefined, { folder, cloud });
     copy.set(folder);
+    saySettings('backup-copy', `Saved. Each daily backup is now copied to ${folder} ✓`);
     res.redirect(303, '/settings#backup-copy');
   });
+
+  // Back up now (the app): the same backup the nightly run and the update make. The owner's session and the same-origin
+  // check on every POST guard it; never through the public door; it only writes into the app's own backup folder.
+  router.post('/settings/backup-now', here, owner, async (req, res, next) => {
+    if (!d.localMode || !d.db || !d.backupDir || !d.statusDir) return next();
+    const run = await runBackup(d.db, d.backupDir, d.backupKeep ?? DEFAULT_BACKUP_KEEP, d.now(), d.statusDir, d.backupCopy);
+    if (run.ok) {
+      saySettings('backup-now', `Backed up at ${timeOfDay(d.now().toISOString())} ✓`);
+      return res.redirect(303, '/settings#health');
+    }
+    const clean = [d.statusDir, d.backupDir].reduce<string>((t, p) => t.replaceAll(p, 'the data folder'), run.error ?? 'The backup did not finish.');
+    return settings(req, res, 500, `The backup did not finish: ${clean}`);
+  });
+  // The shell (BrainAI's own window) takes these two links itself: the native folder picker and Show in Finder. In an
+  // ordinary browser tab they land here instead, so the link never dead-ends.
+  for (const path of ['/app/choose-folder', '/app/reveal-backups']) {
+    router.get(path, here, owner, (_req, res, next) => {
+      if (!d.localMode) return next();
+      res.type('html').send(page('BrainAI window only', html`<div class="narrow"><h1>Use BrainAI's own window</h1><p>${path === '/app/choose-folder' ? 'The folder picker opens from BrainAI\'s own window (the menu bar or tray icon opens it).' : 'Show in Finder opens from BrainAI\'s own window (the menu bar or tray icon opens it).'}</p><p><a href="/settings#health">Back to Settings</a></p></div>`, { nav: true, tab: null, back: { href: '/settings#health', label: 'Settings' } }));
+    });
+  }
 
   // A new device's token, kept until the page after the redirect shows it (once), so a reload never mints another.
   const justAdded = new Map<string, { name: string; token: string; at: number }>();
@@ -199,15 +249,7 @@ export function dashboardRoutes(d: AppDeps): Router {
   });
 
   router.get('/approvals', owner, (req, res) => {
-    // Desktop only (desk.js): the side fragment beside the approval sheet, which shows one suggestion (?id=, else the
-    // first): Next for you, and Your profile today when that suggestion is a pending profile one.
-    if (req.query.pane === 'side') {
-      const id = typeof req.query.id === 'string' ? req.query.id : undefined;
-      const pending = d.service.pendingSuggestions();
-      const s = id === undefined ? pending[0] : pending.find((x) => x.id === id);
-      return res.type('html').send(deskSideView({ next: nextForYou(d, { kind: 'approval', id: s?.id ?? id }), profile: s ? profileToday(d, s) : null }).value);
-    }
-    approvals(res);
+    inbox.approvalsPage(req, res);
   });
 
   router.post('/suggestions/:id/approve', owner, async (req: Request, res) => {
@@ -217,12 +259,25 @@ export function dashboardRoutes(d: AppDeps): Router {
     const content = str(req, 'content');
     const back = suggestionBack(str(req, 'back'));
     let skipped: { id: string; why: string }[] = [];
+    const held = d.store.getSuggestion(id)!;
+    let made: Memory | null = null;
     if (await attempt(res, async () => {
-      skipped = (await d.service.approveSuggestionReport(id, content !== '' ? content : undefined)).notReplaced;
+      const r = await d.service.approveSuggestionReport(id, content !== '' ? content : undefined);
+      skipped = r.notReplaced;
+      made = r.memory;
     }, (m) => approvals(res, 400, m))) {
       invalidateSideStatus();
+      // Only a plain addition can be taken back cleanly (the fact it made goes again); a change, a deletion, a roadmap or
+      // a replacement alters facts that were already there, so those are confirmed without Undo.
+      const profile = held.kind === 'profile';
+      const added = held.action === 'add' && held.kind !== 'roadmap' && held.supersedes.length === 0 && made !== null;
+      const message = held.action === 'delete' ? (profile ? 'Removed from your profile.' : 'Removed from your memory.')
+        : held.action === 'update' ? (profile ? 'Profile updated.' : 'Memory updated.')
+        : profile ? 'Added to your profile.' : 'Saved to your memory.';
+      noteDecision(d.service, { id, at: d.now().getTime(), message, undo: added ? { kind: 'approve-add', memoryId: (made as unknown as Memory).id } : undefined });
       // Facts it could no longer replace are named on the page that loads; otherwise the approval is its own confirmation.
-      if (skipped.length === 0) return res.redirect(303, back);
+      const after = back === '/approvals' ? nextHref(str(req, 'next')) ?? back : back;
+      if (skipped.length === 0) return res.redirect(303, after);
       const lead = skipped.length === 1 ? 'Approved. 1 fact was not replaced:' : `Approved. ${skipped.length} facts were not replaced:`;
       approvals(res, 200, undefined, `${lead} ${skipped.map((x) => x.why).join('; ')}`);
     }
@@ -233,8 +288,47 @@ export function dashboardRoutes(d: AppDeps): Router {
     if (!d.service.pendingSuggestions().some((s) => s.id === id)) return approvals(res, 400, ALREADY_ANSWERED);
     if (await attempt(res, () => d.service.rejectSuggestion(id), (m) => approvals(res, 400, m))) {
       invalidateSideStatus();
-      res.redirect(303, suggestionBack(str(req, 'back')));
+      noteDecision(d.service, { id, at: d.now().getTime(), message: 'Rejected.', undo: { kind: 'reject-suggestion' } });
+      const back = suggestionBack(str(req, 'back'));
+      res.redirect(303, back === '/approvals' ? nextHref(str(req, 'next')) ?? back : back);
     }
+  });
+
+  // B1: Approve all / Reject all for one harvest (every item still waiting in it). Items already answered are skipped.
+  for (const answer of ['approve', 'reject'] as const) {
+    router.post(`/harvest/:batch/${answer}`, owner, async (req: Request, res) => {
+      const batch = req.params.batch as string;
+      if (d.service.harvestBatch(batch).length === 0) return approvals(res, 400, ALREADY_ANSWERED);
+      const r = await d.service.answerHarvest(batch, answer);
+      invalidateSideStatus();
+      const flagged = r.flagged === 0 ? '' : ` ${r.flagged} flagged ${r.flagged === 1 ? 'item needs' : 'items need'} your own answer.`;
+      const said = answer === 'approve' && r.flagged > 0 ? `Saved ${r.done}.${flagged}` : `${answer === 'approve' ? 'Saved' : 'Rejected'} ${r.done} ${r.done === 1 ? 'suggestion' : 'suggestions'}.`;
+      if (r.left.length > 0) return approvals(res, 200, undefined, `${said} ${r.left.length} could not be ${answer === 'approve' ? 'saved' : 'rejected'} and still wait: ${[...new Set(r.left.map((x) => x.why))].join('; ')}`);
+      noteDecision(d.service, { id: batch, at: d.now().getTime(), message: said });
+      // Flagged items still wait: stay on this harvest, where they are.
+      res.redirect(303, r.flagged > 0 ? `/approvals?batch=${encodeURIComponent(batch)}` : '/approvals');
+    });
+  }
+
+  // Undo for the answer just given in the Inbox: the same owner and same-origin protections as Approve (every browser POST),
+  // only for the item just decided and only for UNDO_WINDOW_MS.
+  router.post('/inbox/undo', owner, (req: Request, res) => {
+    const id = str(req, 'id');
+    const dec = undoable(d.service, id, d.now().getTime());
+    if (!dec?.undo) return approvals(res, 400, 'That can no longer be undone: it was more than 2 minutes ago, or another answer came since.');
+    try {
+      if (dec.undo.kind === 'reject-suggestion') d.service.undoRejectSuggestion(id);
+      else if (dec.undo.kind === 'approve-add') d.service.undoApprovedAdd(id, dec.undo.memoryId);
+      else if (dec.undo.kind === 'tidy-approved') d.tidy.undoApproved(id);
+      else if (dec.undo.kind === 'tidy-rejected') d.tidy.reopenRejected(id);
+      else d.skills.reopenRejected(id);
+    } catch (e) {
+      if (!(e instanceof MemoryError || e instanceof SkillError || e instanceof TidyError)) throw e;
+      return approvals(res, 400, e.message);
+    }
+    invalidateSideStatus();
+    noteDecision(d.service, { id, at: d.now().getTime(), message: 'Undone. It waits for you again.' });
+    res.redirect(303, '/approvals');
   });
 
   // ---- Browse, search, create ----
@@ -306,6 +400,7 @@ export function dashboardRoutes(d: AppDeps): Router {
     const ok = await attempt(res, async () => {
       const r = await d.service.remember({
         kind: values.kind as Kind, content: values.content, project: values.project || undefined, tags: tagList(values.tags), keys: values.keys,
+        meta: newMeta(values),
       }, OWNER);
       if (r.status === 'saved' || r.status === 'roadmap_updated') id = r.memory.id;
     }, (m) => send(res, 400, 'New fact', newView(values, m)));
@@ -366,8 +461,9 @@ export function dashboardRoutes(d: AppDeps): Router {
     if (await attempt(res, () => d.service.undoSupersession(row.id, OWNER), (msg) => detail(res, d.store.get(row.oldId)!, 400, valuesOf(old), msg, false, str(req, 'part') === 'history' ? 'history' : undefined, undefined, o.raw))) {
       const back = str(req, 'back');
       const project = old.project === null ? null : d.service.projectNamed(old.project);
+      if (back === 'tidy' || back === 'inbox') return tidyDone(req, res);
       res.redirect(303, back === 'panel' && project !== null ? `/?project=${encodeURIComponent(project)}#panel`
-        : back === 'tidy' ? '/facts/tidy' : back === 'facts' ? '/facts?show=replaced' : withFrom(`/memories/${old.id}`, o.raw));
+        : back === 'facts' ? '/facts?show=replaced' : withFrom(`/memories/${old.id}`, o.raw));
     }
   });
 
@@ -377,7 +473,36 @@ export function dashboardRoutes(d: AppDeps): Router {
     if (!m) return notFound(res);
     const values = formValues(req, m.kind);
     const o = origin(req);
-    if (await attempt(res, () => d.service.update(id, { content: values.content, project: values.project || null, tags: tagList(values.tags), keys: values.keys }, OWNER, { base: values.base }),
+    // A12: the date and the source come from the same form. Only a field the owner changed from what the form was
+    // opened with is saved (an assistant's change to another field meanwhile stays), and taking the source away takes
+    // its note with it. A form with no record of what it was opened with sends every field it has.
+    const changed = (now: string | undefined, orig: string | undefined): now is string => now !== undefined && (orig === undefined || now.trim() !== orig.trim());
+    // The source select shows an assistant-set source as its own "keep" option: that is no change. Picking a source
+    // on purpose, even the one already there, makes it the owner's.
+    const keepSource = values.source === 'keep';
+    const sourceVal: string | undefined = keepSource ? values.origSource : values.source;
+    const assistantSet = m.source !== null && m.sourceBy !== null && m.sourceBy !== 'owner';
+    const dateChanged = changed(values.validUntil, values.origValidUntil);
+    const sourceChanged = !keepSource && (changed(sourceVal, values.origSource) || (assistantSet && (sourceVal ?? '').trim() !== ''));
+    const noteChanged = changed(values.sourceNote, values.origSourceNote);
+    const meta = {
+      validUntil: dateChanged ? values.validUntil!.trim() : undefined,
+      source: sourceChanged ? (sourceVal ?? '').trim() : undefined,
+      sourceNote: sourceChanged && (sourceVal ?? '').trim() === '' ? '' : noteChanged ? values.sourceNote : undefined,
+    };
+    // A change the owner made to a field that someone else changed meanwhile is not applied: show what it is now.
+    const was = { validUntil: m.validUntil ?? '', source: m.source ?? '', sourceNote: m.sourceNote ?? '' };
+    const clash = [
+      dateChanged && values.origValidUntil !== undefined && was.validUntil !== values.origValidUntil.trim() ? 'date' : '',
+      sourceChanged && values.origSource !== undefined && was.source !== values.origSource.trim() ? 'source' : '',
+      noteChanged && values.origSourceNote !== undefined && was.sourceNote !== values.origSourceNote.trim() ? 'source note' : '',
+    ].filter((x) => x !== '');
+    if (clash.length > 0) {
+      const by = m.updatedBy === 'owner' ? 'you' : m.updatedBy;
+      return detail(res, m, 409, { ...values, source: keepSource ? 'keep' : values.source, sourceBy: m.sourceBy, base: m.updatedAt, origValidUntil: was.validUntil, origSource: was.source, origSourceNote: was.sourceNote },
+        `The ${clash.join(' and ')} of this fact changed since you opened it (it now reads: ${[m.validUntil ? `valid until ${m.validUntil}` : 'no date', m.source ? `source ${m.source}${m.sourceBy ? ` set by ${m.sourceBy}` : ''}` : 'no source'].join(', ')}; last saved by ${by}). Nothing was saved. Your values are still in the form below: check them, then save again.`, false, 'edit', undefined, o.raw);
+    }
+    if (await attempt(res, () => d.service.update(id, { content: values.content, project: values.project || null, tags: tagList(values.tags), keys: values.keys, meta }, OWNER, { base: values.base }),
       (msg) => {
         // Saved by someone else since this page was opened: show what it says now, keep the draft, and let a second
         // Save (from this page, with the current text in view) go through.
@@ -401,7 +526,17 @@ export function dashboardRoutes(d: AppDeps): Router {
       // With no `back` of its own, Delete goes to the back target itself, never to the deleted fact's page.
       const back = str(req, 'back');
       const o = origin(req);
-      res.redirect(303, back === 'home' ? '/' : back === 'tidy' ? '/facts/tidy' : o.back?.href ?? factBackDefault(m, look).href);
+      if (back === 'tidy' || back === 'inbox') return tidyDone(req, res);
+      res.redirect(303, back === 'home' ? '/' : o.back?.href ?? factBackDefault(m, look).href);
+    }
+  });
+
+  // Tidy-up "Past its date": a new date, or none ("Still true": the date is cleared). Same protections as any fact edit.
+  router.post('/memories/:id/valid-until', owner, async (req: Request, res) => {
+    const id = req.params.id as string;
+    if (!activeMemory(id)) return notFound(res);
+    if (await attempt(res, () => d.service.update(id, { meta: { validUntil: str(req, 'valid_until').trim() } }, OWNER), (msg) => tidy(res, 400, msg))) {
+      tidyDone(req, res);
     }
   });
 
@@ -409,7 +544,7 @@ export function dashboardRoutes(d: AppDeps): Router {
     const id = req.params.id as string;
     if (!activeMemory(id)) return notFound(res);
     d.store.touch(id);
-    res.redirect(303, '/facts/tidy');
+    tidyDone(req, res);
   });
 
   router.post('/history/:hid/undo', owner, async (req: Request, res) => {
@@ -421,7 +556,8 @@ export function dashboardRoutes(d: AppDeps): Router {
       const m = d.store.get(entry.memoryId);
       if (m) detail(res, m, 400, valuesOf(m), msg, false, 'history', undefined, o.raw); else notFound(res);
     })) {
-      res.redirect(303, str(req, 'back') === 'tidy' ? '/facts/tidy' : withFrom(`/memories/${entry.memoryId}`, o.raw));
+      if (str(req, 'back') === 'tidy' || str(req, 'back') === 'inbox') return tidyDone(req, res);
+      res.redirect(303, withFrom(`/memories/${entry.memoryId}`, o.raw));
     }
   });
 
@@ -442,7 +578,7 @@ export function dashboardRoutes(d: AppDeps): Router {
 
   // ---- Tidy up ----
 
-  router.get('/facts/tidy', owner, (_req, res) => tidy(res));
+  router.get('/facts/tidy', owner, (req, res) => inbox.tidy(res, 200, undefined, typeof req.query.item === 'string' && req.query.item !== '' ? req.query.item : undefined));
   router.get('/settings/tidy', owner, (_req, res) => res.redirect(301, '/facts/tidy'));
 
   // "Newer replaces older" on a duplicate pair. Two decisions stay a dismissed pair, so an undo doesn't bring the pair
@@ -455,13 +591,13 @@ export function dashboardRoutes(d: AppDeps): Router {
       const a = d.store.get(older)!;
       const b = d.store.get(newer)!;
       if (replaceableKind(a) === 'decision' && replaceableKind(b) === 'decision') d.store.dismissPair(older, newer);
-    }, (msg) => tidy(res, 400, msg))) res.redirect(303, '/facts/tidy');
+    }, (msg) => tidy(res, 400, msg))) tidyDone(req, res);
   });
 
   // "Replaced by the latest" on an older status of a project with several.
   router.post('/tidy/statuses/supersede', owner, async (req: Request, res) => {
     if (await attempt(res, () => d.service.supersede([str(req, 'id')], str(req, 'latest'), OWNER), (msg) => tidy(res, 400, msg))) {
-      res.redirect(303, '/facts/tidy');
+      tidyDone(req, res);
     }
   });
   router.get('/tidy', owner, (_req, res) => res.redirect(301, '/facts/tidy'));
@@ -470,12 +606,12 @@ export function dashboardRoutes(d: AppDeps): Router {
     const project = str(req, 'project');
     if (project === '') return badRequest(res);
     keepStatuses(d.store, project);
-    res.redirect(303, '/facts/tidy');
+    tidyDone(req, res);
   });
 
   router.post('/tidy/projects/move', owner, async (req: Request, res) => {
     if (await attempt(res, () => d.service.moveProject(str(req, 'from'), str(req, 'to'), OWNER), () => badRequest(res))) {
-      res.redirect(303, '/facts/tidy');
+      tidyDone(req, res);
     }
   });
 
@@ -484,7 +620,7 @@ export function dashboardRoutes(d: AppDeps): Router {
     const b = str(req, 'b');
     if (a === '' || b === '' || a === b) return badRequest(res);
     d.store.dismissProjects(a, b);
-    res.redirect(303, '/facts/tidy');
+    tidyDone(req, res);
   });
 
   router.post('/duplicates/merge', owner, async (req: Request, res) => {
@@ -493,7 +629,7 @@ export function dashboardRoutes(d: AppDeps): Router {
     if (keep === '' || drop === '' || keep === drop) return badRequest(res);
     if (!activeMemory(keep) || !activeMemory(drop)) return notFound(res);
     d.service.forget(drop, OWNER);
-    res.redirect(303, '/facts/tidy');
+    tidyDone(req, res);
   });
 
   router.post('/duplicates/keep-both', owner, (req: Request, res) => {
@@ -502,7 +638,7 @@ export function dashboardRoutes(d: AppDeps): Router {
     if (a === '' || b === '' || a === b) return badRequest(res);
     if (!d.store.get(a) || !d.store.get(b)) return notFound(res);
     d.store.dismissPair(a, b);
-    res.redirect(303, '/facts/tidy');
+    tidyDone(req, res);
   });
 
   // ---- Clients and devices ----
@@ -521,6 +657,32 @@ export function dashboardRoutes(d: AppDeps): Router {
     }
     d.provider.setGrantAccess(id, access, projects);
     res.redirect(303, '/settings#connections');
+  });
+
+  // C2: "Saves wait for me" for one connection.
+  router.post('/clients/:grantId/saves-wait', owner, (req: Request, res) => {
+    const id = req.params.grantId as string;
+    if (!d.provider.listGrants().some((g) => g.id === id)) return notFound(res);
+    d.provider.setGrantSavesWait(id, str(req, 'wait') === '1');
+    res.redirect(303, '/settings#connections');
+  });
+
+  // C2: the global pause. The banner's Resume comes back to the page it was on (a same-site Referer), else to Settings.
+  const backToPage = (req: Request): string => {
+    try {
+      const u = new URL(req.get('referer') ?? '', d.publicUrl);
+      const here = new URL(`${req.protocol}://${req.get('host') ?? ''}`);
+      if (u.host === here.host && !u.pathname.startsWith('//') && !u.pathname.startsWith('/\\') && u.pathname !== '/settings/pause' && u.pathname !== '/settings/pause/resume') return `${u.pathname}${u.search}${u.hash}`;
+    } catch { /* no usable Referer */ }
+    return '/settings#connections';
+  };
+  router.post('/settings/pause', owner, (_req: Request, res) => {
+    d.service.setSavesPaused(true);
+    res.redirect(303, '/settings#connections');
+  });
+  router.post('/settings/pause/resume', owner, (req: Request, res) => {
+    d.service.setSavesPaused(false);
+    res.redirect(303, backToPage(req));
   });
 
   router.post('/clients/:grantId/name', owner, (req: Request, res) => {
@@ -559,10 +721,6 @@ export function dashboardRoutes(d: AppDeps): Router {
     }
     res.redirect(303, '/settings#login');
   });
-
-  // ---- Activity ----
-
-  router.get('/activity', owner, (_req, res) => res.redirect(301, '/review/now#latest'));
 
   return router;
 }

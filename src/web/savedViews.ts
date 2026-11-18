@@ -6,17 +6,21 @@ import { html, type SafeHtml } from './html.js';
  * The Documents-or-home choice. Documents that a cloud service keeps a copy of get a warning and the home folder first;
  * otherwise one button. Each button posts `where` to `action`.
  */
-export function whereChoice(v: { documents: string; synced: 'iCloud' | 'OneDrive' | null; home: string; action: string }): SafeHtml {
+export function whereChoice(v: { documents: string; synced: 'iCloud' | 'OneDrive' | null; home: string; action: string; start?: boolean }): SafeHtml {
+  // The Remove page's buttons say what they start, not just where the copy goes.
+  const label = (plain: string, removing: string) => (v.start ? removing : plain);
   if (v.synced === null) {
     return html`<p>It goes into your Documents folder: <code class="path">${v.documents}</code></p>
-<form method="post" action="${v.action}"><input type="hidden" name="where" value="documents"><button type="submit" class="primary">Save to Documents</button></form>`;
+<form method="post" action="${v.action}"><input type="hidden" name="where" value="documents"><button type="submit" class="primary">${label('Save to Documents', 'Save a copy and start removing')}</button></form>${v.start ? html`
+<p class="meta">Your tools are disconnected next. Your memories stay until you press Finish on the last page.</p>` : ''}`;
   }
   return html`<p class="notice">Your Documents folder syncs to ${v.synced}, so this copy would be uploaded there.</p>
 <p>Every memory is in it in plain text. Your home folder, <code class="path">${v.home}</code>, stays on this computer.</p>
 <div class="row-actions">
-<form method="post" action="${v.action}"><input type="hidden" name="where" value="home"><button type="submit" class="primary">Save to your home folder</button></form>
-<form method="post" action="${v.action}"><input type="hidden" name="where" value="documents"><button type="submit" class="secondary">Save to Documents anyway</button></form>
-</div>`;
+<form method="post" action="${v.action}"><input type="hidden" name="where" value="home"><button type="submit" class="primary">${label('Save to your home folder', 'Save a copy to my home folder and start removing')}</button></form>
+<form method="post" action="${v.action}"><input type="hidden" name="where" value="documents"><button type="submit" class="secondary">${label('Save to Documents anyway', 'Save a copy to Documents anyway and start removing')}</button></form>
+</div>${v.start ? html`
+<p class="meta">Your tools are disconnected next. Your memories stay until you press Finish on the last page.</p>` : ''}`;
 }
 
 export function savedPage(v: { documents: string; synced: 'iCloud' | 'OneDrive' | null; home: string; said: string | null }): SafeHtml {

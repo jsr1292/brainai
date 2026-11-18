@@ -193,6 +193,109 @@ least one turn that answers it (for a multi-hop question, at least one of the tu
 the answer is the first fact. Open-domain questions, which need knowledge from outside the conversation, are hardest,
 as expected.
 
+## LongMemEval
+
+A second public test, [LongMemEval](https://github.com/xiaowu0162/LongMemEval) (Wu et al., "LongMemEval: Benchmarking Chat
+Assistants on Long-Term Interactive Memory", ICLR 2025). Each of its 500 questions comes with its own chat history of
+about 50 sessions (115,000 tokens, 550 turns on average) between a user and an assistant, with distractor sessions
+mixed in, and one to a few sessions that hold the answer.
+
+**Licence and source.** The code and the data are MIT-licensed (repository LICENSE, "Copyright (c) 2024 Di Wu"; the
+Hugging Face dataset card says `license: mit`), so using them for this benchmark is allowed. Data:
+[xiaowu0162/longmemeval-cleaned](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned) at revision
+98d7416c24c778c2fee6e6f3006e7a073259d48f, file `longmemeval_s_cleaned.json` (277 MB, SHA-256
+d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442), the September 2025 clean-up of the authors' original
+files. It is downloaded into `bench-results/cache/` (git-ignored) and checked against that hash; it is never committed.
+
+### What is measured
+
+Retrieval only, as for LoCoMo, with the same rules: no model writes or judges an answer, runs are paired (the same
+facts and questions with the reranker on and off), and the misses are published.
+
+- **Variant: LongMemEval_S** (about 50 sessions per question), not the oracle variant (only the answer sessions, which
+  makes retrieval trivial) and not M (about 500 sessions).
+- **Unit: one fact per turn**, as LoCoMo's turns are: "User on 2023/05/20 (Sat) 02:21: ..." or "Assistant on ...", saved
+  by the owner in a fresh in-memory brain for each question, then asked through the same `MemoryService.recall` the
+  server uses, with its default models (EmbeddingGemma 4-bit, reranker mMiniLM int8), for up to 20 results. A turn longer
+  than the 1,000-character fact limit (about 4 turns in 10) is cut at paragraph, line, sentence or word ends into several
+  facts that each begin with the same speaker and date. I did not pack turns into longer facts: LongMemEval turns
+  already average 880 characters, so packing would hold two turns at most, and a fact per turn keeps the turn-level
+  labels exact.
+- **Two scores.** *Session* (s): an answer session (`answer_session_ids`) is among the first *k* results, which is the
+  level LongMemEval itself reports retrieval at. *Turn* (t): a turn labelled `has_answer` is among the first *k*. Because
+  a session is about 10 turns, the session score is much easier; turn-level shows whether recall finds the sentence
+  and not just the right conversation. For questions that need several sessions, "all" requires every answer session
+  among the results (a multi-session question counts as found in "s" when any one is).
+- **Abstention** (30 questions, ids ending `_abs`, the thing asked about was never said) is its own row. There is nothing
+  to find, so the number that matters is how often recall says so: the share of questions where recall's weak-match
+  warning (the server's own cut-off, WEAK_SCORE) would be shown, or recall returned nothing. Its session and turn scores
+  are given for completeness (the labelled session is one that talks about something close).
+- The brain's clock is not set (the date is in each fact's text). `--dated`, which saves each turn on its session's day
+  and asks on the question's date, gave identical numbers here.
+
+### Cost and sample
+
+About 200,000 distinct turns across the 500 histories, and EmbeddingGemma on this Mac embeds about 17 facts a second, so
+a full run is about 8 hours (measured: 46 seconds a question, 6,514 s for 140), well over the 2 hours I allowed. The
+results below are therefore a **stratified sample: 20 questions of each of the 7 categories (140)**, taken at an even
+stride through the file (not random, not chosen by result), 121,062 facts saved. Embeddings are cached per model in
+`bench-results/cache/`, so a re-run with the reranker off or on, another limit, or `--dated` takes 1 to 2 minutes.
+With 20 questions per row a percentage moves 5 points per question: read differences of a few points as noise.
+
+### Results
+
+18 November 2026, BrainAI 1.4.0 (commit c9969b4, with the A3 files added), EmbeddingGemma-300m (4-bit), reranker
+cross-encoder/mmarco-mMiniLMv2-L12-H384-v1 (int8), LongMemEval_S cleaned, 20 questions per category, up to 20 results, on
+an Apple Silicon Mac. Session: an answer session in the first *k*; Turn: an answer turn in the first *k*.
+
+| Category (20 each) | Session @1 | Session @8 | Session @20 | Turn @1 | Turn @8 | Turn @20 | Weak-match warning |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Single-session, user | 100% | 100% | 100% | 75% | 95% | 100% | 0% |
+| Single-session, assistant | 100% | 100% | 100% | 75% | 100% | 100% | 5% |
+| Single-session, preference | 75% | 100% | 100% | 15% | 70% | 95% | 25% |
+| Multi-session | 100% | 100% | 100% | 50% | 95% | 100% | 35% |
+| Knowledge update | 100% | 100% | 100% | 55% | 85% | 100% | 0% |
+| Temporal reasoning | 95% | 100% | 100% | 55% | 85% | 90% | 30% |
+| Abstention | 95% | 100% | 100% | 10% | 20% | 20% | **55%** |
+| **All 140** | **95.0%** | **100%** | **100%** | **47.9%** | **78.6%** | **86.4%** | 21.4% |
+
+Recall never returned nothing (0% empty in every category): its search always has nearest facts to show. For the six
+real categories the weak-match warning is a false alarm, since an answer is there: 16% of those 120 questions (19 of them) (0% to
+35% by category). For abstention it is the right signal, and it fired for 11 of 20 (55%); the other 9 returned plausible
+facts with no warning, which is the weak spot for "no answer".
+
+Questions needing every answer session (multi-session, temporal, abstention's labelled sessions): all of them within 8
+results for 75%, 80% and 80% of questions (within 20: 100%, 85%, 90%); overall 90.7% within 8 and 96.4% within 20.
+
+Without the reranker (the search alone, same facts): session 95.0 / 99.3 / 100 and turn 34.3 / 77.1 / 86.4 (at 1 / 8 /
+20), MRR 0.965 either way. The reranker's gain is at the turn level at rank 1: 47.9% instead of 34.3% (multi-session
+50% instead of 15%, knowledge update 55% instead of 30%); within 20 it changes nothing, as for LoCoMo. The warning needs
+the reranker's score, so it is never shown without it.
+
+Weakest: recognising no-answer questions (abstention, 55% warned; its turn-level 20% is not meaningful, as it has
+no answer turn). Among the real categories the weakest are **single-session-preference** (turn @1 15%, @8 70%: the answer is a preference
+spread over a long reply, so the labelled turn is often not the one that matches the question words; session rank 1
+for 75%, and one question's labelled turn was not in the first 20) and **temporal reasoning** (the evidence for 3 of 20
+questions spans sessions that are not all found within 20; turn-level 90% at 20). The 34 facts of 121,062 that were
+not saved were refused by the save checks (not investigated).
+
+Misses, per question, are in `bench-results/longmemeval-2026-11-18-sample20.json` (rank of the first answer session,
+first answer turn and of all answer sessions for each of the 140 questions). Those files are git-ignored like LoCoMo's.
+
+**Comparison.** The LongMemEval paper reports retrieval at session level over all 500 questions for retrievers such as
+BM25, Contriever, Stella and GTE. I did not copy those numbers here: I have not re-checked them against the paper's
+tables, and they measure other things (all 500 questions, per-session or per-turn-value indexing with other unit sizes,
+recall of any answer session among the top-*k* sessions rather than among *k* facts). The session numbers above are
+near the ceiling and, on a 20-question sample, cannot separate retrievers; the turn level and the weak-match rate are
+where BrainAI can improve.
+
+```bash
+npm run bench:longmemeval -- --sample 20              # 20 questions per category, up to 20 results
+npm run bench:longmemeval -- --sample 20 --rerank off  # the search alone (1 minute once embeddings are cached)
+npm run bench:longmemeval                              # all 500 questions: about 8 hours here
+npm run bench:longmemeval -- --only <question_id,...>  # named questions;  --dated  --limit <n>  --cache/--out <dir>
+```
+
 ## Running it
 
 ```bash

@@ -518,3 +518,31 @@ test('a restored brain still queues rows saved with a placeholder vector for a m
     assert.deepEqual(db.prepare("SELECT tbl, key FROM embedding_pending WHERE key = 'placeholder'").all(), [{ tbl: 'm', key: 'placeholder' }]);
   } finally { db.close(); }
 });
+
+test('A12: a backup file from schema 37 (no date or source columns) restores, opens and gets the empty columns', async (t) => {
+  const file = join(tmp(t), 'memory-2026-11-06.db');
+  const old = openDb(file, { upTo: 37 });
+  old.prepare(`INSERT INTO memories(id, kind, content, project, tags, embedding, created_at, created_by, updated_at, updated_by)
+    VALUES ('m1', 'decision', 'The site is plain HTML', 'garden-club-site', '[]', x'00', '2026-11-06', 'owner', '2026-11-06', 'owner')`).run();
+  old.pragma('journal_mode = DELETE');
+  old.close();
+  const dir = emptyData(t);
+  assert.deepEqual(await restoreInto(file, dir), { facts: 1, pages: 0, pictures_missing: 0 });
+  const opened = openDb(join(dir, 'memory.db'));
+  t.after(() => opened.close());
+  assert.equal((opened.prepare('SELECT version FROM schema_version').get() as { version: number }).version, latestSchema());
+  assert.deepEqual(opened.prepare("SELECT valid_until, source, source_note FROM memories WHERE id = 'm1'").get(), { valid_until: null, source: null, source_note: null });
+});
+
+test('A12: a saved copy carries the date and the source of a fact through a restore', async (t) => {
+  const source = tmp(t);
+  const given = makeService({ now: () => T });
+  await given.service.remember({ kind: 'decision', project: 'wildlog', content: 'Wildlog licence renews yearly', meta: { validUntil: '2027-01-31', source: 'owner_said', sourceNote: 'phone call' } } as never, me);
+  const archive = join(tmp(t), 'brainai-saved-2026-11-06.tar.gz');
+  await packArchive(given.db, source, archive, T);
+  const dir = emptyData(t);
+  await restoreInto(archive, dir);
+  const opened = openDb(join(dir, 'memory.db'));
+  t.after(() => opened.close());
+  assert.deepEqual(opened.prepare('SELECT valid_until, source, source_note FROM memories').get(), { valid_until: '2027-01-31', source: 'owner_said', source_note: 'phone call' });
+});

@@ -5,6 +5,9 @@ import { SkillError } from '../skills/service.js';
 import type { SkillFile } from '../skills/types.js';
 import type { AppDeps } from './app.js';
 import { requireOwner } from './authRoutes.js';
+import { nextHref } from './back.js';
+import { noteDecision } from './inboxUndo.js';
+import { invalidateSideStatus } from './sideStatus.js';
 import { html, page, type SafeHtml } from './html.js';
 import { proposalCard, skillEditView, skillFileView, skillHistoryView, skillsListView, skillView, type SkillForm } from './skillViews.js';
 
@@ -24,7 +27,7 @@ export function skillRoutes(d: AppDeps): Router {
   const router = Router();
   const owner = requireOwner(d.sessions);
   const send = (res: Response, status: number, title: string, body: SafeHtml, back?: { href: string; label: string }) =>
-    res.status(status).type('html').send(page(title, body, { nav: true, tab: 'pages', back }));
+    res.status(status).type('html').send(page(title, body, { nav: true, tab: 'pages', section: 'skills', back }));
   const missing = (res: Response) => send(res, 404, 'Not found', html`<h1>Not found</h1><p>No such skill.</p>`);
   const skill = (req: Request) => d.skills.get(req.params.id as string);
   const status = (e: SkillError) => (e.code === 'changed' ? 409 : e.code === 'not_found' ? 404 : 400);
@@ -159,7 +162,9 @@ export function skillRoutes(d: AppDeps): Router {
   router.post('/skill-proposals/:id/reject', owner, (req, res) => {
     try {
       d.skills.rejectProposal(req.params.id as string);
-      res.redirect(303, '/approvals');
+      noteDecision(d.service, { id: req.params.id as string, at: d.now().getTime(), message: 'Rejected.', undo: { kind: 'reject-proposal' } });
+      invalidateSideStatus();
+      res.redirect(303, nextHref(req.body?.next) ?? '/approvals');
     } catch (e) {
       if (!(e instanceof SkillError)) throw e;
       answered(res, e);

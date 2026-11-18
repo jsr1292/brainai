@@ -1,17 +1,18 @@
 import { isStatus, projectBrief, type Brief } from './brief.js';
 import { embedText, normalizeKeys } from './keys.js';
 import { EPOCH, factDates, parseTimeRange, todayIn } from './timeRange.js';
-import { cosine, type Embedder } from './embedder.js';
+import { cosine, isZeroVector, type Embedder } from './embedder.js';
 import { findSimilar, hybridSearch, type SearchHit } from './search.js';
 import { RERANK_POOL, type Reranker } from './reranker.js';
 import { SwitchableReranker } from '../models/switchable.js';
 import { looksLikeInstruction } from './instructionLike.js';
+import { isPastDate, metaChanged, metaOf, MetaError, NO_META, resolveMeta, type MetaInput } from './factMeta.js';
 import { checkRoadmap, keepTicked, parseRoadmap, type Roadmap, type WaitingItem } from './roadmap.js';
 import { looksLikeSecret } from './secrets.js';
 import { words } from './words.js';
 import type { MemoryStore, ReplacedFilter } from './store.js';
 import type { ProjectStateName } from '../projects/types.js';
-import { actorLabel, KINDS, OWNER_LABEL as OWNER, type Actor, type Kind, type Memory, type Suggestion } from './types.js';
+import { actorLabel, KINDS, OWNER_LABEL as OWNER, type Actor, type FactMeta, type Kind, type Memory, type Suggestion } from './types.js';
 import type { MeaningHook } from '../graph/threads.js';
 import { MAX_WHY, type Disagreement } from './disagreements.js';
 import { MAX_SUPERSEDES, replaceableKind, type Replaceable, type Supersession } from './supersessions.js';
@@ -78,6 +79,16 @@ const CLOSEST_PROJECTS = 3;
  * cannot flood the approvals.
  */
 export const MAX_HELD_PENDING = 20;
+/** B1: harvested suggestions waiting for the owner, counted apart so a harvest never blocks a plain save (and the reverse). */
+export const MAX_HARVEST_PENDING = 60;
+/** B1: items in one suggest_memories call. */
+export const MAX_HARVEST_ITEMS = 20;
+export const MAX_HARVEST_LABEL = 80;
+export type HarvestItem = { content: string; kind: string; project?: string; keys?: string; validUntil?: string; source?: string | null; sourceNote?: string };
+/** What became of one harvested item: held for the owner, or why it was not (nothing is ever saved by the call). */
+export type HarvestOutcome =
+  | { status: 'held'; suggestion: Suggestion; similar: { id: string; excerpt: string }[] }
+  | { status: 'refused'; code: 'secret_detected' | 'invalid' | 'already_waiting' | 'no_room'; why: string };
 /** recent_work returns at most this many decisions, newest first, so a long window still fits in one tool result. */
 export const MAX_RECENT_DECISIONS = 50;
 /** The owner's picker shows at most this many facts, most alike first ("Show all" lists the rest). */
@@ -108,6 +119,44 @@ function checkAiKeys(keys: string): void {
 const changedSince = (m: Memory) => new MemoryError('changed',
   `Not saved: this ${m.kind === 'summary' ? 'status' : m.kind} changed since you read it (updated ${m.updatedAt} by ${m.updatedBy}). `
   + `Merge your change into its current text below, keeping what the other save added, and save again with base_updated_at ${m.updatedAt}.`, m);
+
+/** A1/A2 as the fields after a change; a bad value is an 'invalid' MemoryError with a plain message. */
+function metaFor(current: FactMeta, input: MetaInput | undefined, fromAi: boolean, by: string | null): FactMeta {
+  try {
+    return resolveMeta(current, input ?? {}, fromAi, by);
+  } catch (e) {
+    if (e instanceof MetaError) throw new MemoryError('invalid', e.message);
+    throw e;
+  }
+}
+
+/**
+ * The fields of a held save over `base` (the fact's own, or none): '' clears, null keeps. The source is set by the
+ * assistant that held the save. A note whose source ends up cleared or missing is dropped, never an error.
+ */
+function heldFields(s: Suggestion, base: FactMeta): FactMeta {
+  const source = s.source === undefined || s.source === null ? base.source : s.source === '' ? null : s.source;
+  return metaFor(base, {
+    validUntil: s.validUntil ?? undefined,
+    source: s.source ?? undefined,
+    sourceNote: source === null ? undefined : s.sourceNote ?? undefined,
+  }, false, s.sourceBy ?? s.suggestedBy);
+}
+
+/**
+ * What a held save records: only what the writer gave (null = not given, '' = clear), the rest follows the fact on
+ * approval. `earlier` is the writer's own held save this one replaces: what it held and this one does not touch stays.
+ */
+function heldMeta(next: FactMeta, given: MetaInput | undefined, by: string, earlier?: Suggestion): Pick<Suggestion, 'validUntil' | 'source' | 'sourceNote' | 'sourceBy'> {
+  const g = given ?? {};
+  const source = g.source === undefined ? earlier?.source ?? null : next.source ?? '';
+  return {
+    validUntil: g.validUntil === undefined ? earlier?.validUntil ?? null : next.validUntil ?? '',
+    source,
+    sourceNote: g.sourceNote === undefined ? earlier?.sourceNote ?? null : next.sourceNote ?? '',
+    sourceBy: source === null || source === '' ? null : g.source === undefined ? earlier?.sourceBy ?? by : by,
+  };
+}
 
 type Similar = { memory: Memory; similarity: number }[];
 
@@ -217,6 +266,13 @@ const isFinished = (state: ProjectState): boolean => state === 'done' || state =
 export interface ProjectLeft { project: string; roadmap: Memory; parsed: Roadmap; lastActivity: string; quiet: boolean; state: ProjectState }
 
 /** The held reason for a save close to a deleted fact (§17a): "is close to a fact you deleted on 2 Nov 2026". */
+/** A held suggestion that carries a warning: the owner answers it on its own card, never in bulk. */
+/**
+ * C2: the reason of a save held only because its connection's saves wait for the owner ("Saves wait for me" in Settings).
+ * It is no warning about the text: Approve all takes such a save like any other.
+ */
+export const HOLD_REASON = "This assistant's saves wait for you";
+export const isFlagged = (s: Pick<Suggestion, 'reason' | 'deletedMatch'>): boolean => (s.reason !== null && s.reason !== HOLD_REASON) || s.deletedMatch !== null;
 export function deletedReason(m: Pick<Memory, 'deletedAt'>): string {
   return `is close to a fact you deleted on ${deletedDay(m.deletedAt ?? '')}`;
 }
@@ -265,6 +321,17 @@ export class MemoryService {
       closeFacts?: number;
     },
   ) {}
+
+  /** A1: the fact is past its date (strictly before today in the owner's calendar). Never hides it or changes its rank. */
+  isPastDate(m: Pick<Memory, 'validUntil'>): boolean {
+    return isPastDate(m.validUntil ?? null, this.store.nowDate());
+  }
+
+  /** The current facts past their date, oldest date first (the Inbox's tidy-up). */
+  pastDateFacts(): Memory[] {
+    return this.store.list({}).filter((m) => this.isPastDate(m))
+      .sort((a, b) => (a.validUntil ?? '').localeCompare(b.validUntil ?? '') || a.id.localeCompare(b.id));
+  }
 
   get(id: string): Memory | undefined {
     return this.store.get(id);
@@ -521,9 +588,11 @@ export class MemoryService {
    * `base`: for a roadmap, the updatedAt of the project's roadmap as the writer read it (see update).
    */
   async remember(
-    input: { kind: Kind; content: string; project?: string; tags?: string[]; keys?: string; allowDuplicate?: boolean; newProject?: boolean; separateWork?: boolean; base?: string; supersedes?: string[];
+    input: { kind: Kind; content: string; project?: string; tags?: string[]; keys?: string; meta?: MetaInput; allowDuplicate?: boolean; newProject?: boolean; separateWork?: boolean; base?: string; supersedes?: string[];
       /** A save that can't wait for approval (closing a discussion): refuse a match with a deleted fact with this message. */
-      refuseDeleted?: (day: string) => string },
+      refuseDeleted?: (day: string) => string;
+      /** C2: the connection's saves wait for the owner: what would be saved is held in the Inbox with this reason instead (an assistant's call only). */
+      hold?: string },
     actor: Actor,
   ): Promise<RememberResult> {
     let kind = checkKind(input.kind);
@@ -531,6 +600,7 @@ export class MemoryService {
     const tags = checkTags(input.tags);
     const keys = normalizeKeys(input.keys);
     if (actor.type === 'ai') checkAiKeys(keys);
+    const meta = metaFor(NO_META, input.meta, actor.type === 'ai', actorLabel(actor));
     const project = this.resolveProject(input.project);
     if (kind === 'roadmap') {
       if (project === null) throw new MemoryError('invalid', 'A roadmap belongs to a project: give its project name.');
@@ -554,7 +624,7 @@ export class MemoryService {
     const roadmap = kind === 'roadmap' ? this.roadmapOf(project!) : undefined;
     if (roadmap) {
       // The project keeps the state the owner gave it: an assistant's new roadmap never reopens a parked project.
-      const r = await this.update(roadmap.id, { content, tags: input.tags === undefined ? roadmap.tags : tags, keys: input.keys }, actor, { base: input.base });
+      const r = await this.update(roadmap.id, { content, tags: input.tags === undefined ? roadmap.tags : tags, keys: input.keys, meta: input.meta }, actor, { base: input.base, hold: input.hold });
       if (r.status === 'updated') return { status: 'roadmap_updated', memory: r.memory };
       if (r.status === 'suggested') return { status: 'suggested', suggestion: r.suggestion, similar: [] };
       throw new Error('unreachable: a roadmap update never changes its project');
@@ -567,8 +637,8 @@ export class MemoryService {
       this.checkHeldRoom();
       const similar = findSimilar(this.store, vector, { kind }, this.opts.duplicateThreshold);
       const deleted = this.deletedMatch(vector, { kind, tags, project: null });
-      const reason = looksLikeInstruction(content) ?? (deleted ? deletedReason(deleted) : null);
-      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, reason, suggestedBy: by, deletedMatch: deleted?.id ?? null });
+      const reason = looksLikeInstruction(content) ?? (deleted ? deletedReason(deleted) : null) ?? input.hold ?? null;
+      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, reason, suggestedBy: by, deletedMatch: deleted?.id ?? null, ...heldMeta(meta, input.meta, by) });
       return { status: 'suggested', suggestion, similar };
     }
     // Statuses this save replaces are not "the existing ones": they are being superseded by it.
@@ -592,21 +662,21 @@ export class MemoryService {
       const pending = await this.matchingPendingSuggestion(vector, kind, project);
       if (pending) return { status: 'already_suggested', suggestion: pending };
       this.checkHeldRoom();
-      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, kind, project, reason: looksLikeInstruction(content) ?? deletedReason(deleted), suggestedBy: by, supersedes: ids, deletedMatch: deleted.id });
+      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, kind, project, reason: looksLikeInstruction(content) ?? deletedReason(deleted), suggestedBy: by, supersedes: ids, deletedMatch: deleted.id, ...heldMeta(meta, input.meta, by) });
       return { status: 'suggested', suggestion, similar: [] };
     }
-    const reason = actor.type === 'ai' ? looksLikeInstruction(content) : null;
+    const reason = actor.type === 'ai' ? looksLikeInstruction(content) ?? input.hold ?? null : null;
     if (reason) {
       const pending = await this.matchingPendingSuggestion(vector, kind, project);
       if (pending) return { status: 'already_suggested', suggestion: pending };
       this.checkHeldRoom();
-      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, kind, project, reason, suggestedBy: by, supersedes: ids });
+      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, kind, project, reason, suggestedBy: by, supersedes: ids, ...heldMeta(meta, input.meta, by) });
       return { status: 'suggested', suggestion, similar: [] };
     }
     let memory: Memory;
     try {
       memory = this.store.atomic(() => {
-        const saved = this.store.insert({ kind, content, project, tags, keys, embedding: vector, by });
+        const saved = this.store.insert({ kind, content, project, tags, keys, embedding: vector, by, meta });
         // Separate streams of work: neither status supersedes the other (newerStatus, the tidy page's status groups).
         for (const s of statuses) this.store.dismissPair(saved.id, s.id);
         if (ids.length > 0) {
@@ -630,6 +700,16 @@ export class MemoryService {
     }
     this.indexFacts([memory.id]);
     return { status: 'saved', memory, replaced: this.memories(ids) };
+  }
+
+  /**
+   * Guided import: facts already saved that a candidate text is as close to as a duplicate, for the owner's review list.
+   * `checked` is false while no search model is ready (keywords only): duplicates cannot be found then.
+   */
+  async duplicatesOf(text: string, kind: Kind, project: string | null): Promise<{ checked: boolean; matches: { memory: Memory; similarity: number }[] }> {
+    const vector = await this.embedder.embed(embedText(text, ''), 'passage');
+    if (isZeroVector(vector)) return { checked: false, matches: [] };
+    return { checked: true, matches: findSimilar(this.store, vector, { kind, project: project === null ? undefined : this.resolveProject(project) }, this.opts.duplicateThreshold) };
   }
 
   private memories(ids: readonly string[]): Memory[] {
@@ -700,22 +780,116 @@ export class MemoryService {
     throw new MemoryError('invalid', actor.type === 'owner' ? `${SAME_KIND_ONLY} Undo the replacement on this page first.` : SAME_KIND_ONLY);
   }
 
-  /** `freed`: waiting ones this save replaces. Every waiting suggestion counts: all of them wait for the owner. */
+  /** `freed`: waiting ones this save replaces. Every waiting suggestion counts: all of them wait for the owner (harvested ones have their own room). */
   private checkHeldRoom(freed = 0): void {
-    if (this.store.listSuggestions('pending').length - freed >= MAX_HELD_PENDING) {
+    if (this.store.listSuggestions('pending').filter((s) => !s.harvest).length - freed >= MAX_HELD_PENDING) {
       throw new MemoryError('invalid', `Not saved: ${MAX_HELD_PENDING} memories are already waiting for the owner's approval. Tell the owner to review them on the memory dashboard.`);
     }
+  }
+
+  /**
+   * B1 harvest: an assistant's reading of its own session, up to MAX_HARVEST_ITEMS items, every one held for the owner
+   * (never saved here). Each goes through the same checks as a held save: a secret is refused, text that reads like an
+   * instruction is flagged, a close existing memory or a fact the owner deleted is attached as a warning. Items are
+   * judged one by one: a refused one never stops the others. `by` is the calling app; `label` names the session.
+   */
+  async suggestMemories(items: HarvestItem[], label: string, actor: Actor, newBatch: () => string, opts: { hold?: string } = {}): Promise<{ batch: string; label: string; results: HarvestOutcome[] }> {
+    const name = label.replace(/\s+/g, ' ').trim();
+    if (name === '' || name.length > MAX_HARVEST_LABEL) throw new MemoryError('invalid', `session: a short label for this session, 1 to ${MAX_HARVEST_LABEL} characters.`);
+    if (items.length < 1 || items.length > MAX_HARVEST_ITEMS) throw new MemoryError('invalid', `items: between 1 and ${MAX_HARVEST_ITEMS} suggestions per call.`);
+    if (looksLikeInstruction(name)) throw new MemoryError('invalid', 'session: the label reads like an instruction; use a few plain words about the session.');
+    const by = actorLabel(actor);
+    const batch = newBatch();
+    const results: HarvestOutcome[] = [];
+    // Every waiting suggestion is embedded at most once per call; the ones held here add their vector as they go.
+    const pendingVectors = new Map<string, Float32Array>();
+    for (const item of items) {
+      try {
+        results.push(await this.holdHarvested(item, { batch, label: name }, by, pendingVectors, opts.hold));
+      } catch (e) {
+        if (!(e instanceof MemoryError)) throw e;
+        results.push({ status: 'refused', code: e.code === 'secret_detected' ? 'secret_detected' : 'invalid', why: e.message });
+      }
+    }
+    return { batch, label: name, results };
+  }
+
+  private async holdHarvested(item: HarvestItem, harvest: { batch: string; label: string }, by: string, pendingVectors: Map<string, Float32Array>, hold?: string): Promise<HarvestOutcome> {
+    if (item.kind !== 'decision' && item.kind !== 'summary' && item.kind !== 'profile') {
+      throw new MemoryError('invalid', 'kind must be decision, summary or profile (a roadmap is saved with remember).');
+    }
+    const kind: Kind = item.kind;
+    const content = checkContent(item.content, maxFor(kind));
+    const keys = normalizeKeys(item.keys);
+    checkAiKeys(keys);
+    const meta = metaFor(NO_META, { validUntil: item.validUntil, source: item.source, sourceNote: item.sourceNote }, true, by);
+    const project = kind === 'profile' ? null : this.resolveProject(item.project);
+    if (kind !== 'profile' && project === null) throw new MemoryError('invalid', 'project: a decision or status belongs to a project.');
+    checkAiLabels(project, []);
+    const vector = await this.embedder.embed(embedText(content, keys), 'passage');
+    const pending = await this.matchingPendingSuggestion(vector, kind, project, pendingVectors);
+    if (pending) return { status: 'refused', code: 'already_waiting', why: 'The same fact already waits for the owner.' };
+    if (this.store.listSuggestions('pending').filter((s) => s.harvest).length >= MAX_HARVEST_PENDING) {
+      return { status: 'refused', code: 'no_room', why: `${MAX_HARVEST_PENDING} harvested suggestions already wait for the owner. Tell the owner to review them in the Inbox.` };
+    }
+    const similar = findSimilar(this.store, vector, { kind, project }, this.opts.duplicateThreshold);
+    const deleted = this.deletedMatch(vector, { kind, tags: [], project });
+    // The same check remember makes: text that matches a replaced fact is held with that as its reason, so Approve all leaves it.
+    const was = this.wasReplaced(vector, { kind, tags: [], project }, new Set());
+    const reasons = [looksLikeInstruction(content), deleted ? deletedReason(deleted) : null, similar.length > 0 ? 'is close to a memory the owner already has' : null,
+      was?.status === 'was_replaced' ? 'matches a fact that was replaced by a newer one' : null].filter((r): r is string => r !== null);
+    if (reasons.length === 0 && hold) reasons.push(hold);
+    const suggestion = this.store.addSuggestion({
+      action: 'add', memoryId: null, content, tags: [], keys, kind, project, reason: reasons.length > 0 ? reasons.join(' and ') : null,
+      suggestedBy: by, deletedMatch: deleted?.id ?? null, similarId: similar[0]?.memory.id ?? null, ...heldMeta(meta, { validUntil: item.validUntil, source: item.source, sourceNote: item.sourceNote }, by), harvest,
+    });
+    pendingVectors.set(suggestion.id, vector);
+    return { status: 'held', suggestion, similar: similar.map((x) => ({ id: x.memory.id, excerpt: x.memory.content.slice(0, 160) })) };
+  }
+
+  /** The waiting harvested suggestions of one call, oldest first. */
+  harvestBatch(batch: string): Suggestion[] {
+    return this.store.listSuggestions('pending').filter((s) => s.harvest?.batch === batch);
+  }
+
+  /**
+   * Approves or rejects every waiting suggestion of one harvest (the owner's Approve all / Reject all). Each is judged on
+   * its own: one that can no longer be saved is left waiting and named, the rest go through.
+   */
+  async answerHarvest(batch: string, answer: 'approve' | 'reject'): Promise<{ done: number; left: { id: string; why: string }[]; flagged: number }> {
+    let done = 0;
+    let flagged = 0;
+    const left: { id: string; why: string }[] = [];
+    for (const s of this.harvestBatch(batch)) {
+      // Approve all never saves an item that carries a warning (instruction-like, close to a fact the owner deleted or
+      // replaced, a near-duplicate): it keeps waiting for the owner's own answer on its card.
+      if (answer === 'approve' && isFlagged(s)) { flagged++; continue; }
+      try {
+        if (answer === 'approve') await this.approveSuggestionReport(s.id); else this.rejectSuggestion(s.id);
+        done++;
+      } catch (e) {
+        if (!(e instanceof MemoryError)) throw e;
+        left.push({ id: s.id, why: e.message });
+      }
+    }
+    return { done, left, flagged };
   }
 
   /**
    * A pending suggestion of the same kind and project whose text is as similar as a duplicate, so the same fact does
    * not pile up for approval. Look-alike rules of two projects are two facts: each must reach the owner.
    */
-  private async matchingPendingSuggestion(vector: Float32Array, kind: Kind, project: string | null): Promise<Suggestion | undefined> {
+  private async matchingPendingSuggestion(vector: Float32Array, kind: Kind, project: string | null, vectors?: Map<string, Float32Array>): Promise<Suggestion | undefined> {
     for (const s of this.store.listSuggestions('pending')) {
       if (s.content === null || s.kind !== kind) continue;
       if (kind !== 'profile' && this.suggestedProject(s) !== project) continue;
-      if (cosine(vector, await this.embedder.embed(embedText(s.content, s.keys ?? ''), 'passage')) >= this.opts.duplicateThreshold) return s;
+      // `vectors`: one call's cache, so a 20-item harvest embeds each waiting suggestion once, not once per item.
+      let v = vectors?.get(s.id);
+      if (!v) {
+        v = await this.embedder.embed(embedText(s.content, s.keys ?? ''), 'passage');
+        vectors?.set(s.id, v);
+      }
+      if (cosine(vector, v) >= this.opts.duplicateThreshold) return s;
     }
     return undefined;
   }
@@ -740,9 +914,9 @@ export class MemoryService {
    */
   async update(
     id: string,
-    input: { content?: string; project?: string | null; tags?: string[]; keys?: string; newProject?: boolean; supersedes?: string[] },
+    input: { content?: string; project?: string | null; tags?: string[]; keys?: string; meta?: MetaInput; newProject?: boolean; supersedes?: string[] },
     actor: Actor,
-    opts: { expectContent?: string; base?: string } = {},
+    opts: { expectContent?: string; base?: string; /** C2: the connection's saves wait for the owner: the change is held in the Inbox with this reason (an assistant's call only). */ hold?: string } = {},
   ): Promise<
     | { status: 'updated'; memory: Memory; replaced: Memory[] }
     | { status: 'suggested'; suggestion: Suggestion }
@@ -754,15 +928,31 @@ export class MemoryService {
       throw new MemoryError('invalid', `This fact was replaced by ${this.store.supersessions.chainEnd(id).endId}. Update that one.`);
     }
     if (opts.base !== undefined && current.updatedAt !== opts.base) throw changedSince(current);
+    const by = actorLabel(actor);
+    // An assistant's follow-up on a profile entry builds on its own change still waiting (it replaces that one below),
+    // so a meta-only follow-up does not throw away its pending text.
+    const own = actor.type === 'ai' && current.kind === 'profile'
+      ? this.store.listSuggestions('pending').find((s) => s.action === 'update' && s.memoryId === id && s.suggestedBy === by)
+      : undefined;
+    const base: { content: string; tags: string[]; keys: string; meta: FactMeta } = own
+      ? { content: own.content ?? current.content, tags: own.tags, keys: own.keys ?? current.keys, meta: heldFields(own, metaOf(current)) }
+      : { content: current.content, tags: current.tags, keys: current.keys, meta: metaOf(current) };
     // Content left out (B9: only new search words): the text as it is now, read again on every retry.
-    const content = checkContent(input.content ?? current.content, maxFor(current.kind));
-    const tags = input.tags === undefined ? current.tags : checkTags(input.tags);
+    const content = checkContent(input.content ?? base.content, maxFor(current.kind));
+    const tags = input.tags === undefined ? base.tags : checkTags(input.tags);
     // B9: search words left out keep the fact's own; '' clears them.
-    const keys = input.keys === undefined ? current.keys : normalizeKeys(input.keys);
+    const keys = input.keys === undefined ? base.keys : normalizeKeys(input.keys);
     if (actor.type === 'ai' && input.keys !== undefined) checkAiKeys(keys);
+    // An assistant who rewrites a fact the owner said, without saying where the new words came from, does not leave
+    // "you said this" on text the owner never said: the source goes (the owner's own edit keeps it).
+    const givenMeta: MetaInput | undefined = actor.type === 'ai' && content !== current.content && current.source === 'owner_said'
+      && input.meta?.source === undefined && (own === undefined || own.source === null || own.source === undefined)
+      ? { ...input.meta, source: null } : input.meta;
+    // A1/A2: left out keeps the fact's own; the date and the source never touch the text, the vector or the keyword index.
+    const meta = metaFor(base.meta, givenMeta, actor.type === 'ai', by);
+    const metaDiffers = metaChanged(metaOf(current), meta);
     this.checkKindKept(current, tags, actor);
     const project = input.project === undefined ? current.project : this.resolveProject(input.project);
-    const by = actorLabel(actor);
     if (current.kind === 'roadmap' && actor.type === 'ai' && content !== current.content && checkRoadmap(content) === null && checkRoadmap(current.content) === null) {
       // An assistant writing from an older copy must not put back what the owner has ticked off since.
       const merged = keepTicked(current.content, content);
@@ -788,13 +978,13 @@ export class MemoryService {
       }
     }
     if (actor.type === 'ai' && current.kind === 'profile') {
-      const reason = looksLikeInstruction(content);
+      const reason = looksLikeInstruction(content) ?? opts.hold ?? null;
       // Its newer edit of a profile memory replaces its own edit still waiting, so re-saves don't pile up.
       const superseded = this.store.listSuggestions('pending')
         .filter((s) => s.action === 'update' && s.memoryId === id && s.suggestedBy === by);
       this.checkHeldRoom(superseded.length);
       for (const s of superseded) this.store.resolveSuggestion(s.id, 'rejected');
-      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, keys: input.keys === undefined ? null : keys, reason, suggestedBy: by });
+      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, keys: input.keys === undefined ? own?.keys ?? null : keys, reason, suggestedBy: by, ...heldMeta(meta, givenMeta, by, own) });
       return { status: 'suggested', suggestion };
     }
     /** Adds the replacement rows in the caller's transaction, decided again on the fact as it is now. */
@@ -803,29 +993,6 @@ export class MemoryService {
       const now = this.activeMemory(id);
       this.addSupersessions(this.checkSupersede(ids, { id, kind: now.kind, tags: now.tags, project: now.project }, 'update'), id, by);
     };
-    if (content === current.content) {
-      // Same text: only the labels change, and the memory keeps its date (moving a status must not make it the latest).
-      const same = project === current.project && tags.length === current.tags.length && tags.every((t, i) => t === current.tags[i]);
-      // New search words (B9) are embedded with the text: not a version and not an edit, so the date stays too.
-      const vector = keys === current.keys ? null : await this.embedder.embed(embedText(content, keys), 'passage');
-      if (same && vector === null) {
-        if (ids.length > 0) this.store.atomic(replaceIn);
-        return { status: 'updated', memory: current, replaced: this.memories(ids) };
-      }
-      const relabelled = this.store.atomic(() => {
-        const latest = this.activeMemory(id);
-        // The text changed while the keys were embedded: start again from what is there now.
-        if (latest.content !== content) return 'changed' as const;
-        this.checkKindKept(latest, tags, actor);
-        let m = same ? latest : this.store.relabel(id, { project, tags, by });
-        if (vector !== null) m = this.store.setKeys(id, keys, vector);
-        replaceIn();
-        return m;
-      });
-      if (relabelled === 'changed') return this.update(id, input, actor, opts);
-      this.indexFacts([id]);
-      return { status: 'updated', memory: relabelled, replaced: this.memories(ids) };
-    }
     const holdUpdate = (reason: string, deletedMatch: string | null = null): { status: 'suggested'; suggestion: Suggestion } => {
       // An assistant's newer held edit of a memory replaces its own edit still waiting, so re-saves don't pile up.
       const superseded = this.store.listSuggestions('pending')
@@ -834,15 +1001,43 @@ export class MemoryService {
       for (const s of superseded) this.store.resolveSuggestion(s.id, 'rejected');
       // Only a project the AI chose is recorded: approval otherwise keeps whatever project the memory has by then.
       const chosen = input.project === undefined ? null : project;
-      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, keys: input.keys === undefined ? null : keys, kind: current.kind, project: chosen, reason, suggestedBy: by, supersedes: ids, deletedMatch });
+      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, keys: input.keys === undefined ? null : keys, kind: current.kind, project: chosen, reason, suggestedBy: by, supersedes: ids, deletedMatch, ...heldMeta(meta, givenMeta, by) });
       return { status: 'suggested', suggestion };
     };
+    if (content === current.content) {
+      // A label-only change on a connection whose saves wait: a plain hold (no text to warn about).
+      if (opts.hold && actor.type === 'ai') return holdUpdate(opts.hold);
+      // Same text: only the labels change, and the memory keeps its date (moving a status must not make it the latest).
+      const same = project === current.project && tags.length === current.tags.length && tags.every((t, i) => t === current.tags[i]);
+      // New search words (B9) are embedded with the text: not a version and not an edit, so the date stays too.
+      const vector = keys === current.keys ? null : await this.embedder.embed(embedText(content, keys), 'passage');
+      if (same && vector === null && !metaDiffers) {
+        if (ids.length > 0) this.store.atomic(replaceIn);
+        return { status: 'updated', memory: current, replaced: this.memories(ids) };
+      }
+      const relabelled = this.store.atomic(() => {
+        const latest = this.activeMemory(id);
+        // The text changed while the keys were embedded: start again from what is there now.
+        if (latest.content !== content || metaChanged(metaOf(latest), metaOf(current))) return 'changed' as const;
+        this.checkKindKept(latest, tags, actor);
+        let m = same ? latest : this.store.relabel(id, { project, tags, by, meta: metaDiffers ? meta : undefined });
+        if (vector !== null) m = this.store.setKeys(id, keys, vector);
+        if (same && metaDiffers) m = this.store.setMeta(id, meta, by);
+        replaceIn();
+        return m;
+      });
+      if (relabelled === 'changed') return this.update(id, input, actor, opts);
+      this.indexFacts([id]);
+      return { status: 'updated', memory: relabelled, replaced: this.memories(ids) };
+    }
     const reason = actor.type === 'ai' ? looksLikeInstruction(content) : null;
     if (reason) return holdUpdate(reason);
     const embedding = await this.embedder.embed(embedText(content, keys), 'passage');
     // Forgetting that sticks (§17a): an assistant can't rewrite a fact into one the owner deleted.
     const deleted = actor.type === 'ai' ? this.deletedMatch(embedding, { kind: current.kind, tags, project }, id) : undefined;
     if (deleted) return holdUpdate(deletedReason(deleted), deleted.id);
+    // Only now the plain "saves wait" hold: the warnings above must not be lost behind it.
+    if (opts.hold && actor.type === 'ai') return holdUpdate(opts.hold);
     // Other requests ran while the text was embedded. Nothing awaits between these checks and the write.
     const result = this.store.atomic((): Memory | 'changed' => {
       const latest = this.store.get(id);
@@ -851,11 +1046,11 @@ export class MemoryService {
         throw new MemoryError('invalid', LIST_CHANGED);
       }
       // Changed meanwhile: start again from what is there now (an assistant's roadmap then keeps a tick made meanwhile).
-      if (latest.content !== current.content || latest.project !== current.project || JSON.stringify(latest.tags) !== JSON.stringify(current.tags) || latest.keys !== current.keys) {
+      if (latest.content !== current.content || latest.project !== current.project || JSON.stringify(latest.tags) !== JSON.stringify(current.tags) || latest.keys !== current.keys || metaChanged(metaOf(latest), metaOf(current))) {
         return 'changed';
       }
       this.checkKindKept(latest, tags, actor);
-      const memory = this.store.update(id, { content, project, tags, keys, embedding, by });
+      const memory = this.store.update(id, { content, project, tags, keys, embedding, by, meta });
       // Rewritten, the fact may no longer disagree with anything: its open pairs end (a new flag opens one again).
       if (content !== latest.content) this.store.disagreements.settleFor(id, 'changed', by);
       replaceIn();
@@ -866,19 +1061,44 @@ export class MemoryService {
     return { status: 'updated', memory: result, replaced: this.memories(ids) };
   }
 
-  forget(id: string, actor: Actor): { status: 'deleted' } | { status: 'suggested'; suggestion: Suggestion } {
+  forget(id: string, actor: Actor, opts: { hold?: string } = {}): { status: 'deleted' } | { status: 'suggested'; suggestion: Suggestion } {
     const current = this.activeMemory(id);
     const by = actorLabel(actor);
-    if (actor.type === 'ai' && current.kind === 'profile') {
+    if (actor.type === 'ai' && (current.kind === 'profile' || opts.hold !== undefined)) {
       // A deletion already waiting for this memory is the same request, whoever asked first.
       const waiting = this.store.listSuggestions('pending').find((s) => s.action === 'delete' && s.memoryId === id);
       if (waiting) return { status: 'suggested', suggestion: waiting };
       this.checkHeldRoom();
-      const suggestion = this.store.addSuggestion({ action: 'delete', memoryId: id, content: null, tags: [], suggestedBy: by });
+      const suggestion = this.store.addSuggestion({ action: 'delete', memoryId: id, content: null, tags: [], suggestedBy: by, ...(current.kind !== 'profile' ? { kind: current.kind, project: current.project } : {}), ...(opts.hold ? { reason: opts.hold } : {}) });
       return { status: 'suggested', suggestion };
     }
     this.store.softDelete(id, by);
     return { status: 'deleted' };
+  }
+
+  /**
+   * Retires a fact whose decision now lives on a page (tidy, move_to_page). Like forget, but not the owner forgetting it:
+   * the fact is deleted (out of recall, restorable) and marked moved, so forgetting-that-sticks ignores it.
+   */
+  retireToPage(id: string, where: string, actor: Actor): void {
+    if (actor.type !== 'owner') throw new MemoryError('invalid', 'Only the owner can retire a fact onto a page');
+    this.activeMemory(id);
+    this.store.softDelete(id, actorLabel(actor), { movedTo: where });
+  }
+
+  /**
+   * C2: takes back a fact an assistant just saved (Activity › Undo). The owner's decision: it counts as the owner
+   * deleting it, so forgetting-that-sticks applies (the assistant cannot save it straight back) and Restore brings it back. Refused when
+   * the fact changed since it was saved.
+   */
+  undoSaved(id: string, actor: Actor): void {
+    if (actor.type !== 'owner') throw new MemoryError('invalid', 'Only the owner can undo a save');
+    const m = this.store.get(id);
+    if (!m) throw notFound(id);
+    if (m.deletedAt) throw new MemoryError('invalid', 'This fact is already deleted.');
+    if (this.store.history(id).length > 0) throw new MemoryError('invalid', 'This fact changed after it was saved, so it was left as it is.');
+    if (this.store.supersessions.liveBy(id).length > 0) throw new MemoryError('invalid', 'This fact replaced older ones: bring those back first.');
+    this.store.softDelete(id, OWNER);
   }
 
   async undo(historyId: number, actor: Actor): Promise<Memory> {
@@ -991,8 +1211,22 @@ export class MemoryService {
     return { statuses, decisions: decisions.slice(0, MAX_RECENT_DECISIONS), omitted: Math.max(0, decisions.length - MAX_RECENT_DECISIONS) };
   }
 
+  /** Set by a command that only measures (cli tidy-stats): reading the brief then leaves no trace (no recall mark, no tool-call log). */
+  observeOnly = false;
+
   /** Notes that an AI called a tool, for the weekly digest. */
+  /** C2: when the owner paused every assistant save (an ISO time), or null while saving is on. */
+  savesPausedSince(): string | null {
+    return this.store.switchValue('saves_paused');
+  }
+
+  /** C2: the owner's "Pause all saves from assistants" switch. */
+  setSavesPaused(on: boolean): void {
+    this.store.setSwitch('saves_paused', on ? this.store.nowDate().toISOString() : null);
+  }
+
   recordUse(actor: Actor, tool: string): void {
+    if (this.observeOnly) return;
     this.store.logToolCall(actorLabel(actor), tool);
   }
 
@@ -1003,7 +1237,7 @@ export class MemoryService {
   async brief(project: string): Promise<{ found: true; brief: Brief } | { found: false; closest: string[] }> {
     const brief = projectBrief(this.store, this.lookup(project));
     if (brief) {
-      this.store.markRecalled([...(brief.roadmap ? [brief.roadmap] : []), ...brief.statuses, ...brief.decisions].map((m) => m.id));
+      if (!this.observeOnly) this.store.markRecalled([...(brief.roadmap ? [brief.roadmap] : []), ...brief.statuses, ...brief.decisions].map((m) => m.id));
       return { found: true, brief };
     }
     return { found: false, closest: await this.closestProjects(project) };
@@ -1119,7 +1353,7 @@ export class MemoryService {
       .some((s) => s.action === 'add' && s.kind === 'roadmap' && s.project !== null && this.canonical(s.project) === p);
     if ((live(source) || waiting(source)) && (live(target) || waiting(target))) {
       if (waiting(source) || waiting(target)) {
-        throw new MemoryError('invalid', `${source} and ${target} both have a roadmap, and one of them is waiting for your approval: approve or reject it in Approvals first, then merge what is left into one of them.`);
+        throw new MemoryError('invalid', `${source} and ${target} both have a roadmap, and one of them is waiting for your approval: approve or reject it in your Inbox first, then merge what is left into one of them.`);
       }
       throw new MemoryError('invalid', `${source} and ${target} both have a roadmap: merge what is left into one of them and delete the other first.`);
     }
@@ -1196,8 +1430,8 @@ export class MemoryService {
         // A roadmap saved meanwhile for the same project is the one this approval updates (one per project).
         const existing = s.kind === 'roadmap' && chosen !== null ? this.roadmapOf(chosen) : undefined;
         applied = existing
-          ? this.store.update(existing.id, { content: content!, project: existing.project, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy })
-          : this.store.insert({ kind: s.kind, content: content!, project: chosen, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy });
+          ? this.store.update(existing.id, { content: content!, project: existing.project, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy, meta: heldFields(s, metaOf(existing)) })
+          : this.store.insert({ kind: s.kind, content: content!, project: chosen, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy, meta: heldFields(s, NO_META) });
       } else {
         const target = this.activeMemory(s.memoryId ?? '');
         // The owner approves this: a fact linked by a replacement since it was held keeps its kind.
@@ -1205,9 +1439,11 @@ export class MemoryService {
         const project = s.kind === 'profile' ? target.project : (chosen ?? target.project);
         // Only new search words (B9): not a version and not an edit, as when an assistant changes them directly.
         const keysOnly = content === target.content && project === target.project && JSON.stringify(s.tags) === JSON.stringify(target.tags);
+        const meta = heldFields(s, metaOf(target));
         applied = keysOnly
           ? this.store.setKeys(target.id, keys, embedding!)
-          : this.store.update(target.id, { content: content!, project, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy });
+          : this.store.update(target.id, { content: content!, project, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy, meta });
+        if (keysOnly && metaChanged(metaOf(target), meta)) applied = this.store.setMeta(target.id, meta, s.suggestedBy);
       }
       if (applied) {
         // Each id on its own: one that no longer qualifies is skipped and named, the others are still replaced.
@@ -1287,6 +1523,43 @@ export class MemoryService {
   private replacingFact(newId: string): { id: string; kind: Kind; tags: string[]; project: string | null } {
     const m = this.activeMemory(newId);
     return { id: m.id, kind: m.kind, tags: m.tags, project: m.project };
+  }
+
+  /** B2: the size and secret checks of a save, without saving (a proposed merge text). */
+  checkContentOf(content: string, kind: Kind): string {
+    return checkContent(content, maxFor(kind));
+  }
+
+  /** B2: the same checks supersede() makes, without writing: throws the reason a proposal could not be applied. */
+  checkReplacement(oldIds: readonly string[], next: { id?: string; kind: Kind; tags: string[]; project: string | null }): string[] {
+    return this.checkSupersede(oldIds, next, 'owner');
+  }
+
+  /**
+   * B2: an approved tidy merge. One new fact (source inferred, set by the proposing app; valid_until the latest of the
+   * originals' when all of them had one, else none) that replaces every original, saved together or not at all.
+   */
+  async mergeFacts(input: { ids: readonly string[]; content: string; kind: Kind; by: string; replacedBy: string }): Promise<{ memory: Memory; rows: Supersession[] }> {
+    const kind = checkKind(input.kind);
+    const content = checkContent(input.content, maxFor(kind));
+    const olds = input.ids.map((id) => this.activeMemory(id));
+    const project = olds[0]?.project ?? null;
+    const tags: string[] = [];
+    this.checkSupersede(input.ids, { kind, tags, project }, 'owner');
+    const dates = olds.map((m) => m.validUntil ?? null);
+    const validUntil = dates.every((d) => d !== null) ? dates.reduce((a, b) => (a! > b! ? a : b)) : null;
+    let keys = '';
+    try { keys = normalizeKeys([...new Set(olds.flatMap((m) => m.keys.split(/\s+/)).filter((w) => w !== ''))].join(' ')); } catch { keys = ''; }
+    const embedding = await this.embedder.embed(embedText(content, keys), 'passage');
+    const meta: FactMeta = { validUntil, source: 'inferred', sourceNote: null, sourceBy: input.by };
+    const made = this.store.atomic(() => {
+      // Read again inside the transaction: nothing may have changed while the text was being embedded.
+      const ids = this.checkSupersede(input.ids, { kind, tags, project }, 'owner');
+      const saved = this.store.insert({ kind, content, project, tags, keys, embedding, by: input.by, meta });
+      return { memory: saved, rows: this.addSupersessions(ids, saved.id, input.replacedBy) };
+    });
+    this.indexFacts([made.memory.id]);
+    return made;
   }
 
   /**
@@ -1471,6 +1744,62 @@ export class MemoryService {
     return { choices: scored.slice(0, PICKER_CHOICES).map((s) => s.x), total: same.length, kind, project };
   }
 
+  /** Waiting again is refused when the Inbox has no room (as for a new save) or another waiting item is about the same fact. */
+  private checkCanReopen(s: Suggestion): void {
+    const pending = this.store.listSuggestions('pending');
+    if (pending.length >= MAX_HELD_PENDING) {
+      throw new MemoryError('invalid', `That can no longer be undone: ${MAX_HELD_PENDING} items already wait in the Inbox. Answer some first.`);
+    }
+    if (s.memoryId !== null && pending.some((p) => p.id !== s.id && p.memoryId === s.memoryId)) {
+      throw new MemoryError('invalid', 'That can no longer be undone: another suggestion about the same fact waits in the Inbox now.');
+    }
+  }
+
+  /** Undo a rejection: the suggestion waits again. */
+  undoRejectSuggestion(id: string): void {
+    const s = this.store.getSuggestion(id);
+    if (!s || s.status !== 'rejected') throw new MemoryError('invalid', 'That suggestion was not rejected.');
+    this.checkCanReopen(s);
+    this.store.reopenSuggestion(id);
+  }
+
+  /**
+   * Undo an approval of a plain addition: the fact it created goes (deleted, as Forget does) and the suggestion waits
+   * again. Refused once that fact was edited, replaced, or became the replacement of another fact since (or any history
+   * row refers to it).
+   */
+  undoApprovedAdd(id: string, memoryId: string): void {
+    const s = this.store.getSuggestion(id);
+    const m = this.store.get(memoryId);
+    if (!s || s.status !== 'approved' || s.action !== 'add' || !m || m.deletedAt || m.updatedAt !== m.createdAt || this.store.supersessions.liveFor(memoryId) || this.store.supersessions.liveBy(memoryId).length > 0 || this.store.history(memoryId).length > 0) {
+      throw new MemoryError('invalid', 'That can no longer be undone: the fact changed since.');
+    }
+    this.checkCanReopen(s);
+    this.store.atomic(() => {
+      this.store.softDelete(memoryId, 'owner', { undone: true });
+      this.store.reopenSuggestion(id);
+    });
+  }
+
+  /**
+   * B2: takes back an approved tidy merge: the replacements are undone and the merged fact goes (deleted, as Forget does).
+   * Refused once the merged fact was edited, replaced, or replaced something else since, or a replacement was already undone.
+   */
+  undoMerge(mergedId: string, rowIds: readonly number[]): void {
+    const m = this.store.get(mergedId);
+    const rows = rowIds.map((id) => this.store.supersessions.get(id));
+    const live = this.store.supersessions.liveBy(mergedId);
+    const clean = m && !m.deletedAt && m.updatedAt === m.createdAt && this.store.history(mergedId).length === 0
+      && this.store.supersessions.liveFor(mergedId) === undefined
+      && rows.every((r) => r && r.undoneAt === null && r.newId === mergedId) && live.length === rows.length;
+    if (!clean) throw new MemoryError('invalid', 'That can no longer be undone: the merged fact or the facts it replaced changed since.');
+    this.store.atomic(() => {
+      for (const r of rows) this.store.supersessions.undo(r!.id, OWNER);
+      this.store.softDelete(mergedId, 'owner', { undone: true });
+    });
+    this.indexStep((x) => x.factsBroughtBack(rows.map((r) => r!.oldId)));
+  }
+
   rejectSuggestion(id: string): void {
     this.pendingSuggestion(id);
     this.store.resolveSuggestion(id, 'rejected');
@@ -1482,15 +1811,27 @@ export class MemoryService {
 
   /** Pairs of memories of one kind that say nearly the same thing, closest first: compares every pair, so it is slow. */
   duplicates(): { a: Memory; b: Memory; similarity: number }[] {
+    return this.scanDuplicates();
+  }
+
+  /** The same scan over the approved profile entries only (Brain health, A4): a handful of entries, so cheap. */
+  profileDuplicates(): { a: Memory; b: Memory; similarity: number }[] {
+    return this.scanDuplicates('profile');
+  }
+
+  private scanDuplicates(only?: Kind): { a: Memory; b: Memory; similarity: number }[] {
     const duplicates: { a: Memory; b: Memory; similarity: number }[] = [];
     // Roadmaps are one per project and share their four-line shape, so they are never duplicates of each other.
-    for (const kind of KINDS.filter((k) => k !== 'roadmap')) {
+    for (const kind of KINDS.filter((k) => k !== 'roadmap' && (only === undefined || k === only))) {
       const es = this.store.activeEmbeddings({ kind });
       for (let i = 0; i < es.length; i++) {
         for (let j = i + 1; j < es.length; j++) {
           const similarity = cosine(es[i]!.embedding, es[j]!.embedding);
           if (similarity < this.opts.duplicateThreshold) continue;
           if (this.store.isDismissed(es[i]!.id, es[j]!.id)) continue;
+          // A pair an assistant flagged as disagreeing (open, or settled "both are right") is for Facts that disagree, not here.
+          const flagged = this.store.disagreements.forPair(es[i]!.id, es[j]!.id);
+          if (flagged && (flagged.settledAt === null || flagged.settledHow === 'both')) continue;
           const a = this.store.get(es[i]!.id);
           const b = this.store.get(es[j]!.id);
           if (a && b) duplicates.push({ a, b, similarity });

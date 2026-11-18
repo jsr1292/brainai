@@ -7,6 +7,7 @@ import type { Replaceable } from '../memory/supersessions.js';
 import type { Memory } from '../memory/types.js';
 import { shortDay } from '../timezone.js';
 import { withFrom } from './back.js';
+import { versionMeta } from './factMetaViews.js';
 import { html, type SafeHtml } from './html.js';
 import { writer, writerName } from './dashboardViews.js';
 
@@ -68,7 +69,7 @@ export function chainList(story: FactStory, kind: Replaceable, now: Date = new D
     const cls = [s.current ? 'cur' : '', s.here ? 'here' : ''].filter(Boolean).join(' ');
     const text = s.here ? html`${s.memory.content}` : html`<a href="${withFrom(`/memories/${s.memory.id}`, from)}">${excerpt(s.memory.content)}</a>`;
     const state = s.memory.deletedAt
-      ? html` · deleted · ${day(s.memory.deletedAt, now)}`
+      ? html` · ${s.memory.movedTo ? html`moved to ${s.memory.movedTo}` : 'deleted'} · ${day(s.memory.deletedAt, now)}`
       : s.replacedAt ? html` · replaced ${day(s.replacedAt, now)}` : s.current ? ' · current' : '';
     return html`<li${cls ? html` class="${cls}"` : ''}><span class="txt">${text}</span><span class="meta">${writer(s.memory.createdBy)} · ${day(s.memory.createdAt, now)}${state}${s.here ? html` · <em>this fact</em>` : ''}</span></li>`;
   };
@@ -77,12 +78,15 @@ export function chainList(story: FactStory, kind: Replaceable, now: Date = new D
 }
 
 /** History: edits keep "Undo to this"; a live replacement has Undo; a bringing back has no button. */
-export function factEvents(events: FactEvent[], now: Date = new Date(), from?: string): SafeHtml {
+export function factEvents(events: FactEvent[], now: Date = new Date(), from?: string, movedTo?: string | null): SafeHtml {
+  // The newest delete entry of a fact retired onto a page says where it went, not "delete".
+  const retired = movedTo ? events.find((x) => x.type === 'edit' && x.entry.action === 'delete') : undefined;
   const row = (e: FactEvent) => {
     if (e.type === 'edit') {
       return html`<li class="card">
-  <p class="meta"><span class="verb">${e.entry.action}</span> by ${writer(e.entry.changedBy)} ${day(e.entry.changedAt, now)}</p>
+  <p class="meta"><span class="verb">${e === retired ? `Moved to ${movedTo}` : e.entry.action}</span> by ${writer(e.entry.changedBy)} ${day(e.entry.changedAt, now)}</p>
   <blockquote>${e.entry.content}</blockquote>
+  ${versionMeta(e.entry)}
   <form method="post" action="/history/${e.entry.id}/undo"><input type="hidden" name="part" value="history">${fromField(from)}<button type="submit" class="secondary">Undo to this</button></form>
 </li>`;
     }

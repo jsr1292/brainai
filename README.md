@@ -44,6 +44,8 @@ server later without losing a memory.
 
 - **Every assistant, one memory.** Claude, ChatGPT and Grok (web and phone), and Claude Code, Codex, Grok Build and
   OpenCode on your computer. Each connects with OAuth, and you choose what it may do.
+- **One-install plugin for Claude Code:** `claude plugin marketplace add jsr1292/brainai`, then
+  `claude plugin install brainai@brainai-plugins` (`docs/CLIENTS.md`, "Install as a plugin").
 - **Recall by meaning,** in several languages, with a briefing per project: its statuses, decisions and roadmap in
   one call. A small local model reorders each search's first matches so the best answer comes first. Projects can
   have nicknames, and an assistant can send an English version of a question asked in another language. How well it

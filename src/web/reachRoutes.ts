@@ -12,7 +12,8 @@ import { generateTotpSecret, otpauthUri, totpAt } from '../auth/totp.js';
 import type { AppDeps } from './app.js';
 import { requireOwner, SESSION_COOKIE, sessionCookieOptions } from './authRoutes.js';
 import { html, page } from './html.js';
-import { reachPage, reachSwitch } from './reachViews.js';
+import { viaDoor } from '../desktop/publicDoor.js';
+import { reachPage, reachSwitch, tailscaleBox } from './reachViews.js';
 import { funnelOff, funnelOffSync, funnelOn, tailscaleState, type TailscaleEnv } from '../desktop/tailscale.js';
 import { cloudflaredState, prepareTunnel, startSignIn, stopLeftover, TunnelRunner, validHostname, type CloudflaredEnv, type SignInRun } from '../desktop/cloudflared.js';
 
@@ -26,7 +27,7 @@ const same = (a: string, b: string) => timingSafeEqual(createHash('sha256').upda
 /** Without the tools environment (only tests build an app so) Tailscale is never looked for, not even the Mac app. */
 function tailscaleEnv(d: AppDeps): TailscaleEnv {
   return d.tools
-    ? { home: d.tools.home, path: d.tools.path, appPath: d.tools.tailscaleApp, extraEnv: d.tools.extraEnv }
+    ? { home: d.tools.home, path: d.tools.path, appPath: d.tools.tailscaleApp, statusTimeoutMs: d.tools.tailscaleStatusMs, extraEnv: d.tools.extraEnv }
     : { home: '', path: '', appPath: '/nonexistent/Tailscale' };
 }
 
@@ -143,11 +144,31 @@ export function reachRoutes(d: AppDeps): Router {
       said, hasPassword: d.owner.hasPassword(), hasAuthenticator: d.owner.isConfigured(),
       pending: pending ? { secret: pending.secret, svg: await QRCode.toString(otpauthUri(pending.secret, 'owner'), { type: 'svg', margin: 1 }) } : null,
       reach: d.owner.isConfigured()
-        ? windows ? html`<p>Reach from phone and web is not on Windows yet: for now, use BrainAI from the apps on this computer, or <a href="/settings/move">move it to a server</a>.</p>` : reachSwitch({ waiting: gate.waiting, reason: gate.reason, on: d.reach?.url() ?? null, via: d.reach?.via() ?? 'tailscale', tailscale: await tailscaleState(ts), cloudflare: { ...(await cloudflaredState(cf)), signingIn: signing ? signing.url() ?? '' : null } })
+        ? windows ? html`<p>Reach from phone and web is not on Windows yet: for now, use BrainAI from the apps on this computer, or <a href="/settings/move">move it to a server</a>.</p>` : reachSwitch({ waiting: gate.waiting, reason: gate.reason, on: d.reach?.url() ?? null, via: d.reach?.via() ?? 'tailscale', cloudflare: { ...(await cloudflaredState(cf)), signingIn: signing ? signing.url() ?? '' : null } })
         : null,
     };
     said = null;
     res.type('html').send(page('Reach from phone and web', reachPage(view), { nav: true, tab: null, back: { href: '/settings', label: 'Settings' } }));
+  });
+
+  // The Tailscale check shown in step 3, off the page's own request (Tailscale can take seconds to answer, or never):
+  // one check at a time, and an answer from the last few seconds is reused unless Check again asks afresh.
+  let checking: Promise<Awaited<ReturnType<typeof tailscaleState>>> | null = null;
+  let checked: { at: number; state: Awaited<ReturnType<typeof tailscaleState>> } | null = null;
+  const CHECK_REUSE_MS = 5_000;
+  const tailscaleNow = (fresh: boolean) => {
+    if (!fresh && checked && d.now().getTime() - checked.at < CHECK_REUSE_MS) return Promise.resolve(checked.state);
+    if (!checking) {
+      const run = tailscaleState(ts).then((state) => { checked = { at: d.now().getTime(), state }; return state; }).finally(() => { if (checking === run) checking = null; });
+      checking = run;
+    }
+    return checking;
+  };
+  // Only on this computer: never through the public door, whatever Host it names (as its siblings in the other route files).
+  const here = (req: Request, _res: Response, next: (arg?: 'router') => void) => (viaDoor(req) ? next('router') : next());
+  router.get('/settings/reach/tailscale', here, owner, macOnly, async (req, res) => {
+    const state = await tailscaleNow(req.query.fresh === '1');
+    res.set('Cache-Control', 'no-store').type('html').send(tailscaleBox(state).value);
   });
 
   // A saved Reach comes back at start: on the door Tailscale already points at, or shared again from a new one.

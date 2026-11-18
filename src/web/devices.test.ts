@@ -64,8 +64,8 @@ test('a body over 256 KB answers 413', async (t) => {
 test('Settings lists devices with their last report, adds one showing the token once, and revokes one', async (t) => {
   const { app, f } = await start(t);
   const before = await (await f('/settings')).text();
-  assert.match(before, /<section id="devices"[\s\S]*No devices yet\./);
-  assert.match(before, /<nav class="settings-nav"[^>]*>[\s\S]*href="#devices">Devices</);
+  assert.match(before, /<section id="devices"[\s\S]*No other computers yet\./);
+  assert.match(before, /<nav class="settings-nav"[^>]*>[\s\S]*href="#devices">Other computers</);
   const added = await f('/settings/devices', form({ name: 'Mac' }));
   // Post, then redirect: reloading the page that shows the token never adds a second device.
   assert.equal(added.status, 303);

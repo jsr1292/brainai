@@ -4,7 +4,7 @@ import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/share
 import { InvalidClientMetadataError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
-import { posesAsOwner } from '../memory/types.js';
+import { posesAsBrainAI, posesAsOwner } from '../memory/types.js';
 import { randomToken } from './hash.js';
 import { fetchClientMetadata, TransientFetchError } from './cimd.js';
 import type { RedirectAllowlist } from './redirects.js';
@@ -32,6 +32,7 @@ export function validateDisplayName(raw: string): string {
   if (name === '') throw new InvalidNameError('Enter a name.');
   if (name.length > MAX_CLIENT_NAME) throw new InvalidNameError(`The name must be at most ${MAX_CLIENT_NAME} characters.`);
   if (posesAsOwner(name)) throw new InvalidNameError('The name must not read as the owner ("owner", "you" or "me").');
+  if (posesAsBrainAI(name)) throw new InvalidNameError('The name "BrainAI" is kept for BrainAI itself. Choose another.');
   return name;
 }
 
@@ -146,6 +147,7 @@ export class ClientsStore implements OAuthRegisteredClientsStore {
       throw new InvalidClientMetadataError(`client_name must be at most ${MAX_CLIENT_NAME} characters`);
     }
     if (posesAsOwner(client.client_name)) throw new InvalidClientMetadataError('client_name must not read as the owner ("owner", "you" or "me")');
+    if (posesAsBrainAI(client.client_name)) throw new InvalidClientMetadataError('client_name "BrainAI" is kept for BrainAI itself');
     const dayAgo = new Date(this.now().getTime() - 86_400_000).toISOString();
     const recent = (this.db.prepare(`SELECT COUNT(*) AS n FROM oauth_clients WHERE is_cimd = 0 AND created_at > ?
       AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = oauth_clients.client_id)`).get(dayAgo) as { n: number }).n;

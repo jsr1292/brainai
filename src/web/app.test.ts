@@ -209,7 +209,7 @@ test('end-to-end: register → authorize → login → consent → token → MCP
   });
   assert.equal(init.result.serverInfo.name, 'brainai');
   const list = await mcp(app, tokens.access_token, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
-  assert.deepEqual(list.result.tools.map((x: any) => x.name).sort(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'note_observation', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'record_lesson', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_area', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
+  assert.deepEqual(list.result.tools.map((x: any) => x.name).sort(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'note_observation', 'open_discussion', 'project_brief', 'propose_skill', 'propose_tidy', 'read_discussion', 'read_page', 'recall', 'recent_work', 'record_lesson', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_area', 'set_project_info', 'suggest_memories', 'tidy_session', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
   const saved = await mcp(app, tokens.access_token, {
     jsonrpc: '2.0', id: 3, method: 'tools/call',
     params: { name: 'remember', arguments: { kind: 'decision', content: 'The web app uses Express 5', project: 'brainai' } },
@@ -517,7 +517,7 @@ test('MCP requests use the grant\'s access level', async (t) => {
   const f = await loggedInFetch(app);
   const { accessToken } = await connectClient(app.baseUrl, f, 'Grok');
   const names = async () => (await mcp(app, accessToken, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })).result.tools.map((x: any) => x.name).sort();
-  assert.deepEqual(await names(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'note_observation', 'open_discussion', 'project_brief', 'propose_skill', 'read_discussion', 'read_page', 'recall', 'recent_work', 'record_lesson', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_area', 'set_project_info', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
+  assert.deepEqual(await names(), ['add_page_image', 'begin_image_upload', 'close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'list_skills', 'load_profile', 'load_skill', 'note_observation', 'open_discussion', 'project_brief', 'propose_skill', 'propose_tidy', 'read_discussion', 'read_page', 'recall', 'recent_work', 'record_lesson', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_area', 'set_project_info', 'suggest_memories', 'tidy_session', 'update_memory', 'view_image', 'weekly_review', 'whats_left', 'write_page']);
   app.deps.provider.setGrantAccess(app.deps.provider.listGrants()[0]!.id, 'discussions');
   assert.deepEqual(await names(), ['list_discussions', 'open_discussion', 'read_discussion', 'reply_to_discussion']);
 });

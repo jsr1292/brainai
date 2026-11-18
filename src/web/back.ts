@@ -14,6 +14,16 @@ export interface BackLookups {
 
 export const SUGGESTION_BACK = /^\/(approvals)?$/;
 export const suggestionBack = (v: unknown): '/' | '/approvals' => v === '/approvals' ? '/approvals' : '/';
+/** The Inbox item to open after an answer ("kind:id", as the Inbox model keys it) as its address; null for anything else. */
+export function nextHref(v: unknown): string | null {
+  if (typeof v !== 'string' || v.length > 400) return null;
+  const at = v.indexOf(':');
+  const kind = v.slice(0, at);
+  const id = encodeURIComponent(v.slice(at + 1));
+  if (at < 0 || id === '') return null;
+  return kind === 'suggestion' ? `/approvals?id=${id}` : kind === 'proposal' ? `/approvals?proposal=${id}`
+    : kind === 'batch' ? `/approvals?batch=${id}` : kind === 'disagree' ? `/disagreements?id=${id}` : kind === 'tidy' ? `/facts/tidy?item=${id}` : null;
+}
 const UUID = /^[0-9a-f-]{36}$/;
 const REVIEW_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const factsBack: Back = { href: '/facts', label: 'Facts', tab: 'facts' };

@@ -87,6 +87,23 @@ pub fn is_update(url: &str, port: u16) -> bool {
     url == format!("http://localhost:{port}/app/update")
 }
 
+/// Settings › Backups and copies › Choose folder…: the window going there means "open the system folder picker". The
+/// link is cancelled (the page stays), and the chosen folder comes back as `folder_page`, which only fills a box.
+pub fn is_choose_folder(url: &str, port: u16) -> bool {
+    url == format!("http://localhost:{port}/app/choose-folder")
+}
+
+/// Settings › Backups and copies › Show in Finder/Explorer: opens the backups folder in the system's file manager.
+pub fn is_reveal_backups(url: &str, port: u16) -> bool {
+    url == format!("http://localhost:{port}/app/reveal-backups")
+}
+
+/// Where the window goes after a folder was chosen: Settings with the path in the query, to fill the second-folder box.
+/// Nothing is saved by this: the page only shows the path, and Save is the owner's own press.
+pub fn folder_page(port: u16, folder: &str) -> String {
+    format!("http://localhost:{port}/settings?folder={}#backup-copy", percent_encode(folder))
+}
+
 /// Whether the window is on Home (any query or fragment): the only page the shell reloads to show the update card.
 pub fn is_home(url: &str, port: u16) -> bool {
     let Some(rest) = url.strip_prefix(&format!("http://localhost:{port}")) else { return false };
@@ -287,5 +304,26 @@ mod tests {
         assert!(install_location_ok("/Users/a/Applications/BrainAI.app/Contents/MacOS/brainai"));
         assert!(!install_location_ok("/Volumes/BrainAI/BrainAI.app/Contents/MacOS/brainai"));
         assert!(!install_location_ok("/private/var/folders/x/AppTranslocation/1234/d/BrainAI.app/Contents/MacOS/brainai"));
+    }
+
+    #[test]
+    fn the_folder_picker_and_the_folder_view_are_exact_matches() {
+        assert!(is_choose_folder("http://localhost:3100/app/choose-folder", 3100));
+        assert!(!is_choose_folder("http://localhost:3100/app/choose-folder?x=1", 3100), "a query string");
+        assert!(!is_choose_folder("http://localhost:3101/app/choose-folder", 3100), "another port");
+        assert!(!is_choose_folder("http://127.0.0.1:3100/app/choose-folder", 3100), "another host");
+        assert!(!is_choose_folder("https://evil.example/app/choose-folder", 3100));
+        assert!(is_reveal_backups("http://localhost:3100/app/reveal-backups", 3100));
+        assert!(!is_reveal_backups("http://localhost:3100/app/reveal-backups/", 3100));
+        assert!(!is_reveal_backups("http://localhost:3100/app/choose-folder", 3100));
+    }
+
+    #[test]
+    fn a_chosen_folder_comes_back_percent_encoded_to_the_settings_box() {
+        assert_eq!(folder_page(3100, "/Volumes/Backup Drive"), "http://localhost:3100/settings?folder=%2FVolumes%2FBackup%20Drive#backup-copy");
+        // Nothing in a folder name can end the query or the host.
+        let page = folder_page(3100, "/a&b?c#d\u{e9}");
+        assert!(page.starts_with("http://localhost:3100/settings?folder=%2Fa%26b%3Fc%23d%C3%A9#backup-copy"), "{page}");
+        assert_eq!(page.matches('#').count(), 1);
     }
 }

@@ -292,11 +292,12 @@ test('choosing a version in History opens the page at its diff and Restore, not 
 test('a page drawn from a form POST tells the installed app not to refresh it; a plain GET page does not', async (t) => {
   const { f, page } = await start(t);
   const preview = await (await f('/pages', post({ title: 'Draft', area: 'tools', body: '# Hi', intent: 'preview' }))).text();
-  assert.match(preview, /<body data-fresh="off" class="app" data-desk="[^"]+">/, 'a GET of /pages would show the Pages home, not this draft');
+  assert.match(preview, /<body data-fresh="off" class="app" data-desk="[^"]+"[^>]*>/, 'a GET of /pages would show the Pages home, not this draft');
   const conflict = await f(`/pages/${page.id}`, post({ base: '0', section: 'gotchas', body: '## Gotchas\nMine.', intent: 'save' }));
-  assert.match(await conflict.text(), /<body data-fresh="off" class="app" data-desk="[^"]+">/);
+  assert.match(await conflict.text(), /<body data-fresh="off" class="app" data-desk="[^"]+"[^>]*>/);
   const reading = await (await f(`/pages/${page.id}`)).text();
-  assert.match(reading, /<body class="app" data-desk="[^"]+">/);
+  assert.match(reading, /<body class="app" data-desk="[^"]+"[^>]*>/);
+  assert.doesNotMatch(reading, /<body[^>]*data-fresh/);
   assert.equal((await (await f('/pages/nope-not-there')).text()).includes('data-fresh="off"'), true, 'a page that is not the 200 answer to its URL is not refreshed either');
 });
 

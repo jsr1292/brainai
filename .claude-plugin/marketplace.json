@@ -1,0 +1,15 @@
+{
+  "name": "brainai-plugins",
+  "description": "BrainAI plugins: connect your coding tools to your own BrainAI shared memory.",
+  "owner": {
+    "name": "BrainAI"
+  },
+  "plugins": [
+    {
+      "name": "brainai",
+      "source": "./plugins/claude-code/brainai",
+      "description": "MCP server entry, save-reminder hooks and the harvest-session skill for Claude Code.",
+      "version": "1.5.0"
+    }
+  ]
+}

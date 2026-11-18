@@ -174,14 +174,14 @@ test('weekly_review adds brain health as it is now for a full connection, never 
   const health = () => ({
     upToDate: { score: 80, reasons: [{ text: 'homelab was last updated 40 days ago', href: '/?project=homelab#panel' }] },
     ready: { score: 100, reasons: [] },
-    waiting: { score: 70, reasons: [{ text: '2 facts disagree', href: '/disagreements' }] },
+    waiting: { score: 70, reasons: [{ text: '1 pair of facts disagrees', href: '/disagreements' }] },
   });
   const full = await connect(w, 'Claude Code', { health });
   t.after(() => full.client.close());
   const r = await full.call({ week: 'now' });
   assert.match(r.text, /Brain health now: up to date 80, ready 100, waiting on you 70\./);
   // Only the lowest part's first reason: the rest stay on the dashboard.
-  assert.deepEqual(dataOf(r.text).brain_health, { up_to_date: 80, ready: 100, waiting_on_you: 70, top_reason: '2 facts disagree' });
+  assert.deepEqual(dataOf(r.text).brain_health, { up_to_date: 80, ready: 100, waiting_on_you: 70, top_reason: '1 pair of facts disagrees' });
   const limited = await connect(w, 'Grok', { health, access: 'projects', projects: ['wildlog'] });
   t.after(() => limited.client.close());
   const l = await limited.call({ week: 'now' });

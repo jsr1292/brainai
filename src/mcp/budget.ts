@@ -20,8 +20,10 @@ export function packByBudget<T>(rows: T[], size: (row: T) => number, opts: { bud
  * client can show it inline.
  *
  * Priority, highest first (lower parts give way first when the text does not fit):
- *   1. the floor, always in full whatever its size: the roadmap, the latest status, the newest 3 decisions and the first
- *      BRIEF_FLOOR_NOTES open owner notes (they ask the assistant to act, so they never give way to older history);
+ *   1. the floor, always in full whatever its size: the roadmap, the latest status, the newest 3 decisions, the first
+ *      BRIEF_FLOOR_NOTES open owner notes (they ask the assistant to act, so they never give way to older history) and
+ *      the first BRIEF_FLOOR_PAGES pages (the caller sorts them: out of date or with notes first, then the most recent),
+ *      so a brief that flags a page out of date never lists none;
  *   2. one-line excerpts of the other statuses and decisions (80 characters when 160 do not fit; then the older
  *      decisions are left out, counted, oldest non-founding first, the founding ones last);
  *   3. open notes, other projects' handbook topics, then pages (a share of the budget, most relevant first, the rest counted with a pointer);
@@ -33,6 +35,8 @@ export const BRIEF_BUDGET = 16_000;
 export const BRIEF_NOTE_MAX = 300;
 /** This many open owner notes are part of the floor (each cut to BRIEF_NOTE_MAX); any more are listed if they fit. */
 export const BRIEF_FLOOR_NOTES = 5;
+/** This many pages are part of the floor: the brief always lists them, whatever else gives way. */
+export const BRIEF_FLOOR_PAGES = 2;
 /** The notes and pages shown before the decisions and statuses are upgraded to full text: at most this many characters. */
 export const BRIEF_PAGES_SHARE = 3_000;
 
@@ -64,7 +68,7 @@ export function fitBrief(opts: {
 }): BriefFit {
   const n = opts.decisions;
   const want = Math.min(BRIEF_MIN_FULL_DECISIONS, n);
-  const fit: BriefFit = { fullStatuses: new Set(opts.statuses > 0 ? [0] : []), fullDecisions: new Set(), excerptLen: BRIEF_EXCERPT, dropped: new Set(), pages: 0, notes: Math.min(BRIEF_FLOOR_NOTES, opts.notes), topics: 0 };
+  const fit: BriefFit = { fullStatuses: new Set(opts.statuses > 0 ? [0] : []), fullDecisions: new Set(), excerptLen: BRIEF_EXCERPT, dropped: new Set(), pages: Math.min(BRIEF_FLOOR_PAGES, opts.pages), notes: Math.min(BRIEF_FLOOR_NOTES, opts.notes), topics: 0 };
   const len = () => opts.render(fit).length;
   const fits = () => opts.everything === true || len() <= opts.limit;
   const range = (a: number, b: number) => Array.from({ length: Math.max(0, b - a) }, (_, k) => a + k);

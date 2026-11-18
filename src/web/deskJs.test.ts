@@ -23,6 +23,20 @@ test('no single key ever submits; ⌘↵ submits only from a text field in an al
   assert.equal(d.keyAction(k('Enter', 'Enter', { metaKey: true, repeat: true }), { ...ctx, inSheetForm: true, typing: true }), null);
 });
 
+test('in the Inbox, ⌘↵ / Ctrl↵ approves from anywhere in the pane or the page, but not while typing in a field outside the pane', () => {
+  const inbox = { ...ctx, screen: 'inbox', inList: false, inPane: false, inSheetForm: false, typing: false };
+  for (const mods of [{ metaKey: true }, { ctrlKey: true }]) {
+    assert.equal(d.keyAction(k('Enter', 'Enter', mods), inbox), 'approve', 'a row just selected, focus on the page');
+    assert.equal(d.keyAction(k('Enter', 'Enter', mods), { ...inbox, inPane: true }), 'approve', 'focus on a button in the pane');
+    assert.equal(d.keyAction(k('Enter', 'Enter', mods), { ...inbox, typing: true }), null, 'typing in the sidebar search');
+    assert.equal(d.keyAction(k('Enter', 'Enter', mods), { ...inbox, typing: true, inPane: true }), 'approve');
+    assert.equal(d.keyAction(k('Enter', 'Enter', mods), { ...inbox, typing: true, inPane: true, inSheetForm: true }), 'submit');
+  }
+  assert.equal(d.keyAction(k('Enter', 'Enter'), inbox), null, 'a plain Enter never approves');
+  assert.equal(d.keyAction(k('Enter', 'Enter', { metaKey: true, repeat: true }), inbox), null);
+  assert.equal(d.keyAction(k('Enter', 'Enter', { metaKey: true }), { ...inbox, screen: 'panes' }), null, 'only the Inbox');
+});
+
 test('cmdEnterForm allows approve, decide and save forms only', () => {
   for (const a of ['/suggestions/s1/approve', '/discussions/d1/decide', '/discussions/d1/note', '/projects/wildlog/info', 'https://b.test/suggestions/s1/approve'])
     assert.equal(d.cmdEnterForm(a), true, a);
@@ -130,7 +144,7 @@ test('sheetKind knows the four sheets and nothing else', () => {
   const B = 'https://b.test/';
   assert.equal(d.sheetKind('/?project=ferngrid#panel', B), 'project');
   assert.equal(d.sheetKind('https://b.test/?project=a%20b', B), 'project');
-  assert.equal(d.sheetKind('/approvals', B), 'approval');
+  assert.equal(d.sheetKind('/approvals', B), null, 'the Inbox is its own page, not a sheet');
   assert.equal(d.sheetKind('/discussions/ab12', B), 'discussion');
   assert.equal(d.sheetKind('/#notyet', B), 'notyet');
   for (const h of ['/', '/?project=', '/discussions', '/approvals?pane=side', '/?project=a&pane=side', '/?pane=projects', '/pages/x', 'https://other.test/?project=a', '/discussions/ab12/files/x', '/discussions/ab12?pane=side', '/settings', '/memories/m1/history'])
@@ -140,15 +154,13 @@ test('sheetKind knows the four sheets and nothing else', () => {
 test('sideUrl asks the fragment of the same route', () => {
   const B = 'https://b.test/';
   assert.equal(d.sideUrl('project', '/?project=a b#panel', B), '/?project=a%20b&pane=side');
-  assert.equal(d.sideUrl('approval', '/approvals', B), '/approvals?pane=side');
-  assert.equal(d.sideUrl('approval', '/approvals', B, 's 1'), '/approvals?pane=side&id=s%201');
+  assert.equal(d.sideUrl('approval', '/approvals', B), null, 'the Inbox has no side fragment');
   assert.equal(d.sideUrl('discussion', '/discussions/ab12', B), '/discussions/ab12?pane=side');
   assert.equal(d.sideUrl('notyet', '/#notyet', B), null);
 });
 
 test('crumbs read as in the mockup', () => {
   assert.deepEqual(d.crumbParts('project', 'ferngrid'), ['Projects', 'ferngrid']);
-  assert.deepEqual(d.crumbParts('approval', ''), ['Inbox']);
   assert.deepEqual(d.crumbParts('discussion', 'ledgerline'), ['Projects', 'ledgerline', 'Discussion']);
   assert.deepEqual(d.crumbParts('discussion', ''), ['Projects', 'Discussions', 'Discussion']);
   assert.deepEqual(d.crumbParts('notyet', ''), ['Projects', 'Not in the brain yet']);
@@ -183,7 +195,7 @@ test('requestFor follows the button that was pressed: Reject posts to its own fo
 test('postOutcome: a redirect to a sheet swaps, to anything else goes there, an answer in place stays', () => {
   const B = 'https://b.test/?project=a';
   assert.deepEqual(d.postOutcome({ redirected: true, url: 'https://b.test/?project=a', ok: true }, B), { do: 'swap', url: 'https://b.test/?project=a' });
-  assert.deepEqual(d.postOutcome({ redirected: true, url: 'https://b.test/approvals', ok: true }, B), { do: 'swap', url: 'https://b.test/approvals' });
+  assert.deepEqual(d.postOutcome({ redirected: true, url: 'https://b.test/approvals', ok: true }, B), { do: 'go', url: 'https://b.test/approvals' });
   assert.deepEqual(d.postOutcome({ redirected: true, url: 'https://b.test/discussions', ok: true }, B), { do: 'go', url: 'https://b.test/discussions' });
   assert.deepEqual(d.postOutcome({ redirected: true, url: 'https://b.test/review', ok: true }, B), { do: 'go', url: 'https://b.test/review' });
   assert.deepEqual(d.postOutcome({ redirected: false, url: 'https://b.test/projects/a/state', ok: false }, B), { do: 'inplace' });
@@ -244,28 +256,35 @@ test('arrows step from the row with keyboard focus, else from the selected one',
   assert.equal(d.stepStart(-1, -1), -1);
 });
 
-test('the approval sheet shows one suggestion: the one in ?id= when it still waits, else the first', () => {
-  assert.equal(d.approvalPick(['a', 'b', 'c'], 'b'), 'b');
-  assert.equal(d.approvalPick(['a', 'b', 'c'], undefined), 'a');
-  assert.equal(d.approvalPick(['a', 'b'], 'gone'), 'a');
-  assert.equal(d.approvalPick([], 'b'), undefined);
-  assert.equal(d.approvalIdOf('https://b.test/approvals?id=s%201'), 's 1');
-  assert.equal(d.approvalIdOf('/approvals'), undefined);
+test('the old approval sheet is gone: no pick helpers, no shaping, no approval sheet kind', () => {
+  const src = readFileSync(new URL('./static/desk.js', import.meta.url), 'utf8');
+  for (const gone of ['approvalPick', 'approvalIdOf', 'shapeApproval', 'shownApprovalId', "kind === 'approval'", '/approvals?pane=side']) assert.ok(!src.includes(gone), gone);
+  assert.equal(d.approvalPick, undefined);
+  assert.equal(d.approvalIdOf, undefined);
 });
 
-test('the approval crumb ends in the suggestion\'s kind, as in the mockup (Inbox › Profile)', () => {
-  assert.deepEqual(d.crumbParts('approval', 'Profile'), ['Inbox', 'Profile']);
-  assert.deepEqual(d.crumbParts('approval', ''), ['Inbox']);
+test('in the Inbox, arrows step its rows (unless focus is in the item), E edits, and ⌘↵ / Ctrl↵ submits from a text field in its pane', () => {
+  const inbox = { ...ctx, screen: 'inbox', inList: false, inPane: false };
+  assert.equal(d.keyAction(k('ArrowDown', 'ArrowDown'), inbox), 'down');
+  assert.equal(d.keyAction(k('ArrowUp', 'ArrowUp'), inbox), 'up');
+  assert.equal(d.keyAction(k('j', 'KeyJ'), inbox), 'down');
+  assert.equal(d.keyAction(k('ArrowDown', 'ArrowDown'), { ...inbox, inPane: true }), null, 'in the item the arrows scroll it');
+  assert.equal(d.keyAction(k('e', 'KeyE'), inbox), 'edit');
+  assert.equal(d.keyAction(k('e', 'KeyE'), { ...inbox, typing: true }), null);
+  assert.equal(d.keyAction(k('Enter', 'Enter', { metaKey: true }), { ...inbox, typing: true, inSheetForm: true }), 'submit');
+  assert.equal(d.keyAction(k('Enter', 'Enter', { ctrlKey: true }), { ...inbox, typing: true, inSheetForm: true }), 'submit');
+  assert.equal(d.keyAction(k('Enter', 'Enter'), { ...inbox, typing: true, inSheetForm: true }), null, 'a plain Enter never submits');
 });
 
-test('the approval sheet is shaped as the mockup: the sentence is the h1, the writer leads the meta line, Suggested then Replaces struck through, key hints on the pills', () => {
-  const shape = fnBody('shapeApproval');
-  assert.ok(/el\('h1'/.test(shape), 'the head becomes the h1');
-  assert.ok(/'Suggested'/.test(shape) && /'Replaces'/.test(shape), 'Suggested and Replaces labels');
-  assert.ok(/classList\.add\('replaced'\)/.test(shape), 'the replaced text is marked for the strike');
-  assert.ok(/MOD \+ '↵'/.test(shape) && /'aria-keyshortcuts', 'Meta\+Enter Control\+Enter'/.test(shape), 'Approve shows the modifier+Enter hint and announces both Meta+Enter and Control+Enter');
-  assert.ok(/text: 'E'/.test(shape), 'Edit first carries E');
-  assert.ok(/shapeApproval\(/.test(fnBody('fillSheet')), 'fillSheet shapes an approval');
+test('the Inbox keys are wired: screen() knows main > .inbox, the pane counts as a sheet form, the Edit first hook is the pane\'s', () => {
+  const screen = fnBody('screen');
+  assert.ok(/main > \.inbox'\)\) return 'inbox'/.test(screen));
+  assert.ok(/\.inbox-pane/.test(fnBody('keyContext')), 'keyContext: a form in .inbox-pane is a sheet form');
+  const src = readFileSync(new URL('./static/desk.js', import.meta.url), 'utf8');
+  assert.ok(src.includes(".inbox-pane .approval-card details.edit-first"), 'the edit hook finds the pane\'s Edit first');
+  assert.ok(src.includes("form.closest('.desk-sheet, .inbox-pane')"), 'the submit hook accepts the pane');
+  assert.ok(src.includes('.inbox-list a.ir'), 'arrows go to the neighbouring list row');
+  assert.ok(/location\.assign\(next\.href\)/.test(src));
 });
 
 test('foldKey keys a fold by its id, else by its summary without counts', () => {
@@ -289,7 +308,7 @@ test('sheetKind knows pages and facts, never their sub-pages', () => {
 });
 
 test('sheetPlace and placeOfPath', () => {
-  assert.deepEqual(['project', 'approval', 'discussion', 'notyet', 'page', 'fact'].map(d.sheetPlace), ['projects', 'projects', 'projects', 'projects', 'pages', 'facts']);
+  assert.deepEqual(['project', 'discussion', 'notyet', 'page', 'fact'].map(d.sheetPlace), ['projects', 'projects', 'projects', 'pages', 'facts']);
   assert.deepEqual(['/', '/pages', '/pages/x', '/facts', '/memories/x', '/review', '/review/now', '/growth', '/graph', '/settings', '/search'].map(d.placeOfPath),
     ['projects', 'pages', 'pages', 'facts', 'facts', 'week', 'week', 'week', 'graph', 'settings', 'other']);
 });
@@ -325,7 +344,7 @@ test('postOutcome keeps a redirect in its place', () => {
 });
 
 test('postScope: Settings forms post natively', () => {
-  for (const k of ['project', 'approval', 'discussion', 'notyet', 'page', 'fact']) assert.equal(d.postScope(k), true, k);
+  for (const k of ['project', 'discussion', 'notyet', 'page', 'fact']) assert.equal(d.postScope(k), true, k);
   for (const k of ['settings', undefined, '']) assert.equal(d.postScope(k), false, String(k));
 });
 
@@ -401,12 +420,24 @@ test('capLabel', () => {
 // ---- D34 Task 7: the ⌘K palette ----
 test('paletteDo never posts: only GET jumps and an idea that fills the field', () => {
   const all = d.paletteDo('');
-  assert.deepEqual(all.map((x: any) => x.label), ['Go to Projects', 'Go to Pages', 'Go to Facts', 'Go to Inbox', 'Go to Last week', 'Go to So far', 'Go to Growth', 'Go to Graph', 'Go to Settings']);
+  assert.deepEqual(all.map((x: any) => x.label), ['Go to Projects', 'Go to Pages', 'Go to Facts', 'Go to Inbox', 'Go to Last week', 'Go to So far', 'Go to Growth', 'Go to Activity', 'Go to Graph', 'Go to Settings']);
   for (const x of all) { assert.match(x.href, /^\/[\w/]*$/); assert.equal(x.idea, undefined); }
   assert.deepEqual(d.paletteDo('lantern')[0], { label: 'Add “lantern” as an idea', idea: 'lantern' });
   assert.deepEqual(d.paletteDo('week').map((x: any) => x.label), ['Add “week” as an idea', 'Go to Last week']);
+  const goTo = [{ label: 'Import', href: '/import', alias: 'Bring in memory' }];
+  assert.deepEqual(d.paletteDo('import', goTo).map((x: any) => x.label), ['Go to Import', 'Add “import” as an idea'], 'a place named exactly as typed comes first');
+  assert.deepEqual(d.paletteDo('Growth').map((x: any) => x.label), ['Go to Growth', 'Add “Growth” as an idea']);
+  assert.deepEqual(d.paletteDo('impor', goTo).map((x: any) => x.label), ['Add “impor” as an idea', 'Go to Import'], 'a partial match keeps the idea first');
   assert.equal(d.paletteDo('x'.repeat(141)).some((x: any) => x.idea), false);
   assert.deepEqual(d.paletteDo('ápprov').map((x: any) => x.href).filter(Boolean), ['/approvals']);
+});
+test('paletteDo offers the extra Go to pages once something is typed, matched on the typed text and the alias', () => {
+  const extra = [{ label: 'Skills', href: '/skills' }, { label: 'Facts that disagree', href: '/disagreements', alias: 'disagreements' }, { label: 'Settings › Search', href: '/settings#search' }, { label: 'Settings › Remove', href: '/settings/remove' }];
+  assert.equal(d.paletteDo('', extra).length, 10, 'an empty palette stays short');
+  assert.deepEqual(d.paletteDo('skill', extra).map((x: any) => x.label), ['Add “skill” as an idea', 'Go to Skills']);
+  assert.deepEqual(d.paletteDo('disagreements', extra).map((x: any) => x.href).filter(Boolean), ['/disagreements']);
+  assert.deepEqual(d.paletteDo('settings', extra).map((x: any) => x.href).filter(Boolean), ['/settings', '/settings#search', '/settings/remove']);
+  assert.deepEqual(d.paletteDo('remov', extra).map((x: any) => x.label), ['Add “remov” as an idea', 'Go to Settings › Remove']);
 });
 test('createLatest keeps the newest only', () => {
   const l = d.createLatest(); const a = l.next(); const b = l.next();

@@ -61,7 +61,7 @@ test('a bad choice answers 400; settling needs the owner; back goes only to the 
 test('For you says how many facts disagree and links to the list of every open pair', async (t) => {
   const { app, f } = await start(t);
   const home = await (await f('/')).text();
-  assert.match(home, /<a class="row" href="\/disagreements"><span class="dot" aria-hidden="true"><\/span><span class="txt">2 facts disagree<\/span>/);
+  assert.match(home, /<a class="row" href="\/disagreements"><span class="dot" aria-hidden="true"><\/span><span class="txt">1 pair of facts disagrees<\/span>/);
   for (const d of app.deps.service.openDisagreements()) app.deps.service.settleDisagreement(d.id, 'both', { type: 'owner' });
   assert.doesNotMatch(await (await f('/')).text(), /facts disagree/);
 });
@@ -85,7 +85,7 @@ test('the list of every open pair groups them by project, profile facts under "A
 test('with nothing to settle the list says so', async (t) => {
   const { app, f } = await start(t);
   for (const d of app.deps.service.openDisagreements()) app.deps.service.settleDisagreement(d.id, 'both', { type: 'owner' });
-  assert.match(await (await f('/disagreements')).text(), /Nothing to settle/);
+  assert.match(await (await f('/disagreements')).text(), /Nothing waits for you/);
 });
 
 test('on a project page, a fact from another project says which one, so settling never deletes it unseen', async (t) => {
@@ -97,4 +97,10 @@ test('on a project page, a fact from another project says which one, so settling
   const p2 = ((await app.deps.service.remember({ kind: 'decision', content: 'Everything listens on 3200', project: 'wildlog', newProject: true }, ai)) as { memory: Memory }).memory;
   app.deps.service.flagDisagreement(a.id, p2.id, 'Which port again', ai);
   assert.match(await (await f('/?project=homelab')).text(), /Everything listens on 3200[\s\S]*?in wildlog/);
+});
+
+test('every place that counts open pairs says "1 pair" or "N pairs", never the two facts of one pair', async () => {
+  const { disagreeText } = await import('./disagreeViews.js');
+  assert.equal(disagreeText(1), '1 pair of facts disagrees');
+  assert.equal(disagreeText(2), '2 pairs of facts disagree');
 });

@@ -30,7 +30,7 @@ test('row buttons on Projects, Settings, page notes and discussions name their r
   // Settings: devices and connections.
   await connectClient(app.baseUrl, f, 'Claude Code');
   const settings = await (await f('/settings')).text();
-  assert.match(settings, /<button type="submit" class="secondary" aria-label="Revoke the device Mac">Revoke<\/button>/);
+  assert.match(settings, /<button type="submit" class="secondary" aria-label="Revoke the computer Mac">Revoke<\/button>/);
   assert.match(settings, /<button type="submit" class="secondary" aria-label="Revoke Claude Code">Revoke<\/button>/);
   assert.match(settings, /<summary>Change<span class="visually-hidden"> Claude Code<\/span><span class="chev"><\/span><\/summary>/);
 

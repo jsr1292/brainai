@@ -82,6 +82,18 @@ export function parseRoadmap(content: string): Roadmap {
   return { done, now, progress, next: text('next'), later: text('later'), nextSteps: items(values.get('next')), laterSteps: items(values.get('later')), waiting };
 }
 
+/**
+ * A roadmap as one line for a result list or a heading: "Now: member sign-in (3/4) · Next: newsletter signup". Done and Later
+ * are left out. Null when it has neither a Now nor a Next (the caller shows the text as it is).
+ */
+export function roadmapOneLine(content: string): string | null {
+  const r = parseRoadmap(content);
+  const now = r.now === null ? null : r.progress ? `${r.now} (${r.progress.done}/${r.progress.total})` : r.now;
+  const next = r.nextSteps[0] ?? r.next;
+  const parts = [now === null ? null : `Now: ${now}`, next === null || next === undefined ? null : `Next: ${next}`].filter((x): x is string => x !== null);
+  return parts.length === 0 ? null : parts.join(' · ');
+}
+
 /** A parsed roadmap written back as its labelled lines, in ROADMAP_LABELS order; empty lines are left out. */
 export function formatRoadmap(r: Roadmap): string {
   const count = r.progress ? `(${r.progress.done}/${r.progress.total})` : null;

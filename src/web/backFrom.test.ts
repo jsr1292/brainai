@@ -95,7 +95,8 @@ test('the Graph links its pages with its own address', async (t) => {
   const f = await loggedIn(app);
   const project = await (await f(`/pages/${page.id}?from=${encodeURIComponent('/graph?project=wildlog')}`)).text();
   assert.match(project, /<a class="top-back" href="\/graph\?project=wildlog"><span>Graph<\/span><\/a>/);
-  assert.equal(lit(project), 'Graph');
+  // The Graph has no tab of its own on the phone bar: it lights Projects.
+  assert.equal(lit(project), 'Projects');
   const list = await (await f(`/pages/${page.id}?from=${encodeURIComponent('/graph?view=list')}`)).text();
   assert.match(list, /<a class="top-back" href="\/graph\?view=list"><span>Graph<\/span><\/a>/);
 });

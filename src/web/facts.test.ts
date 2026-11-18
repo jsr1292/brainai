@@ -145,9 +145,10 @@ test('Tidy up lives at /facts/tidy and old addresses redirect', async (t) => {
   const tidy = await f('/facts/tidy');
   assert.equal(tidy.status, 200);
   const body = await tidy.text();
-  assert.match(body, /Nothing to tidy\./);
-  assert.match(body, /href="\/pages" aria-current="page">Pages/);
-  assert.match(body, /href="\/facts">‹ Facts/);
+  assert.match(body, /Nothing waits for you\./);
+  // Tidy up is part of the Inbox: its tab is lit, and it leads back to Projects when the Inbox itself is empty.
+  assert.match(body, /href="\/approvals" aria-current="page">Inbox/);
+  assert.match(body, /<a class="top-back" href="\/"><span>Projects<\/span><\/a>/);
   for (const path of ['/settings/tidy', '/tidy']) {
     const res = await f(path);
     assert.equal(res.status, 301);
@@ -508,6 +509,21 @@ test('a roadmap fact reads as Now, Next and Done', async (t) => {
   assert.match(body, /<dt>Now:<\/dt><dd>design refresh \(8\/15\)<\/dd>/);
   assert.match(body, /<dt>Next:<\/dt><dd>final review<\/dd>/);
   assert.match(body, /<dt>Done:<\/dt><dd>design plan<\/dd>/);
+});
+
+test("a roadmap fact's page keeps the one-line heading and shows the whole roadmap below it, also once deleted", async (t) => {
+  const app = await start(t);
+  const m = await fact(app, 'Done: tools merged (2026-10-20)\nNow: design refresh (8/15)\nNext: final review; merge\nLater: dark mode\nWaiting on you: device checklist (by 2026-12-01)', 'homelab', 'roadmap');
+  const f = await loggedIn(app);
+  const check = (body: string) => {
+    assert.match(body, /<h1 class="fact-text">Now: design refresh \(8\/15\) · Next: final review<\/h1>/);
+    for (const [label, value] of [['Done:', 'tools merged \\(2026-10-20\\)'], ['Now:', 'design refresh \\(8\\/15\\)'], ['Next:', 'final review; merge'], ['Later:', 'dark mode'], ['Waiting on you:', 'device checklist \\(by 2026-12-01\\)']]) {
+      assert.match(body, new RegExp(`<dt>${label}</dt><dd>${value}</dd>`), label);
+    }
+  };
+  check(await (await f(`/memories/${m.id}`)).text());
+  await f(`/memories/${m.id}/delete`, form({}));
+  check(await (await f(`/memories/${m.id}`)).text());
 });
 
 test('the filter row is one visible row, and New fact sits at the top', async (t) => {

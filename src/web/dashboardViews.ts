@@ -2,11 +2,11 @@ import type { GrantInfo } from '../auth/provider.js';
 import type { SessionInfo } from '../auth/sessions.js';
 import type { Flag, WriterTally } from '../memory/digest.js';
 import type { BackupRun, BackupStatus, SimpleRun } from '../backupStatus.js';
-import { deletedDay, MAX_CONTENT, MAX_ROADMAP } from '../memory/service.js';
+import { deletedDay, HOLD_REASON, MAX_CONTENT, MAX_ROADMAP } from '../memory/service.js';
 import type { Overlap } from '../memory/tidy.js';
 import type { ActivityRow } from '../memory/store.js';
 import { KINDS, type HistoryEntry, type Kind, type Memory, type Suggestion } from '../memory/types.js';
-import { parseRoadmap } from '../memory/roadmap.js';
+import { formatRoadmap, parseRoadmap, roadmapOneLine } from '../memory/roadmap.js';
 import { deviceLabel } from './deviceLabel.js';
 import type { FactEvent, FactStory } from '../memory/factStory.js';
 import type { MemoryService } from '../memory/service.js';
@@ -20,6 +20,7 @@ import { shortDay } from '../timezone.js';
 export type ReplacedItem = ReturnType<SupersessionStore['replacedList']>[number];
 import { html, type SafeHtml } from './html.js';
 import { metaLine } from './metaLine.js';
+import { heldMetaLines, metaFields, pastChip, sourceLine, validLine } from './factMetaViews.js';
 import { subnav } from './subnav.js';
 import { timeAgo, viewNow } from './when.js';
 
@@ -27,7 +28,7 @@ export const PAGE_SIZE = 50;
 const EXCERPT = 160;
 
 /** `base`: the updatedAt of the memory the form was filled from, so a save from a stale page is refused. */
-export interface MemoryFormValues { kind: string; content: string; project: string; tags: string; keys?: string; base?: string }
+export interface MemoryFormValues { kind: string; content: string; project: string; tags: string; keys?: string; base?: string; validUntil?: string; source?: string; sourceBy?: string | null; sourceNote?: string; origValidUntil?: string; origSource?: string; origSourceNote?: string }
 export interface ActivityItem { at: string; by: string; action: ActivityRow['action']; memoryId: string; content: string }
 
 export const when = (iso: string): SafeHtml => timeAgo(iso, viewNow());
@@ -35,7 +36,8 @@ export const errorBlock = (error?: string): SafeHtml => (error ? html`<p class="
 export const excerpt = (s: string) => (s.length > EXCERPT ? s.slice(0, EXCERPT) + '…' : s);
 export const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-export const valuesOf = (m: Memory): MemoryFormValues => ({ kind: m.kind, content: m.content, project: m.project ?? '', tags: m.tags.join(' '), keys: m.keys, base: m.updatedAt });
+export const valuesOf = (m: Memory): MemoryFormValues => ({ kind: m.kind, content: m.content, project: m.project ?? '', tags: m.tags.join(' '), keys: m.keys, base: m.updatedAt, validUntil: m.validUntil ?? '', source: m.source ?? '', sourceBy: m.sourceBy, sourceNote: m.sourceNote ?? '',
+  origValidUntil: m.validUntil ?? '', origSource: m.source ?? '', origSourceNote: m.sourceNote ?? '' });
 
 // ---- Who wrote it (colour) and what kind it is (shape) ----
 
@@ -66,7 +68,7 @@ export function suggestionPhrase(s: Pick<Suggestion, 'action' | 'kind'>): string
 
 /** `replaces`: the facts a held save would replace once approved (section 16), so the owner never approves blind. */
 /** `deleted`: the fact the owner deleted that a held save is close to (§17a), quoted above what it saves. */
-export function suggestionCard(s: Suggestion, current: string | undefined, o: { back: '/' | '/approvals'; replaces?: Memory[]; deleted?: Memory }): SafeHtml {
+export function suggestionCard(s: Suggestion, current: string | undefined, o: { back: '/' | '/approvals'; /** The Inbox item to open after this answer (its key). */ next?: string | null; replaces?: Memory[]; deleted?: Memory; /** A harvested near-duplicate: the existing fact it is close to. */ similar?: Memory; /** Shown inside its harvest's pane: the pane says where it comes from and what the buttons do. */ inBatch?: boolean; /** The fact's date and source now, for an update. */ currentMeta?: Pick<Memory, 'validUntil' | 'source' | 'sourceNote' | 'sourceBy'> }): SafeHtml {
   const replaces = o.replaces ?? [];
   const deleting = s.action === 'delete';
   const quote = (cls: string, text: string | undefined) => html`<blockquote class="${cls}">${text ?? '(already gone)'}</blockquote>`;
@@ -76,6 +78,8 @@ export function suggestionCard(s: Suggestion, current: string | undefined, o: { 
     : quote('proposed', s.content ?? '');
   // B9: the search words the save carries (a keys-only change has the same text on both sides).
   const keys = !deleting && s.keys ? html`<p class="sg-keys">Search words: ${s.keys}</p>` : '';
+  // A1/A2: the date and the source the save carries (A12).
+  const heldMeta = deleting ? '' : heldMetaLines(s, o.currentMeta, s.action === 'update' && s.content === current && !s.keys);
   const gone = o.deleted?.deletedAt ? o.deleted : undefined;
   const deletedQuote = gone && !deleting
     ? html`<p class="label">You deleted, ${deletedDay(gone.deletedAt!)}:</p><blockquote class="dim">${gone.content}</blockquote>
@@ -86,23 +90,27 @@ export function suggestionCard(s: Suggestion, current: string | undefined, o: { 
   // the suggestion unchanged.
   const editText = deleting ? html`` : html`<label class="edit-text">${s.action === 'update' ? 'New text' : 'Suggested text'} <textarea name="content" rows="4" maxlength="${s.kind === 'roadmap' ? MAX_ROADMAP : MAX_CONTENT}">${s.content ?? ''}</textarea></label>`;
   const editToggle = deleting ? html`` : html`<details class="edit-first"><summary class="button ghost">Edit first</summary></details>`;
+  // A removal says so: "Saved as a decision" is the wording for an add.
+  const ifApproved = deleting ? html`Deleted${s.project ? html` from ${s.project}` : ''} if you approve.` : html`Saved as a ${s.kind}${s.project ? html` in ${s.project}` : ''} if you approve.`;
   return html`<article class="card suggestion approval-card">
   <p class="approval-head">${writer(s.suggestedBy)} suggests ${suggestionPhrase(s)}</p>
   ${metaLine([when(s.suggestedAt), s.kind.charAt(0).toUpperCase() + s.kind.slice(1), s.project])}
-  ${s.reason ? html`<p class="held">Held because it ${s.reason}. Saved as a ${s.kind}${s.project ? html` in ${s.project}` : ''} if you approve.</p>` : ''}
-  ${deletedQuote}${body}${keys}
+  ${s.harvest && !o.inBatch ? html`<p class="meta">Harvested from this session: ${s.harvest.label}</p>` : ''}
+  ${s.reason === HOLD_REASON ? html`<p class="held">${HOLD_REASON}. ${ifApproved}</p>` : s.reason ? html`<p class="held">Held because it ${s.reason}. ${ifApproved}</p>` : ''}
+  ${o.similar && !o.similar.deletedAt ? html`<p class="meta">Close to: <a href="${withFrom(`/memories/${o.similar.id}`, o.back)}">${excerpt(o.similar.content)}</a></p>` : ''}
+  ${deletedQuote}${body}${keys}${heldMeta}
   ${replaces.length > 0 ? html`<p class="label">Approving also replaces:</p>
   ${replaces.map((m) => html`<blockquote class="dim"><a href="${withFrom(`/memories/${m.id}`, o.back)}">${excerpt(m.content)}</a></blockquote>`)}` : ''}
   <form method="post" action="/suggestions/${s.id}/approve">
-    <input type="hidden" name="back" value="${o.back}">
+    <input type="hidden" name="back" value="${o.back}">${o.next ? html`<input type="hidden" name="next" value="${o.next}">` : ''}
     ${editText}
     <div class="actions">
-      <button type="submit" class="primary">${deleting ? 'Delete it' : 'Approve'}</button>
+      <button type="submit" class="primary">${deleting ? 'Delete it' : 'Approve'}${o.back === '/approvals' ? html` <kbd class="kbd-hint"><span class="k-mac">⌘↵</span><span class="k-pc">Ctrl ↵</span></kbd>` : ''}</button>
       ${editToggle}
       <button type="submit" formaction="/suggestions/${s.id}/reject" formnovalidate class="ghost push-right">${deleting ? 'Keep it' : 'Reject'}</button>
     </div>
   </form>
-  <p class="meta approval-foot">Both buttons bring you back here, and this goes.</p>
+  ${o.inBatch ? '' : html`<p class="meta approval-foot">Both buttons bring you back here, and this goes.</p>`}
 </article>`;
 }
 
@@ -110,7 +118,7 @@ export function suggestionCard(s: Suggestion, current: string | undefined, o: { 
 export function memoryCard(m: Memory, replaced = false, from?: string): SafeHtml {
   return html`<li class="${replaced ? 'card rep' : 'card'}" data-kind="${m.kind}">
   <a class="card-link" href="/memories/${m.id}${from ? `?from=${encodeURIComponent(from)}` : ''}">${excerpt(m.content)}</a>
-  ${metaLine([kindMark(m.kind), projectLink(m.project), writer(m.updatedBy), when(m.updatedAt)])}
+  ${metaLine([kindMark(m.kind), projectLink(m.project), writer(m.updatedBy), when(m.updatedAt), pastChip(m)])}
 </li>`;
 }
 
@@ -128,7 +136,7 @@ const placeName = (where: string): string => (where.startsWith('gdrive:')
   ? 'Google Drive'
   : where.replace(/^\/mnt\//, '').replace(/\/memory-backups\/?$/, '') || where);
 
-export function backupsPanel(b: { status: BackupStatus; health: { ok: boolean; problems: string[] }; offsite: boolean; jobs?: boolean }, opts: { id?: string; title?: string; extra?: SafeHtml } = {}): SafeHtml {
+export function backupsPanel(b: { status: BackupStatus; health: { ok: boolean; problems: string[] }; offsite: boolean; jobs?: boolean }, opts: { id?: string; title?: string; extra?: SafeHtml; /** After the runs: what follows them in the section. */ after?: SafeHtml } = {}): SafeHtml {
   const { nightly, offsite } = b.status;
   const job = (label: string, r: SimpleRun | undefined) => html`<li><span class="label-inline">${label}</span> ${r ? html`${when(r.at)} <span class="place${r.ok ? '' : ' bad'}">${r.ok ? '✓' : '✗'}</span>` : html`<span class="quiet">not yet</span>`}</li>`;
   const run = (label: string, r: BackupRun | undefined, places: SafeHtml) => html`<li><span class="label-inline">${label}</span> ${r ? html`${when(r.at)} ${places}` : html`<span class="quiet">not yet</span>`}</li>`;
@@ -147,6 +155,7 @@ export function backupsPanel(b: { status: BackupStatus; health: { ok: boolean; p
   </ul>
   ${nightly?.counts ? html`<p class="meta">Last backup: ${plural(nightly.counts.facts, 'fact', 'facts')}, ${plural(nightly.counts.pages, 'page', 'pages')}</p>` : ''}
   ${b.health.ok ? '' : html`<ul class="problems">${b.health.problems.map((p) => html`<li>${p}</li>`)}</ul>`}
+  ${opts.after ?? ''}
 </section>`;
 }
 
@@ -160,11 +169,17 @@ export interface TidyItems {
   stale: Memory[];
   /** Replaced facts whose replacement was deleted (section 16), with the deletion to restore. */
   gone?: { row: Supersession; old: Memory; newer: Memory; deletion: HistoryEntry | undefined }[];
+  /** A1: current facts past their valid_until date, oldest date first. */
+  pastDate?: Memory[];
 }
 
-export const tidyCount = (v: TidyItems): number => v.overlaps.length + v.statuses.length + v.duplicates.length + v.stale.length + (v.gone?.length ?? 0);
+export const tidyCount = (v: TidyItems): number => v.overlaps.length + v.statuses.length + v.duplicates.length + v.stale.length + (v.gone?.length ?? 0) + (v.pastDate?.length ?? 0);
 
-export function tidyView(v: TidyItems, error?: string, now: Date = new Date()): SafeHtml {
+/** `back`: where the page's forms return to after an answer: Tidy up itself, or the Inbox when the cards sit in its pane. */
+export function tidyView(v: TidyItems, error?: string, now: Date = new Date(), back: 'tidy' | 'inbox' = 'tidy'): SafeHtml {
+  const backField = html`<input type="hidden" name="back" value="${back}">`;
+  /** The forms that had no `back` before only say so in the Inbox pane (their default is Tidy up itself). */
+  const backExtra = back === 'inbox' ? backField : html``;
   const memories = (n: number) => plural(n, 'memory', 'memories');
   /** This screen's own address, so every fact it links goes back here. */
   const self = '/facts/tidy';
@@ -173,13 +188,13 @@ export function tidyView(v: TidyItems, error?: string, now: Date = new Date()): 
   // is the only replacement on the screen (one project with two statuses).
   const firstReplaceable = v.duplicates.find((d) => d.replaceable);
   const loneLatest = firstReplaceable === undefined && v.statuses.length === 1 && v.statuses[0]!.statuses.length === 2;
-  const move = (from: string, to: string, secondary: boolean) => html`<form method="post" action="/tidy/projects/move"><input type="hidden" name="from" value="${from}"><input type="hidden" name="to" value="${to}"><button type="submit"${secondary ? html` class="secondary"` : ''}>Move all to ${to}</button></form>`;
+  const move = (from: string, to: string, secondary: boolean) => html`<form method="post" action="/tidy/projects/move">${backExtra}<input type="hidden" name="from" value="${from}"><input type="hidden" name="to" value="${to}"><button type="submit"${secondary ? html` class="secondary"` : ''}>Move all to ${to}</button></form>`;
   const overlapCard = ({ smaller, larger }: Overlap) => html`<li class="card">
   <p>${projectLink(smaller.project)} (${memories(smaller.count)}) reads like ${projectLink(larger.project)} (${memories(larger.count)}).</p>
   <div class="actions">
     ${move(smaller.project, larger.project, false)}
     ${move(larger.project, smaller.project, true)}
-    <form method="post" action="/tidy/projects/different"><input type="hidden" name="a" value="${smaller.project}"><input type="hidden" name="b" value="${larger.project}"><button type="submit" class="secondary">Different projects</button></form>
+    <form method="post" action="/tidy/projects/different">${backExtra}<input type="hidden" name="a" value="${smaller.project}"><input type="hidden" name="b" value="${larger.project}"><button type="submit" class="secondary">Different projects</button></form>
   </div>
   <p class="label">Moving renames the project on those memories. Each memory's history keeps the old name.</p>
 </li>`;
@@ -189,11 +204,11 @@ export function tidyView(v: TidyItems, error?: string, now: Date = new Date()): 
     <blockquote><a href="${fact(m.id)}">${excerpt(m.content)}</a></blockquote>
     <div class="status-foot">
       <p class="meta">${i === 0 ? 'Latest, updated' : 'Updated'} ${when(m.updatedAt)} by ${writer(m.updatedBy)}</p>
-      <span class="actions">${i === 0 ? '' : html`<form method="post" action="/tidy/statuses/supersede"><input type="hidden" name="id" value="${m.id}"><input type="hidden" name="latest" value="${statuses[0]!.id}"><button type="submit"${loneLatest ? html` class="primary"` : ''}>Replaced by the latest</button></form>`}
-      <form method="post" action="/memories/${m.id}/delete"><input type="hidden" name="back" value="tidy"><button type="submit" class="secondary">Delete</button></form></span>
+      <span class="actions">${i === 0 ? '' : html`<form method="post" action="/tidy/statuses/supersede">${backExtra}<input type="hidden" name="id" value="${m.id}"><input type="hidden" name="latest" value="${statuses[0]!.id}"><button type="submit"${loneLatest ? html` class="primary"` : ''}>Replaced by the latest</button></form>`}
+      <form method="post" action="/memories/${m.id}/delete">${backField}<button type="submit" class="secondary">Delete</button></form></span>
     </div>
   </li>`)}</ol>
-  <form method="post" action="/tidy/statuses/keep"><input type="hidden" name="project" value="${project}"><button type="submit" class="secondary">All still current</button></form>
+  <form method="post" action="/tidy/statuses/keep">${backExtra}<input type="hidden" name="project" value="${project}"><button type="submit" class="secondary">All still current</button></form>
 </li>`;
   const dupCard = (item: TidyItems['duplicates'][number]) => {
     const { a, b, similarity, replaceable } = item;
@@ -202,13 +217,13 @@ export function tidyView(v: TidyItems, error?: string, now: Date = new Date()): 
     const side = (keep: Memory, drop: Memory) => html`<div class="dup-side">
   <blockquote><a href="${fact(keep.id)}">${excerpt(keep.content)}</a></blockquote>
   <p class="meta">${replaceable ? `${keep.id === older.id ? 'older' : 'newer'} · ` : ''}updated ${when(keep.updatedAt)}</p>
-  <form method="post" action="/duplicates/merge"><input type="hidden" name="keep" value="${keep.id}"><input type="hidden" name="drop" value="${drop.id}"><button type="submit"${replaceable ? html` class="secondary"` : ''}>Keep this one</button></form>
+  <form method="post" action="/duplicates/merge">${backExtra}<input type="hidden" name="keep" value="${keep.id}"><input type="hidden" name="drop" value="${drop.id}"><button type="submit"${replaceable ? html` class="secondary"` : ''}>Keep this one, delete the other</button></form>
 </div>`;
-    const keepBoth = html`<form method="post" action="/duplicates/keep-both"><input type="hidden" name="a" value="${a.id}"><input type="hidden" name="b" value="${b.id}"><button type="submit" class="secondary">Keep both</button></form>`;
+    const keepBoth = html`<form method="post" action="/duplicates/keep-both">${backExtra}<input type="hidden" name="a" value="${a.id}"><input type="hidden" name="b" value="${b.id}"><button type="submit" class="secondary">Keep both</button></form>`;
     return html`<li class="card">
   <p class="meta">Probably the same (${Math.round(similarity * 100)}% similar)${replaceable ? html` · both ${kindWord(a) === 'status' ? 'statuses' : 'decisions'}${a.project ? html` in ${a.project}` : ''}` : ''}</p>
   <div class="pair">${side(a, b)}${side(b, a)}</div>
-  ${replaceable ? html`<div class="tacts"><form method="post" action="/tidy/duplicates/supersede"><input type="hidden" name="older" value="${older.id}"><input type="hidden" name="newer" value="${newer.id}"><button type="submit"${item === firstReplaceable ? html` class="primary"` : ''}>Newer replaces older</button></form>${keepBoth}</div>
+  ${replaceable ? html`<div class="tacts"><form method="post" action="/tidy/duplicates/supersede">${backExtra}<input type="hidden" name="older" value="${older.id}"><input type="hidden" name="newer" value="${newer.id}"><button type="submit"${item === firstReplaceable ? html` class="primary"` : ''}>Newer replaces older</button></form>${keepBoth}</div>
   <p class="label">"Keep this one" deletes the other. "Newer replaces older" keeps the older one readable, out of search.</p>`
     : html`${keepBoth}
   <p class="label">Keeping one deletes the other.</p>`}
@@ -218,17 +233,27 @@ export function tidyView(v: TidyItems, error?: string, now: Date = new Date()): 
   <blockquote><a href="${fact(old.id)}">${excerpt(old.content)}</a></blockquote>
   <p class="meta">${projectLink(old.project)} · its replacement was deleted ${newer.deletedAt ? shortDay(newer.deletedAt, now) : ''} by ${writer(deletion?.changedBy ?? newer.updatedBy)}</p>
   <div class="tacts">
-    <form method="post" action="/supersessions/${row.id}/undo"><input type="hidden" name="back" value="tidy"><button type="submit">Bring it back</button></form>
-    <form method="post" action="/memories/${old.id}/delete"><input type="hidden" name="back" value="tidy"><button type="submit" class="secondary">Delete it too</button></form>
-    ${deletion ? html`<form method="post" action="/history/${deletion.id}/undo"><input type="hidden" name="back" value="tidy"><button type="submit" class="secondary">Restore the newer one</button></form>` : ''}
+    <form method="post" action="/supersessions/${row.id}/undo">${backField}<button type="submit">Bring it back</button></form>
+    <form method="post" action="/memories/${old.id}/delete">${backField}<button type="submit" class="secondary">Delete it too</button></form>
+    ${deletion ? html`<form method="post" action="/history/${deletion.id}/undo">${backField}<button type="submit" class="secondary">Restore the newer one</button></form>` : ''}
   </div>
 </li>`;
   const staleCard = (m: Memory) => html`<li class="card">
   <a class="card-link" href="${fact(m.id)}">${excerpt(m.content)}</a>
   <p class="meta">${kindMark(m.kind)} ${projectLink(m.project)} last updated ${when(m.updatedAt)}</p>
   <div class="actions">
-    <form method="post" action="/memories/${m.id}/confirm"><button type="submit">Still true</button></form>
-    <form method="post" action="/memories/${m.id}/delete"><input type="hidden" name="back" value="tidy"><button type="submit" class="secondary">Delete</button></form>
+    <form method="post" action="/memories/${m.id}/confirm">${backExtra}<button type="submit">Still true</button></form>
+    <form method="post" action="/memories/${m.id}/delete">${backField}<button type="submit" class="secondary">Delete</button></form>
+  </div>
+</li>`;
+  // A1: "Still true" clears the date; "Set a new date" takes one; "Replace…" opens the fact on its replace picker.
+  const pastCard = (m: Memory) => html`<li class="card">
+  <a class="card-link" href="${fact(m.id)}">${excerpt(m.content)}</a>
+  <p class="meta">${kindMark(m.kind)} ${projectLink(m.project)} past its date since ${m.validUntil}</p>
+  <div class="tacts">
+    <form method="post" action="/memories/${m.id}/valid-until">${backExtra}<input type="hidden" name="valid_until" value=""><button type="submit">Still true (clear the date)</button></form>
+    <form method="post" action="/memories/${m.id}/valid-until" class="tacts">${backExtra}<label class="visually-hidden" for="vu-${m.id}">New date</label><input type="date" id="vu-${m.id}" name="valid_until" required><button type="submit" class="secondary">Set a new date</button></form>
+    <a class="button secondary" href="${fact(m.id)}#picker">Replace…</a>
   </div>
 </li>`;
   const section = <T>(title: string, why: string, items: T[], card: (item: T) => SafeHtml) => (items.length === 0 ? html`` : html`<section class="panel tidy">
@@ -244,6 +269,7 @@ ${tidyCount(v) === 0 ? html`<p class="quiet">Nothing to tidy.</p>` : ''}
 ${section('Same project under two names?', 'Assistants look projects up by name, so memories under the other name get missed.', v.overlaps, overlapCard)}
 ${section('Several statuses for one project', "A project's briefing shows every status, so an outdated one can mislead an assistant. Delete what is no longer true, or edit the newest so it covers what still matters.", v.statuses, statusCard)}
 ${section('Possible duplicates', 'Two memories that say almost the same thing.', v.duplicates, dupCard)}
+${section('Past its date', 'These facts had an end date that has gone by. They are still in search and still shown to assistants, marked as past their date.', v.pastDate ?? [], pastCard)}
 ${section('Not touched in a long while', 'Nobody has changed or recalled these in six months.', v.stale, staleCard)}
 ${section("Replaced by a fact that's gone", 'The newer fact was deleted, so nothing in search says this any more. Nothing changes until you choose.', v.gone ?? [], goneCard)}</div>`;
 }
@@ -342,12 +368,19 @@ function roadmapLines(content: string): SafeHtml | null {
   return html`<dl class="rmap">${lines.map(([label, value]) => html`<dt>${label}</dt><dd>${value}</dd>`)}</dl>`;
 }
 
+/** A roadmap fact in full, under its one-line heading: Done, Now, Next, Later and Waiting on you, each as it is saved. Null when the heading already shows the text. */
+function roadmapFull(content: string): SafeHtml | null {
+  if (roadmapOneLine(content) === null) return null;
+  const lines = formatRoadmap(parseRoadmap(content)).split('\n').map((l) => { const i = l.indexOf(':'); return [l.slice(0, i + 1), l.slice(i + 1).trim()] as const; });
+  return html`<dl class="rmap rmap-full">${lines.map(([label, value]) => html`<dt>${label}</dt><dd>${value}</dd>`)}</dl>`;
+}
+
 /** One fact in a group: its text (a roadmap reads as Now, Next and Done) and its meta line. */
 function groupRow(m: Memory, from?: string): SafeHtml {
   const href = `/memories/${m.id}${from ? `?from=${encodeURIComponent(from)}` : ''}`;
   const roadmap = m.kind === 'roadmap' ? roadmapLines(m.content) : null;
   return html`<li class="frow"><a class="card-link" href="${href}">${roadmap ?? excerpt(m.content)}</a>
-  <p class="fmeta"><span class="fkind">${m.kind}</span> · ${writer(m.updatedBy)} · ${when(m.updatedAt)}</p></li>`;
+  <p class="fmeta"><span class="fkind">${m.kind}</span> · ${writer(m.updatedBy)} · ${when(m.updatedAt)}${pastChip(m).value !== '' ? html` · ${pastChip(m)}` : ''}</p></li>`;
 }
 
 /** One group: its heading (the project links to the project), its facts, and a link to the ones it does not show. */
@@ -440,7 +473,7 @@ ${v.filter.q === undefined && (v.page > 1 || v.hasNext) ? html`<p class="pager">
 </div>`;
 }
 
-function memoryForm(action: string, values: MemoryFormValues, opts: { kindEditable: boolean; submit: string; from?: string }): SafeHtml {
+function memoryForm(action: string, values: MemoryFormValues, opts: { kindEditable: boolean; submit: string; from?: string; meta?: boolean }): SafeHtml {
   return html`<form method="post" action="${action}" class="editor">
   ${values.base ? html`<input type="hidden" name="base" value="${values.base}">` : ''}
   ${opts.from ? html`<input type="hidden" name="from" value="${opts.from}">` : ''}
@@ -453,6 +486,7 @@ function memoryForm(action: string, values: MemoryFormValues, opts: { kindEditab
     <label>Tags (separated by spaces or commas) <input type="text" name="tags" value="${values.tags}"></label>
   </div>
   <label>Search words (help search find this fact; never in search results) <input type="text" name="keys" value="${values.keys ?? ''}" maxlength="200"></label>
+  ${opts.meta ? metaFields(values) : ''}
   <div class="actions"><button type="submit" class="primary">${opts.submit}</button></div>
 </form>`;
 }
@@ -461,7 +495,7 @@ export function newView(values: MemoryFormValues, error?: string): SafeHtml {
   return html`<div class="narrow">
 <h1>New fact</h1>
 ${errorBlock(error)}
-${memoryForm('/memories', values, { kindEditable: true, submit: 'Save' })}
+${memoryForm('/memories', values, { kindEditable: true, submit: 'Save', meta: true })}
 <p class="label">Profile memories take effect immediately.</p></div>`;
 }
 
@@ -480,7 +514,7 @@ export function detailView(m: Memory, history: HistoryEntry[], values: MemoryFor
   // One level only: a link drawn on this page carries the page's own plain path; the origin (extra.from) is kept by
   // the forms and the picker's "Show all", which reopens this same fact.
   const self = `/memories/${m.id}`;
-  const editor = html`${memoryForm(self, values, { kindEditable: false, submit: 'Save changes', from: extra.from })}
+  const editor = html`${memoryForm(self, values, { kindEditable: false, submit: 'Save changes', from: extra.from, meta: true })}
 <form method="post" action="/memories/${m.id}/delete" class="danger">${extra.from ? html`<input type="hidden" name="from" value="${extra.from}">` : ''}<button type="submit" class="secondary">Delete</button>
 <p class="meta">It leaves search for you and your assistants. Assistants that try to save it again will ask you first. You can bring it back from its History.</p></form>`;
   const where = extra.where;
@@ -489,11 +523,13 @@ export function detailView(m: Memory, history: HistoryEntry[], values: MemoryFor
 ${errorBlock(error)}
 ${replaced ? replacedNote(story!, now, self) : ''}
 <p class="eyebrow fact-kind">${kindMark(m.kind)}${m.project ? html` · ${projectLink(m.project)}` : ''}${replaced ? html` · <span class="chip plain">replaced</span>` : ''}</p>
-<h1 class="fact-text${replaced ? ' rep' : ''}">${m.content}</h1>
-${metaLine([html`Saved by ${writer(m.createdBy)}`, when(m.createdAt), ...(history.length > 0 && !m.deletedAt ? [html`edited by ${writer(m.updatedBy)}`, when(m.updatedAt)] : []), ...(m.tags.length ? [html`Tags: ${m.tags.join(', ')}`] : [])])}
+<h1 class="fact-text${replaced ? ' rep' : ''}">${(m.kind === 'roadmap' ? roadmapOneLine(m.content) : null) ?? m.content}</h1>
+${m.kind === 'roadmap' ? roadmapFull(m.content) ?? '' : ''}
+${metaLine([html`Saved by ${writer(m.createdBy)}`, when(m.createdAt), ...(history.length > 0 && !m.deletedAt ? [html`edited by ${writer(history[0].changedBy)}`, when(history[0].changedAt)] : []), ...(m.tags.length ? [html`Tags: ${m.tags.join(', ')}`] : [])])}
 ${m.keys ? html`<p class="fact-keys">Search words: ${m.keys}</p>` : ''}
-${m.deletedAt ? html`<p class="quiet">Deleted ${when(m.deletedAt)}. Use Undo in History to bring it back.</p>` : html`<details class="pfold" id="edit"${extra.open === 'edit' ? ' open' : ''}><summary>Edit or delete<span class="chev"></span></summary>${replaced ? html`<p class="quiet">Editing a replaced fact keeps it replaced.</p>` : ''}${editor}</details>`}
-<details class="pfold" id="history"${m.deletedAt || extra.open === 'history' ? ' open' : ''}><summary>History${events.length > 0 ? html` <span class="n">${events.length}</span>` : ''}<span class="chev"></span></summary>${factEvents(events, now, extra.from)}</details>
+${validLine(m, now)}${sourceLine(m)}
+${m.deletedAt ? html`<p class="quiet">${m.movedTo ? html`Moved to ${m.movedTo} ${when(m.deletedAt)}` : html`Deleted ${when(m.deletedAt)}`}. Use Undo in History to bring it back.</p>` : html`<details class="pfold" id="edit"${extra.open === 'edit' ? ' open' : ''}><summary>Edit or delete<span class="chev"></span></summary>${replaced ? html`<p class="quiet">Editing a replaced fact keeps it replaced.</p>` : ''}${editor}</details>`}
+<details class="pfold" id="history"${m.deletedAt || extra.open === 'history' ? ' open' : ''}><summary>History${events.length > 0 ? html` <span class="n">${events.length}</span>` : ''}<span class="chev"></span></summary>${factEvents(events, now, extra.from, m.movedTo)}</details>
 ${story ? html`${replacesBox(story, now, self)}${chainList(story, kindWord(m), now, self)}` : ''}
 ${whereShown ? html`<section class="where"><h3>Where it shows</h3><ul class="rows">${where.project ? html`<li><a href="/?project=${encodeURIComponent(where.project)}#panel">${where.project}</a></li>` : ''}${where.pages.map((p) => html`<li><a href="${withFrom(`/pages/${p.id}`, self)}">${p.title}</a></li>`)}${where.discussion ? html`<li>Decided in: <a href="/discussions/${where.discussion.id}">${where.discussion.title}</a></li>` : ''}</ul></section>` : ''}
 ${extra.picker ? pickerFold(m, extra.picker, extra.pickAll ?? false, now, extra.open === 'picker', extra.selectedBy, extra.from) : ''}</div>`;
@@ -531,7 +567,12 @@ function setupLine(s: ConnStatus): SafeHtml {
   return html`<p class="conn-setup">${text}${tools}</p>`;
 }
 
-export function grantCards(v: { grants: GrantInfo[]; projects?: string[]; status?: Map<string, ConnStatus> }): SafeHtml {
+/** The "added, not signed in yet" line of Settings › Connections; empty when there is none. */
+export function addedToolsLine(added: string[]): SafeHtml {
+  return added.length === 0 ? html`` : html`<p class="attention"><span class="dot attention" aria-hidden="true"></span> ${added.join(', ')}: added, not signed in yet</p>`;
+}
+
+export function grantCards(v: { grants: GrantInfo[]; projects?: string[]; status?: Map<string, ConnStatus>; /** Tools BrainAI added that have not signed in yet (local mode). */ added?: string[] }): SafeHtml {
   const forms = (g: GrantInfo) => html`<form method="post" action="/clients/${g.id}/name" class="actions">
     <label>Name <input type="text" name="name" value="${g.clientName}" maxlength="100" required></label>
     <button type="submit" class="secondary">Rename</button>
@@ -542,9 +583,14 @@ export function grantCards(v: { grants: GrantInfo[]; projects?: string[]; status
     <label class="choice"><input type="radio" name="access" value="projects"${g.access === 'projects' ? ' checked' : ''}> Read only, chosen projects</label>
     <details class="project-picker"${g.access === 'projects' ? ' open' : ''}><summary>Projects for read only<span class="chev"></span></summary>${projectChoices(v.projects ?? [], g.projects)}</details>
     <button type="submit" class="secondary">Change access</button>
-  </form>`;
+  </form>
+  <form method="post" action="/clients/${g.id}/saves-wait" class="actions">
+    <label class="choice"><input type="checkbox" name="wait" value="1"${g.savesWait ? ' checked' : ''}> Saves wait for me</label>
+    <button type="submit" class="secondary">Save this setting</button>
+  </form>
+  <p class="meta">When on, what this assistant saves, updates or forgets (facts, and suggested batches of facts) waits in your Inbox until you approve it. These cannot wait and are refused instead: page writes and edits, page pictures, notes on pages, project info and areas, lessons, flagging a disagreement, noting an observation, and closing a discussion. Proposals and discussion posts still go through, because you read them anyway. Off by default.</p>`;
   const row = (g: GrantInfo) => html`<li class="conn">
-  <div class="conn-row"><span class="conn-name">${writer(g.clientName)}</span><span class="conn-access">${accessLabel(g, v.projects ?? [])}</span><span class="meta">used ${g.lastUsedAt ? when(g.lastUsedAt) : 'never'}</span>
+  <div class="conn-row"><span class="conn-name">${writer(g.clientName)}</span><span class="conn-access">${accessLabel(g, v.projects ?? [])}${g.savesWait ? ' · saves wait for you' : ''}</span><span class="meta">used ${g.lastUsedAt ? when(g.lastUsedAt) : 'never'}</span>
   <form method="post" action="/clients/${g.id}/revoke"><button type="submit" class="secondary" aria-label="Revoke ${g.clientName}">Revoke</button></form></div>
   ${v.status?.get(g.id) ? setupLine(v.status.get(g.id)!) : ''}
   <details class="conn-change"><summary>Change<span class="visually-hidden"> ${g.clientName}</span><span class="chev"></span></summary>${forms(g)}<p class="meta">Connected ${when(g.createdAt)}</p></details>
@@ -552,7 +598,9 @@ export function grantCards(v: { grants: GrantInfo[]; projects?: string[]; status
   const revokedRow = (g: GrantInfo) => html`<li class="conn-old">${writer(g.clientName)} <span class="meta">connected ${when(g.createdAt)}, revoked ${when(g.revokedAt!)}</span></li>`;
   const active = v.grants.filter((g) => !g.revokedAt);
   const revoked = v.grants.filter((g) => g.revokedAt);
-  return html`${active.length === 0 ? html`<p class="quiet">No AI is connected.</p>` : html`<ul class="conns">${active.map(row)}</ul>`}
+  const added = v.added ?? [];
+  const addedLine = addedToolsLine(added);
+  return html`${active.length === 0 ? (added.length === 0 ? html`<p class="quiet">No AI is connected.</p>` : addedLine) : html`<ul class="conns">${active.map(row)}</ul>${addedLine}`}
 ${revoked.length > 0 ? html`<details class="conn-revoked"><summary>Revoked connections <span class="n">${revoked.length}</span><span class="chev"></span></summary><ul class="plain">${revoked.map(revokedRow)}</ul></details>` : ''}`;
 }
 

@@ -46,7 +46,8 @@ test("the owner's overlay sets the setup number and adds its lines to the setup 
   const page = await (await f('/settings/setup/claude-code')).text();
   assert.match(page, /pass setup: 5\./);
   assert.match(page, /Push to the backup remote/);
-  assert.match(page, /Setup text 5\./);
+  assert.match(page, /Version 5 of the setup text\./);
+  assert.doesNotMatch(page, /Setup text 5\./);
   await connectClient(app.baseUrl, f, 'Claude Code');
   (app.deps.provider as any).db.prepare("UPDATE oauth_grants SET setup_version = 5 WHERE name = 'Claude Code'").run();
   assert.match(await (await f('/settings')).text(), /Setup text 5 · up to date ✓/);
@@ -149,18 +150,48 @@ test('local mode with Reach on: a cloud app uses the public address in the addre
   assert.match(body, /You sign in with your brain password and code/);
 });
 
-test('local tools keep localhost, and say the window approves when no password is set', async (t) => {
+test('local tools: the setup pages send the owner to Tools on this computer for the one-click way', async (t) => {
   const { get } = await local(t, { noPassword: true });
   for (const slug of ['claude-code', 'codex', 'opencode']) {
     const body = await get(`/settings/setup/${slug}`);
-    assert.match(body, /data-copy="http:\/\/localhost:\d+\/mcp"/, slug);
-    assert.match(body, /BrainAI’s window asks you to approve it, then you pick its access\./, slug);
-    assert.doesNotMatch(body, /brain password and code/, slug);
+    assert.match(body, /On this computer, use <a href="\/settings\/tools">Tools on this (Mac|computer)<\/a>: one click does all of this\. The steps below are for another computer\./, slug);
   }
 });
 
+test('local tools: the manual steps are for another computer, so they need Reach and name the server brainai', async (t) => {
+  const { app, get } = await local(t, { noPassword: true });
+  for (const slug of ['claude-code', 'codex', 'opencode']) {
+    const body = await get(`/settings/setup/${slug}`);
+    assert.match(body, /Another computer can only reach this brain through Reach/, slug);
+    assert.match(body, /href="\/settings\/reach"/, slug);
+    assert.doesNotMatch(body, /localhost|data-copy=|setup-steps/, slug);
+  }
+  reachOn(app, 'https://brain.example.ts.net');
+  const body = await get('/settings/setup/claude-code');
+  assert.ok(body.includes('data-copy="https://brain.example.ts.net/mcp"'));
+  assert.match(body, /claude mcp add --transport http brainai https:\/\/brain\.example\.ts\.net\/mcp -s user/);
+  assert.doesNotMatch(body, /localhost|http memory/);
+  assert.match(body, /You sign in with your brain password and code/);
+  assert.match(await get('/settings/setup/codex'), /codex mcp add brainai --url https:\/\/brain\.example\.ts\.net\/mcp/);
+});
+
+test('the Claude setup page has no Tools box: only the three terminal tools get it', async (t) => {
+  const { app, get } = await local(t);
+  reachOn(app, 'https://brain.example.ts.net');
+  assert.doesNotMatch(await get('/settings/setup/claude'), /one click does all of this/);
+});
+
+test('the setup page says what the check line does, per app', async (t) => {
+  const { app, get } = await local(t);
+  reachOn(app, 'https://brain.example.ts.net');
+  assert.match(await get('/settings/setup/claude'), /This page shows when Claude is connected and using this text\./);
+  assert.match(await get('/settings/setup/claude-code'), /This page shows when Claude Code is connected and using this text\./);
+  assert.match(await get('/settings/setup/claude'), /Version \d+ of the setup text\./);
+});
+
 test('with a password and code set, local tools say the password and code', async (t) => {
-  const { get } = await local(t);
+  const { app, get } = await local(t);
+  reachOn(app, 'https://brain.example.ts.net');
   assert.match(await get('/settings/setup/claude-code'), /You sign in with your brain password and code/);
 });
 
@@ -170,4 +201,16 @@ test('server mode is unchanged: cloud apps show the address and the password-and
   assert.ok(body.includes(`data-copy="${attr(new URL('/mcp', app.baseUrl).href)}"`));
   assert.match(body, /<p class="meta">You sign in with your brain password and code, then pick its access\.<\/p>/);
   assert.doesNotMatch(body, /Turn on Reach/);
+});
+
+test('server mode: the Claude Code and Codex setup pages name the server memory and have no Tools box', async (t) => {
+  const { app, f } = await start(t);
+  for (const slug of ['claude-code', 'codex']) {
+    const body = await (await f(`/settings/setup/${slug}`)).text();
+    assert.match(body, /\bmemory\b/, slug);
+    assert.doesNotMatch(body, /brainai/, slug);
+    assert.doesNotMatch(body, /Tools on this (Mac|computer)/, slug);
+    assert.doesNotMatch(body, /\/settings\/tools/, slug);
+    assert.ok(body.includes(new URL('/mcp', app.baseUrl).href), slug);
+  }
 });

@@ -76,7 +76,7 @@ export function brainHealth(input: HealthInput, now: Date): Health {
   const items = w.approvals + w.disagreements + w.overdue.length + w.discussions.length;
   const waitingReasons: Reason[] = [
     ...(w.approvals > 0 ? [{ text: `${w.approvals} ${plural(w.approvals, 'change waits', 'changes wait')} for your approval`, href: '/approvals' }] : []),
-    ...(w.disagreements > 0 ? [{ text: w.disagreements === 1 ? '2 facts disagree' : `${w.disagreements} pairs of facts disagree`, href: '/disagreements' }] : []),
+    ...(w.disagreements > 0 ? [{ text: w.disagreements === 1 ? '1 pair of facts disagrees' : `${w.disagreements} pairs of facts disagree`, href: '/disagreements' }] : []),
     ...w.overdue.map((o) => ({ text: `${o.project}: "${o.text}" was due ${dayLabel(o.due)}`, href: panel(o.project) })),
     ...w.discussions.map((x) => ({ text: `${x.title} waits on you`, href: `/discussions/${x.id}` })),
   ];

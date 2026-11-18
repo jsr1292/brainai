@@ -1,13 +1,15 @@
 import type { MemoryStore } from './store.js';
 import type { Supersession } from './supersessions.js';
 import type { Memory } from './types.js';
+import { metaExportText } from './factMeta.js';
 
 const day = (iso: string) => iso.slice(0, 10);
 
 function line(m: Memory): string {
   const tags = m.tags.length > 0 ? ` [${m.tags.join(', ')}]` : '';
   // One memory per bullet: line breaks inside a memory are folded so the list stays readable.
-  return `- ${m.content.replace(/\s*\n\s*/g, ' ')}${tags} (${day(m.updatedAt)}, ${m.updatedBy})`;
+  const meta = metaExportText(m);
+  return `- ${m.content.replace(/\s*\n\s*/g, ' ')}${tags} (${day(m.updatedAt)}, ${m.updatedBy}${meta === '' ? '' : `; ${meta}`})`;
 }
 
 /**

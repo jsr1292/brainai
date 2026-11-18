@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { changedSections, diffBodies } from '../pages/diff.js';
 import { renderMarkdown, splitSections } from '../pages/markdown.js';
+import { FileImports } from '../pages/fileImports.js';
 import { NoteError } from '../pages/notes.js';
 import { PageError, type Page } from '../pages/types.js';
 import type { AppDeps } from './app.js';
@@ -99,6 +100,7 @@ export function pageRoutes(d: AppDeps): Router {
       live, related: p.deletedAt === null ? d.pages.relatedFacts(p, d.relatedSimilarity) : [], linkedFrom: p.deletedAt === null ? d.pages.linkedFrom(p) : [],
       flag: p.deletedAt === null ? d.pages.freshness.forPage(p, { hints: true }) : null,
       pictures: d.pages.pictures(p.body),
+      fileImport: d.db ? new FileImports(d.db, d.now).get(p.id) : undefined,
       diagramProblems: p.deletedAt === null ? d.diagramChecks.problems(p).map((x) => x.block) : [],
     }), back ?? { href: '/pages', label: 'Pages' }, false);
   };

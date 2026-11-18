@@ -284,6 +284,7 @@ test('Settings > Connections local rows keep the description under the title, no
   const s = await appSession(app);
   const r = await fetch(app.baseUrl + '/settings', { headers: { Cookie: s } });
   const body = await r.text();
-  assert.match(body, /<span class="txt">Reach from phone and web<span class="sub">/);
+  assert.match(body, /<span class="txt">Claude · ChatGPT · Grok<span class="sub">/);
+  assert.match(body, /<span class="txt">Tools on this (Mac|computer)<span class="sub">/);
   assert.doesNotMatch(body, /<span class="txt">[^<]*<\/span><span class="meta">[^<]*<\/span><span class="chev">/);
 });

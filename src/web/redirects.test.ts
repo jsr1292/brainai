@@ -22,10 +22,10 @@ test('old Memories and What\'s left addresses redirect, keeping what they pointe
   assert.equal((await f('/left/x/park', { method: 'POST' })).status, 404);
 });
 
-test('Activity goes to So far Latest changes', async (t) => {
+test('Activity is its own page now, no longer a redirect to So far', async (t) => {
   const { f } = await start(t);
   const res = await f('/activity');
-  assert.deepEqual([res.status, res.headers.get('location')], [301, '/review/now#latest']);
+  assert.equal(res.status, 200);
 });
 
 test('every old address lands on its new home', async (t) => {
@@ -33,7 +33,7 @@ test('every old address lands on its new home', async (t) => {
   for (const [from, to] of [
     ['/settings/growth', '/growth'], ['/settings/tidy', '/facts/tidy'], ['/tidy', '/facts/tidy'],
     ['/settings/import', '/pages/moved'], ['/settings/import/x1', '/pages/moved/x1'],
-    ['/activity', '/review/now#latest'], ['/memories', '/facts'], ['/clients', '/settings#connections'],
+    ['/memories', '/facts'], ['/clients', '/settings#connections'],
     ['/graph?view=map', '/graph'],
   ] as const) {
     const res = await f(from);
@@ -83,9 +83,9 @@ test('every owner page renders in the new shell: the brain header, and no old na
     const res = await f(path);
     assert.equal(res.status, 200, path);
     const body = await res.text();
-    assert.match(body, /<nav class="tabs" aria-label="Main"><a href="\/"[^>]*>Projects<\/a><a href="\/pages"[^>]*>Pages<\/a><a href="\/review"[^>]*>Week<\/a><a href="\/graph"[^>]*>Graph<\/a><\/nav>/, path);
+    assert.match(body, /<nav class="tabs" aria-label="Main"><a href="\/"[^>]*>Projects<\/a><a href="\/pages"[^>]*>Pages<\/a><a href="\/approvals"[^>]*>Inbox(?:<span class="tab-count"[^>]*>\d+<\/span>)?<\/a><a href="\/review"[^>]*>Week<\/a><\/nav>/, path);
     assert.match(body, /<a class="settings-link" href="\/settings"/, path);
-    assert.doesNotMatch(body, /href="\/overview"|href="\/left|href="\/clients"|href="\/activity"|href="\/tidy"|href="\/memories"[ >]/, path);
+    assert.doesNotMatch(body, /href="\/overview"|href="\/left|href="\/clients"|href="\/tidy"|href="\/memories"[ >]/, path);
     // The old header's More menu; the review's own "N more" folds live in the page, not the header.
     assert.doesNotMatch(body.slice(0, body.indexOf('</header>')), /class="more(?: [^"]*)?"|<details class="more/, path);
   }

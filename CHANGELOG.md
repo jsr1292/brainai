@@ -4,6 +4,42 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Backups and health shows the version you run.
 
+## 1.5.0 (2026-11-18)
+
+Updating needs nothing from you. BrainAI changes its database on the first start (six additions, nothing removed) and copies it to `data/pre-migrate/` first. On the desktop app, press Connect again (or "Add save reminders") on Settings › Tools to get the new save reminders.
+
+**Each fact says how long it holds and where it came from**
+- **Valid until.** An assistant can give a fact the date it stops being true (a deadline, a version, who holds a job). Recall, briefings and the fact page show "valid until …" or "past its date since …"; nothing is hidden or reordered. Facts past their date appear in the Inbox under tidy-ups, with "Still true" and "Set a new date".
+- **Source.** A fact can say whether you said it, an assistant inferred it, it was imported or it came from a file, with a short note. It also records who set that: when an assistant says you said something, it reads "Codex says you said this", never as your own words. An assistant that rewrites such a fact without saying so again clears the claim. Disagreements show each side's source.
+- **Your profile's size.** Brain health shows how big the profile is (every assistant reads all of it at the start of every conversation) and which entries say nearly the same thing.
+
+**Memory that keeps itself in shape**
+- **Save reminders** for Claude Code (also before a conversation is compacted), Codex and Cursor, installed by Connect and taken back by Disconnect or Remove BrainAI. BrainAI backs up each tool's settings file first and only touches its own entries. OpenCode and Grok Build have no hook that can reach the model; docs/CLIENTS.md says why.
+- **Harvest.** A new tool, `suggest_memories`, lets an assistant send up to 20 decisions, statuses and facts from its session at once. Nothing is saved until you approve: they wait in your Inbox as one group with Approve all, which leaves any flagged item (reads like an instruction, close to something you deleted or replaced) for your own answer. A new skill, harvest-session, arrives as a proposal built into BrainAI; you decide whether to add it.
+- **Tidy sessions.** Ask an assistant to tidy a project: it gets groups of related facts one at a time (`tidy_session`) and proposes replacing, merging, moving decisions into the project page's Key decisions, or leaving them (`propose_tidy`). Each proposal waits in your Inbox with a before and after; the originals stay as history, and replace and merge can be undone.
+- **Brain health** says when a connected app read your memory 20 or more times in a week and saved nothing.
+
+**You see and control what assistants do**
+- **Activity** (Week › Activity): what each assistant saved, changed, deleted or replaced and which pages it edited, by day, filterable by assistant, with Undo on each fact. Undoing an assistant's new fact counts as you deleting it, so it is not saved straight back.
+- **Saves wait for me**, per connection in Settings › Assistants: that assistant's saves, changes and deletions wait in your Inbox; its page edits and a few other direct changes are paused.
+- **Pause all saves from assistants**: every assistant write stops at once, with a Resume banner on every page.
+
+**Easier to start**
+- **Import** (Settings › Backups and copies, or the first steps on Home): paste what ChatGPT, Claude or Gemini remember about you, tick the lines to keep (lines that read like instructions to assistants and duplicates start unticked), and they are saved as imported. Up to 100 facts per import. A built-in skill, import-project-folders, lets a coding assistant propose facts from your project folders. A Markdown or text file can become a page, marked "imported, not written by an assistant".
+- **A Claude Code plugin**: `claude plugin marketplace add jsr1292/brainai`, then `claude plugin install brainai@brainai-plugins`. It asks for your brain's address and brings the save reminders, the harvest skill and the rules. Use it or the desktop app's Connect, not both (Connect skips Claude Code when the plugin is installed).
+
+**The dashboard**
+- **Inbox is one list**, grouped: approvals, harvested groups, tidy proposals, facts that disagree, discussions waiting, and tidy-ups "when you have time". The badge counts only what needs you. ⌘↵ (Ctrl ↵) approves, ↑↓ move between items, and Approve and Reject show a line with Undo.
+- **Settings regrouped**: Assistants (on this computer, or on the web and phone through Reach), Search, Backups and copies (with Back up now, a folder picker in the app, and how to get a backup back), Other computers, Your login, and Remove BrainAI on its own at the end.
+- **The phone bar** is Projects · Pages · Inbox · Week. A new brain shows first steps on Home until they are done or hidden. Projects explain the five areas and their colours; Map is now called Five areas.
+- **Honest connection states**: a tool reads "Added · one step left" until it has signed in, then "Connected ✓". The welcome can be skipped or gone back through, and "Try it" says what to check when nothing arrives. Skills has its own link, Ctrl-K finds settings and places, and the project panel shows the roadmap's current step.
+- **Reach** opens at once and checks Tailscale in the background (no more 30-second wait), and says it works only while this computer is on and awake.
+- **Briefings** always list a couple of pages and name a page that may be out of date.
+
+**Checks**
+- Text that reads like it tries to send your chats, memories or keys to an email address is held for your approval, like text that sends them to a web address.
+- A second benchmark, LongMemEval (retrieval only, no AI judge), is in docs/BENCHMARK.md: the right conversation was in the first 8 results for every question of a 140-question sample.
+
 ## 1.4.0 (2026-11-18)
 
 If you connected Claude's desktop app through BrainAI's Connect (the Mac or Windows app), updating needs one thing from you: restart Claude's desktop app once. Until then, a bridge it already started keeps 1.3.0's code, which lacks the new check. Nothing else needs a restart.

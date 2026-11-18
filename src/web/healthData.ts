@@ -1,8 +1,11 @@
 import { backupHealth, readBackupStatus } from '../backupStatus.js';
+import type { ProfileHealth } from './healthViews.js';
+import { quietApps, QUIET_WINDOW_DAYS, type QuietApp } from '../health/quietApps.js';
 import { brainHealth, type Health, type HealthInput } from '../health/health.js';
 import { isLifeArea } from '../projects/service.js';
 import { localDay } from '../timezone.js';
 import type { AppDeps } from './app.js';
+import { needsYouCounts } from './inboxModel.js';
 import { connStatuses } from './connStatus.js';
 
 /** What brain health reads (B1), gathered from what the dashboard already knows. */
@@ -29,9 +32,11 @@ export function healthInput(d: AppDeps, now: Date): HealthInput {
     if (d.statusDir === undefined) return null;
     const status = readBackupStatus(d.statusDir);
     if (d.localMode && !status.nightly) return null;
-    return backupHealth(status, now, { offsite: true, jobs: true });
+    return backupHealth(status, now, { offsite: !d.localMode, jobs: !d.localMode });
   })();
   const today = localDay(now);
+  // The same count as the Inbox's badge: approvals include skill proposals.
+  const counts = needsYouCounts(d);
   return {
     projects,
     outOfDatePages: headers.filter((h) => flagged.has(h.id)).map((h) => ({ id: h.id, title: h.title })),
@@ -39,8 +44,8 @@ export function healthInput(d: AppDeps, now: Date): HealthInput {
     apps,
     backups,
     waiting: {
-      approvals: d.service.pendingSuggestions().length,
-      disagreements: d.service.openDisagreements().length,
+      approvals: counts.approvals,
+      disagreements: counts.disagreements,
       overdue: d.service.whatsLeft(now).waiting.filter((w) => w.due !== null && w.due < today).map((w) => ({ project: w.project, text: w.text, due: w.due! })),
       discussions: d.discussions.waitingOnOwner(),
     },
@@ -48,3 +53,18 @@ export function healthInput(d: AppDeps, now: Date): HealthInput {
 }
 
 export const healthOf = (d: AppDeps, now: Date): Health => brainHealth(healthInput(d, now), now);
+
+/** The profile's size and near-identical entries (A4), worked out only when Brain health renders: a handful of entries, N² is cheap. */
+export function profileHealth(d: AppDeps): ProfileHealth {
+  const entries = d.service.loadProfile();
+  const words = entries.reduce((n, m) => n + (m.content.trim() === '' ? 0 : m.content.trim().split(/\s+/).length), 0);
+  // The tidy-up scan's own test (the embedding profile's duplicate threshold, dismissed and disagreeing pairs left out).
+  const pairs = d.service.profileDuplicates().map(({ a, b }) => ({ a: { id: a.id, content: a.content }, b: { id: b.id, content: b.content } }));
+  return { entries: entries.length, words, pairs };
+}
+
+/** Apps that read the memory a lot over the last week and saved nothing (B1). Worked out only when Brain health renders. */
+export function quietAppsOf(d: AppDeps, now: Date): QuietApp[] {
+  const grants = d.provider.listGrants().filter((g) => !g.revokedAt);
+  return quietApps(d.store.toolCalls(new Date(now.getTime() - QUIET_WINDOW_DAYS * 86_400_000), new Date(now.getTime() + 1)), grants.map((g) => g.clientName));
+}

@@ -25,7 +25,7 @@ test('Your login reads as one meta line', async (t) => {
   assert.doesNotMatch(login, /<ul class="meta-line">\s+</);
 });
 
-test('Settings holds five things, in order', async (t) => {
+test("A server's Settings holds four things, in order", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'settings-five-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   // A healthy set of runs at 03:10 in the owner's zone (Europe/Berlin, UTC+1 in November).
@@ -49,21 +49,26 @@ test('Settings holds five things, in order', async (t) => {
   assert.match(body, /<title>Settings<\/title>/);
   assert.match(body, /<a class="settings-link" href="\/settings" aria-current="page"/);
   const ids = [...body.matchAll(/<section id="([a-z-]+)"/g)].map((m) => m[1]!);
-  assert.deepEqual(ids, ['this-device', 'connections', 'devices', 'health', 'login']);
+  assert.deepEqual(ids, ['connections', 'health', 'devices', 'login', 'this-device']);
   for (const gone of ['approvals', 'activity', 'growth', 'tidy', 'moved', 'facts']) assert.ok(!ids.includes(gone), gone);
   assert.doesNotMatch(body, /href="\/discussions"/, 'the Discussions link left with the moved sections');
   // The phone's index: one row per section, each with a one-line status.
   const rows = [...body.matchAll(/<a class="row" href="#([a-z-]+)"><span class="txt">([^<]+)<\/span><span class="st">([\s\S]*?)<\/span><span class="chev"><\/span><\/a>/g)]
     .map((m) => [m[1]!, m[2]!, m[3]!.replace(/<[^>]+>/g, '').trim()] as const);
-  assert.deepEqual(rows.map((r) => r[0]), ['this-device', 'connections', 'devices', 'health', 'login']);
-  assert.equal(rows[0]![1], 'This iPhone');
-  assert.equal(rows[0]![2], 'Not set up yet');
-  assert.equal(rows[1]![2], '1 assistant');
+  assert.deepEqual(rows.map((r) => r[0]), ['connections', 'health', 'devices', 'login', 'this-device']);
+  assert.deepEqual(rows.map((r) => r[1]), ['Assistants', 'Backups and copies', 'Other computers', 'Your login', 'This browser']);
+  assert.equal(rows[0]![2], '1 assistant');
+  assert.equal(rows[1]![2], '● Backups: all fine · 03:10');
   assert.equal(rows[2]![2], 'None yet');
-  assert.equal(rows[3]![2], '● All fine · 03:10');
-  assert.equal(rows[4]![2], '1 device');
-  assert.match(body, /<h2>This iPhone<\/h2>/);
-  assert.match(body, /Offline reading isn't here yet\. When it comes, this is where you keep a copy of the brain on this iPhone\./);
+  assert.equal(rows[3]![2], '1 browser signed in');
+  // A server keeps a minimal "This browser" for desk.js's two switches: no version line, no iPhone/Mac naming.
+  assert.equal(rows[4]![2], '');
+  const mine = body.slice(body.indexOf('<section id="this-device"'), body.indexOf('</section>', body.indexOf('<section id="this-device"')));
+  assert.match(mine, /<h2>This browser<\/h2>/);
+  assert.doesNotMatch(mine, /BrainAI \d|database \d/);
+  assert.match(body, /<body[^>]* data-server/);
+  assert.doesNotMatch(body, /This iPhone|id="remove"|id="search"/, 'a server has no Search or Remove');
+  assert.doesNotMatch(body, /Offline reading/);
   assert.equal((body.match(/>Log out</g) ?? []).length, 1, 'one Log out for one device');
 });
 
@@ -112,7 +117,8 @@ test('/facts/tidy shows the tidy lists, and old tidy links redirect there', asyn
   const { f } = await start(t);
   const res = await f('/facts/tidy');
   assert.equal(res.status, 200);
-  assert.match(await res.text(), /<title>Tidy up<\/title>[\s\S]*Nothing to tidy/);
+  // Tidy up lives inside the Inbox frame now: the page is the Inbox, and with nothing at all to do it is the empty Inbox.
+  assert.match(await res.text(), /<title>Inbox<\/title>[\s\S]*Nothing waits for you/);
   for (const path of ['/tidy', '/settings/tidy']) {
     const old = await f(path);
     assert.equal(old.status, 301);
@@ -120,9 +126,9 @@ test('/facts/tidy shows the tidy lists, and old tidy links redirect there', asyn
   }
 });
 
-test('old Overview, Clients and Activity addresses redirect into Settings or Graph', async (t) => {
+test('old Overview and Clients addresses redirect into Settings or Graph', async (t) => {
   const { f } = await start(t);
-  for (const [from, to] of [['/overview', '/settings'], ['/overview?view=globe', '/graph'], ['/clients', '/settings#connections'], ['/activity', '/review/now#latest']]) {
+  for (const [from, to] of [['/overview', '/settings'], ['/overview?view=globe', '/graph'], ['/clients', '/settings#connections']]) {
     const res = await f(from!);
     assert.equal(res.status, 301, from);
     assert.equal(res.headers.get('location'), to, from);
@@ -143,8 +149,12 @@ test('Connections: one compact row per active assistant, its forms folded under 
 });
 
 test('the Tidy up page leads back to Facts, and All weeks back to last week', async (t) => {
-  const { f } = await start(t);
-  assert.match(await (await f('/facts/tidy')).text(), /<p class="crumb back"><a href="\/facts">‹ Facts<\/a><\/p>/);
+  const { app, f } = await start(t);
+  // With something waiting the frame shows: Tidy up inside the Inbox, leading back to the Inbox.
+  await app.deps.service.remember({ kind: 'profile', content: 'Has a Synology NAS' }, ai);
+  const tidy = await (await f('/facts/tidy')).text();
+  assert.match(tidy, /<a class="inbox-back" href="\/approvals">‹ Inbox<\/a>/);
+  assert.match(tidy, /Nothing to tidy/);
   assert.match(await (await f('/review/all')).text(), /<p class="crumb back"><a href="\/review">‹ Last week<\/a><\/p>/);
 });
 
@@ -278,7 +288,7 @@ test('each connection says whether it runs the newest setup text', async (t) => 
   assert.match(connRow(body, 'Claude'), new RegExp(`<p class="conn-setup"><span class="ok">Setup text ${SETUP_VERSION} · up to date ✓</span>`));
   assert.match(connRow(body, 'ChatGPT'), /Setup text \d+ · older\. <a href="\/settings\/setup\/chatgpt">Copy the new text<\/a>/);
   assert.match(connRow(body, 'Grok'), /Setup text: unknown\. <a href="\/settings\/setup\/grok">Paste the setup text<\/a> so the brain can tell/);
-  assert.match(body, /href="#connections"><span class="txt">Connections<\/span><span class="st"><span class="st-dot looks" aria-hidden="true">●<\/span> Needs a look/);
+  assert.match(body, /href="#connections"><span class="txt">Assistants<\/span><span class="st"><span class="st-dot looks" aria-hidden="true">●<\/span> Needs a look/);
 });
 
 test('a connection whose tool list is older than what the brain serves it says to refresh the connector', async (t) => {
@@ -339,7 +349,7 @@ test('a style rule keeps Copy beside its text and underlines the setup links', (
 
 test('the Devices line says devices keep shared skills in step', async (t) => {
   const { f } = await start(t);
-  assert.match(await (await f('/settings')).text(), /Computers that report which folders are in ~\/Projects and their git state, and keep the skills you share in step\. A device token can only send those reports and receive the skills that are On\./);
+  assert.match(await (await f('/settings')).text(), /Add a computer so BrainAI knows which project folders are on it, and so the skills you turn on reach it\./);
 });
 
 test('Backups and health shows the brain version and the database version (O1)', async (t) => {

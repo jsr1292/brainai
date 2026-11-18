@@ -967,3 +967,29 @@ test('the Pages tab fold card keeps its gap from the card above it, not the grou
   assert.equal(marginTop('ul', ['group']), '0');
   assert.equal(marginTop('ul', ['group', 'nopage-group']), '1rem');
 });
+
+test('style.css and desk.css close every brace they open (a dropped } once swallowed the Inbox block into an @media)', () => {
+  for (const file of ['./static/style.css', './static/desk.css']) {
+    // Comments and strings may hold braces; neither counts.
+    const text = readFileSync(new URL(file, import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g, '""');
+    let depth = 0;
+    for (const ch of text) {
+      if (ch === '{') depth++;
+      else if (ch === '}') { depth--; assert.ok(depth >= 0, `${file}: a } with nothing open`); }
+    }
+    assert.equal(depth, 0, `${file}: ${depth} block(s) never closed`);
+  }
+});
+
+test('the empty Skills page is one column, and the Inbox answer line spans both columns', () => {
+  assert.equal(prop('.pages-wrap.solo', 'display'), 'block');
+  const desk = readFileSync(new URL('./static/desk.css', import.meta.url), 'utf8');
+  assert.match(desk, /\.inbox-head \{ grid-column: 1 \/ -1;/);
+});
+
+test('QA fixes: held-save meta lines are muted, Edit first is full width, the Done chip is compact, an empty Home lines up left', () => {
+  assert.match(readFileSync(new URL('./static/style.css', import.meta.url), 'utf8'), /^\.fact-keys, \.sg-keys, \.sg-meta \{[^}]*color: var\(--muted\)/m);
+  assert.equal(prop('.approval-card .edit-text', 'align-self'), 'stretch');
+  assert.equal(prop('.approval-card .edit-text', 'flex-direction'), 'column');
+  assert.equal(prop('.tacts .tacts', 'margin-top'), '0');
+});

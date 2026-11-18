@@ -61,7 +61,7 @@ function listBody(list: GraphList, opts: { inWindowPage: boolean }): SafeHtml {
   const empty = list.summary.projects === 0 && list.done.length === 0;
   return html`<section class="graph-list" aria-labelledby="graph-list-title">
 <h1 id="graph-list-title">Graph</h1>
-${empty ? html`<p class="lede">No projects yet.</p>` : html`<p class="lede">${lede(list)}</p>`}
+${empty ? html`<p class="lede">Your projects appear here once assistants save facts about them.</p>` : html`<p class="lede">${lede(list)}</p>`}
 ${opts.inWindowPage ? '' : html`<p><a class="more-link" href="/graph?view=3d">Show in 3D</a></p>`}
 ${list.areas.map((a) => (a.area === 'personal' ? personalSection(a.rows, list.personal) : html`<h2>${a.label}</h2>
 <ul class="graph-rows">${a.rows.map(row)}</ul>`))}

@@ -17,6 +17,7 @@ import { createLocalEmbedder } from './memory/embedder.js';
 import { ensureEmbeddings, modelOf } from './memory/reembed.js';
 import { startReranker, type Reranker } from './memory/reranker.js';
 import { exportMarkdown } from './memory/exportMarkdown.js';
+import { formatTidyStats, tidyStats } from './memory/tidyStats.js';
 import { comparePaired, formatReport, parseCases, runRecallTest } from './memory/recallTest.js';
 import { DEFAULT_LIMIT, MemoryService } from './memory/service.js';
 import { MemoryStore } from './memory/store.js';
@@ -275,6 +276,13 @@ async function freshness({ db, args = [] }: CliContext): Promise<void> {
   for (const l of lines) console.log(l);
 }
 
+/** B2: `cli tidy-stats <project>`: facts, the project_brief size and what it shortens or leaves out (compare before and after a tidy). */
+async function tidyStatsCommand({ db, args = [] }: CliContext): Promise<void> {
+  const project = args[0];
+  if (!project || project.startsWith('--')) throw new Error('Usage: cli tidy-stats <project>');
+  console.log(formatTidyStats(await tidyStats(db, project)));
+}
+
 export const COMMANDS: Record<string, (ctx: CliContext) => Promise<void>> = {
   freshness,
   'export-brain': exportBrain,
@@ -285,6 +293,7 @@ export const COMMANDS: Record<string, (ctx: CliContext) => Promise<void>> = {
   aliases,
   clients,
   'recall-test': recallTest,
+  'tidy-stats': tidyStatsCommand,
   export: exportCommand,
 };
 

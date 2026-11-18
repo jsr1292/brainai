@@ -1,6 +1,6 @@
 import { OAuthClientInformationFullSchema } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { posesAsOwner } from '../memory/types.js';
+import { posesAsBrainAI, posesAsOwner } from '../memory/types.js';
 
 const MAX_BYTES = 64 * 1024;
 const TIMEOUT_MS = 5000;
@@ -86,6 +86,7 @@ export async function fetchClientMetadata(clientIdUrl: string, fetchFn: typeof f
   }
   d.token_endpoint_auth_method = 'none';
   if (posesAsOwner(d.client_name)) throw new Error('Client metadata client_name must not read as the owner ("owner", "you" or "me")');
+  if (posesAsBrainAI(d.client_name)) throw new Error('Client metadata client_name "BrainAI" is kept for BrainAI itself');
   // Never accept secrets from a remote document.
   delete d.client_secret;
   delete d.client_secret_expires_at;

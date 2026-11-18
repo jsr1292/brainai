@@ -1,43 +1,80 @@
 import { randomUUID } from 'node:crypto';
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
+import { isDay } from './timeRange.js';
+import { isSource, MAX_SOURCE_BY, MAX_SOURCE_NOTE, metaOf } from './factMeta.js';
 import { SupersessionStore } from './supersessions.js';
 import { DisagreementStore } from './disagreements.js';
-import { OWNER_LABEL, type HistoryEntry, type Kind, type Memory, type Suggestion } from './types.js';
+import { activityWhyNot } from './activityWhy.js';
+import { activityAssistants, assistantActivity, deleteUndoable, replacementUndoable, savedUndoable, updateUndoable } from './assistantActivity.js';
+import { OWNER_LABEL, type FactMeta, type HistoryEntry, type Kind, type Memory, type Source, type Suggestion } from './types.js';
 import { words } from './words.js';
 import { MAX_NICKNAMES } from '../projects/store.js';
 
 export interface MemoryRow {
   id: string; kind: Kind; content: string; project: string | null; tags: string; keys: string;
   created_at: string; created_by: string; updated_at: string; updated_by: string;
-  last_recalled_at: string | null; deleted_at: string | null;
+  last_recalled_at: string | null; deleted_at: string | null; deleted_by?: string | null;
+  valid_until: string | null; source: Source | null; source_note: string | null; source_by: string | null;
 }
 export interface HistoryRow {
   id: number; memory_id: string; action: HistoryEntry['action']; content: string; project: string | null;
   tags: string; changed_at: string; changed_by: string;
+  valid_until: string | null; source: Source | null; source_note: string | null; source_by: string | null;
 }
 interface SuggestionRow {
   id: string; action: Suggestion['action']; memory_id: string | null; content: string | null; tags: string;
   kind: Kind; project: string | null; reason: string | null;
   suggested_at: string; suggested_by: string; status: Suggestion['status']; supersedes: string; deleted_match: string | null; keys: string | null;
+  valid_until: string | null; source: Source | '' | null; source_note: string | null; source_by: string | null;
+  harvest_batch: string | null; harvest_label: string | null; similar_id: string | null;
 }
 
 const toBlob = (v: Float32Array) => Buffer.from(v.buffer, v.byteOffset, v.byteLength);
 const fromBlob = (b: Buffer) => new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
 
+/** What a stored row says, trusted no further than its shape: a restored or hand-edited database can hold anything. */
+const cleanDay = (v: unknown): string | null => (typeof v === 'string' && isDay(v) ? v : null);
+const cleanSource = (v: unknown): Source | null => (isSource(v) ? v : null);
+const cleanBy = (v: unknown): string | null => (typeof v === 'string' && v !== '' && v.length <= MAX_SOURCE_BY ? v : null);
+const cleanNote = (v: unknown): string | null => (typeof v === 'string' && v !== '' && v.length <= MAX_SOURCE_NOTE ? v : null);
+const rowMeta = (r: { valid_until: unknown; source: unknown; source_note: unknown; source_by: unknown }) => {
+  const source = cleanSource(r.source);
+  return { validUntil: cleanDay(r.valid_until), source, sourceNote: source === null ? null : cleanNote(r.source_note), sourceBy: source === null ? null : cleanBy(r.source_by) };
+};
+
+/**
+ * A fact retired because its decision moved onto a page (tidy, move_to_page) is deleted with `deleted_by` set to this prefix
+ * plus "<page> › <section>" instead of 'owner': it is gone from recall like any deleted fact and Undo restores it, but
+ * forgetting-that-sticks (deletedEmbeddings: deleted_by = 'owner') does not count it as the owner forgetting it.
+ */
+export const MOVED_PREFIX = 'moved-to-page:';
+/** deleted_by of a fact removed by an Undo (an approval or a merge taken back): not a deletion the owner chose. */
+export const UNDONE_MARK = 'undo';
+
 export const toMemory = (r: MemoryRow): Memory => ({
   id: r.id, kind: r.kind, content: r.content, project: r.project, tags: JSON.parse(r.tags) as string[], keys: r.keys ?? '',
   createdAt: r.created_at, createdBy: r.created_by, updatedAt: r.updated_at, updatedBy: r.updated_by,
   lastRecalledAt: r.last_recalled_at, deletedAt: r.deleted_at,
+  movedTo: r.deleted_at !== null && typeof r.deleted_by === 'string' && r.deleted_by.startsWith(MOVED_PREFIX) ? r.deleted_by.slice(MOVED_PREFIX.length) : null,
+  ...rowMeta(r),
 });
 export const toHistory = (r: HistoryRow): HistoryEntry => ({
   id: r.id, memoryId: r.memory_id, action: r.action, content: r.content, project: r.project,
   tags: JSON.parse(r.tags) as string[], changedAt: r.changed_at, changedBy: r.changed_by,
+  ...rowMeta(r),
 });
 const toSuggestion = (r: SuggestionRow): Suggestion => ({
   id: r.id, action: r.action, memoryId: r.memory_id, content: r.content, tags: JSON.parse(r.tags) as string[],
   kind: r.kind, project: r.project, reason: r.reason, suggestedAt: r.suggested_at, suggestedBy: r.suggested_by, status: r.status,
   supersedes: JSON.parse(r.supersedes ?? '[]') as string[], deletedMatch: r.deleted_match ?? null, keys: r.keys ?? null,
+  // A held save: null = none given, '' = clear it.
+  validUntil: r.valid_until === '' ? '' : cleanDay(r.valid_until),
+  source: r.source === '' ? '' : cleanSource(r.source),
+  sourceNote: r.source_note === '' ? '' : cleanNote(r.source_note),
+  sourceBy: cleanBy(r.source_by),
+  harvest: r.harvest_batch ? { batch: r.harvest_batch, label: r.harvest_label ?? '' } : null,
+  similarId: r.similar_id ?? null,
 });
 
 /**
@@ -111,6 +148,39 @@ export class MemoryStore {
     return this.now().toISOString();
   }
 
+  /** C2: one page of what assistants saved or changed (Activity), newest first. */
+  assistantActivity(opts: { by?: string; page?: number } = {}): ReturnType<typeof assistantActivity> {
+    return assistantActivity(this.db, opts);
+  }
+
+  /** C2: the assistants that have saved or changed something, for Activity's filter. */
+  activityAssistants(): string[] {
+    return activityAssistants(this.db);
+  }
+
+  /** C2: whether an Activity row can still be undone: nothing touched the fact after it (ref: a fact id, a history row id or a replacement id). */
+  activityUndoable(kind: 'saved' | 'updated' | 'deleted' | 'replaced', ref: string | number): boolean {
+    if (kind === 'saved') return savedUndoable(this.db, String(ref));
+    if (kind === 'replaced') return replacementUndoable(this.db, Number(ref));
+    const h = this.historyEntry(Number(ref));
+    return h !== undefined && (kind === 'updated' ? updateUndoable(this.db, h.memoryId, h.id) : deleteUndoable(this.db, h.memoryId, h.id));
+  }
+
+  /** Why Undo is not offered on an Activity row: "Already undone", "Changed since", "Deleted since" or "Stands in for replaced facts". */
+  activityWhyNot(kind: 'saved' | 'updated' | 'deleted' | 'replaced', memoryId: string | null, ref: string | number): string | null {
+    return activityWhyNot(this.db, kind, memoryId, ref);
+  }
+
+  /** C2: the owner's global switches (brain_switches): a switch's value while it is on, null while it is off. */
+  switchValue(name: string): string | null {
+    return (this.db.prepare('SELECT value FROM brain_switches WHERE name = ?').get(name) as { value: string } | undefined)?.value ?? null;
+  }
+
+  setSwitch(name: string, value: string | null): void {
+    if (value === null) this.db.prepare('DELETE FROM brain_switches WHERE name = ?').run(name);
+    else this.db.prepare('INSERT INTO brain_switches(name, value, set_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value, set_at = excluded.set_at').run(name, value, this.ts());
+  }
+
   nowDate(): Date {
     return this.now();
   }
@@ -129,8 +199,8 @@ export class MemoryStore {
 
   private writeHistory(m: Memory, action: HistoryEntry['action'], by: string): void {
     this.db.prepare(
-      'INSERT INTO memory_history(memory_id, action, content, project, tags, changed_at, changed_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    ).run(m.id, action, m.content, m.project, JSON.stringify(m.tags), this.ts(), by);
+      'INSERT INTO memory_history(memory_id, action, content, project, tags, changed_at, changed_by, valid_until, source, source_note, source_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(m.id, action, m.content, m.project, JSON.stringify(m.tags), this.ts(), by, m.validUntil, m.source, m.sourceNote, m.sourceBy);
   }
 
   private mustGet(id: string): Memory {
@@ -211,15 +281,15 @@ export class MemoryStore {
     return project === null ? null : this.aliasTarget(project) ?? project;
   }
 
-  insert(m: { kind: Kind; content: string; project: string | null; tags: string[]; keys?: string; embedding: Float32Array; by: string }): Memory {
+  insert(m: { kind: Kind; content: string; project: string | null; tags: string[]; keys?: string; embedding: Float32Array; by: string; meta?: FactMeta }): Memory {
     const id = randomUUID();
     const t = this.ts();
     this.db.transaction(() => {
       const project = this.real(m.project);
       this.db.prepare(
-        `INSERT INTO memories(id, kind, content, project, tags, keys, embedding, created_at, created_by, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(id, m.kind, m.content, project, JSON.stringify(m.tags), m.keys ?? '', toBlob(m.embedding), t, m.by, t, m.by);
+        `INSERT INTO memories(id, kind, content, project, tags, keys, embedding, created_at, created_by, updated_at, updated_by, valid_until, source, source_note, source_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(id, m.kind, m.content, project, JSON.stringify(m.tags), m.keys ?? '', toBlob(m.embedding), t, m.by, t, m.by, m.meta?.validUntil ?? null, m.meta?.source ?? null, m.meta?.sourceNote ?? null, m.meta?.sourceBy ?? null);
       this.ftsReplace(id, m.content, project, m.tags);
       this.ensureProject(project, m.kind, m.by);
     })();
@@ -232,7 +302,7 @@ export class MemoryStore {
   }
 
   /** `keys` left out keeps the fact's search words. */
-  update(id: string, f: { content: string; project: string | null; tags: string[]; keys?: string; embedding: Float32Array; by: string }): Memory {
+  update(id: string, f: { content: string; project: string | null; tags: string[]; keys?: string; embedding: Float32Array; by: string; meta?: FactMeta }): Memory {
     this.db.transaction(() => {
       const prev = this.mustGet(id);
       if (prev.deletedAt) throw new Error(`memory is deleted: ${id}`);
@@ -246,23 +316,43 @@ export class MemoryStore {
    * Changes only the project and tags, recorded in history. updated_at stays, because the text did not change and
    * statuses are ordered by it.
    */
-  relabel(id: string, f: { project: string | null; tags: string[]; by: string }): Memory {
+  relabel(id: string, f: { project: string | null; tags: string[]; by: string; meta?: FactMeta }): Memory {
     this.db.transaction(() => {
       const prev = this.mustGet(id);
       const project = this.real(f.project);
       this.writeHistory(prev, 'update', f.by);
       this.db.prepare('UPDATE memories SET project = ?, tags = ? WHERE id = ?').run(project, JSON.stringify(f.tags), id);
+      if (f.meta) this.writeMeta(id, f.meta);
       this.ftsReplace(id, prev.content, project, f.tags);
       this.ensureProject(project, prev.kind, f.by);
     })();
     return this.mustGet(id);
   }
 
-  private applyContent(id: string, f: { content: string; project: string | null; tags: string[]; keys?: string; embedding: Float32Array }, by: string): void {
+  private writeMeta(id: string, meta: FactMeta): void {
+    this.db.prepare('UPDATE memories SET valid_until = ?, source = ?, source_note = ?, source_by = ? WHERE id = ?').run(meta.validUntil, meta.source, meta.sourceNote, meta.sourceBy, id);
+  }
+
+  /**
+   * A1/A2: changes only the date and the source, recorded in history (so "Undo to this" brings the old ones back).
+   * updated_at stays, as for relabel: the text did not change. Not indexed, not embedded.
+   */
+  setMeta(id: string, meta: FactMeta, by: string): Memory {
+    this.db.transaction(() => {
+      const prev = this.mustGet(id);
+      if (prev.deletedAt) throw new Error(`memory is deleted: ${id}`);
+      this.writeHistory(prev, 'update', by);
+      this.writeMeta(id, meta);
+    })();
+    return this.mustGet(id);
+  }
+
+  private applyContent(id: string, f: { content: string; project: string | null; tags: string[]; keys?: string; embedding: Float32Array; meta?: FactMeta }, by: string): void {
     const project = this.real(f.project);
     this.db.prepare(
       'UPDATE memories SET content = ?, project = ?, tags = ?, keys = COALESCE(?, keys), embedding = ?, updated_at = ?, updated_by = ? WHERE id = ?',
     ).run(f.content, project, JSON.stringify(f.tags), f.keys ?? null, toBlob(f.embedding), this.ts(), by, id);
+    if (f.meta) this.writeMeta(id, f.meta);
     this.ftsReplace(id, f.content, project, f.tags);
     this.ensureProject(project, this.mustGet(id).kind, by);
   }
@@ -280,11 +370,17 @@ export class MemoryStore {
     return this.mustGet(id);
   }
 
-  softDelete(id: string, by: string): void {
+  /**
+   * `movedTo`: "<page> › <section>" when the fact is retired because it moved onto a page (see MOVED_PREFIX); `undone`: the
+   * fact goes because an Undo took back the save that made it. Neither is the owner forgetting it (deleted_by is not
+   * 'owner'); the history still records `by`. A name that starts with MOVED_PREFIX is never read as a moved marker.
+   */
+  softDelete(id: string, by: string, how: { movedTo?: string; undone?: boolean } = {}): void {
+    const marker = how.movedTo !== undefined ? `${MOVED_PREFIX}${how.movedTo}` : how.undone ? UNDONE_MARK : by.startsWith(MOVED_PREFIX) ? `client:${by}` : by;
     this.db.transaction(() => {
       const prev = this.mustGet(id);
       this.writeHistory(prev, 'delete', by);
-      this.db.prepare('UPDATE memories SET deleted_at = ?, deleted_by = ? WHERE id = ?').run(this.ts(), by, id);
+      this.db.prepare('UPDATE memories SET deleted_at = ?, deleted_by = ? WHERE id = ?').run(this.ts(), marker, id);
       this.ftsRemove(id);
     })();
   }
@@ -307,7 +403,7 @@ export class MemoryStore {
       } else {
         if (!embedding) throw new Error('embedding required to restore a previous version');
         this.writeHistory(cur, 'restore', by);
-        this.applyContent(cur.id, { content: h.content, project: h.project, tags: JSON.parse(h.tags) as string[], embedding }, by);
+        this.applyContent(cur.id, { content: h.content, project: h.project, tags: JSON.parse(h.tags) as string[], embedding, meta: metaOf(toHistory(h)) }, by);
       }
     })();
     return this.mustGet(h.memory_id);
@@ -650,11 +746,11 @@ export class MemoryStore {
   }
 
   /** Kind, project and reason default to a profile change. */
-  addSuggestion(s: Omit<Suggestion, 'id' | 'suggestedAt' | 'status' | 'kind' | 'project' | 'reason' | 'supersedes' | 'deletedMatch' | 'keys'> & Partial<Pick<Suggestion, 'kind' | 'project' | 'reason' | 'supersedes' | 'deletedMatch' | 'keys'>>): Suggestion {
+  addSuggestion(s: Omit<Suggestion, 'id' | 'suggestedAt' | 'status' | 'kind' | 'project' | 'reason' | 'supersedes' | 'deletedMatch' | 'keys' | 'validUntil' | 'source' | 'sourceNote' | 'sourceBy' | 'harvest' | 'similarId'> & Partial<Pick<Suggestion, 'kind' | 'project' | 'reason' | 'supersedes' | 'deletedMatch' | 'keys' | 'validUntil' | 'source' | 'sourceNote' | 'sourceBy' | 'harvest' | 'similarId'>>): Suggestion {
     const id = randomUUID();
     this.db.prepare(
-      'INSERT INTO profile_suggestions(id, action, memory_id, content, tags, kind, project, reason, suggested_at, suggested_by, supersedes, deleted_match, keys) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).run(id, s.action, s.memoryId, s.content, JSON.stringify(s.tags), s.kind ?? 'profile', s.project ?? null, s.reason ?? null, this.ts(), s.suggestedBy, JSON.stringify(s.supersedes ?? []), s.deletedMatch ?? null, s.keys ?? null);
+      'INSERT INTO profile_suggestions(id, action, memory_id, content, tags, kind, project, reason, suggested_at, suggested_by, supersedes, deleted_match, keys, valid_until, source, source_note, source_by, harvest_batch, harvest_label, similar_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(id, s.action, s.memoryId, s.content, JSON.stringify(s.tags), s.kind ?? 'profile', s.project ?? null, s.reason ?? null, this.ts(), s.suggestedBy, JSON.stringify(s.supersedes ?? []), s.deletedMatch ?? null, s.keys ?? null, s.validUntil ?? null, s.source ?? null, s.sourceNote ?? null, s.sourceBy ?? null, s.harvest?.batch ?? null, s.harvest?.label ?? null, s.similarId ?? null);
     return this.getSuggestion(id)!;
   }
 
@@ -667,6 +763,11 @@ export class MemoryStore {
   getSuggestion(id: string): Suggestion | undefined {
     const r = this.db.prepare('SELECT * FROM profile_suggestions WHERE id = ?').get(id) as SuggestionRow | undefined;
     return r && toSuggestion(r);
+  }
+
+  /** Undo: a suggestion just answered waits again. */
+  reopenSuggestion(id: string): void {
+    this.db.prepare("UPDATE profile_suggestions SET status = 'pending', resolved_at = NULL WHERE id = ?").run(id);
   }
 
   resolveSuggestion(id: string, status: 'approved' | 'rejected'): void {

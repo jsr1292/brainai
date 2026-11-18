@@ -283,3 +283,10 @@ test('a picture address written with entities is not a picture: drawing and coun
   assert.doesNotMatch(pmd(encoded), /<img|class="pic"/);
   assert.deepEqual(imageIdsIn(encoded), []);
 });
+
+test('[[fact:id|words]] links the fact under its id and shows the writer\'s words; a missing fact shows the words, not the id', () => {
+  assert.deepEqual(findLinks('Use sqlite [[fact:abc-123|fact]] now'), [{ kind: 'fact', target: 'abc-123' }]);
+  const html = renderMarkdown('Use sqlite [[fact:abc-123|fact]].', (t) => (t === 'fact:abc-123' ? { href: '/memories/abc-123', label: 'Use sqlite for everything and more' } : null)).value;
+  assert.match(html, /<a class="wikilink" href="\/memories\/abc-123">fact<\/a>/);
+  assert.match(renderMarkdown('x [[fact:gone|fact]]', () => null).value, /<span class="wikilink missing">fact<\/span>/);
+});

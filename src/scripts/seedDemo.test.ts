@@ -7,6 +7,7 @@ import { OwnerAuth } from '../auth/owner.js';
 import { totpAt } from '../auth/totp.js';
 import { openDb } from '../db.js';
 import { createFakeEmbedder } from '../memory/fakeEmbedder.js';
+import { MemoryService } from '../memory/service.js';
 import { MemoryStore } from '../memory/store.js';
 import { DEMO_PASSWORD, DEMO_TOTP_SECRET, seedDemo, setDemoLogin } from './seedDemo.js';
 
@@ -29,6 +30,8 @@ test('the demo brain has every project, a week of facts, two pages, a discussion
   assert.equal(projects.length, 10, 'the nine demo projects and developer-handbook');
   assert.deepEqual(projects.filter((p) => p.state !== 'open').map((p) => `${p.name}:${p.state}`), ['photo-archive:parked', 'recipe-box:idea']);
   assert.equal((db.prepare('SELECT count(*) AS n FROM discussions').get() as { n: number }).n, 1);
+  assert.equal(new MemoryService(store, createFakeEmbedder(), { duplicateThreshold: 0.97, minRecallSimilarity: 0.2, recallConfidentSimilarity: 0.5 }).pendingSuggestions().length, 1, 'a held suggestion waits in the Inbox');
+  assert.equal(new MemoryService(store, createFakeEmbedder(), { duplicateThreshold: 0.97, minRecallSimilarity: 0.2, recallConfidentSimilarity: 0.5 }).openDisagreements().length, 1, 'one pair of facts disagrees');
   const auth = new OwnerAuth(db, () => new Date());
   assert.equal(await auth.verifyPassword(DEMO_PASSWORD), true);
   assert.equal(auth.verifyTotp(totpAt(DEMO_TOTP_SECRET, Math.floor(Date.now() / 30_000))), true);

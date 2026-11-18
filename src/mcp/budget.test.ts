@@ -21,13 +21,13 @@ test('packByBudget keeps the order', () => {
   assert.deepEqual(packByBudget(rows(12, 1000), len, { budget: 8000, min: 5 }).map((r) => r.i), [0, 1, 2, 3, 4, 5, 6, 7]);
 });
 
-test('fitBrief: when the floor alone is over the limit, only the floor stays (newest 3 decisions in full and up to 5 owner notes; the rest dropped, no pages)', () => {
+test('fitBrief: when the floor alone is over the limit, only the floor stays (newest 3 decisions in full, up to 5 owner notes and the first 2 pages; the rest dropped)', () => {
   // Every full decision costs 5,000 characters, every other row 10, so even the floor passes the limit.
   const render = (f: BriefFit) => 'x'.repeat(f.fullDecisions.size * 5000 + (6 - f.dropped.size - f.fullDecisions.size) * 10 + f.pages * 100 + f.notes * 100);
   const fit = fitBrief({ limit: 9000, statuses: 1, decisions: 6, founding: 2, pages: 5, notes: 5, topics: 0, render });
   assert.deepEqual([...fit.fullDecisions].sort(), [3, 4, 5]);
   assert.deepEqual([...fit.dropped].sort(), [0, 1, 2]);
-  assert.equal(fit.pages, 0);
+  assert.equal(fit.pages, 2, 'the first 2 pages are part of the floor');
   assert.equal(fit.notes, 5, 'the owner notes are part of the floor');
 });
 

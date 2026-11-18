@@ -8,8 +8,9 @@ import { Router, type RequestHandler } from 'express';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { backupFiles, claudeCodeHasBrainEntry, disconnect, dropLeftoverKey, tracesOfThisBrain, toolStates } from '../desktop/tools.js';
+import { backupFiles, claudeCodeHasBrainEntry, disconnect, dropLeftoverKey, dropSettingsBackup, tracesOfThisBrain, toolStates } from '../desktop/tools.js';
 import { deleteTunnel } from '../desktop/cloudflared.js';
+import { removeToolHooks } from '../desktop/hooksInstall.js';
 import { removeFolderReport, removeHooks, type Launchctl } from '../desktop/leftovers.js';
 import { viaDoor } from '../desktop/publicDoor.js';
 import { makeSavedCopy, moveIntoSaved, writeReadme } from '../saved/savedCopy.js';
@@ -62,6 +63,7 @@ export function removeRoutes(d: AppDeps): Router {
     const leftTools: { name: string; reason: string }[] = [];
     let tunnel: { hostname: string | null; deleted: boolean; reason?: string } | null = null;
     let originals: string[] = [];
+    const handled: string[] = [];
     // Every step after the save is on its own: one that throws becomes a line in the result, and the rest still run.
     const step = async (what: string, fn: () => Promise<void> | void) => {
       try { await fn(); } catch (e) {
@@ -89,7 +91,14 @@ export function removeRoutes(d: AppDeps): Router {
             tools.push({ name: tool.name, what: 'left alone', detail: tool.detail }); continue;
           }
           const traces = tool.state === 'connected' ? 'yes' : await tracesOfThisBrain(tool.id, env);
-          if (traces === 'no') continue;
+          if (traces === 'no') {
+            // Not connected here, but the save reminders BrainAI added to Codex or Cursor may still be (Connect added them, the connection went).
+            if (tool.id !== 'claude-code') {
+              const note = removeToolHooks(tool.id, env, false);
+              if (note) kept.push(note);
+            }
+            continue;
+          }
           if (traces === 'unreadable') {
             const reason = `BrainAI couldn't read its settings; if it has a brainai entry for ${host}, remove it by hand.`;
             tools.push({ name: tool.name, what: 'unreadable', detail: reason });
@@ -105,6 +114,7 @@ export function removeRoutes(d: AppDeps): Router {
       await step("Claude Code's hooks", async () => {
         const hooks = removeHooks(env, await claudeCodeHasBrainEntry(env));
         if (hooks.kept) kept.push(hooks.kept);
+        else { const gone = dropSettingsBackup(env); if (gone) handled.push(gone); }
       });
       await step('the folder report', () => {
         const report = removeFolderReport({ home: env.home, platform }, ours, removeSeams.launchctl);
@@ -116,7 +126,7 @@ export function removeRoutes(d: AppDeps): Router {
     // The README is written again with the final checklist, whatever happened above.
     const checklist = savedChecklist(d, 'app', { tunnel, leftTools, kept });
     try {
-      writeReadme(saved.folder, { day: saved.day, facts: saved.facts, pages: saved.pages, checklist, originals });
+      writeReadme(saved.folder, { day: saved.day, facts: saved.facts, pages: saved.pages, checklist, originals, handled });
     } catch (e) {
       console.error('writing the final README failed:', e);
       kept.push(`Failed: the README in the saved folder, ${e instanceof Error ? e.message : String(e)}`);

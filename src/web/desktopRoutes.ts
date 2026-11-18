@@ -5,7 +5,8 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { connect, disconnect, toolStates, type ToolEnv, type ToolId } from '../desktop/tools.js';
+import { addedNotSignedIn, withSignIn } from './toolSignIn.js';
+import { addReminders, connect, disconnect, toolStates, type ToolEnv, type ToolId } from '../desktop/tools.js';
 import { setupText } from '../setup/texts.js';
 import type { AppDeps } from './app.js';
 import { appKeyCheck, requireOwner } from './authRoutes.js';
@@ -13,6 +14,7 @@ import { html, page } from './html.js';
 import { viaDoor } from '../desktop/publicDoor.js';
 import { isEmptyBrain, stageRestore } from '../saved/restore.js';
 import { kindOfFile } from '../saved/backupFile.js';
+import { addedToolsLine } from './dashboardViews.js';
 import { firstLine, modelsLine, modelsProgress, toolsPage, welcomePage } from './desktopViews.js';
 import { readHardware, suggest } from '../models/hardware.js';
 import type { ModelChoice } from '../models/choice.js';
@@ -67,7 +69,7 @@ export function toolEnv(d: AppDeps): ToolEnv | null {
   if (!d.localMode || !d.tools) return null;
   const mcpUrl = new URL('/mcp', d.publicUrl).href;
   const { bridgeCli, ...tools } = d.tools;
-  const env: ToolEnv = { ...tools, mcpUrl, rules: (slug) => setupText(slug, mcpUrl, d.setupOverlay) };
+  const env: ToolEnv = { hooksDir: fileURLToPath(new URL('../hooks/', import.meta.url)), ...tools, mcpUrl, rules: (slug) => setupText(slug, mcpUrl, d.setupOverlay) };
   // Disconnect ends a tool's sign-in too, through the same revoke as Settings › Connections (the rows stay, marked revoked).
   env.endSignIns = (toolName) => {
     const live = d.provider.listGrants().filter((g) => !g.revokedAt && g.clientName.toLowerCase().startsWith(toolName.toLowerCase()));
@@ -87,6 +89,29 @@ export function toolEnv(d: AppDeps): ToolEnv | null {
   return env;
 }
 
+/** The tools' looks start their CLIs (up to 30 s each): the answer is kept for a short while and shared by Settings › Tools and the Settings line. */
+const STATES_MS = 30_000;
+const stateCache = new WeakMap<AppDeps, { at: number; grants: string; states: Promise<Awaited<ReturnType<typeof toolStates>>> }>();
+export function cachedToolStates(d: AppDeps, env: ToolEnv): Promise<Awaited<ReturnType<typeof toolStates>>> {
+  // A sign-in granted or revoked elsewhere (Settings › Connections) changes what a look says, so it ends the kept answer too.
+  const grants = d.provider.listGrants().map((g) => `${g.id}:${g.revokedAt ?? ''}`).join(',');
+  const hit = stateCache.get(d);
+  if (hit && hit.grants === grants && d.now().getTime() - hit.at < STATES_MS) return hit.states;
+  const states = toolStates(env);
+  stateCache.set(d, { at: d.now().getTime(), grants, states });
+  states.catch(() => { if (stateCache.get(d)?.states === states) stateCache.delete(d); });
+  return states;
+}
+/** Forgets the kept looks: a connect, disconnect or replace changed what they would say. */
+export const forgetToolStates = (d: AppDeps) => { stateCache.delete(d); };
+
+/** Local mode: the names of the tools BrainAI added that have not signed in yet (for Settings › Connections). */
+export async function addedToolNames(d: AppDeps): Promise<string[]> {
+  const env = toolEnv(d);
+  if (!env) return [];
+  try { return addedNotSignedIn(withSignIn(await cachedToolStates(d, env), d.provider.listGrants())).map((t) => t.name); } catch { return []; }
+}
+
 export function desktopRoutes(d: AppDeps): Router {
   const router = Router();
   const env = toolEnv(d);
@@ -102,9 +127,17 @@ export function desktopRoutes(d: AppDeps): Router {
     return r && Date.now() - r.at < 120_000 ? r.text : null;
   };
 
+  // The "added, not signed in yet" line of Settings, off the page's own request (the tools' CLIs can take seconds). Only on
+  // this computer: never through the public door, and only for the owner.
+  const sameComputer: RequestHandler = (req, _res, next) => (viaDoor(req) ? next('router') : next());
+  router.get('/settings/tools/added', sameComputer, owner, async (_req, res) => {
+    const names = await addedToolNames(d);
+    res.set('Cache-Control', 'no-store').type('html').send(addedToolsLine(names).value);
+  });
+
   router.get('/settings/tools', owner, async (req, res) => {
     const said = resultFor(req.query.tool);
-    res.type('html').send(page(`Tools on ${thisComputer()}`, toolsPage({ tools: await toolStates(env), windows: windows(env), said, cursorRules: env.rules('claude-code') }),
+    res.type('html').send(page(`Tools on ${thisComputer()}`, toolsPage({ tools: withSignIn(await cachedToolStates(d, env), d.provider.listGrants()), windows: windows(env), said, cursorRules: env.rules('claude-code') }),
       { nav: true, tab: null, back: { href: '/settings#connections', label: 'Settings' } }));
   });
 
@@ -114,13 +147,23 @@ export function desktopRoutes(d: AppDeps): Router {
       if (!isId(id)) return next();
       const replace = (req.body as Record<string, unknown> | undefined)?.replace === '1';
       const r = what === 'connect' ? await connect(id, env, { replace }) : await disconnect(id, env);
+      forgetToolStates(d);
       if (r.ok) await d.refreshAskCommands?.().catch(() => {});
-      const said = r.ok ? (what === 'connect' ? `Connected. Next: ${r.signIn}` : (id === 'claude-desktop' ? 'Disconnected. Its key was revoked.' : r.ended ? 'Disconnected. Its sign-in was ended too.' : 'Disconnected. If it is still listed in Settings › Connections, revoke it there.')) : r.reason;
+      const hooks = r.ok && r.hooksNote ? ` ${r.hooksNote}` : '';
+      const said = r.ok ? ((what === 'connect' ? `Added. One step left: ${r.signIn}` : (id === 'claude-desktop' ? 'Disconnected. Its key was revoked.' : r.ended ? 'Disconnected. Its sign-in was ended too.' : 'Disconnected. If it is still listed in Settings › Connections, revoke it there.')) + hooks) : r.reason;
       results.set(id, { text: said, at: Date.now() });
       const back = (req.body as Record<string, unknown> | undefined)?.back === 'welcome' ? '/welcome?step=3&tool=' : '/settings/tools?tool=';
       res.redirect(303, back + id);
     });
   }
+  router.post('/settings/tools/:id/reminders', owner, async (req, res, next) => {
+    const id = req.params.id as string;
+    if (!isId(id)) return next();
+    const r = await addReminders(id, env);
+    forgetToolStates(d);
+    results.set(id, { text: r.ok ? `Save reminders added.${r.hooksNote ? ` ${r.hooksNote}` : ''}` : r.reason, at: Date.now() });
+    res.redirect(303, `/settings/tools?tool=${id}`);
+  });
   // The restore pages exist only on this computer, never through the public door.
   const here: RequestHandler = (req, _res, next) => (viaDoor(req) ? next('router') : next());
   const dataDir = d.statusDir;
@@ -147,7 +190,7 @@ export function desktopRoutes(d: AppDeps): Router {
     const restore = step === 1 && canRestore() ? (req.query.restore === '1' ? 'choose' as const : 'offer' as const) : null;
     const restored = step === 3 ? takeRestored() : null;
     res.type('html').send(page('Welcome to BrainAI', welcomePage({
-      step, tools: step === 3 ? await toolStates(env) : [], windows: windows(env), said, cursorRules: env.rules('claude-code'), restore, restored,
+      step, tools: step >= 3 ? withSignIn(await cachedToolStates(d, env), d.provider.listGrants()) : [], windows: windows(env), said, cursorRules: env.rules('claude-code'), restore, restored,
       models: step === 2 && d.models ? { hardware: await (d.hardware ?? (() => readHardware(dataDir ?? process.cwd())))(), installed: await d.models.installedIds() } : undefined,
       modelsLine: step >= 3 && d.models ? modelsLine(d.models.status(), { dataDir }) : undefined,
     }),

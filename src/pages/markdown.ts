@@ -105,7 +105,7 @@ export function findLinks(body: string): { kind: 'title' | 'fact'; target: strin
     if (fenced[i]) return;
     for (const m of line.replace(CODE_SPAN, '').matchAll(WIKI)) {
       const t = m[1]!.trim();
-      const link = t.startsWith('fact:') ? { kind: 'fact' as const, target: t.slice(5).trim() } : { kind: 'title' as const, target: t };
+      const link = t.startsWith('fact:') ? { kind: 'fact' as const, target: t.slice(5).split('|')[0]!.trim() } : { kind: 'title' as const, target: t };
       const key = `${link.kind}:${link.target}`;
       if (link.target === '' || seen.has(key)) continue;
       seen.add(key);
@@ -190,9 +190,14 @@ marked.use({
       return m ? { type: 'wikilink', raw: m[0], target: m[1]!.trim() } : undefined;
     },
     renderer(token) {
-      const t = (token as unknown as { target: string }).target;
-      const r = resolving(t);
-      if (!r) return `<span class="wikilink missing">${esc(t)}</span>`;
+      const full = (token as unknown as { target: string }).target;
+      // [[fact:id|words]]: a fact link that shows the writer's own words (a line that already says what the fact says).
+      const bar = full.startsWith('fact:') ? full.indexOf('|') : -1;
+      const t = bar < 0 ? full : full.slice(0, bar).trim();
+      const alias = bar < 0 ? '' : full.slice(bar + 1).trim();
+      const found = resolving(t);
+      const r = found && alias !== '' ? { ...found, label: alias } : found;
+      if (!r) return `<span class="wikilink missing">${esc(alias !== '' ? alias : t)}</span>`;
       const marker = r.replacedHref === undefined ? '' : ` <a class="fact-replaced" href="${esc(r.replacedHref)}">${esc(r.replacedLabel ?? 'replaced')}</a>`;
       return `<a class="wikilink" href="${esc(r.href)}">${esc(r.label)}</a>${marker}`;
     },

@@ -12,10 +12,10 @@ function world(t: TestContext, state: FakeTailscaleState | null, timeoutMs?: num
 }
 
 test('Tailscale missing, stopped or signed out says what to do; running gives the Mac\'s public name', async (t) => {
-  assert.deepEqual(await tailscaleState(world(t, null).env), { installed: false, running: false, host: null });
-  assert.deepEqual(await tailscaleState(world(t, { backend: 'Stopped' }).env), { installed: true, running: false, host: null });
-  assert.deepEqual(await tailscaleState(world(t, { backend: 'NeedsLogin' }).env), { installed: true, running: false, host: null });
-  assert.deepEqual(await tailscaleState(world(t, { backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' }).env), { installed: true, running: true, host: 'brainai-mac.tail1234.ts.net' });
+  assert.deepEqual(await tailscaleState(world(t, null).env), { installed: false, running: false, host: null, timedOut: false });
+  assert.deepEqual(await tailscaleState(world(t, { backend: 'Stopped' }).env), { installed: true, running: false, host: null, timedOut: false });
+  assert.deepEqual(await tailscaleState(world(t, { backend: 'NeedsLogin' }).env), { installed: true, running: false, host: null, timedOut: false });
+  assert.deepEqual(await tailscaleState(world(t, { backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' }).env), { installed: true, running: true, host: 'brainai-mac.tail1234.ts.net', timedOut: false });
 });
 
 test('Funnel on shares this loopback port on 443 and gives back the public address; off stops it', async (t) => {
@@ -46,7 +46,7 @@ test('Funnel not yet allowed, Tailscale signed out, or the command hanging: a cl
 
 test('a warning from Tailscale on stderr does not make it look signed out', async (t) => {
   const { env } = world(t, { backend: 'Running', warn: true });
-  assert.deepEqual(await tailscaleState(env), { installed: true, running: true, host: 'brainai-mac.tail1234.ts.net' });
+  assert.deepEqual(await tailscaleState(env), { installed: true, running: true, host: 'brainai-mac.tail1234.ts.net', timedOut: false });
   assert.equal((await funnelOn(env, 3100)).ok, true);
 });
 
@@ -64,4 +64,16 @@ test('a funnel command that fails or hangs after it ran is undone, so Tailscale 
 test('a Tailscale link in a successful answer is not read as "approval needed"', async (t) => {
   const { env } = world(t, { backend: 'Running', linkOnSuccess: true });
   assert.deepEqual(await funnelOn(env, 3100), { ok: true, url: 'https://brainai-mac.tail1234.ts.net' });
+});
+
+test('the status check the page shows has its own short limit, while Turn on keeps the long one', async (t) => {
+  const { env } = world(t, { hang: true }, 30_000);
+  const t0 = Date.now();
+  assert.deepEqual(await tailscaleState({ ...env, statusTimeoutMs: 300 }), { installed: true, running: false, host: null, timedOut: true });
+  assert.ok(Date.now() - t0 < 5000, 'gave up at the short limit, not the 30 s one');
+  // Turn on (funnelOn) asks status with timeoutMs, not statusTimeoutMs.
+  const on = world(t, { hang: true }, 700);
+  const r = await funnelOn({ ...on.env, statusTimeoutMs: 100 }, 3100);
+  assert.equal(r.ok, false);
+  assert.ok(on.f.calls().length >= 1);
 });
