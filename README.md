@@ -27,7 +27,7 @@ server later without losing a memory.
 | **A cloud server** | The same, without a machine at home | A small rented Linux server, Docker, a domain on Cloudflare | `docs/CLOUD.md` |
 
 - **Your computer:** the app runs BrainAI with no server, no domain and no password, and connects Claude Code,
-  Codex, OpenCode, Cursor and Claude's desktop app in one click each. *Reach from phone and web* adds a public address (through Tailscale,
+  Codex, OpenCode, Cursor and Claude's desktop app in one click each (with save reminders where the tool allows). *Reach from phone and web* adds a public address (through Tailscale,
   or your own domain on Cloudflare) while the Mac is on. The Mac app is about 281 MiB: it does not carry the search
   models. On first run it suggests models for your computer and downloads the ones you pick (change them later in
   Settings › Search). It tells you when a new version is out and updates itself when you say so.
@@ -46,21 +46,31 @@ server later without losing a memory.
   OpenCode on your computer. Each connects with OAuth, and you choose what it may do.
 - **One-install plugin for Claude Code:** `claude plugin marketplace add jsr1292/brainai`, then
   `claude plugin install brainai@brainai-plugins` (`docs/CLIENTS.md`, "Install as a plugin").
-- **Recall by meaning,** in several languages, with a briefing per project: its statuses, decisions and roadmap in
-  one call. A small local model reorders each search's first matches so the best answer comes first. Projects can
+- **Recall by meaning,** in several languages, with a briefing per project: its statuses, decisions, roadmap and pages
+  in one call. A small local model reorders each search's first matches so the best answer comes first. Projects can
   have nicknames, and an assistant can send an English version of a question asked in another language. How well it
-  finds things is measured on the public LoCoMo test (`docs/BENCHMARK.md`).
+  finds things is measured on two public tests, LoCoMo and LongMemEval, retrieval only (`docs/BENCHMARK.md`).
+- **Facts that say how long they hold and where they came from.** An assistant can mark a fact as valid until a date
+  (a deadline, a version, who holds a job): every assistant then sees when it is past its date. Each fact can say
+  whether you said it or an assistant inferred it, and who recorded that, so an assistant's claim never reads as your
+  own words.
 - **You approve what matters.** Changes to your profile, and memories that read like instructions to an assistant,
-  wait for you. What you delete stays deleted. Passwords and keys are refused.
-- **Disagreements come to you.** When an assistant sees two saved facts that can't both be true, it flags them and
-  you pick the one that is right; until then every assistant is told they are not settled.
-- **The dashboard:** projects and their pages, a weekly review of what moved, brain health (how up to date and ready
-  the brain is, and what waits on you), tidy-up suggestions for memories that are stale or duplicated, pictures and
-  diagrams in pages.
+  wait for you in one Inbox, grouped, with Undo. What you delete stays deleted. Passwords and keys are refused.
+- **You see and control what assistants do.** Activity lists what each assistant saved, changed or deleted, with Undo
+  on each fact. "Saves wait for me" holds one assistant's saves for your approval; "Pause all saves" stops them all.
+- **Nothing gets lost at the end of a session.** Save reminders for Claude Code, Codex and Cursor, and a harvest
+  skill: an assistant sends what a session decided in one batch, which waits in your Inbox until you approve it.
+- **Memory that stays tidy.** Ask an assistant to tidy a project: it proposes merging, replacing or moving old
+  decisions into the project's page, and you approve each one. Tidy-up suggestions flag what is stale, duplicated or
+  past its date. When two facts can't both be true, you pick the one that is right.
+- **Bring what you already have.** Paste what ChatGPT, Claude or Gemini remember about you and tick what to keep, let a
+  coding assistant propose facts from your project folders, or add a Markdown file as a page.
+- **The dashboard:** projects and their pages, a weekly review of what moved, brain health, pictures and diagrams in
+  pages, on a computer or a phone.
 - **Discussions:** ask several assistants the same question and let them answer each other in rounds.
 - **Shared skills:** share a skill from one computer and your other assistants can load it.
 - **Backups that leave the house:** nightly snapshots to your other drives, a nightly Markdown export into git, and a
-  weekly encrypted copy in the cloud.
+  weekly encrypted copy in the cloud. In the app, Back up now and a second folder of your choice.
 - **You can leave any time, with everything:** one saved folder with every memory, readable and ready to bring back.
 
 ## A look around
@@ -71,8 +81,10 @@ The screenshots show a sample brain with made-up projects (`npm run demo:seed`, 
 |---|---|
 | ![A project page with a diagram drawn from text](docs/images/page.png) | ![The week review: what moved, what was decided, what waits on you](docs/images/week.png) |
 | **Pages** keep what a project is and how it runs, with diagrams drawn from text. | **The week** shows what moved on each roadmap, what was decided and by which assistant. |
-| ![The graph of projects, grouped by area](docs/images/graph.png) | ![Setting up Claude Code: the address, the setup text and a live check](docs/images/connect.png) |
-| **The graph** places every project by area, with the threads between them. | **Connecting an app** takes three steps, and the page shows whether it worked. |
+| ![The Inbox: everything that waits for you, grouped](docs/images/inbox.png) | ![Activity: what each assistant saved or changed, with Undo](docs/images/activity.png) |
+| **The Inbox** holds what waits for you, grouped: approvals, harvested sessions, tidy proposals, disagreements. | **Activity** shows what each assistant saved or changed, day by day, with Undo. |
+| ![The graph of projects, grouped by area](docs/images/graph.png) | ![Connecting an assistant: the address, the setup text and a live check](docs/images/connect.png) |
+| **The graph** places every project by area, with the threads between them. | **Connecting an app** takes a few steps, and the page shows whether it worked. |
 
 ![The dashboard on a phone](docs/images/phone.png)
 
