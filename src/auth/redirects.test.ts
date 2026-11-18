@@ -8,7 +8,6 @@ import { OwnerAuth } from './owner.js';
 test('seeded entries: Claude callbacks and loopback', () => {
   const a = new RedirectAllowlist(openDb(':memory:'));
   assert.ok(a.isAllowed('https://claude.ai/api/mcp/auth_callback'));
-  assert.ok(a.isAllowed('https://claude.ai/api/mcp/auth_callback?x=1'));
   assert.ok(a.isAllowed('http://localhost:49152/callback'));
   assert.ok(a.isAllowed('http://127.0.0.1:3000/'));
   // The consent page's CSP form-action can't name an IPv6 literal, so the browser would block the redirect to it.
@@ -49,4 +48,11 @@ test('cli redirects list/add/remove', async () => {
   await COMMANDS.redirects(ctx(['remove', 'https://grok.com/cb']));
   assert.ok(!new RedirectAllowlist(db).isAllowed('https://grok.com/cb'));
   await assert.rejects(COMMANDS.redirects(ctx(['add'])));
+});
+
+test('an https callback with a query is not allowed, though its exact address is', () => {
+  const a = new RedirectAllowlist(openDb(':memory:'));
+  assert.ok(a.isAllowed('https://claude.ai/api/mcp/auth_callback'));
+  assert.ok(!a.isAllowed('https://claude.ai/api/mcp/auth_callback?next=https://evil.example/'));
+  assert.ok(a.isAllowed('http://localhost:49152/callback?x=1'));
 });

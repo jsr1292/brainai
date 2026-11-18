@@ -28,6 +28,8 @@ says what is new.
 - A brain icon sits in the menu bar: **Open BrainAI**, **Start at login** (on after the first start), **Quit BrainAI**.
   Closing the window leaves BrainAI running; Quit stops it.
 - Only apps on this Mac can reach it, and there is no password, until you turn on Reach from phone and web (below).
+  On this computer BrainAI is used from its own window. With no password set, a browser is not signed in: it shows
+  "Open BrainAI's window". Only the window (through its one-time ticket) or the password gives a session.
 
 ## Connecting your tools
 
@@ -42,7 +44,7 @@ Settings › Tools on this Mac, with **Disconnect**.
 | OpenCode | `mcp.brainai` in `~/.config/opencode/opencode.json`, rules in `~/.config/opencode/AGENTS.md` | `opencode mcp auth brainai` |
 | Cursor | `mcpServers.brainai` in `~/.cursor/mcp.json` | Paste the rules shown into Cursor › Settings › Rules |
 
-Each tool's sign-in shows BrainAI's consent page: you click Allow. Connect never changes a tool that already uses
+Each tool's sign-in opens your browser, which waits and says to open BrainAI's window. There a banner shows the tool; press Review, then Approve or Deny. The browser then goes on to the tool by itself. (With a password set for Reach, the browser signs in with the password and shows the consent page, as before.) Connect never changes a tool that already uses
 another BrainAI (for example a home server, under the name `memory`) unless you press **Replace**, and even then it
 leaves that other entry alone. Every file is backed up next to itself as `<name>.brainai-backup` before a change, and
 only the part between the `<!-- brain setup -->` lines is ever written. An `opencode.jsonc` (with comments) is not
@@ -97,8 +99,14 @@ working and the password stays. Every sign-in is tied to the address it was made
 works through the public address and a local tool's only on this Mac.
 
 Tailscale forwards to a separate door that BrainAI opens only while Reach is on, and everything through it is treated
-as the internet. If BrainAI is quit, removed or reset while Funnel is still on in Tailscale, the public address reaches
-nothing. Once set, the password and the authenticator are not changed from the dashboard.
+as the internet. BrainAI turns Funnel off when it stops (Quit, an update restart) and back on at every start, so after a normal stop Tailscale
+never keeps forwarding to a door BrainAI no longer holds. If Tailscale is not ready at start (for example not signed in
+yet), Reach stays saved and BrainAI waits. It tries again every minute for the first 10 tries, then every 15 minutes, for
+as long as Tailscale is not ready. The Reach page says it is waiting and shows what Tailscale last said. Funnel is off meanwhile.
+Reach turns itself off only when Tailscale is not installed or Funnel is not allowed for your account. If Turn off cannot reach Tailscale,
+BrainAI remembers it (`funnel-off-pending` in its data folder) and asks again at the next start. After a crash or a
+power cut Funnel can stay on until the next start: turn it off in Tailscale (`tailscale funnel --https=443 off`) if
+BrainAI will not be started again. Once set, the password and the authenticator are not changed from the dashboard.
 
 ### Your own domain (Cloudflare)
 
@@ -260,7 +268,7 @@ brain, a saved copy, a backup or a page. If the service is slow or down, that se
 
 **A second backup folder:** Settings › Backups › "Also keep the daily backups in" copies each daily backup to a folder
 you choose (an external drive, a synced folder). It keeps the newest 14 (BACKUP_KEEP) `memory-….db` files there and removes older
-ones; nothing else in the folder is touched. If that folder syncs to iCloud Drive or OneDrive the app warns you,
+ones; nothing else in the folder is touched. The copies are readable by you only on the Mac's own disk, and on drives where "Ignore ownership on this volume" is off (check it in the drive's Get Info). macOS usually turns that on for external drives, so there other accounts on this Mac can read the copies. On Windows and on network drives they are not owner-only either, so choose a folder only you can open. The app deletes only the copies it made, plus, once, the ones an earlier version left there. If that folder syncs to iCloud Drive or OneDrive the app warns you,
 because the backups hold every memory in clear text.
 
 Updating or reinstalling the app never touches the data folder. To remove BrainAI, use **Remove BrainAI** (next section).

@@ -247,6 +247,9 @@ p { overflow-wrap: anywhere; margin: 0 0 0.75rem; }
 .settings-link { display: inline-flex; align-items: center; gap: 0.375rem; min-height: 34px; padding: 0 0.875rem; border-radius: var(--r-pill); color: var(--ink2); font-size: var(--t-sub); font-weight: 500; }
 .settings-link[aria-current="page"] { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
 .top-back, .settings-link .cog { display: none; }
+.k-pc { display: none; }
+html.pc .k-mac { display: none; }
+html.pc .k-pc { display: inline; }
 /* The phone's top-row back link: same words as the desktop crumb, its chevron drawn here so the markup holds only
    the target's name. In the installed app it is the only way back, so it is ink and bold, as the approved mockup. */
 .top-back::before { content: ""; flex: none; width: 9px; height: 9px; margin: 0 6px 0 4px; border-left: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); }
@@ -490,7 +493,9 @@ summary > .chev { margin-left: 0.5rem; vertical-align: 0.125em; }
 .backup-runs, .backups .problems { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.375rem; }
 .backup-runs > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.625rem; }
 .label-inline { color: var(--muted); font-size: var(--t-sub); font-weight: 700; min-width: 4.5rem; }
-.place { font-size: var(--t-sub); font-weight: 600; }
+.place { font-size: var(--t-sub); font-weight: 600; overflow-wrap: anywhere; }
+/* A filesystem path has no spaces to break at, so a Windows path would push the page wider than a phone. Only elements that show a path carry it: on every .meta it would split a size or a status mid-word. */
+.path { overflow-wrap: anywhere; }
 .place.bad, .backups .problems { color: var(--attention); }
 .backups .problems { margin-top: 0.75rem; font-size: var(--t-sub); }
 .panel.backups.attention { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--attention) 40%, transparent); }
@@ -1654,7 +1659,7 @@ code.token { display: block; padding: 0.5rem 0.625rem; border-radius: var(--r-in
 .review .growth .panel-head a.hint { font-size: var(--t-meta); font-weight: 600; }
 .signals { margin: 0.5rem 0 0; color: var(--ink2); font-size: var(--t-sub); }
 .review .panel.fold { padding: 0.75rem 1.125rem; }
-.review .panel.fold > summary { cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.125rem 0.5rem; font: 650 var(--t-section) var(--display); white-space: nowrap; }
+.review .panel.fold > summary { padding: 0; min-height: 0; cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.125rem 0.5rem; font: 650 var(--t-section) var(--display); white-space: nowrap; }
 .review .panel.fold > summary::-webkit-details-marker { display: none; }
 .review .panel.fold > summary .hint { margin-left: auto; color: var(--muted); font: 400 var(--t-meta) var(--text); }
 .review .panel.fold[open] > summary { margin-bottom: 0.75rem; }
@@ -1877,6 +1882,8 @@ details.fold.filter-fold[open] > summary { margin-bottom: 1rem; }
 #search > form.inline { display: inline-block; margin: 0.5rem 0 0; }
 #search .notice { margin: 0.5rem 0; }
 .notice { padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--r-inset); background: var(--surface); }
+.consent-banner { font-weight: 600; }
+.consent-banner a { margin-left: 0.25rem; }
 .setup-steps > li + li { margin-top: 1.25rem; }
 .setup-steps h2 { font-size: var(--t-headline); margin: 0 0 0.25rem; }
 
@@ -1946,13 +1953,13 @@ body.setup main { max-width: 64rem; padding-top: 0; padding-bottom: 0; }
 .setup-frame { display: grid; grid-template-columns: 12.5rem minmax(0, 1fr); column-gap: clamp(2.5rem, 6vw, 5rem); min-height: 100dvh; }
 .setup-rail { position: sticky; top: 0; align-self: start; padding: 2.75rem 0 2rem; }
 .setup-rail .brand { margin: 0 0 2.5rem; padding-left: 0.625rem; }
-.setup-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.125rem; counter-reset: none; }
-.setup-steps li { display: flex; align-items: center; gap: 0.75rem; min-height: 2.5rem; padding: 0 0.625rem; border-radius: var(--r-inset); color: var(--muted); font-size: var(--t-sub); }
-.setup-steps li.current { background: var(--raised); color: var(--fg); font-weight: 600; }
-.setup-steps li.done { color: var(--ink2); }
+.setup-rail-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.125rem; counter-reset: none; }
+.setup-rail-steps li { display: flex; align-items: center; gap: 0.75rem; min-height: 2.5rem; padding: 0 0.625rem; border-radius: var(--r-inset); color: var(--muted); font-size: var(--t-sub); }
+.setup-rail-steps li.current { background: var(--raised); color: var(--fg); font-weight: 600; }
+.setup-rail-steps li.done { color: var(--ink2); }
 .step-mark { flex: none; display: grid; place-items: center; width: 1.375rem; height: 1.375rem; border-radius: 50%; border: 1.5px solid var(--line-strong); font-size: var(--t-label); font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; }
-.setup-steps li.current .step-mark { border-color: var(--accent); background: var(--accent); color: var(--accent-fg); }
-.setup-steps li.done .step-mark { border-color: var(--added); background: var(--added); color: var(--surface); }
+.setup-rail-steps li.current .step-mark { border-color: var(--accent); background: var(--accent); color: var(--accent-fg); }
+.setup-rail-steps li.done .step-mark { border-color: var(--added); background: var(--added); color: var(--surface); }
 .setup-main { max-width: 42rem; padding: 2.75rem 0 3.5rem; }
 .setup-main .step-count { display: none; }
 .setup-main h1 { margin-top: 0; }
@@ -1971,7 +1978,7 @@ body.setup main { max-width: 64rem; padding-top: 0; padding-bottom: 0; }
   .setup-frame { grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .setup-rail { position: static; padding: max(1.25rem, env(safe-area-inset-top)) 0 0; }
   .setup-rail .brand { margin: 0; padding: 0; }
-  .setup-steps { display: none; }
+  .setup-rail-steps { display: none; }
   .setup-main { padding-top: 1.5rem; }
   .setup-main .step-count { display: flex; }
 }

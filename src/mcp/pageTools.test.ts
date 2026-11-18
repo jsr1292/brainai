@@ -32,7 +32,7 @@ async function setup() {
     await client.connect(ct);
     const call = async (tool: string, args: Record<string, unknown> = {}) => {
       const r: any = await client.callTool({ name: tool, arguments: args }).catch((e: Error) => ({ content: [{ text: e.message }], isError: true }));
-      return { text: r.content[0].text as string, isError: !!r.isError };
+      return { text: (r.content.find((b: any) => !String(b.text).startsWith('BrainAI operating rules')) ?? r.content[0]).text as string, isError: !!r.isError };
     };
     const tools = async () => (await client.listTools()).tools.map((t) => t.name);
     return { client, call, tools };
@@ -529,7 +529,7 @@ async function flagSetup(opts: { sectionMatch?: number | null } = {}) {
     await client.connect(ct);
     const call = async (tool: string, args: Record<string, unknown> = {}) => {
       const r: any = await client.callTool({ name: tool, arguments: args }).catch((e: Error) => ({ content: [{ text: e.message }], isError: true }));
-      return { text: r.content[0].text as string, isError: !!r.isError };
+      return { text: (r.content.find((b: any) => !String(b.text).startsWith('BrainAI operating rules')) ?? r.content[0]).text as string, isError: !!r.isError };
     };
     return { call, tools: async () => (await client.listTools()).tools.map((x) => x.name) };
   };
@@ -548,7 +548,7 @@ test('project_brief gives each page its out-of-date reasons with text and dates 
   const m = briefPages(r.text).find((p) => p.id === main.id);
   assert.deepEqual(m.may_be_out_of_date, {
     since: '2026-11-01T10:00:00.000Z', caught_up_at: '2026-10-21T09:00:00.000Z',
-    newer_decisions: [...ds].reverse().map((d) => ({ id: d.id, why: 'new', saved_at: d.createdAt, near_section: null, text: d.content })),
+    newer_decisions: [...ds].reverse().map((d) => ({ id: d.id, why: 'new', date: d.createdAt.slice(0, 10), near_section: null, excerpt: d.content })),
     more_decisions: 0, linked_facts_changed: [],
   });
   assert.equal(briefPages(r.text).find((p) => p.id === runbook.id).may_be_out_of_date, null);
@@ -577,8 +577,8 @@ test('a decision outside the brief\'s own list, and a linked fact from another p
   w.edit('2026-10-26T10:00:00Z', ha.id, 'homeassistant runs on the NAS');
   const { call } = await w.connect('Claude Code');
   const f = briefPages((await call('project_brief', { project: 'wildlog' })).text).find((p) => p.id === main.id).may_be_out_of_date;
-  assert.deepEqual(f.newer_decisions, [{ id: old.id, why: 'changed', saved_at: '2026-10-25T10:00:00.000Z', near_section: null, text: 'wildlog photos go to iCloud' }]);
-  assert.deepEqual(f.linked_facts_changed, [{ id: ha.id, why: 'changed', changed_at: '2026-10-26T10:00:00.000Z', text: 'homeassistant runs on the NAS' }]);
+  assert.deepEqual(f.newer_decisions, [{ id: old.id, why: 'changed', date: '2026-10-25', near_section: null, excerpt: 'wildlog photos go to iCloud' }]);
+  assert.deepEqual(f.linked_facts_changed, [{ id: ha.id, why: 'changed', date: '2026-10-26', excerpt: 'homeassistant runs on the NAS' }]);
 });
 
 test('read_page puts the reasons and when they clear at the top, inside the page data wrapper', async () => {
@@ -719,7 +719,11 @@ test('project_brief and read_page give the same flag', async () => {
   const full = await w.connect('Claude Code');
   const a = briefPages((await full.call('project_brief', { project: 'wildlog' })).text).find((p) => p.id === main.id).may_be_out_of_date;
   assert.notEqual(a, null);
-  assert.deepEqual(data((await full.call('read_page', { id: main.id })).text).may_be_out_of_date, a);
+  // The brief lists those decisions itself, so its flag is the same list with ids, dates and short excerpts.
+  const b = data((await full.call('read_page', { id: main.id })).text).may_be_out_of_date;
+  assert.equal(a.since, b.since);
+  assert.deepEqual(a.newer_decisions.map((d: any) => [d.id, d.why, d.near_section]), b.newer_decisions.map((d: any) => [d.id, d.why, d.near_section]));
+  assert.equal(a.more_decisions, b.more_decisions);
 });
 
 // ---- What assistants hear when they save (Task 10) ----

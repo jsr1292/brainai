@@ -105,3 +105,69 @@ test('a refused sign-in address is listed on the setup pages with Allow; only a 
   assert.notEqual(anon.status, 303);
   assert.ok(!list().includes('https://grok.com/connectors-oauth-exchange-code/'));
 });
+
+// Cloud apps (Claude, ChatGPT, Grok) are called from the vendors' servers, which cannot reach localhost.
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { appSession } from '../testing/helpers.js';
+import { setupApps } from '../setup/texts.js';
+
+async function local(t: TestContext, o: { noPassword?: boolean } = {}) {
+  const app = await startTestApp({ localMode: true, noPassword: o.noPassword, statusDir: mkdtempSync(join(tmpdir(), 'brainai-setup-')) });
+  t.after(() => app.close());
+  const cookie = await appSession(app);
+  return { app, get: async (p: string) => (await fetch(app.baseUrl + p, { headers: { Cookie: cookie } })).text() };
+}
+const reachOn = (app: { deps: any }, url: string) => { app.deps.reach.url = () => new URL(url); };
+
+test('cloud apps are flagged on the app, not by slug checks', () => {
+  assert.deepEqual(setupApps().filter((a) => a.cloud).map((a) => a.slug), ['claude', 'chatgpt', 'grok']);
+});
+
+test('local mode with Reach off: a cloud app page sends the owner to Reach, with no localhost address or steps', async (t) => {
+  const { get } = await local(t, { noPassword: true });
+  for (const slug of ['claude', 'chatgpt', 'grok']) {
+    const body = await get(`/settings/setup/${slug}`);
+    assert.match(body, /can(’|&#39;|')t see this (Mac|computer) yet\. Turn on Reach first, then come back here\./, slug);
+    assert.match(body, /<a [^>]*class="[^"]*primary[^"]*"[^>]*href="\/settings\/reach"[^>]*>Turn on Reach<\/a>|<a [^>]*href="\/settings\/reach"[^>]*class="[^"]*primary[^"]*"[^>]*>Turn on Reach<\/a>/, slug);
+    assert.doesNotMatch(body, /localhost/, slug);
+    assert.doesNotMatch(body, /data-copy=/, slug);
+    assert.doesNotMatch(body, /setup-steps/, slug);
+  }
+  assert.match(await get('/settings/setup/claude'), /Claude’s desktop app can connect without Reach: use <a href="\/settings\/tools">Tools on this (Mac|computer)<\/a>\./);
+  assert.doesNotMatch(await get('/settings/setup/chatgpt'), /\/settings\/tools/);
+});
+
+test('local mode with Reach on: a cloud app uses the public address in the address and the setup text', async (t) => {
+  const { app, get } = await local(t);
+  reachOn(app, 'https://brain.example.ts.net');
+  const body = await get('/settings/setup/claude');
+  assert.ok(body.includes('data-copy="https://brain.example.ts.net/mcp"'));
+  assert.match(body, /the brain \(brain\.example\.ts\.net\)/);
+  assert.doesNotMatch(body, /localhost/);
+  assert.match(body, /You sign in with your brain password and code/);
+});
+
+test('local tools keep localhost, and say the window approves when no password is set', async (t) => {
+  const { get } = await local(t, { noPassword: true });
+  for (const slug of ['claude-code', 'codex', 'opencode']) {
+    const body = await get(`/settings/setup/${slug}`);
+    assert.match(body, /data-copy="http:\/\/localhost:\d+\/mcp"/, slug);
+    assert.match(body, /BrainAI’s window asks you to approve it, then you pick its access\./, slug);
+    assert.doesNotMatch(body, /brain password and code/, slug);
+  }
+});
+
+test('with a password and code set, local tools say the password and code', async (t) => {
+  const { get } = await local(t);
+  assert.match(await get('/settings/setup/claude-code'), /You sign in with your brain password and code/);
+});
+
+test('server mode is unchanged: cloud apps show the address and the password-and-code line', async (t) => {
+  const { app, f } = await start(t);
+  const body = await (await f('/settings/setup/claude')).text();
+  assert.ok(body.includes(`data-copy="${attr(new URL('/mcp', app.baseUrl).href)}"`));
+  assert.match(body, /<p class="meta">You sign in with your brain password and code, then pick its access\.<\/p>/);
+  assert.doesNotMatch(body, /Turn on Reach/);
+});

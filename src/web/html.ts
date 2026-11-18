@@ -91,7 +91,7 @@ function sidebar(opts: { tab?: Tab | null; section?: Section; query?: string }):
   const warn = status.backupLate ? html`<span class="side-warn"><span class="dot attention" aria-hidden="true"></span>Backup late</span>` : '';
   return html`<nav class="side" hidden aria-label="Main">
 <a class="brand" href="/"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></a>
-<form class="side-find" method="get" action="/search" role="search"><svg class="side-find-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input name="q" type="search" placeholder="Search" aria-label="Search" aria-keyshortcuts="Meta+K Control+K" value="${opts.query ?? ''}"><kbd>⌘K</kbd></form>
+<form class="side-find" method="get" action="/search" role="search"><svg class="side-find-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input name="q" type="search" placeholder="Search" aria-label="Search" aria-keyshortcuts="Meta+K Control+K" value="${opts.query ?? ''}"><kbd><span class="k-mac">⌘K</span><span class="k-pc">Ctrl K</span></kbd></form>
 <ul class="side-places">${PLACES.map(place)}</ul>
 <a class="side-place side-settings" href="/settings"${opts.tab === 'settings' ? raw(' aria-current="page"') : ''}>Settings${warn}</a>
 </nav>
@@ -108,15 +108,21 @@ export function setMovedBanner(fn: () => URL | null): void {
   movedTo = fn;
 }
 
+let consentPoller = false;
+/** Local mode: owner pages ask for tool sign-ins waiting for approval (data-consents-waiting on the body). Set by createApp. */
+export function setConsentPoller(on: boolean): void {
+  consentPoller = on;
+}
+
 export function page(title: string, body: SafeHtml, opts: { nav?: boolean; query?: string; tab?: Tab | null; section?: Section; back?: Pick<Back, 'href' | 'label'>; crumb?: boolean; /** The app's first-run setup: its own frame, with the brand in its step list. */ shell?: 'setup' } = {}): string {
   const brand = html`<a class="brand" href="/"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></a>`;
   const link = (t: { href: string; label: string; tab: Tab }) =>
     html`<a href="${t.href}"${opts.tab === t.tab || PHONE_PLACE[opts.tab ?? 'projects'] === t.tab ? raw(' aria-current="page"') : ''}>${t.label}</a>`;
-  const settings = html`<a class="settings-link" href="/settings"${opts.tab === 'settings' ? raw(' aria-current="page"') : ''}><span class="settings-word">Settings</span><svg class="cog" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></a>`;
+  const settings = html`<a class="settings-link" href="/settings"${opts.tab === 'settings' ? raw(' aria-current="page"') : ''} aria-label="Settings"><span class="settings-word">Settings</span><svg class="cog" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></a>`;
   const header = opts.nav
     ? html`<header class="top">${brand}${opts.back ? html`<a class="top-back" href="${opts.back.href}"><span>${opts.back.label}</span></a>` : ''}
 <nav class="tabs" aria-label="Main">${TABS.map(link)}</nav>
-<form class="find" method="get" action="/search" role="search"><input name="q" type="search" placeholder="Search the brain" aria-label="Search" aria-keyshortcuts="Meta+K Control+K" title="Search (⌘K)" value="${opts.query ?? ''}"><button type="button" class="find-cancel">Cancel</button><div class="find-hints"><a href="/review/now#latest">Latest changes</a><a href="/facts">All facts</a><p>Or type: projects, facts and page sections.</p></div></form>
+<form class="find" method="get" action="/search" role="search"><input name="q" type="search" placeholder="Search the brain" aria-label="Search" aria-keyshortcuts="Meta+K Control+K" title="Search (Ctrl K or ⌘K)" value="${opts.query ?? ''}"><button type="button" class="find-cancel">Cancel</button><div class="find-hints"><a href="/review/now#latest">Latest changes</a><a href="/facts">All facts</a><p>Or type: projects, facts and page sections.</p></div></form>
 ${settings}
 </header>`
     : opts.shell === 'setup' ? html`` : html`<header class="top solo">${brand}</header>`;
@@ -130,12 +136,14 @@ ${settings}
 <meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0f1320" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="${asset('apple-touch-icon.png')}">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<script src="${asset('platform.js')}"></script>
 <link rel="stylesheet" href="${asset('style.css')}">
 <link rel="stylesheet" href="${asset('desk.css')}" media="screen and (min-width: 1100px)">
 <script src="${asset('app.js')}" defer></script>
 </head>
-<body class="${opts.nav ? 'app' : opts.shell === 'setup' ? 'setup' : 'auth'}"${opts.nav ? html` data-desk="${asset('desk.js')}"` : ''}>
+<body class="${opts.nav ? 'app' : opts.shell === 'setup' ? 'setup' : 'auth'}"${opts.nav ? html` data-desk="${asset('desk.js')}"` : ''}${consentPoller ? raw(' data-consents-waiting="/consents/waiting"') : ''}>
 ${header}${opts.nav ? sidebar(opts) : ''}<main>
 ${(() => { const to = opts.nav ? movedTo() : null; return to ? html`<p class="notice" role="status">This brain now lives at <a href="${to.origin}">${to.origin}</a>. Changes made here are not copied there.</p>
 ` : ''; })()}${opts.nav && opts.back && opts.crumb !== false ? html`<p class="crumb back"><a href="${opts.back.href}">‹ ${opts.back.label}</a></p>` : ''}

@@ -332,6 +332,11 @@ export class MemoryStore {
     return rows.map(toMemory);
   }
 
+  /** When the first memory was saved (deleted ones count: the brain is that old), or null for an empty brain. */
+  firstCreatedAt(): string | null {
+    return (this.db.prepare('SELECT MIN(created_at) AS at FROM memories').get() as { at: string | null }).at;
+  }
+
   /** Current facts only, without loading their bodies or embeddings. */
   countCurrent(f: { kind?: Kind; project?: string } = {}): number {
     const fs = filterSql(f, 'm');

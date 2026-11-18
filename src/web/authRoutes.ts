@@ -1,17 +1,18 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { isAppPath } from './hostGuard.js';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { InvalidRequestError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { InvalidNameError } from '../auth/clientsStore.js';
-import type { PendingInfo } from '../auth/provider.js';
+import { PENDING_TTL_SEC, type PendingInfo } from '../auth/provider.js';
 import type { Access } from '../discussions/types.js';
 import { DEVICE_DAYS, SESSION_DAYS, type SessionStore } from '../auth/sessions.js';
 import { PROJECT_RE } from '../memory/service.js';
 import type { AppDeps } from './app.js';
 import { projectChoices } from './dashboardViews.js';
 import { rateLimitKey } from './clientIp.js';
+import { thisComputer } from '../desktop/computer.js';
 import { viaDoor } from '../desktop/publicDoor.js';
 import { html, memoryName, page, type SafeHtml } from './html.js';
+import { approvedView, deniedView, waitingView } from './consentViews.js';
 
 export const SESSION_COOKIE = 'mem_session';
 /** Marks a browser the owner has logged in from, so the login limit shared by all addresses does not apply to it. */
@@ -31,28 +32,6 @@ export function readCookie(req: Request, name: string): string | undefined {
     if (eq > 0 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
   }
   return undefined;
-}
-
-/**
- * The desktop app's local mode (D1): while the owner has set no password, a browser request without a valid session
- * gets one, here and now, so every owner check after it sees a signed-in owner. Only browser routes: the apps' own
- * endpoints (`skip`), discovery documents and static files never create a session. The Host guard and the Origin
- * check run before this, so a website cannot use it; a password, once set, ends it.
- */
-export function localSignIn(d: Pick<AppDeps, 'owner' | 'sessions' | 'publicUrl'>, skip: readonly string[]): RequestHandler {
-  const options = { ...sessionCookieOptions(d.publicUrl), maxAge: SESSION_DAYS * 86_400_000 };
-  return (req, res, next) => {
-    // /app/open makes its own session from the ticket: signing in here too would make a second one.
-    if (isAppPath(req.path, skip) || req.path === '/app/open' || d.owner.hasPassword() || d.sessions.isValid(readCookie(req, SESSION_COOKIE))) return next();
-    // Only a page load opens a session: a subresource or fetch without the cookie would otherwise make one each time.
-    const mode = req.get('sec-fetch-mode');
-    if (mode !== undefined && mode !== 'navigate') return next();
-    const token = d.sessions.create(req.get('user-agent'));
-    res.cookie(SESSION_COOKIE, token, options);
-    const others = (req.headers.cookie ?? '').split(';').map((c) => c.trim()).filter((c) => c !== '' && !c.startsWith(`${SESSION_COOKIE}=`));
-    req.headers.cookie = [...others, `${SESSION_COOKIE}=${token}`].join('; ');
-    next();
-  };
 }
 
 /** Lets the request through only with a valid owner session; otherwise sends the browser to log in. */
@@ -177,6 +156,17 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
     if (!appKey || !d.appSecret || !/^[0-9a-f]{64}$/.test(challenge)) return next();
     res.set('Cache-Control', 'no-store').json({ proof: createHmac('sha256', d.appSecret).update(challenge).digest('hex') });
   });
+  // The Claude bridge asks this on every new connection, before it sends its key: only a BrainAI that knows the key's
+  // stored hash can answer. The port is part of the proof, so another BrainAI's answer is no use on this port.
+  router.get('/app/bridge-hello', (req, res, next) => {
+    const grant = typeof req.query.grant === 'string' ? req.query.grant : '';
+    const challenge = typeof req.query.challenge === 'string' ? req.query.challenge : '';
+    if (!d.localMode || !/^[0-9a-f]{64}$/.test(challenge)) return next();
+    const proof = d.provider.bridgeProof(grant, new URL('/mcp', d.publicUrl).href, challenge, d.publicUrl.port);
+    // No live key for this grant (revoked, expired or unknown): the bridge tells the person to connect again.
+    if (!proof) return res.status(410).set('Cache-Control', 'no-store').json({ state: 'not_connected' });
+    res.set('Cache-Control', 'no-store').json({ proof });
+  });
   router.get('/app/open', (req, res, next) => {
     const ticket = typeof req.query.ticket === 'string' ? req.query.ticket : '';
     const until = appKey ? tickets.get(ticket) : undefined;
@@ -189,8 +179,13 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
   });
 
   router.get('/login', (req, res) => {
-    // Local mode with no password: there is nothing to log in with, and localSignIn has already signed the owner in.
-    if (d.localMode && !d.owner.hasPassword()) return res.redirect(302, safeNext(req.query.next) ?? '/');
+    // Local mode with the owner account not fully set up (no password, or a password and no authenticator yet): there is
+    // nothing to log in with. Sessions come only from the app's window.
+    if (d.localMode && !d.owner.isConfigured()) {
+      const win = (d.tools?.platform ?? process.platform) === 'win32';
+      return send(res, 200, "Open BrainAI's window", html`<h1>Open BrainAI's window</h1>
+<p>On ${thisComputer()}, BrainAI opens in its own window. Click its icon in the ${win ? 'tray' : 'menu bar'} and choose Open.</p>`);
+    }
     if (!d.owner.isConfigured()) return notConfigured(res);
     // The login form without a live session: the login ended here, elsewhere, or simply expired (and the browser
     // dropped the cookie with it). The cache may still hold pictures, so it is cleared; storage (the offline queue,
@@ -241,7 +236,8 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
   });
 
   const owner = requireOwner(d.sessions);
-  const expired = (res: Response) => send(res, 404, 'Request expired', html`<h1>Request expired</h1><p>${EXPIRED}</p>`, true);
+  // The sidebar is the owner's: shown only to a signed-in session.
+  const expired = (res: Response, signedIn = true) => send(res, 404, 'Request expired', html`<h1>Request expired</h1><p>${EXPIRED}</p>`, signedIn);
 
   const consentPage = (res: Response, status: number, id: string, pending: PendingInfo, name: string, message?: string, access: Access | null = pending.suggestedAccess, picked: string[] = []) => {
     const origin = new URL(pending.redirectUri).origin;
@@ -249,6 +245,7 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
 <p>It will send you back to: <strong>${origin}</strong></p>
 ${message ? html`<p class="error" role="alert">${message}</p>` : ''}
 <form method="post" action="/consent/${id}">
+  <input type="hidden" name="from" value="window">
   <p><label>Name <input type="text" name="name" value="${name}" maxlength="100" required></label></p>
   <p><label class="choice"><input type="radio" name="access" value="full" required${access === 'full' ? ' checked' : ''}> Full access: memory and discussions</label></p>
   <p><label class="choice"><input type="radio" name="access" value="discussions" required${access === 'discussions' ? ' checked' : ''}> Discussions only: no access to your profile or memories</label></p>
@@ -261,11 +258,59 @@ ${message ? html`<p class="error" role="alert">${message}</p>` : ''}
 </form>`, true);
   };
 
-  router.get('/consent/:id', owner, (req, res) => {
+  // Local mode with the owner account not fully set up: a tool's browser has no session, so its sign-in waits here until the owner decides in
+  // BrainAI's window. Only ids in these two maps are ever answered, and a decided location is handed out once.
+  const PENDING_MS = PENDING_TTL_SEC * 1000;
+  const MAX_WAITING = 50;
+  const waiting = new Map<string, number>();
+  const decided = new Map<string, { location: string; untilMs: number }>();
+  const prune = () => {
+    const now = d.now().getTime();
+    for (const [id, until] of waiting) if (until <= now) waiting.delete(id);
+    for (const [id, v] of decided) if (v.untilMs <= now) decided.delete(id);
+  };
+
+  router.get('/consent/:id/wait', (req, res) => {
+    prune();
     const id = req.params.id as string;
+    res.set('Cache-Control', 'no-store');
+    const done = decided.get(id);
+    if (done) {
+      decided.delete(id);
+      return res.json({ state: 'done', location: done.location });
+    }
+    if (waiting.has(id) && d.provider.getPending(id)) return res.json({ state: 'pending' });
+    waiting.delete(id);
+    res.json({ state: 'gone' });
+  });
+
+  router.get('/consents/waiting', owner, (_req, res) => {
+    prune();
+    const list = [];
+    for (const id of waiting.keys()) {
+      const pending = d.provider.getPending(id);
+      if (pending) list.push({ id, clientName: pending.clientName, origin: new URL(pending.redirectUri).origin });
+    }
+    res.set('Cache-Control', 'no-store').json(list);
+  });
+
+  router.get('/consent/:id', (req, res) => {
+    const id = req.params.id as string;
+    if (d.sessions.isValid(readCookie(req, SESSION_COOKIE))) {
+      const pending = d.provider.getPending(id);
+      if (!pending) return expired(res);
+      return consentPage(res, 200, id, pending, pending.clientName);
+    }
+    if (!(d.localMode && !d.owner.isConfigured())) return res.redirect(302, '/login?next=' + encodeURIComponent(req.originalUrl));
     const pending = d.provider.getPending(id);
-    if (!pending) return expired(res);
-    consentPage(res, 200, id, pending, pending.clientName);
+    if (!pending) return expired(res, false);
+    prune();
+    if (!waiting.has(id)) {
+      while (waiting.size >= MAX_WAITING) waiting.delete(waiting.keys().next().value!);
+      waiting.set(id, d.now().getTime() + PENDING_MS);
+    }
+    res.set('Cache-Control', 'no-store');
+    send(res, 200, "Open BrainAI's window", waitingView(id, pending.clientName, new URL(pending.redirectUri).origin));
   });
 
   router.post('/consent/:id', owner, async (req, res) => {
@@ -301,6 +346,12 @@ ${message ? html`<p class="error" role="alert">${message}</p>` : ''}
       if (e instanceof InvalidNameError) return consentPage(res, 400, id, pending, name ?? pending.clientName, e.message, access as Access, projects);
       if (!(e instanceof InvalidRequestError)) throw e;
       return send(res, 400, 'Cannot approve', html`<h1>Cannot complete this request</h1><p>${e.message}. ${EXPIRED}</p>`, true);
+    }
+    prune();
+    if (waiting.delete(id)) {
+      // The browser that started this sign-in is waiting: it goes on to the tool, the window stays here.
+      decided.set(id, { location, untilMs: d.now().getTime() + PENDING_MS });
+      return send(res, 200, decision === 'approve' ? 'Approved' : 'Denied', decision === 'approve' ? approvedView(pending.clientName) : deniedView(pending.clientName), true);
     }
     res.redirect(302, location);
   });

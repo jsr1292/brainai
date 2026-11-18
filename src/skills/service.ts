@@ -10,7 +10,7 @@ import { findSecret } from '../memory/secrets.js';
 import { MAX_BODY } from '../pages/types.js';
 import { SkillStore } from './store.js';
 import {
-  MAX_PENDING_PROPOSALS, MAX_SKILL_BYTES, MAX_SKILL_DESCRIPTION, MAX_SKILL_FILE_BYTES, MAX_SKILL_FILES, MAX_SKILL_NAME, SKILL_NAME_RE,
+  MAX_PENDING_PROPOSALS, MAX_SKILL_BYTES, MAX_SKILL_DESCRIPTION, MAX_SKILL_FILE_BYTES, MAX_SKILL_FILES, MAX_SKILL_NAME, SKILL_NAME_RE, skillFilePathOk,
   type Skill, type SkillFile, type SkillProposal, type SkillVersion,
 } from './types.js';
 
@@ -23,7 +23,6 @@ export class SkillError extends Error {
 
 export interface SkillInput { name: string; description: string; body: string; files?: SkillFile[] }
 
-const SEGMENT = /^[A-Za-z0-9._-]+$/;
 const bytes = (s: string) => Buffer.byteLength(s, 'utf8');
 
 export class SkillService {
@@ -51,9 +50,7 @@ export class SkillService {
     const seen = new Set<string>();
     let total = 0;
     for (const f of files) {
-      const parts = f.path.split('/');
-      // No dot-led segment (.git, .hidden, ..), and no skill.md in any case (it would overwrite SKILL.md on a Mac).
-      if (f.path.length === 0 || f.path.length > 200 || parts.some((p) => !SEGMENT.test(p) || p.startsWith('.')) || f.path.toLowerCase() === 'skill.md') {
+      if (f.path.length === 0 || f.path.length > 200 || !skillFilePathOk(f.path)) {
         throw new SkillError('invalid', `“${f.path}” is not a file path a skill can hold: use folders and names of letters, digits, dots, hyphens and underscores, like references/palette.md.`);
       }
       if (seen.has(f.path)) throw new SkillError('invalid', `${f.path} is there twice.`);

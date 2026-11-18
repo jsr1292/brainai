@@ -50,6 +50,8 @@ export function settingsView(v: {
   brainUrl?: string;
   /** The running brain and its database schema, so an update can be checked. */
   version?: { brain: string; database: number };
+  /** The app's update checks have been failing for days: the day it began and the short reason. */
+  updateCheck?: { since: string; error?: string };
   /** Live pictures (ImageStore.totals), for the pictures line under Backups and health. */
   pictures?: { count: number; bytes: number; unused: number };
   devices: Device[];
@@ -99,15 +101,18 @@ export function settingsView(v: {
     ? html`<p class="meta"><span>${plural(pics.unused, 'picture', 'pictures')} no current page shows <a href="/settings/pictures">Review</a></span></p>`
     : '';
   const picturesLine = html`${keptLine}${reviewLine}`;
-  const size = html`<p class="meta">${plural(v.counts.facts, 'fact', 'facts')} · ${plural(v.counts.projects, 'project', 'projects')} · ${plural(v.counts.pages, 'page', 'pages')}</p>${picturesLine}${v.version ? html`<p class="meta">BrainAI ${v.version.brain} · database ${v.version.database}</p>` : ''}`;
-  const saveRow = v.localMode ? '' : html`<ul class="group"><li><a class="row nolead" href="/settings/save"><span class="txt">Save a copy of everything</span><span class="meta">Every memory and page, to keep or take elsewhere</span><span class="chev"></span></a></li></ul>`;
+  const updateCheckLine = v.updateCheck
+    ? html`<p class="attention">BrainAI hasn't been able to check for updates since ${v.updateCheck.since}.</p>${v.updateCheck.error ? html`<p class="meta">${v.updateCheck.error}</p>` : ''}<p class="meta">On a work network, a proxy or firewall may be blocking github.com.</p>`
+    : '';
+  const size = html`<p class="meta">${plural(v.counts.facts, 'fact', 'facts')} · ${plural(v.counts.projects, 'project', 'projects')} · ${plural(v.counts.pages, 'page', 'pages')}</p>${picturesLine}${v.version ? html`<p class="meta">BrainAI ${v.version.brain} · database ${v.version.database}</p>` : ''}${updateCheckLine}`;
+  const saveRow = v.localMode ? '' : html`<ul class="group"><li><a class="row nolead" href="/settings/save"><span class="txt">Save a copy of everything<span class="sub">Every memory and page, to keep or take elsewhere</span></span><span class="chev"></span></a></li></ul>`;
   const copyLast = !v.copy?.last ? ''
     : v.copy.last.ok ? html`<p class="meta"><span>Last copy: ${when(v.copy.last.at)}</span></p>`
     : html`<p class="error" role="alert">Last copy failed: ${basename(v.copy.last.folder) || v.copy.last.folder} (${when(v.copy.last.at)}). ${v.copy.last.reason} The normal backup was still made.</p>`;
   const copySection = !v.copy ? '' : v.copy.ask
     ? html`<h3 id="backup-copy">Also keep the daily backups in</h3>
 <p class="error" role="alert">This folder syncs to ${v.copy.ask.cloud}: every memory will be stored there in clear text.</p>
-<p class="meta"><span>${v.copy.ask.folder}</span></p>
+<p class="meta"><span class="path">${v.copy.ask.folder}</span></p>
 <form method="post" action="/settings/backup-copy" class="stack">
   <input type="hidden" name="folder" value="${v.copy.ask.folder}"><input type="hidden" name="confirm" value="1">
   <p><button type="submit" name="action" value="save" class="primary">Keep it</button> <a href="/settings#backup-copy">Choose another</a></p>
@@ -137,7 +142,7 @@ ${errorBlock(v.error)}
   <div class="panel-head"><h2>Connections</h2></div>
   <p class="meta">The assistants that can use the brain, and what each may do.</p>
   ${grantCards({ grants: v.grants, projects: v.projects, status: v.connStatus })}
-  ${v.localMode ? html`<ul class="group"><li><a class="row nolead" href="/settings/tools"><span class="txt">Tools on ${thisComputer()}</span><span class="meta">Connect Claude Code, Codex, OpenCode, Cursor and Claude's desktop app in one click</span><span class="chev"></span></a></li><li><a class="row nolead" href="/settings/reach"><span class="txt">Reach from phone and web</span><span class="meta">Use this BrainAI from Claude, ChatGPT and Grok anywhere</span><span class="chev"></span></a></li><li><a class="row nolead" href="/settings/move"><span class="txt">Move to a server</span><span class="meta">Take every memory to a home or rented server</span><span class="chev"></span></a></li><li><a class="row nolead" href="/settings/save"><span class="txt">Save a copy of everything</span><span class="meta">Every memory and page, to keep or take elsewhere</span><span class="chev"></span></a></li><li><a class="row nolead" href="/settings/remove"><span class="txt">Remove BrainAI from ${thisComputer()}</span><span class="meta">Save a copy, then disconnect your tools and finish</span><span class="chev"></span></a></li></ul>` : ''}
+  ${v.localMode ? html`<ul class="group"><li><a class="row nolead" href="/settings/tools"><span class="txt">Tools on ${thisComputer()}<span class="sub">Connect Claude Code, Codex, OpenCode, Cursor and Claude's desktop app in one click</span></span><span class="chev"></span></a></li><li><a class="row nolead" href="/settings/reach"><span class="txt">Reach from phone and web<span class="sub">Use this BrainAI from Claude, ChatGPT and Grok anywhere</span></span><span class="chev"></span></a></li><li><a class="row nolead" href="/settings/move"><span class="txt">Move to a server<span class="sub">Take every memory to a home or rented server</span></span><span class="chev"></span></a></li><li><a class="row nolead" href="/settings/save"><span class="txt">Save a copy of everything<span class="sub">Every memory and page, to keep or take elsewhere</span></span><span class="chev"></span></a></li><li><a class="row nolead" href="/settings/remove"><span class="txt">Remove BrainAI from ${thisComputer()}<span class="sub">Save a copy, then disconnect your tools and finish</span></span><span class="chev"></span></a></li></ul>` : ''}
   <h3 id="setup">Set up an app</h3>
   <ul class="group">${setupApps().map((a) => html`<li><a class="row nolead" href="/settings/setup/${a.slug}"><span class="txt">${a.name}</span><span class="chev"></span></a></li>`)}</ul>
 </section>

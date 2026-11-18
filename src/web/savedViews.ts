@@ -8,11 +8,11 @@ import { html, type SafeHtml } from './html.js';
  */
 export function whereChoice(v: { documents: string; synced: 'iCloud' | 'OneDrive' | null; home: string; action: string }): SafeHtml {
   if (v.synced === null) {
-    return html`<p>It goes into your Documents folder: <code>${v.documents}</code></p>
+    return html`<p>It goes into your Documents folder: <code class="path">${v.documents}</code></p>
 <form method="post" action="${v.action}"><input type="hidden" name="where" value="documents"><button type="submit" class="primary">Save to Documents</button></form>`;
   }
   return html`<p class="notice">Your Documents folder syncs to ${v.synced}, so this copy would be uploaded there.</p>
-<p>Every memory is in it in plain text. Your home folder, <code>${v.home}</code>, stays on this computer.</p>
+<p>Every memory is in it in plain text. Your home folder, <code class="path">${v.home}</code>, stays on this computer.</p>
 <div class="row-actions">
 <form method="post" action="${v.action}"><input type="hidden" name="where" value="home"><button type="submit" class="primary">Save to your home folder</button></form>
 <form method="post" action="${v.action}"><input type="hidden" name="where" value="documents"><button type="submit" class="secondary">Save to Documents anyway</button></form>
@@ -31,7 +31,7 @@ ${whereChoice({ ...v, action: '/settings/save' })}
 export function savedDone(v: { folder: string; facts: number; pages: number; revealIn: 'Finder' | 'Explorer' }): SafeHtml {
   return html`<div class="narrow">
 <h1>Saved</h1>
-<p><span class="ok">Saved ✓</span> ${factsAndPages(v.facts, v.pages)} are in <code>${v.folder}</code></p>
+<p><span class="ok">Saved ✓</span> ${factsAndPages(v.facts, v.pages)} are in <code class="path">${v.folder}</code></p>
 <p>It holds every memory in plain text: keep it private.</p>
 <div class="row-actions">
 <form method="post" action="/settings/save/show"><button type="submit" class="primary">Show in ${v.revealIn}</button></form>

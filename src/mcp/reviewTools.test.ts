@@ -5,7 +5,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { NoteService } from '../pages/notes.js';
 import { ReviewService } from '../review/service.js';
 import { reviewWorld, type ReviewWorld } from '../testing/reviewWorld.js';
-import { SERVER_INSTRUCTIONS, readOnlyInstructions } from './instructions.js';
+import { OPERATING_RULES, readOnlyInstructions } from './instructions.js';
 import { buildMcpServer } from './server.js';
 import { makeTidyItems, tidySummary } from '../web/tidyItems.js';
 
@@ -47,7 +47,7 @@ async function connect(w: ReviewWorld, actorName: string, opts: Partial<Paramete
   await client.connect(ct);
   const call = async (args: Record<string, unknown> = {}) => {
     const r: any = await client.callTool({ name: 'weekly_review', arguments: args });
-    return { text: r.content[0].text as string, isError: !!r.isError };
+    return { text: (r.content.find((b: any) => !String(b.text).startsWith('BrainAI operating rules')) ?? r.content[0]).text as string, isError: !!r.isError };
   };
   return { client, call, reviews };
 }
@@ -143,11 +143,11 @@ test('a discussions-only connection doesn\'t list the tool', async () => {
   assert.equal(call, true);
   const full = await connect(w, 'Claude Code');
   const tool = (await full.client.listTools()).tools.find((t) => t.name === 'weekly_review')!;
-  assert.equal(tool.description, 'Use when the owner asks how the week went, what happened last week, or for a weekly review.');
+  assert.equal(tool.description, 'Use when the owner asks how the week went, what happened last week, or for a weekly review. When the finished week has no stored snapshot yet, it is built and stored before the result is returned.');
 });
 
 test('the instructions tell assistants to use it only when asked', () => {
-  assert.match(SERVER_INSTRUCTIONS, /\n16\. When the owner asks how the week went, what happened last week, or for a weekly review, call weekly_review\. Never bring the review up unasked\.\n17\. Skills: /);
+  assert.match(OPERATING_RULES, /\n16\. When the owner asks how the week went, what happened last week, or for a weekly review, call weekly_review\. Never bring the review up unasked\.\n17\. Skills: /);
   assert.match(readOnlyInstructions(['wildlog']), /call weekly_review/);
 });
 

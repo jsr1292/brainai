@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { chmodSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -67,6 +67,8 @@ export async function backupNow(db: DB, dir: string, keep: number, now: Date, da
   try {
     const draft = join(work, name);
     await db.backup(draft);
+    // Owner-only from here on: the copies made from the draft keep this mode whatever the umask.
+    chmodSync(draft, 0o600);
     // The copy inherits WAL mode; switching it to a rollback journal keeps each backup a single self-contained file.
     const copy = new Database(draft);
     try {
@@ -82,7 +84,9 @@ export async function backupNow(db: DB, dir: string, keep: number, now: Date, da
     // Copied under a name that is not a backup's, then renamed, so `dir` never holds a half-written backup.
     const partial = join(dir, `.${name}.partial`);
     try {
-      copyFileSync(draft, partial);
+      // Cleared first and created exclusively, so a link planted at this name is never followed.
+      rmSync(partial, { force: true });
+      copyFileSync(draft, partial, constants.COPYFILE_EXCL);
       renameSync(partial, path);
     } catch (e) {
       rmSync(partial, { force: true });

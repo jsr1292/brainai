@@ -39,3 +39,13 @@ test('deskEdits refuses a snapshot whose anchors are missing or doubled', () => 
   assert.throws(() => deskEdits(snap.replace('@media (max-width: 1100px) {', '@media (max-width: 1000px) {')), /exactly once/);
   assert.throws(() => deskEdits(snap + '\n@media (min-width: 1101px) { .toc-fold { display: none; } }\n'), /exactly once/);
 });
+
+test('the wizard rail and the Settings instruction lists use different classes', () => {
+  assert.doesNotMatch(now, /\.setup-steps li/, 'wizard rules must not target .setup-steps');
+  assert.doesNotMatch(now, /\.setup-steps \{ display: none/);
+  assert.match(now, /\.setup-rail-steps li\.current/);
+  assert.match(now, /\.setup-rail-steps \{ display: none; \}/);
+  assert.match(now, /\.place \{[^}]*overflow-wrap: anywhere/);
+  assert.match(now, /^\.path \{ overflow-wrap: anywhere; \}$/m);
+  assert.doesNotMatch(now, /\.meta, p > code/, 'anywhere must not be on every .meta, which would split a size or a status mid-word');
+});

@@ -61,11 +61,11 @@ import { searchRoutes } from './searchRoutes.js';
 import type { MemoryService } from '../memory/service.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { ProjectStore } from '../projects/store.js';
-import { authRoutes, localSignIn, readCookie, SESSION_COOKIE } from './authRoutes.js';
+import { authRoutes, readCookie, SESSION_COOKIE } from './authRoutes.js';
 import { dashboardRoutes } from './dashboardRoutes.js';
 import { discussionRoutes } from './discussionRoutes.js';
 import { rateLimitKey, TRUST_CF_SETTING } from './clientIp.js';
-import { html, page, setMovedBanner } from './html.js';
+import { html, page, setConsentPoller, setMovedBanner } from './html.js';
 import { createSideStatus, setSideStatus } from './sideStatus.js';
 import { setViewClock } from './when.js';
 import type { GraphService } from '../graph/data.js';
@@ -155,6 +155,8 @@ export interface AppDeps {
   reveal?: (path: string) => void;
   /** Whether BrainAI answers at a public address (Reach through Cloudflare checks before saying On). Tests replace it. */
   reachCheck?: (url: URL) => Promise<boolean>;
+  /** How often Reach asks Tailscale again at start when it was not ready: every `everyMs` for the first `max` tries, then every `laterMs`, for as long as it lasts (tests shorten it). */
+  reachRetry?: { everyMs: number; max: number; laterMs: number };
   /** The database itself, for the moving file's copy (local mode). */
   db?: DB;
   /** Local mode: where the owner's coding tools are (their HOME and the PATH to find their commands), for Connect (D3). */
@@ -163,9 +165,9 @@ export interface AppDeps {
 
 const CSP = "default-src 'self'; frame-ancestors 'none'; form-action 'self' https: http://localhost:* http://127.0.0.1:*";
 const SCOPES = ['memory'];
-/** Called by OAuth/MCP clients without browser cookies, so they carry no Origin to check. /app/hello, /app/ticket and
- * /app/removed/ready: the desktop app's own check, ticket and removal check, called by the app itself, never by a page (D2). */
-const CLIENT_ENDPOINTS = ['/mcp', '/authorize', '/token', '/register', '/revoke', '/app/hello', '/app/ticket', '/app/removed/ready', '/app/backup-now', '/api/folder-report', '/api/image-upload', '/api/skills/report', '/api/skills/upload'];
+/** Called by OAuth/MCP clients without browser cookies, so they carry no Origin to check. /app/hello, /app/bridge-hello, /app/ticket and
+ * /app/removed/ready: the desktop app's own check, the Claude bridge's proof, ticket and removal check, called by the app itself, never by a page (D2). */
+const CLIENT_ENDPOINTS = ['/mcp', '/authorize', '/token', '/register', '/revoke', '/app/hello', '/app/bridge-hello', '/app/ticket', '/app/removed/ready', '/app/backup-now', '/api/folder-report', '/api/image-upload', '/api/skills/report', '/api/skills/upload'];
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const STATIC_DIR = join(dirname(fileURLToPath(import.meta.url)), 'static');
 
@@ -311,6 +313,7 @@ export function createApp(d: AppDeps): express.Express {
   setSideStatus(createSideStatus(d));
   setViewClock(d.now);
   setMovedBanner(() => (d.localMode && d.statusDir ? movedTo(d.statusDir) : null));
+  setConsentPoller(d.localMode === true);
   setComputer(d.tools?.platform ?? process.platform);
   const mcpUrl = new URL('/mcp', d.publicUrl);
 
@@ -425,10 +428,9 @@ export function createApp(d: AppDeps): express.Express {
 
   // 6. Origin check, placed before the browser routes it protects (it has to run before them to have any effect).
   app.use(sameOrigin((req) => (onPublic(req) ? reachUrl()! : d.publicUrl)));
-  // The desktop app's local mode: the owner is signed in until a password is set (D1). After the Origin check.
-  // Nothing signs in by itself through the public door, nor anywhere while a public address is on (D4).
-  const autoSignIn = localSignIn(d, CLIENT_ENDPOINTS);
-  if (d.localMode) app.use(fetchMetadataGuard(CLIENT_ENDPOINTS), (req, res, next) => (viaDoor(req) || reachUrl() ? next() : autoSignIn(req, res, next)));
+  // The desktop app's local mode: no automatic sign-in. A session comes from the app window's ticket, or from the
+  // password once one exists. The browser guard stays: another site cannot use the local server.
+  if (d.localMode) app.use(fetchMetadataGuard(CLIENT_ENDPOINTS));
 
   // 5. Login, logout and consent.
   const pageForms = express.urlencoded({ extended: false, limit: PAGE_FORM_LIMIT });
@@ -446,6 +448,7 @@ export function createApp(d: AppDeps): express.Express {
   // safe, and these are public open-source files. Everything else in /static keeps express.static's default.
   app.use('/static/vendor', express.static(join(STATIC_DIR, 'vendor'), { index: false, immutable: true, maxAge: '365d' }));
   app.use('/static', express.static(STATIC_DIR, { index: false }));
+  app.get('/favicon.ico', (_req, res) => res.redirect(302, '/static/icon.svg'));
   app.get('/sw.js', (_req, res) => {
     res.set('Cache-Control', 'no-cache').type('text/javascript').send(SERVICE_WORKER);
   });

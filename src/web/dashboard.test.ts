@@ -81,6 +81,14 @@ test('installable: manifest, head tags and a non-caching service worker are serv
   const login = await (await get('/login')).text();
   assert.match(login, /rel="manifest"/);
   assert.match(login, /name="viewport"[^>]*viewport-fit=cover/);
+  assert.match(login, /<meta name="mobile-web-app-capable" content="yes">/);
+  assert.match(login, /<meta name="apple-mobile-web-app-capable" content="yes">/);
+
+  const fav = await get('/favicon.ico');
+  assert.equal(fav.status, 302, 'browsers ask for /favicon.ico on every load');
+  assert.equal(fav.headers.get('location'), '/static/icon.svg');
+  const icon = await fetch(app.baseUrl + '/static/icon.svg');
+  assert.equal(icon.status, 200);
   assert.match(login, /<script src="\/static\/app\.js\?v=[0-9a-f]{10}" defer><\/script>/);
 
   const sw = await get('/sw.js');

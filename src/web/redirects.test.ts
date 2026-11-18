@@ -90,3 +90,14 @@ test('every owner page renders in the new shell: the brain header, and no old na
     assert.doesNotMatch(body.slice(0, body.indexOf('</header>')), /class="more(?: [^"]*)?"|<details class="more/, path);
   }
 });
+
+test('/register refuses a client whose callback carries a query', async (t) => {
+  const { app } = await start(t);
+  const reg = (uri: string) => fetch(app.baseUrl + '/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ redirect_uris: [uri], client_name: 'Claude', token_endpoint_auth_method: 'none' }),
+  });
+  assert.equal((await reg('https://claude.ai/api/mcp/auth_callback?next=https://evil.example/')).status, 400);
+  assert.equal((await reg('https://claude.ai/api/mcp/auth_callback')).status, 201);
+});

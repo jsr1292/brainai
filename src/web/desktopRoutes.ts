@@ -20,7 +20,7 @@ import { CATALOGUE, ONLINE_MODELS } from '../models/catalogue.js';
 import { deleteKey, isKeyShaped, readKey, writeKey } from '../models/onlineKey.js';
 import { saySearch } from './searchSaid.js';
 import { thisComputer } from '../desktop/computer.js';
-import { readUpdate, setLater, updateLine } from '../desktop/updateState.js';
+import { readUpdate, setLater, setOffsiteLater, updateLine } from '../desktop/updateState.js';
 import { runBackup } from '../backup.js';
 import { BRAIN_VERSION } from '../version.js';
 
@@ -68,6 +68,12 @@ export function toolEnv(d: AppDeps): ToolEnv | null {
   const mcpUrl = new URL('/mcp', d.publicUrl).href;
   const { bridgeCli, ...tools } = d.tools;
   const env: ToolEnv = { ...tools, mcpUrl, rules: (slug) => setupText(slug, mcpUrl, d.setupOverlay) };
+  // Disconnect ends a tool's sign-in too, through the same revoke as Settings › Connections (the rows stay, marked revoked).
+  env.endSignIns = (toolName) => {
+    const live = d.provider.listGrants().filter((g) => !g.revokedAt && g.clientName.toLowerCase().startsWith(toolName.toLowerCase()));
+    for (const g of live) d.provider.revokeGrant(g.id);
+    return live.length;
+  };
   // Claude's desktop app runs this server's own Node and cli.js as a bridge; its key is a grant of its own (local mode only).
   if (d.statusDir) {
     env.bridge = {
@@ -109,7 +115,7 @@ export function desktopRoutes(d: AppDeps): Router {
       const replace = (req.body as Record<string, unknown> | undefined)?.replace === '1';
       const r = what === 'connect' ? await connect(id, env, { replace }) : await disconnect(id, env);
       if (r.ok) await d.refreshAskCommands?.().catch(() => {});
-      const said = r.ok ? (what === 'connect' ? `Connected. Next: ${r.signIn}` : 'Disconnected.') : r.reason;
+      const said = r.ok ? (what === 'connect' ? `Connected. Next: ${r.signIn}` : (id === 'claude-desktop' ? 'Disconnected. Its key was revoked.' : r.ended ? 'Disconnected. Its sign-in was ended too.' : 'Disconnected. If it is still listed in Settings › Connections, revoke it there.')) : r.reason;
       results.set(id, { text: said, at: Date.now() });
       const back = (req.body as Record<string, unknown> | undefined)?.back === 'welcome' ? '/welcome?step=3&tool=' : '/settings/tools?tool=';
       res.redirect(303, back + id);
@@ -229,6 +235,11 @@ export function desktopRoutes(d: AppDeps): Router {
   router.post('/app/update/later', here, owner, (_req, res) => {
     const u = dataDir ? readUpdate(dataDir, BRAIN_VERSION) : null;
     if (dataDir && u) setLater(dataDir, u.version);
+    res.redirect(303, '/');
+  });
+
+  router.post('/app/offsite/later', here, owner, (_req, res) => {
+    if (dataDir) setOffsiteLater(dataDir, d.now());
     res.redirect(303, '/');
   });
 

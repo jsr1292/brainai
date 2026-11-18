@@ -34,8 +34,11 @@ test('Funnel not yet allowed, Tailscale signed out, or the command hanging: a cl
   assert.match((approval as { reason: string }).reason, /https:\/\/login\.tailscale\.com\/f\/funnel\?node=abc123/);
   const out = await funnelOn(world(t, { backend: 'NeedsLogin' }).env, 3100);
   assert.match((out as { reason: string }).reason, /sign in/i);
+  assert.equal((approval as { refused?: boolean }).refused, true, 'Funnel not allowed is a definite refusal');
+  assert.equal((out as { refused?: boolean }).refused, undefined, 'signed out may pass');
   const missing = await funnelOn(world(t, null).env, 3100);
   assert.match((missing as { reason: string }).reason, /Install Tailscale/);
+  assert.equal((missing as { refused?: boolean }).refused, true, 'not installed is a definite refusal');
   const hung = await funnelOn(world(t, { hang: true }, 500).env, 3100);
   assert.equal(hung.ok, false);
   assert.match((hung as { reason: string }).reason, /did not answer/);
@@ -52,7 +55,7 @@ test('a funnel command that fails or hangs after it ran is undone, so Tailscale 
   assert.equal((await funnelOn(failed.env, 3100)).ok, false);
   assert.ok(failed.f.calls().includes('funnel --https=443 off'));
   assert.equal(failed.f.state().funnel, false);
-  const hung = world(t, { backend: 'Running', hangFunnel: true }, 500);
+  const hung = world(t, { backend: 'Running', hangFunnel: true }, 3000);
   assert.equal((await funnelOn(hung.env, 3100)).ok, false);
   assert.ok(hung.f.calls().includes('funnel --https=443 off'));
   assert.equal(hung.f.state().funnel, false);

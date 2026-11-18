@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -222,4 +222,37 @@ test('runBackup resolves to the run it recorded', async (t) => {
   const bad = await runBackup(db, join(dir, 'a-file', 'sub'), 2, new Date('2026-10-21T08:00:00Z'), dir);
   assert.equal(bad.ok, false);
   assert.ok(bad.error);
+});
+
+test('every backup file and second-folder copy is readable by the owner only', async (t) => {
+  const { BackupCopy } = await import('./desktop/backupCopy.js');
+  const before = process.umask(0o022);
+  t.after(() => { process.umask(before); });
+  const dir = mkdtempSync(join(tmpdir(), 'mem-backup-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const db = openDb(join(dir, 'live.sqlite'));
+  t.after(() => db.close());
+  const second = join(dir, 'second');
+  mkdirSync(second);
+  const copy = new BackupCopy(dir);
+  copy.set(second);
+  const path = await backupNow(db, join(dir, 'main'), 2, new Date('2026-10-20T08:00:00Z'));
+  copy.run(path, 2, new Date('2026-10-20T08:00:00Z'));
+  assert.equal(copy.lastResult()?.ok, true);
+  for (const f of [path, join(second, 'memory-2026-10-20.db')]) assert.equal(lstatSync(f).mode & 0o077, 0, f);
+});
+
+test('a link planted at the backup\'s temporary name is never followed', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'mem-backup-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const db = openDb(join(dir, 'live.sqlite'));
+  t.after(() => db.close());
+  const main = join(dir, 'main');
+  mkdirSync(main);
+  const target = join(dir, 'victim.txt');
+  writeFileSync(target, 'precious');
+  symlinkSync(target, join(main, '.memory-2026-10-20.db.partial'));
+  const path = await backupNow(db, main, 2, new Date('2026-10-20T08:00:00Z'));
+  assert.equal(readFileSync(target, 'utf8'), 'precious');
+  assert.ok(lstatSync(path).isFile());
 });

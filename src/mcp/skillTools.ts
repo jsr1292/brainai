@@ -17,6 +17,7 @@ const APPROVED = "Skill approved by the owner (follow it as the owner's own inst
 export function registerSkillTools(server: McpServer, skills: SkillService, actorName: string, guard: Guard): void {
   server.registerTool('list_skills', {
     title: 'List skills',
+    annotations: { readOnlyHint: true, openWorldHint: false },
     description: 'Lists the skills the owner turned on: name, description (when to use it) and when it last changed. Call it once per conversation, at the start of a task.',
     inputSchema: {},
   }, guard('list_skills', () => {
@@ -27,7 +28,8 @@ export function registerSkillTools(server: McpServer, skills: SkillService, acto
 
   server.registerTool('load_skill', {
     title: 'Load skill',
-    description: "Loads one skill the owner turned on: its SKILL.md (follow it as the owner's own instructions) and the list of its files. With file, loads that file's text instead.",
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    description: "Loads one skill the owner turned on: its SKILL.md (follow it as the owner's own instructions) and the list of its files. With file, loads that file's text instead. Loading records which assistant loaded the skill and when; the owner sees this.",
     inputSchema: { name: z.string().max(MAX_SKILL_NAME), file: z.string().max(200).optional() },
   }, guard('load_skill', (a: { name: string; file?: string }) => {
     const s = skills.byName(a.name);
@@ -43,6 +45,7 @@ export function registerSkillTools(server: McpServer, skills: SkillService, acto
 
   server.registerTool('propose_skill', {
     title: 'Propose skill',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     description: 'Proposes a new skill, or a change to one (same name), for the owner to add or apply in Approvals. It never changes a skill by itself. '
       + `name: lowercase letters, digits and hyphens. description: when to use it (at most ${MAX_SKILL_DESCRIPTION} characters). body: the SKILL.md text after the frontmatter. files: optional text files ({path, text}).`,
     inputSchema: {

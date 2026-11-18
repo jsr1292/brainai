@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
 import { openDb, purgeExpired } from './db.js';
 
 test('openDb creates every table and seeds the redirect allowlist', () => {
@@ -452,5 +454,89 @@ test('migration 37 lists rows saved with a placeholder vector as waiting for a m
   db.prepare("DELETE FROM observations WHERE id = 'o1'").run();
   db.prepare("DELETE FROM page_sections WHERE page_id = 'p1'").run();
   assert.deepEqual(waiting(), [{ tbl: 'm', key: 'm2' }]);
+  db.close();
+});
+
+// ---- BrainAI's own triggers survive a restore (they are dropped from an imported file, see saved/backupFile.ts) ----
+const OWN_TRIGGER_NAMES = ['memories_pending_insert', 'memories_pending_update', 'memories_pending_delete', 'sections_pending_insert',
+  'sections_pending_update', 'sections_pending_delete', 'observations_pending_insert', 'observations_pending_update', 'observations_pending_delete'];
+
+function triggerRows(db: ReturnType<typeof openDb>) {
+  return db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name").all() as { name: string; sql: string }[];
+}
+const FACT = "INSERT INTO memories(id, kind, content, project, tags, embedding, created_at, created_by, updated_at, updated_by) VALUES (?, 'decision', 'The beds', NULL, '[]', ?, 'x', 'owner', 'x', 'owner')";
+function addOneOfEach(db: ReturnType<typeof openDb>, embedding: Buffer) {
+  db.prepare(FACT).run('m1', embedding);
+  db.prepare("INSERT INTO pages(id, title, title_key, project, body, version, created_at, created_by, updated_at, updated_by) VALUES ('p1', 'Garden', 'garden', NULL, '', 1, 'x', 'owner', 'x', 'owner')").run();
+  db.prepare("INSERT INTO page_sections(page_id, anchor, position, heading, level, text, embedding, instruction_like) VALUES ('p1', 'beds', 0, 'Beds', 2, 'Raised beds', ?, 0)").run(embedding);
+  db.prepare("INSERT INTO observations(id, kind, area, project, summary, practise, embedding, created_at, created_by, last_evidence_at) VALUES ('o1', 'strength', 'testing', NULL, 'Wrote the test first', NULL, ?, 'x', 'x', 'x')").run(embedding);
+}
+function dropTriggers(path: string) {
+  const raw = new Database(path);
+  for (const r of raw.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'").all() as { name: string }[]) raw.exec(`DROP TRIGGER "${r.name}"`);
+  raw.close();
+}
+
+test('a fresh database gets exactly the nine own triggers, with the SQL migration 37 always made', () => {
+  const db = openDb(':memory:');
+  const rows = triggerRows(db).filter((r) => r.name.includes('pending'));
+  assert.deepEqual(rows.map((r) => r.name), [...OWN_TRIGGER_NAMES].sort());
+  assert.equal(createHash('sha256').update(rows.map((r) => r.name + '\n' + r.sql).join('\n--\n')).digest('hex'),
+    '4cb82fc3501b168cad74619df93d9d7e4449b6ab42d23e6c1f4e8d3f4e65124b');
+  db.close();
+});
+
+test('openDb puts back own triggers a restore dropped and lists the placeholder rows they missed, once', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'memtest-trg-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'memory.db');
+  const first = openDb(path);
+  const real = Buffer.from(new Float32Array([0, 0.6, 0.8, 0]).buffer);
+  addOneOfEach(first, real);
+  first.close();
+  dropTriggers(path);
+  const raw = new Database(path);
+  raw.prepare("UPDATE memories SET embedding = ?").run(Buffer.alloc(16));
+  raw.prepare("UPDATE page_sections SET embedding = ?").run(Buffer.alloc(16));
+  raw.prepare("UPDATE observations SET embedding = ?").run(Buffer.alloc(16));
+  raw.prepare("INSERT INTO memories(id, kind, content, project, tags, embedding, created_at, created_by, updated_at, updated_by) VALUES ('m2', 'decision', 'Real', NULL, '[]', ?, 'x', 'owner', 'x', 'owner')").run(real);
+  assert.equal((raw.prepare('SELECT COUNT(*) AS n FROM embedding_pending').get() as { n: number }).n, 0);
+  raw.close();
+
+  const logged: string[] = [];
+  const log = console.log;
+  console.log = (...a: unknown[]) => { logged.push(a.join(' ')); };
+  let db;
+  try { db = openDb(path); } finally { console.log = log; }
+  assert.deepEqual(triggerRows(db).map((r) => r.name), [...OWN_TRIGGER_NAMES].sort());
+  assert.deepEqual(db.prepare('SELECT tbl, key FROM embedding_pending ORDER BY tbl, key').all(), [{ tbl: 'm', key: 'm1' }, { tbl: 'o', key: 'o1' }, { tbl: 's', key: 'p1\nbeds' }]);
+  assert.equal(logged.length, 1);
+  assert.match(logged[0]!, /restored triggers|triggers/);
+  const snapshot = JSON.stringify([triggerRows(db), db.prepare('SELECT * FROM embedding_pending').all()]);
+  db.close();
+
+  console.log = (...a: unknown[]) => { logged.push(a.join(' ')); };
+  try { db = openDb(path); } finally { console.log = log; }
+  assert.equal(logged.length, 1, 'a second open says nothing');
+  assert.equal(JSON.stringify([triggerRows(db), db.prepare('SELECT * FROM embedding_pending').all()]), snapshot);
+  db.close();
+});
+
+test('an own trigger whose SQL differs is replaced by ours; other triggers are left alone', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'memtest-trg-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'memory.db');
+  const first = openDb(path);
+  const ours = triggerRows(first);
+  first.close();
+  const raw = new Database(path);
+  raw.exec('DROP TRIGGER memories_pending_delete');
+  raw.exec("CREATE TRIGGER memories_pending_delete AFTER DELETE ON memories BEGIN SELECT 1; END");
+  raw.exec("CREATE TRIGGER someone_elses AFTER DELETE ON memories BEGIN SELECT 1; END");
+  raw.close();
+  const db = openDb(path);
+  const now = triggerRows(db);
+  assert.deepEqual(now.filter((r) => r.name !== 'someone_elses'), ours);
+  assert.ok(now.some((r) => r.name === 'someone_elses'));
   db.close();
 });

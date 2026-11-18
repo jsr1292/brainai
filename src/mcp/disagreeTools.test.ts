@@ -21,7 +21,7 @@ function setup() {
     await buildMcpServer(service, name, { registry: new ProjectStore(db, () => new Date()), growth, pages, notes, access, projects } as never).connect(st);
     const client = new Client({ name: 't', version: '0' }); await client.connect(ct);
     const call = async (tool: string, args: Record<string, unknown> = {}) => {
-      const r: any = await client.callTool({ name: tool, arguments: args }); return { text: r.content[0].text as string, isError: !!r.isError };
+      const r: any = await client.callTool({ name: tool, arguments: args }); return { text: (r.content.find((b: any) => !String(b.text).startsWith('BrainAI operating rules')) ?? r.content[0]).text as string, isError: !!r.isError };
     };
     return { client, call };
   };

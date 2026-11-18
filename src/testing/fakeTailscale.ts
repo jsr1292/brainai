@@ -14,6 +14,10 @@ export interface FakeTailscaleState {
   funnelFails?: boolean; hangFunnel?: boolean;
   /** A successful `funnel` answer that mentions a login.tailscale.com page anyway. */
   linkOnSuccess?: boolean;
+  /** `funnel --https=443 off` fails (exit 1) and leaves Funnel as it was. */
+  offFails?: boolean;
+  /** A successful `funnel … <target>` answers only after this many milliseconds (the call is logged when it starts). */
+  delayMs?: number;
 }
 
 const SCRIPT = `#!/usr/bin/env node
@@ -28,10 +32,12 @@ if (args[0] === 'status') {
   process.exit(0);
 }
 if (args[0] === 'funnel') {
+  if (args.includes('off') && s.offFails) { console.error('error: the change could not be applied'); process.exit(1); }
   if (args.includes('off')) { s.funnel = false; fs.writeFileSync(path.join(home, 'tailscale.json'), JSON.stringify(s)); process.exit(0); }
   if (s.hangFunnel) { s.funnel = true; fs.writeFileSync(path.join(home, 'tailscale.json'), JSON.stringify(s)); setInterval(() => {}, 1000); return; }
   if (s.funnelFails) { s.funnel = true; fs.writeFileSync(path.join(home, 'tailscale.json'), JSON.stringify(s)); console.error('error: could not apply the whole config'); process.exit(1); }
   if (s.needsApproval) { console.log('Funnel is not enabled on your tailnet.\\nTo enable, visit:\\n\\n         https://login.tailscale.com/f/funnel?node=abc123\\n'); process.exit(1); }
+  if (s.delayMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, s.delayMs);
   s.funnel = true; fs.writeFileSync(path.join(home, 'tailscale.json'), JSON.stringify(s));
   console.log('Available on the internet:\\n\\nhttps://' + (s.dns || 'brainai-mac.tail1234.ts.net.').replace(/\\.$/, '') + '/\\n|-- proxy ' + args[args.length - 1] + '\\n' + (s.linkOnSuccess ? 'Manage it at https://login.tailscale.com/admin/machines\\n' : ''));
   process.exit(0);

@@ -3,6 +3,11 @@
  * stdio programs, so this forwards every JSON-RPC message between its stdin/stdout and the running BrainAI at
  * http://127.0.0.1:<port>/mcp, with the bridge key as the bearer token.
  *
+ * Whoever holds that port when BrainAI is not running must not get the key. So every new TCP connection first carries
+ * GET /app/bridge-hello on its own socket, and the server must answer with a proof that only a BrainAI that knows the
+ * key's stored hash can make (for this challenge and this port). Only then does the HTTP client get the socket and send
+ * the key. A connection that closes is never reused: its successor is proved again, to whoever holds the port then.
+ *
  * The port comes from the app's port file and the key from <data dir>/claude-desktop-key; both are read again on every
  * (re)connect, so a port change or a new key needs no restart. When BrainAI is not running, or the key is missing or
  * revoked, the request gets a JSON-RPC error with a plain sentence, and the next request tries again. Every request
@@ -15,6 +20,7 @@ import type { Readable, Writable } from 'node:stream';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { ProofRefused, provedConnection, type ProvedConnection } from './provedConnection.js';
 import {
   isJSONRPCErrorResponse, isJSONRPCRequest, isJSONRPCResultResponse, type JSONRPCMessage, type RequestId,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -33,7 +39,7 @@ export const COULD_NOT_ANSWER = 'BrainAI could not answer this request. Try agai
  * Claude may start at login before BrainAI, and may not send initialize again once it failed: an initialize that
  * cannot reach BrainAI is tried again every `intervalMs`, `attempts` more times, before NOT_RUNNING (1 s for 30 s).
  */
-export interface BridgeOptions { initializeRetry?: { intervalMs: number; attempts: number } }
+export interface BridgeOptions { initializeRetry?: { intervalMs: number; attempts: number }; helloTimeoutMs?: number }
 const DEFAULT_RETRY = { intervalMs: 1000, attempts: 30 };
 
 /** JSON-RPC "server error" code for every failure the bridge reports itself. */
@@ -49,11 +55,12 @@ const CONNECTION_CODES = new Set([
 /** A failure whose message is one of the sentences above, safe to show. */
 class BridgeFailure extends Error {}
 
-function readKey(dataDir: string | undefined): string | null {
+/** The key file's grant and token from one read, so a swap of the file cannot pair one's token with the other's grant. */
+function readKey(dataDir: string | undefined): { token: string; grant: string } | null {
   if (!dataDir) return null;
   try {
-    const token = (JSON.parse(readFileSync(join(dataDir, BRIDGE_KEY_FILE), 'utf8')) as { token?: unknown }).token;
-    return typeof token === 'string' && token !== '' ? token : null;
+    const { grant, token } = JSON.parse(readFileSync(join(dataDir, BRIDGE_KEY_FILE), 'utf8')) as { grant?: unknown; token?: unknown };
+    return typeof token === 'string' && token !== '' && typeof grant === 'string' && grant !== '' ? { token, grant } : null;
   } catch {
     return null;
   }
@@ -81,6 +88,7 @@ function isConnectionFailure(e: unknown, depth = 0): boolean {
 /** What Claude is told when a message could not reach BrainAI. */
 function failureMessage(e: unknown): string {
   if (e instanceof BridgeFailure) return e.message;
+  if (e instanceof ProofRefused) return e.notConnected ? NOT_CONNECTED : NOT_RUNNING;
   if (e instanceof StreamableHTTPError && (e.code === 401 || e.code === 403)) return NOT_CONNECTED;
   if (e instanceof StreamableHTTPError && e.code !== undefined && e.code > 0) {
     // BrainAI's own JSON-RPC error (a brain that moved to a server, say) is passed on as it is.
@@ -110,6 +118,8 @@ interface Link {
   transport: StreamableHTTPClientTransport;
   /** Why it was dropped; what the requests its closing cut off are told. */
   failure?: string;
+  /** The proved sockets and the fetch that uses only them. */
+  connection: ProvedConnection;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -158,6 +168,7 @@ export async function runClaudeBridge(
     if (link === l) link = null;
     l.failure ??= failure;
     if (made.delete(l)) l.transport.close().catch(() => {});
+    l.connection.destroy();
   };
 
   /**
@@ -165,7 +176,7 @@ export async function runClaudeBridge(
    * requests with NOT_RUNNING and drops the connection; one that ends without their answer gets COULD_NOT_ANSWER.
    */
   const watchingFetch = (l: Link): FetchLike => async (url, init) => {
-    const res = await fetch(url, init);
+    const res = await l.connection.fetch(url, init);
     // Only an answer stream outlives send(); a JSON answer or an error is read, and dealt with, inside it.
     const stream = res.ok && (res.headers.get('content-type') ?? '').toLowerCase().startsWith('text/event-stream');
     const ids = stream && init?.method === 'POST' ? requestIds(init.body) : [];
@@ -197,12 +208,14 @@ export async function runClaudeBridge(
   };
 
   const connect = (): Link => {
-    const token = readKey(dataDir);
-    if (!token) throw new BridgeFailure(NOT_CONNECTED);
+    const key = readKey(dataDir);
+    if (!key) throw new BridgeFailure(NOT_CONNECTED);
+    const { token, grant } = key;
     keys.add(token);
     const port = readPort(portFile);
     if (port === null) throw new BridgeFailure(NOT_RUNNING);
     const l = { token } as Link;
+    l.connection = provedConnection(port, grant, token, opts.helloTimeoutMs);
     // 127.0.0.1, as the app listens: "localhost" may try ::1 first, where another account's program could listen.
     l.transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
       requestInit: { headers: { Authorization: `Bearer ${token}` } },
@@ -247,10 +260,12 @@ export async function runClaudeBridge(
       } catch (e) {
         const text = failureMessage(e);
         if (current) drop(current, text);
-        // Refused: Connect may have issued a new key since this link was made. Once, try again with the one on file now.
-        if (current && !rekeyed && !closing && e instanceof StreamableHTTPError && (e.code === 401 || e.code === 403)) {
-          const fresh = readKey(dataDir);
-          if (fresh !== null && fresh !== current.token) { rekeyed = true; attempt--; continue; }
+        // Refused (by the key, or by a hello for a revoked grant): Connect may have issued a new key since this link
+        // was made. Once, try again with the one on file now.
+        const refused = (e instanceof StreamableHTTPError && (e.code === 401 || e.code === 403)) || (e instanceof ProofRefused && e.notConnected);
+        if (current && !rekeyed && !closing && refused) {
+          const fresh = readKey(dataDir)?.token;
+          if (fresh !== undefined && fresh !== current.token) { rekeyed = true; attempt--; continue; }
         }
         if (text === NOT_RUNNING && attempt < retries && !closing) {
           await sleep(retry.intervalMs);
@@ -267,7 +282,7 @@ export async function runClaudeBridge(
     const finish = () => {
       if (closing) return;
       closing = true;
-      void Promise.allSettled([stdio.close(), ...[...made].map((l) => l.transport.close())]).then(() => resolve());
+      void Promise.allSettled([stdio.close(), ...[...made].map((l) => { l.connection.destroy(); return l.transport.close(); })]).then(() => resolve());
     };
     // Each message is sent as it arrives (no waiting on the one before), so a long tool call holds up nothing else.
     stdio.onmessage = (message) => { void forward(message); };

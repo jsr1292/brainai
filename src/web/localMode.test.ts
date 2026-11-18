@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
-import { startTestApp, TEST_PASSWORD } from '../testing/helpers.js';
+import { appSession, startTestApp, TEST_PASSWORD } from '../testing/helpers.js';
 
 interface Answer { status: number; headers: Record<string, string | string[] | undefined>; body: string }
 
@@ -67,21 +67,17 @@ async function startConnection(baseUrl: string): Promise<string> {
   return auth.headers.get('location')!;
 }
 
-test('local mode with no password: the dashboard opens signed in, and the consent page needs only the Allow click', async (t) => {
+test('local mode with no password: the app window opens the dashboard, and its consent page needs only the Allow click', async (t) => {
   const app = await startTestApp({ localMode: true, noPassword: true });
   t.after(() => app.close());
-  const home = await openPage(app.baseUrl, '/', { 'Sec-Fetch-Site': 'none' });
+  const cookie = await appSession(app);
+  const home = await openPage(app.baseUrl, '/', { 'Sec-Fetch-Site': 'none', Cookie: cookie });
   assert.equal(home.status, 200);
-  assert.match(home.cookie, /mem_session=/);
-  assert.match(String(home.headers['set-cookie']), /HttpOnly/i);
-  const login = await openPage(app.baseUrl, '/login?next=%2Fsettings');
-  assert.equal(login.status, 302);
-  assert.equal(login.headers.location, '/settings');
   const consent = await startConnection(app.baseUrl);
   // The app opens the consent page in the browser: a navigation from outside (Sec-Fetch-Site: none).
-  const page = await openPage(app.baseUrl, consent, { 'Sec-Fetch-Site': 'none' });
+  const page = await openPage(app.baseUrl, consent, { 'Sec-Fetch-Site': 'none', Cookie: cookie });
   assert.equal(page.status, 200, 'the consent page opens without a login');
-  const c2 = page.cookie;
+  const c2 = cookie;
   // Another site's form is still refused by the Origin check.
   const foreign = await fetch(app.baseUrl + consent, { method: 'POST', redirect: 'manual', headers: { Cookie: c2, Origin: 'https://attacker.example', 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ decision: 'approve' }) });
   assert.equal(foreign.status, 403);
@@ -158,7 +154,7 @@ test('outside local mode there is no app ticket and no app link, even with a key
   assert.equal((await fetch(`${app.baseUrl}/app/ticket`, { method: 'POST', headers: { 'X-App-Key': key } })).status, unknown.status);
 });
 
-test('another site cannot use the local server: subresource requests are refused and never create sessions', async (t) => {
+test('another site cannot use the local server: its requests are refused and never create sessions', async (t) => {
   const app = await startTestApp({ localMode: true, noPassword: true });
   t.after(() => app.close());
   const count = () => (app.deps.sessions as any).list().length as number;
@@ -171,15 +167,16 @@ test('another site cannot use the local server: subresource requests are refused
     assert.equal((await fetch(`${app.baseUrl}/`, { redirect: 'manual', headers: { 'Sec-Fetch-Site': site, 'Sec-Fetch-Mode': 'cors' } })).status, 403, site);
   }
   assert.equal(count(), before, 'no session was created');
-  // A link followed from elsewhere still opens BrainAI (one session), and the browser's own requests work.
+  // A link followed from elsewhere makes no session (it goes to the login page), and the window's own requests work.
   const nav = await openPage(app.baseUrl, '/', { 'Sec-Fetch-Site': 'cross-site' });
-  assert.equal(nav.status, 200);
-  assert.equal(count(), before + 1);
-  const same = await fetch(`${app.baseUrl}/search?q=x`, { redirect: 'manual', headers: { Cookie: nav.cookie, 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors' } });
+  assert.equal(nav.status, 302);
+  assert.equal(count(), before);
+  const cookie = await appSession(app);
+  const same = await fetch(`${app.baseUrl}/search?q=x`, { redirect: 'manual', headers: { Cookie: cookie, 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors' } });
   assert.notEqual(same.status, 403);
   // A same-origin subresource without a cookie does not get a session of its own either.
   await fetch(`${app.baseUrl}/search?q=x`, { redirect: 'manual', headers: { 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors' } });
-  assert.equal(count(), before + 1);
+  assert.equal(count(), before + 1, 'only the ticket made a session');
 });
 
 test('127.0.0.1 pages redirect to localhost, so the dashboard has one address and its forms work', async (t) => {
@@ -239,4 +236,54 @@ test('only the three app addresses are exempt: any other /app/… path keeps the
   const viaLoopback = await send(app.baseUrl, '/app/open?ticket=abc', `127.0.0.1:${port}`);
   assert.equal(viaLoopback.status, 308);
   assert.equal(viaLoopback.headers.location, `http://localhost:${port}/app/open?ticket=abc`);
+});
+
+/** One raw request carrying nothing but a Host header, as a program run by another account on this computer sends it. */
+const bare = (app: { baseUrl: string }, path: string, method = 'GET', headers: Record<string, string> = {}, body?: string) =>
+  send(app.baseUrl, path, `localhost:${new URL(app.baseUrl).port}`, method, { 'User-Agent': 'curl/8.7.1', Accept: '*/*', ...headers }, body);
+const sessionCookies = (a: Answer) => {
+  const set = a.headers['set-cookie'];
+  return (Array.isArray(set) ? set : set ? [set] : []).filter((c) => c.startsWith('mem_session='));
+};
+
+test('with no password, a program sending no browser headers gets no owner session', async (t) => {
+  const app = await startTestApp({ localMode: true, noPassword: true });
+  t.after(() => app.close());
+  const origin = app.baseUrl;
+  const home = await bare(app, '/');
+  assert.deepEqual(sessionCookies(home), [], 'no session cookie');
+  assert.notEqual((await bare(app, '/search?q=x')).status, 200);
+  const pw = await bare(app, '/settings/reach/password', 'POST', { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' }, 'password=chosen-by-the-other-account&again=chosen-by-the-other-account');
+  assert.notEqual(pw.status, 200);
+  assert.equal(app.deps.owner.hasPassword(), false, 'the password was not set');
+});
+
+test("with no password, a browser page load gets no session and the 'Open BrainAI's window' page, never a loop", async (t) => {
+  const app = await startTestApp({ localMode: true, noPassword: true });
+  t.after(() => app.close());
+  const home = await openPage(app.baseUrl, '/', { 'Sec-Fetch-Site': 'none' });
+  assert.equal(home.status, 302);
+  assert.equal(home.headers.location, '/login?next=%2F');
+  const login = await openPage(app.baseUrl, '/login?next=%2F', { 'Sec-Fetch-Site': 'none' });
+  assert.equal(login.status, 200);
+  assert.match(login.body, /Open BrainAI/);
+  assert.equal(login.cookie, '');
+});
+
+test('the app window still gets its session from the ticket', async (t) => {
+  const app = await startTestApp({ localMode: true, noPassword: true });
+  t.after(() => app.close());
+  const cookie = await appSession(app);
+  const home = await fetch(app.baseUrl + '/', { redirect: 'manual', headers: { Cookie: cookie } });
+  assert.equal(home.status, 200);
+});
+
+test('Settings > Connections local rows keep the description under the title, not in a third grid column', async (t) => {
+  const app = await startTestApp({ localMode: true, noPassword: true });
+  t.after(() => app.close());
+  const s = await appSession(app);
+  const r = await fetch(app.baseUrl + '/settings', { headers: { Cookie: s } });
+  const body = await r.text();
+  assert.match(body, /<span class="txt">Reach from phone and web<span class="sub">/);
+  assert.doesNotMatch(body, /<span class="txt">[^<]*<\/span><span class="meta">[^<]*<\/span><span class="chev">/);
 });

@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ClientsStore } from './auth/clientsStore.js';
+import { forgetAutoSessions } from './auth/sessionReset.js';
 import { LoginLimiter } from './auth/loginLimiter.js';
 import { OwnerAuth } from './auth/owner.js';
 import { MemoryOAuthProvider } from './auth/provider.js';
@@ -171,6 +172,8 @@ const listening = (where: string) => {
   void models?.start().catch(() => {});
 };
 if (config.localMode) {
+  // Sessions the old automatic sign-in made are forgotten once, before anything listens.
+  forgetAutoSessions(db, config.dataDir);
   // The desktop app holds both loopback addresses, so no other account can take ::1 (D1 review).
   const [server, ...also] = await listenLocal(app, config.port);
   listening(`127.0.0.1 and ::1, port ${config.port}`);

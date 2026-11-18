@@ -78,7 +78,7 @@ test('the sidebar comes right after the header, hidden, labelled Main, with ever
     ['side-place', '/graph', 'Graph'],
     ['side-place side-settings', '/settings', 'Settings'],
   ]);
-  assert.match(side, /<form class="side-find" method="get" action="\/search" role="search"><svg class="side-find-icon" viewBox="0 0 24 24" aria-hidden="true"[^>]*><circle cx="11" cy="11" r="7"\/><path d="m20 20-3.5-3.5"\/><\/svg><input name="q" type="search" placeholder="Search" aria-label="Search" aria-keyshortcuts="Meta\+K Control\+K" value=""><kbd>⌘K<\/kbd><\/form>/);
+  assert.match(side, /<form class="side-find" method="get" action="\/search" role="search"><svg class="side-find-icon" viewBox="0 0 24 24" aria-hidden="true"[^>]*><circle cx="11" cy="11" r="7"\/><path d="m20 20-3.5-3.5"\/><\/svg><input name="q" type="search" placeholder="Search" aria-label="Search" aria-keyshortcuts="Meta\+K Control\+K" value=""><kbd><span class="k-mac">⌘K<\/span><span class="k-pc">Ctrl K<\/span><\/kbd><\/form>/);
   assert.match(side, /<ul class="side-places">/);
 });
 

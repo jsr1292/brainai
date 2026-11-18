@@ -139,11 +139,20 @@ export function updateCard(u: UpdateFile, later: string | null): SafeHtml {
   <p><strong class="update-title">${line.title}</strong></p>
   <p class="update-text"${line.text === '' ? raw(' hidden') : raw('')}>${line.text}</p>
   ${items.length > 0 && !line.busy ? html`<ul>${items.map((i) => html`<li>${i}</li>`)}</ul>` : ''}
-  ${line.busy ? '' : html`<p class="update-actions">${u.state === 'blocked'
+  ${line.busy ? '' : html`<div class="update-actions">${u.state === 'blocked'
     // The app cannot replace itself where it runs: the release page (outside links open in the browser).
     ? html`<a class="button" href="https://github.com/jsr1292/brainai/releases/latest">Download BrainAI ${u.version}</a>`
     : html`<a class="button" href="/app/update">${u.state === 'failed' ? 'Try again' : 'Update and restart'}</a>`}
-  ${u.state === 'available' ? html`<form method="post" action="/app/update/later" class="inline"><button type="submit">Later</button></form>` : ''}</p>`}
+  ${u.state === 'available' ? html`<form method="post" action="/app/update/later" class="inline"><button type="submit">Later</button></form>` : ''}</div>`}
+</div>`;
+}
+
+/** The quiet card on Home (the app only) while the only copies of the brain are on this disk. Later hides it for 30 days. */
+export function offsiteCard(): SafeHtml {
+  return html`<div class="conn-setup offsite-card" role="status">
+  <p>Your backups are only on this computer. Keep a copy in OneDrive, Dropbox or another folder that syncs.</p>
+  <div class="update-actions"><a class="button" href="/settings#backup-copy">Choose a folder</a>
+  <form method="post" action="/app/offsite/later" class="inline"><button type="submit">Later</button></form></div>
 </div>`;
 }
 
@@ -236,7 +245,7 @@ function setupFrame(step: 1 | 2 | 3 | 4, body: SafeHtml): SafeHtml {
   return html`<div class="setup-frame">
 <aside class="setup-rail">
 <p class="brand"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></p>
-<ol class="setup-steps" aria-label="Setup steps">${SETUP_STEPS.map(item)}</ol>
+<ol class="setup-rail-steps" aria-label="Setup steps">${SETUP_STEPS.map(item)}</ol>
 </aside>
 <div class="setup-main welcome">
 <p class="meta step-count">Step ${step} of 4</p>

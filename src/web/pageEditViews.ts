@@ -60,7 +60,7 @@ ${fields(v)}
 ${v.preview ? html`<div class="preview art"${/class="(pic|diagram)"/.test(v.preview.value) ? html` data-viewer="${asset('viewer.js')}"` : ''}${v.preview.value.includes('class="diagram"') ? html` data-diagrams="${asset('diagrams.js')}" data-renderer="${asset('diagram-frame.js')}"` : ''}>${v.preview}</div>` : ''}
 <textarea name="body" rows="${v.mode === 'section' ? 14 : 24}" aria-label="${v.mode === 'section' && v.section ? `Text of the ${v.section.heading || 'Introduction'} section (Markdown)` : 'Page text (Markdown)'}" spellcheck="true" data-editor${v.preview ? html` class="under-preview"` : ''}>${v.body}</textarea>
 </section>
-<div class="psavebar"><button type="submit" name="intent" value="save" class="primary">${v.mode === 'section' ? 'Save section' : v.mode === 'new' ? 'Create page' : 'Save page'}<kbd>⌘S</kbd></button><a class="quiet-btn" href="${cancel}">Cancel</a><span class="psave-note">${v.mode === 'new' ? 'Saving makes version 1.' : `Saving makes version ${(v.base ?? 0) + 1}.`}</span></div>
+<div class="psavebar"><button type="submit" name="intent" value="save" class="primary">${v.mode === 'section' ? 'Save section' : v.mode === 'new' ? 'Create page' : 'Save page'}<kbd><span class="k-mac">⌘S</span><span class="k-pc">Ctrl S</span></kbd></button><a class="quiet-btn" href="${cancel}">Cancel</a><span class="psave-note">${v.mode === 'new' ? 'Saving makes version 1.' : `Saving makes version ${(v.base ?? 0) + 1}.`}</span></div>
 </form>
 ${v.mode === 'page' && v.pageId ? deletePageFold(v.pageId) : ''}`;
 }

@@ -1,5 +1,6 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash, createHmac } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createServer } from 'node:net';
@@ -23,17 +24,31 @@ async function closedPort(): Promise<number> {
   return port;
 }
 
-/** A stand-in for BrainAI on 127.0.0.1 only, answering with `handle`; closed (connections dropped) after the test. */
-async function fakeBrainAI(t: TestContext, handle: (req: IncomingMessage, body: any, res: ServerResponse) => void) {
+/**
+ * A stand-in for BrainAI on 127.0.0.1 only, answering with `handle`; closed (connections dropped) after the test.
+ * Like BrainAI it proves itself to the bridge: GET /app/bridge-hello is answered with the proof for the key `token`
+ * (the one runBridge gives its bridge by default), and never reaches `handle`.
+ */
+async function fakeBrainAI(t: TestContext, handle: (req: IncomingMessage, body: any, res: ServerResponse) => void, token = KEY) {
+  let port = 0;
   const server = createHttpServer((req, res) => {
+    if (req.url?.startsWith('/app/bridge-hello?')) {
+      const hello = new URL(req.url, 'http://127.0.0.1').searchParams;
+      const key = createHash('sha256').update(token).digest('hex');
+      const proof = createHmac('sha256', key).update((hello.get('challenge') ?? '') + String(port)).digest('hex');
+      const answer = JSON.stringify({ proof });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(answer) }).end(answer);
+      return;
+    }
     let raw = '';
     req.on('data', (c: Buffer) => { raw += c.toString(); });
     req.on('end', () => handle(req, raw ? JSON.parse(raw) : undefined, res));
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  port = (server.address() as { port: number }).port;
   const stop = () => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); });
   t.after(async () => { if (server.listening) await stop(); });
-  return { port: (server.address() as { port: number }).port, stop };
+  return { port, stop };
 }
 
 /**
@@ -164,6 +179,12 @@ test('a revoked grant: requests get NOT_CONNECTED, even on a bridge that was wor
   assert.equal((await h.request('tools/list')).error?.message, NOT_CONNECTED);
 });
 
+test('a key file without a grant: requests get NOT_CONNECTED', async (t) => {
+  const h = await harness(t);
+  writeFileSync(join(h.dir, BRIDGE_KEY_FILE), JSON.stringify({ token: 'made-up-key-without-a-grant' }), { mode: 0o600 });
+  assert.equal((await h.initialize()).error?.message, NOT_CONNECTED);
+});
+
 test('a key replaced while the bridge runs (Connect again, old grant revoked): the next request uses the new key and succeeds', async (t) => {
   const h = await harness(t);
   assert.equal((await h.initialize()).error, undefined);
@@ -207,6 +228,20 @@ test('BrainAI stopping during a slow tools/call: the waiting request gets NOT_RU
   const r = await reply;
   assert.equal(r.id, 1);
   assert.equal(r.error?.message, NOT_RUNNING);
+});
+
+test('a long tool call holds up nothing else: a quick request is answered while it is still running', async (t) => {
+  const fake = await fakeBrainAI(t, (_req, body, res) => {
+    if (body.method === 'tools/call') { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.flushHeaders(); return; }
+    jsonResult(res, body.id, { tools: [] });
+  });
+  const b = runBridge(t, { token: KEY, port: fake.port });
+  const slow = b.request('tools/call', { name: 'recall', arguments: { query: 'sourdough' } });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const quick = await Promise.race([b.request('tools/list'), new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000))]);
+  assert.deepEqual(quick?.result, { tools: [] });
+  await fake.stop();
+  await slow;
 });
 
 test('an answer that is not MCP (an HTML page) gets a plain sentence, not NOT_RUNNING', async (t) => {

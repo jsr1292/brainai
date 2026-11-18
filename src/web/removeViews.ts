@@ -36,7 +36,7 @@ export function removeDone(v: { folder: string; facts: number; pages: number; to
         : html`<li>${t.name}: failed${t.detail ? html`: ${t.detail}` : ''}</li>`;
   return html`<div class="narrow">
 <h1>BrainAI is ready to be removed</h1>
-<p><span class="ok">Saved ✓</span> ${factsAndPages(v.facts, v.pages)} are in <code>${v.folder}</code></p>
+<p><span class="ok">Saved ✓</span> ${factsAndPages(v.facts, v.pages)} are in <code class="path">${v.folder}</code></p>
 <p>It holds every memory in plain text: keep it private.</p>
 <div class="row-actions">
 <form method="post" action="/settings/remove/show"><button type="submit" class="secondary">Show in ${v.revealIn}</button></form>

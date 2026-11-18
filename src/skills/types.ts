@@ -35,3 +35,10 @@ export const MAX_SKILL_FILE_BYTES = 64 * 1024;
 export const MAX_SKILL_BYTES = 256 * 1024;
 export const MAX_PENDING_PROPOSALS = 20;
 export const SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const FILE_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
+/**
+ * Whether a skill file path is one a skill can hold: folders and names of letters, digits, dots, hyphens and underscores,
+ * no dot-led segment (.git, .hidden, ..), and no skill.md in any case (it would overwrite SKILL.md on a Mac).
+ */
+export const skillFilePathOk = (path: string): boolean =>
+  path.toLowerCase() !== 'skill.md' && path.split('/').every((p) => FILE_SEGMENT_RE.test(p) && !p.startsWith('.'));

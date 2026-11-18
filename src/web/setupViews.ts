@@ -4,6 +4,7 @@ import type { Refused } from '../auth/refusedRedirects.js';
 import { SETUP_VERSION, appOfGrant, type SetupApp } from '../setup/texts.js';
 import { when } from './dashboardViews.js';
 import { html, type SafeHtml } from './html.js';
+import { thisComputer } from '../desktop/computer.js';
 
 const copyBox = (text: string, label: string) =>
   html`<div class="copy-box"><pre>${text}</pre><button type="button" class="secondary" data-copy="${text}" aria-label="Copy ${label}">Copy</button></div>`;
@@ -35,14 +36,29 @@ function allowBlock(app: SetupApp, a: { allowed: boolean; refused: readonly Refu
   return html`<div id="allow">${own}${refused}</div>`;
 }
 
-export function setupPage(app: SetupApp, text: string, mcpUrl: string, status: SafeHtml, version = SETUP_VERSION, allow: { allowed: boolean; refused: readonly Refused[] } = { allowed: true, refused: [] }): SafeHtml {
+/** How the owner signs in: password and code when both are set; otherwise (local mode) BrainAI's window approves. */
+export interface SetupContext { needsReach: boolean; signIn: 'password' | 'window' }
+
+/** A cloud app on a brain with no public address: no localhost address, no steps, just the way to Reach. */
+function needsReachPage(app: SetupApp): SafeHtml {
+  const note = app.withoutReach?.split('TOOLS') ?? [];
+  return html`<div class="narrow">
+<h1>Set up ${app.name}</h1>
+<p>${app.name === 'Claude' ? 'Claude on the web and phone' : app.name} can’t see ${thisComputer()} yet. Turn on Reach first, then come back here.</p>
+<p><a class="button primary" href="/settings/reach">Turn on Reach</a></p>
+${note.length === 2 ? html`<p class="meta">${note[0]}<a href="/settings/tools">Tools on ${thisComputer()}</a>${note[1]}</p>` : ''}
+</div>`;
+}
+
+export function setupPage(app: SetupApp, text: string, mcpUrl: string, status: SafeHtml, version = SETUP_VERSION, allow: { allowed: boolean; refused: readonly Refused[] } = { allowed: true, refused: [] }, ctx: SetupContext = { needsReach: false, signIn: 'password' }): SafeHtml {
+  if (app.cloud && ctx.needsReach) return needsReachPage(app);
   return html`<div class="narrow">
 <h1>Set up ${app.name}</h1>
 <p class="lede">Three steps. This page knows when ${app.name} runs the newest setup text.</p>
 <ol class="setup-steps">
 <li><h2>Connect</h2>${allowBlock(app, allow)}<p>${app.connect.replace('ADDRESS', mcpUrl)}</p>
 ${copyBox(mcpUrl, 'the address')}
-<p class="meta">You sign in with your brain password and code, then pick its access.</p></li>
+<p class="meta">${ctx.signIn === 'password' ? 'You sign in with your brain password and code, then pick its access.' : 'BrainAI’s window asks you to approve it, then you pick its access.'}</p></li>
 <li><h2>Paste the setup text</h2><p>${app.where}</p>
 ${copyBox(text, 'the setup text')}
 <p class="meta">Setup text ${version}. It holds no profile facts and no secrets.</p></li>

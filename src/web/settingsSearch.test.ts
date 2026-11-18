@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { request } from 'node:http';
-import { startTestApp } from '../testing/helpers.js';
+import { appSession, startTestApp } from '../testing/helpers.js';
 import { fakeHome } from '../testing/fakeTools.js';
 import { openDb } from '../db.js';
 import { packArchive } from '../saved/archive.js';
@@ -77,7 +77,7 @@ async function setup(t: TestContext, o: { installed?: ModelId[]; fetch?: typeof 
   const local = o.local !== false;
   const app = await startTestApp({ localMode: local, noPassword: local, statusDir, tools: { home: f.home, path: `${f.bin}:${dirname(process.execPath)}:/usr/bin:/bin`, apps: f.apps }, models: local ? manager : undefined });
   t.after(() => app.close());
-  const cookie = (await open(app.baseUrl, '/settings')).cookie;
+  const cookie = local ? await appSession(app) : (await open(app.baseUrl, '/settings')).cookie;
   return { app, cookie, statusDir, modelsDir, manager, reranker, embedder, db, e5 };
 }
 

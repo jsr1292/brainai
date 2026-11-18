@@ -81,6 +81,7 @@ export function registerDiscussionTools(
 
   server.registerTool('open_discussion', {
     title: 'Open discussion',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     description: "Opens a discussion: a question for the owner's other assistants to answer in rounds. Use it only when the owner asks.",
     inputSchema: {
       title: z.string(),
@@ -112,6 +113,7 @@ export function registerDiscussionTools(
 
   server.registerTool('list_discussions', {
     title: 'List discussions',
+    annotations: { readOnlyHint: true, openWorldHint: false },
     description: 'Lists discussions with their round and who has replied.',
     inputSchema: { status: z.enum(['open', 'closed', 'all']).optional() },
   }, guard('list_discussions', (a: { status?: 'open' | 'closed' | 'all' }) =>
@@ -119,6 +121,7 @@ export function registerDiscussionTools(
 
   server.registerTool('read_discussion', {
     title: 'Read discussion',
+    annotations: { readOnlyHint: true, openWorldHint: false },
     description: 'Reads a discussion, or one of its files (long files come in parts). In round 1 you see the others\' replies only after you reply.',
     inputSchema: { id: z.string(), model, file: z.string().optional(), part: z.number().int().min(1).optional() },
   }, guard('read_discussion', (a: { id: string; model: string; file?: string; part?: number }) => {
@@ -135,6 +138,7 @@ export function registerDiscussionTools(
 
   server.registerTool('reply_to_discussion', {
     title: 'Reply to discussion',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     description: 'Adds your reply to a discussion, once per round. State your model.',
     inputSchema: { id: z.string(), model, text: z.string(), files },
   }, guard('reply_to_discussion', (a: { id: string; model: string; text: string; files?: { name: string; content: string }[] }) => {
@@ -153,6 +157,7 @@ export function registerDiscussionTools(
   if (caller('').access === 'full') {
     server.registerTool('close_discussion', {
       title: 'Close discussion',
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
       description: "Closes a discussion and saves its decision to the owner's memory. Use it only when the owner gives you the decision.",
       inputSchema: {
         id: z.string(), model, decision: z.string(),

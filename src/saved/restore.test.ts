@@ -13,6 +13,7 @@ import { backupNow, missingPictures } from '../backup.js';
 import { backupHealth } from '../backupStatus.js';
 import { latestSchema } from '../db.js';
 import { handTar, tarOf } from './testArchives.js';
+import { restoredRowsProblem } from './rowChecks.js';
 import { applyPendingRestore, isEmptyBrain, restoreInto, stageRestore } from './restore.js';
 
 const T = new Date('2026-11-06T10:00:00Z');
@@ -204,7 +205,7 @@ async function backupFile(t: TestContext, pictures = 0) {
   const page = await makePages(given, () => T).create({ title: 'Garden club setup', area: 'apps', body: 'Run it with the usual command.' }, 'owner');
   for (let i = 0; i < pictures; i++) {
     given.db.prepare(`INSERT INTO images(id, type, bytes, width, height, created_at, created_by, page_id) VALUES (?, 'png', 1, 1, 1, '2026-11-06', 'owner', ?)`)
-      .run(`img${i}`, (page as { id: string }).id);
+      .run(`${String(i).repeat(24)}`, (page as { id: string }).id);
   }
   const file = await backupNow(given.db, tmp(t), 1, T);
   return { file, db: given.db };
@@ -387,7 +388,7 @@ test('a backup-file import marks its pictures removed, so the restored brain is 
   const { file } = await backupFile(t, 3);
   // Three rows in the file: two live, one already deleted for good.
   const src = new Database(file);
-  src.prepare("UPDATE images SET removed_at = '2026-11-01T00:00:00.000Z', removed_by = 'owner' WHERE id = 'img2'").run();
+  src.prepare("UPDATE images SET removed_at = '2026-11-01T00:00:00.000Z', removed_by = 'owner' WHERE id = '222222222222222222222222'").run();
   src.close();
   const dir = emptyData(t);
   assert.deepEqual(await stageRestore(file, dir), { facts: 2, pages: 1, pictures_missing: 2 });
@@ -396,13 +397,124 @@ test('a backup-file import marks its pictures removed, so the restored brain is 
   const restored = new Database(join(dir, 'memory.db'));
   t.after(() => restored.close());
   const rows = restored.prepare('SELECT id, removed_at, removed_by FROM images ORDER BY id').all() as { id: string; removed_at: string | null; removed_by: string | null }[];
-  assert.equal(rows.find((r) => r.id === 'img0')!.removed_by, 'restore');
-  assert.ok(rows.find((r) => r.id === 'img0')!.removed_at);
-  assert.equal(rows.find((r) => r.id === 'img2')!.removed_by, 'owner', 'a picture already removed keeps its own record');
+  assert.equal(rows.find((r) => r.id === '000000000000000000000000')!.removed_by, 'restore');
+  assert.ok(rows.find((r) => r.id === '000000000000000000000000')!.removed_at);
+  assert.equal(rows.find((r) => r.id === '222222222222222222222222')!.removed_by, 'owner', 'a picture already removed keeps its own record');
   assert.equal(missingPictures(restored, dir), null);
   const missing = missingPictures(restored, dir) ?? 0;
   const health = backupHealth({ nightly: { at: new Date().toISOString(), ok: true, pictures: { missing, stray: 0 } } } as never, new Date());
   assert.doesNotMatch(JSON.stringify(health), /pictures the database lists/);
   const pages = restored.prepare('SELECT body FROM pages').all() as { body: string }[];
   assert.ok(pages.some((p) => p.body.includes('Run it with the usual command.')), 'the page text is unchanged');
+});
+
+/** A saved copy at the current schema whose rows were written by plain SQL, the way a crafted file would be. */
+function craftedArchive(t: TestContext, setup: (c: ReturnType<typeof openDb>) => void): string {
+  const craft = tmp(t);
+  const c = openDb(join(craft, 'memory.db'));
+  setup(c);
+  c.pragma('journal_mode = DELETE');
+  c.close();
+  const archive = join(tmp(t), 'brainai-saved-2026-11-06.tar.gz');
+  execFileSync('tar', ['-czf', archive, '-C', craft, 'memory.db']);
+  return archive;
+}
+
+const addSkill = (c: ReturnType<typeof openDb>, name: string, path?: string) => {
+  c.prepare(`INSERT INTO skills(id, name, description, body, enabled, origin, version, created_at, created_by, updated_at, updated_by)
+    VALUES ('s1', ?, 'dummy', 'dummy body', 0, 'here', 1, '2026-11-06', 'owner', '2026-11-06', 'owner')`).run(name);
+  if (path !== undefined) c.prepare("INSERT INTO skill_files(skill_id, path, text) VALUES ('s1', ?, 'dummy')").run(path);
+};
+const addFact = (c: ReturnType<typeof openDb>, project: string) => {
+  c.prepare(`INSERT INTO memories(id, kind, content, project, tags, keys, embedding, created_at, created_by, updated_at, updated_by)
+    VALUES ('m1', 'decision', 'dummy fact text', ?, '[]', '', x'00', '2026-11-06', 'owner', '2026-11-06', 'owner')`).run(project);
+};
+const BAD = '../../../escaped';
+const addPage = (c: ReturnType<typeof openDb>, project: string | null, area: string | null) => {
+  c.pragma('ignore_check_constraints = ON');
+  c.prepare(`INSERT INTO pages(id, title, title_key, body, project, area, version, created_at, created_by, updated_at, updated_by)
+    VALUES ('p1', 'dummy', 'dummy', 'dummy', ?, ?, 1, '2026-11-06', 'owner', '2026-11-06', 'owner')`).run(project, area);
+};
+const addImage = (c: ReturnType<typeof openDb>, id: string, type: string) => {
+  c.pragma('ignore_check_constraints = ON');
+  c.prepare(`INSERT INTO images(id, type, bytes, width, height, created_at, created_by) VALUES (?, ?, 1, 1, 1, '2026-11-06', 'owner')`).run(id, type);
+};
+
+const refused: [string, (c: ReturnType<typeof openDb>) => void][] = [
+  ['skills.name', (c) => addSkill(c, BAD)],
+  ['skill_files.path', (c) => addSkill(c, 'plain', '../../escaped.txt')],
+  ['memories.project', (c) => addFact(c, BAD)],
+  ['pages.project', (c) => addPage(c, BAD, null)],
+  ['projects.name', (c) => { c.pragma('ignore_check_constraints = ON'); c.prepare("INSERT INTO projects(name, state_changed_at, created_at, created_by, updated_at, updated_by) VALUES (?, '2026-11-06', '2026-11-06', 'owner', '2026-11-06', 'owner')").run(BAD); }],
+  ['project_aliases.alias', (c) => c.prepare("INSERT INTO project_aliases(alias, project, added_at, added_by) VALUES (?, 'wildlog', '2026-11-06', 'owner')").run(BAD)],
+  ['project_aliases.project', (c) => c.prepare("INSERT INTO project_aliases(alias, project, added_at, added_by) VALUES ('old', ?, '2026-11-06', 'owner')").run(BAD)],
+  ['pages.area', (c) => addPage(c, null, 'bogus')],
+  ['projects.area', (c) => { c.pragma('ignore_check_constraints = ON'); c.prepare("INSERT INTO projects(name, area, state_changed_at, created_at, created_by, updated_at, updated_by) VALUES ('wildlog', 'bogus', '2026-11-06', '2026-11-06', 'owner', '2026-11-06', 'owner')").run(); }],
+  ['images.id', (c) => addImage(c, '../../../../escaped-id00', 'png')],
+  ['images.type', (c) => addImage(c, 'abcdef0123456789abcdef01', '../../x')],
+];
+
+for (const [column, setup] of refused) {
+  test(`a saved copy with a bad ${column} is refused, naming it`, async (t) => {
+    const archive = craftedArchive(t, setup);
+    const dir = emptyData(t);
+    await assert.rejects(
+      stageRestore(archive, dir),
+      (e: Error) => e.message.startsWith('This saved copy holds names BrainAI would never write (' + column + ': ') && e.message.endsWith(', so it is not brought back.'),
+    );
+    assert.equal(existsSync(join(dir, 'restore-pending')), false);
+  });
+}
+
+test('a saved copy whose column is declared in upper case is still checked', (t) => {
+  const file = join(tmp(t), 'memory.db');
+  const c = new Database(file);
+  c.exec("CREATE TABLE skills(id TEXT, NAME TEXT); INSERT INTO skills VALUES ('s1', '../../dummy')");
+  c.close();
+  assert.equal(restoredRowsProblem(file), 'skills.name: "../../dummy"');
+});
+
+test('a saved copy from before skills existed is not refused for that', (t) => {
+  const file = join(tmp(t), 'memory.db');
+  const c = new Database(file);
+  c.exec("CREATE TABLE memories(id TEXT, project TEXT); INSERT INTO memories VALUES ('m1', 'wildlog')");
+  c.close();
+  assert.equal(restoredRowsProblem(file), null);
+});
+
+test('a saved copy with a nested skill file such as references/palette.md is still restored', async (t) => {
+  const archive = craftedArchive(t, (c) => { addSkill(c, 'palette-skill', 'references/palette.md'); addFact(c, 'wildlog'); });
+  const dir = emptyData(t);
+  assert.deepEqual(await stageRestore(archive, dir), { facts: 1, pages: 0, pictures_missing: 0 });
+  assert.ok(existsSync(join(dir, 'restore-pending', 'memory.db')));
+});
+
+test('a crafted constraint name in a backup file gives a short restore error with no raw control character', async (t) => {
+  const { file } = await backupFile(t);
+  const c = new Database(file);
+  c.pragma('foreign_keys = OFF');
+  const name = `\u001b[2J\u0007\u009b${'z'.repeat(10_000)}`;
+  c.exec('DROP TABLE oauth_clients');
+  c.exec(`CREATE TABLE oauth_clients(client_id TEXT PRIMARY KEY, metadata TEXT, CONSTRAINT "${name}" CHECK(length(json_extract(metadata, '$.client_secret')) < 10))`);
+  c.prepare('INSERT INTO oauth_clients VALUES (?, ?)').run('c1', '{"client_secret":"a"}');
+  c.close();
+  for (const restore of [restoreInto, stageRestore]) {
+    const err = await restore(file, emptyData(t)).then(() => null, (e: Error) => e);
+    assert.ok(err, 'the restore is refused');
+    assert.match(err.message, /CHECK constraint failed/);
+    assert.ok(err.message.length < 400, `${err.message.length}`);
+    assert.doesNotMatch(err.message, /[\u0000-\u001f\u007f-\u009f]/);
+  }
+});
+
+test('a restored brain still queues rows saved with a placeholder vector for a model', async (t) => {
+  const archive = await saved(t);
+  const dir = emptyData(t);
+  await restoreInto(archive, dir);
+  const db = openDb(join(dir, 'memory.db'));
+  try {
+    db.prepare(`INSERT INTO memories(id, kind, content, project, tags, keys, embedding, created_at, created_by, updated_at, updated_by)
+      VALUES ('placeholder','decision','Saved with no model','larder','[]','',?,'2026-11-06','owner','2026-11-06','owner')`).run(Buffer.alloc(16));
+    assert.deepEqual(db.prepare("SELECT tbl, key FROM embedding_pending WHERE key = 'placeholder'").all(), [{ tbl: 'm', key: 'placeholder' }]);
+  } finally { db.close(); }
 });

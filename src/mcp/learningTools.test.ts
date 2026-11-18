@@ -106,7 +106,7 @@ test('an idea has five_areas null in its brief', async () => {
 });
 
 test('the instructions explain the learning rule, numbered in order', async () => {
-  const { SERVER_INSTRUCTIONS } = await import('./instructions.js');
+  const { OPERATING_RULES: SERVER_INSTRUCTIONS } = await import('./instructions.js');
   assert.match(SERVER_INSTRUCTIONS, /\d+\. Learning: the owner is learning to work like a developer/);
   assert.match(SERVER_INSTRUCTIONS, /Interrupt the current work only for a real risk/);
   const numbers = [...SERVER_INSTRUCTIONS.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
@@ -114,14 +114,15 @@ test('the instructions explain the learning rule, numbered in order', async () =
   assert.doesNotMatch(SERVER_INSTRUCTIONS, /There is no folder report here/);
 });
 
-test('review I5: a full brief lists every handbook topic with where it was learned, marking this project\'s', async () => {
+test('review I5: a full brief lists this project\'s handbook topics in full and the other projects\' as title and level', async () => {
   const { connect, project } = setup();
   await project('gpx');
   await project('larder');
   const c = await connect('Claude Code');
   await c.call('record_lesson', { title: 'What a commit and a push are', level: 'helped', project: 'gpx' });
   const brief = dataOf((await c.call('project_brief', { project: 'larder' })).text);
-  assert.deepEqual(brief.handbook, [{ title: 'What a commit and a push are', level: 'helped', page_id: null, projects: ['gpx'], here: false }]);
+  assert.deepEqual(brief.handbook, [], 'this project has no topic of its own');
+  assert.deepEqual(brief.handbook_other_topics, [{ title: 'What a commit and a push are', level: 'helped' }], "other projects' topics are a compact list of title and level");
   const ro = await connect('Grok', { access: 'projects', projects: ['larder'] });
   assert.deepEqual(dataOf((await ro.call('project_brief', { project: 'larder' })).text).handbook, [], 'read-only sees only topics of its projects');
 });
@@ -135,6 +136,6 @@ test('review M2: a refused record_lesson saves nothing, not even the handbook pr
 });
 
 test('review M14: the instructions say to explain less and hand steps over', async () => {
-  const { SERVER_INSTRUCTIONS } = await import('./instructions.js');
+  const { OPERATING_RULES: SERVER_INSTRUCTIONS } = await import('./instructions.js');
   assert.match(SERVER_INSTRUCTIONS, /Use each topic's level to explain less each time, and once the owner has done a step with you, suggest they try it themselves/);
 });

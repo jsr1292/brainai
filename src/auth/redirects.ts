@@ -50,7 +50,7 @@ export class RedirectAllowlist {
       const entries = this.list();
       if (u.protocol === 'http:') return entries.includes('loopback') && LOOPBACK_HOSTS.has(u.hostname);
       if (u.protocol !== 'https:') return false;
-      return entries.includes(u.origin + u.pathname);
+      return u.search === '' && entries.includes(u.origin + u.pathname);
     } catch {
       return false;
     }

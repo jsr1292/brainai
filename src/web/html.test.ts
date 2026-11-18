@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { html, page, raw, SafeHtml } from './html.js';
 
 test('html escapes values but not SafeHtml', () => {
@@ -102,4 +103,38 @@ test('the Facts filters apply as they change wherever the list is drawn, so Show
 test('the live editor hides the plain text box it replaces (style.css sets textarea display, which beats [hidden])', () => {
   const css = readFileSync(new URL('./static/style.css', import.meta.url), 'utf8');
   assert.match(css, /textarea\[data-editor\]\[hidden\] \{ display: none; \}/);
+});
+
+test('the settings gear keeps an accessible name when its word is hidden on a phone', () => {
+  const header = page('Projects', html``, { nav: true, tab: 'projects' }).split('</header>')[0]!;
+  assert.match(header, /<a class="settings-link" href="\/settings"[^>]* aria-label="Settings"/);
+});
+
+test('the search hint shows both keys, and an early external script picks Ctrl on non-Apple devices', () => {
+  const out = page('Projects', html``, { nav: true, tab: 'projects' });
+  assert.match(out, /<kbd><span class="k-mac">⌘K<\/span><span class="k-pc">Ctrl K<\/span><\/kbd>/);
+  assert.doesNotMatch(out, /title="Search \(⌘K\)"/);
+  assert.match(out, /<script src="\/static\/platform\.js\?v=[0-9a-f]{10}"><\/script>/, 'a blocking script in the head, before first paint');
+  const css = readFileSync(new URL('./static/style.css', import.meta.url), 'utf8');
+  assert.match(css, /html\.pc \.k-mac \{ display: none; \}/);
+  assert.match(css, /html\.pc \.k-pc \{ display: inline; \}/);
+  const js = readFileSync(new URL('./static/platform.js', import.meta.url), 'utf8');
+  const run = (nav: object): { cls: string[]; pc: unknown } => {
+    const cls: string[] = [];
+    const ctx = { navigator: nav, document: { documentElement: { classList: { add: (c: string) => cls.push(c) } } }, window: {} as { __pc?: boolean } };
+    runInNewContext(js, ctx);
+    return { cls, pc: ctx.window.__pc };
+  };
+  assert.deepEqual(run({ platform: 'Win32', userAgent: 'Windows' }).cls, ['pc']);
+  assert.equal(run({ userAgentData: { platform: 'Linux' }, platform: '', userAgent: '' }).pc, true);
+  assert.deepEqual(run({ platform: 'MacIntel', userAgent: 'Macintosh' }).cls, []);
+  assert.deepEqual(run({ platform: 'iPhone', userAgent: 'iPhone' }).cls, []);
+  assert.deepEqual(run({ platform: 'MacIntel', userAgent: 'Macintosh', maxTouchPoints: 5 }).cls, [], 'iPadOS reports a Mac');
+});
+
+test('Behind the scenes on Week lines up with the other cards: its summary drops the generic fold row padding and height', () => {
+  const css = readFileSync(new URL('./static/style.css', import.meta.url), 'utf8');
+  const rule = css.match(/^\.review \.panel\.fold > summary \{([^}]*)\}/m)?.[1] ?? '';
+  assert.match(rule, /padding: 0;/);
+  assert.match(rule, /min-height: 0;/);
 });

@@ -1,6 +1,6 @@
 [package]
 name = "brainai"
-version = "1.3.0"
+version = "1.4.0"
 description = "BrainAI: a shared brain for your AI assistants, on this Mac"
 edition = "2021"
 license = "MIT"
@@ -25,6 +25,9 @@ hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
 rand = "0.8"
+# The same reqwest, features and TLS provider the updater plugin already uses: the probe that says why a check failed
+# (a proxy's 407, a firewall's 403) adds no second TLS stack.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
 # Plain http to this computer only: no TLS needed.
 ureq = { version = "2", default-features = false, features = ["json"] }
 

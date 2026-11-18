@@ -15,8 +15,8 @@ import { needsWelcome } from './desktopRoutes.js';
 import { disagreementsView, type OpenDisagreement } from './disagreeViews.js';
 import { errorBlock } from './dashboardViews.js';
 import { healthOf } from './healthData.js';
-import { modelsLine, updateCard } from './desktopViews.js';
-import { laterVersion, readUpdate } from '../desktop/updateState.js';
+import { modelsLine, offsiteCard, updateCard } from './desktopViews.js';
+import { laterVersion, offsiteNudgeDue, offsiteNudgeHidden, readUpdate } from '../desktop/updateState.js';
 import { viaDoor } from '../desktop/publicDoor.js';
 import { BRAIN_VERSION } from '../version.js';
 import { projectList, projectsHomeView, type HomeViewInput, type WeekLine } from './projectsViews.js';
@@ -102,6 +102,15 @@ export function projectRoutes(d: AppDeps): Router {
         if (!d.localMode || !d.statusDir || (req && viaDoor(req))) return undefined;
         const u = readUpdate(d.statusDir, BRAIN_VERSION);
         return u ? updateCard(u, laterVersion(d.statusDir)) : undefined;
+      })(),
+      offsiteCard: (() => {
+        if (!d.localMode || !d.statusDir || !d.backupCopy || (req && viaDoor(req))) return undefined;
+        const status = readBackupStatus(d.statusDir);
+        const due = offsiteNudgeDue({
+          localMode: true, offsiteSet: d.backupCopy.folder() !== null || status.offsite !== undefined, gitSet: status.git !== undefined,
+          firstMemoryAt: d.store.firstCreatedAt(), now: d.now(),
+        });
+        return due && !offsiteNudgeHidden(d.statusDir, d.now()) ? offsiteCard() : undefined;
       })(),
       modelsLine: d.models ? modelsLine(d.models.status(), { onlyWhenBusy: true, dataDir: d.statusDir }) : undefined,
       connected: d.provider.listGrants().length > 0,

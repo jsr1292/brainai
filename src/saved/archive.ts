@@ -11,6 +11,7 @@ import { promisify } from 'node:util';
 import Database from 'better-sqlite3';
 import { backupNow } from '../backup.js';
 import { latestSchema, type DB } from '../db.js';
+import { shown } from './shown.js';
 
 /** The file names an archive has: `brainai-saved-<day>.tar.gz`, and the earlier `brainai-move-<day>.tar.gz`. */
 export const ARCHIVE_NAME = /^brainai-(saved|move)-\d{4}-\d{2}-\d{2}\.tar\.gz$/;
@@ -88,11 +89,18 @@ function readCounts(file: string): { facts: number; pages: number } {
   }
 }
 
+/** The non-empty lines of a tar listing; Windows tar may end them with CRLF. */
+export function listLines(text: string): string[] {
+  return text.split(/\r?\n/).filter(Boolean);
+}
+
 /** Why an entry is not allowed, or null. `type` is the first column of `tar -tv` (`-` file, `d` folder). */
 function entryProblem(type: string, name: string): string | null {
-  if (type !== '-' && type !== 'd') return `it holds a link or special file (${name})`;
-  if (name.startsWith('/')) return `it holds an absolute path (${name})`;
-  if (name.split('/').includes('..')) return `it holds a path that climbs out of its folder (${name})`;
+  if (type !== '-' && type !== 'd') return `it holds a link or special file (${shown(name)})`;
+  if (name.startsWith('/')) return `it holds an absolute path (${shown(name)})`;
+  if (name.split('/').includes('..')) return `it holds a path that climbs out of its folder (${shown(name)})`;
+  // Windows tar treats `\` as a separator, and `:` reaches drive-relative paths and alternate streams.
+  if (/[\\:\0]/.test(name)) return `it holds a name with a backslash or colon (${shown(name)})`;
   return null;
 }
 
@@ -108,8 +116,8 @@ export async function checkArchive(file: string): Promise<ArchiveCheck> {
     // Two listings of the same archive: the type column of the verbose one (the columns after it differ between tar
     // makers, so they are not parsed), and the plain names. A name with a line break would make them disagree: refused.
     const opts = { maxBuffer: 256 * 1024 * 1024 };
-    kinds = (await run('tar', ['-tvzf', file], opts)).stdout.split('\n').filter(Boolean).map((l) => l[0]);
-    listed = (await run('tar', ['-tzf', file], opts)).stdout.split('\n').filter(Boolean);
+    kinds = listLines((await run('tar', ['-tvzf', file], opts)).stdout).map((l) => l[0]);
+    listed = listLines((await run('tar', ['-tzf', file], opts)).stdout);
   } catch {
     return { ok: false, reason: 'This is not a BrainAI saved copy: the file could not be read as an archive.' };
   }
@@ -122,7 +130,7 @@ export async function checkArchive(file: string): Promise<ArchiveCheck> {
   }
   if (!names.includes('memory.db')) return { ok: false, reason: 'This is not a BrainAI saved copy: it has no memory.db.' };
   const stray = names.find((n) => n.split('/')[0] !== 'memory.db' && n.split('/')[0] !== 'images');
-  if (stray) return { ok: false, reason: `This is not a BrainAI saved copy: it holds something else (${stray}).` };
+  if (stray) return { ok: false, reason: `This is not a BrainAI saved copy: it holds something else (${shown(stray)}).` };
 
   const tmp = mkdtempSync(join(tmpdir(), 'brainai-check-'));
   try {

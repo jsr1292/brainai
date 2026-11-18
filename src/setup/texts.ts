@@ -23,16 +23,21 @@ export interface SetupApp {
   reports?: false;
   /** The sign-in addresses this app needs on the allowlist (Claude's and loopback ones are allowed from the start). */
   allow?: readonly string[];
+  /** Called from the vendor's cloud (web and phone): it can only reach the brain at a public address, never localhost. */
+  cloud?: true;
+  /** A note shown when the cloud app has no public address yet; TOOLS stands for the link to Tools on this computer. */
+  withoutReach?: string;
 }
 
 const APPS: SetupApp[] = [
-  { slug: 'claude', name: 'Claude', file: false,
+  { slug: 'claude', name: 'Claude', file: false, cloud: true,
+    withoutReach: 'Claude’s desktop app can connect without Reach: use TOOLS.',
     connect: 'In Claude (claude.ai, the desktop app or the phone): Settings › Connectors › Add custom connector, and paste the address.',
     where: 'Settings › Profile, in “What personal preferences should Claude consider in responses?”. Replace any older brain text.' },
-  { slug: 'chatgpt', name: 'ChatGPT', file: false, allow: ['https://chatgpt.com/connector_platform_oauth_redirect'],
+  { slug: 'chatgpt', name: 'ChatGPT', file: false, cloud: true, allow: ['https://chatgpt.com/connector_platform_oauth_redirect'],
     connect: 'In ChatGPT: Settings › Apps and connectors › Advanced settings › Developer mode on, then Create, and paste the address.',
     where: 'Settings › Personalization › Custom instructions, in “What should ChatGPT know about you?”. Replace any older brain text.' },
-  { slug: 'grok', name: 'Grok', file: false, allow: ['https://grok.com/connectors-oauth-exchange-code/'],
+  { slug: 'grok', name: 'Grok', file: false, cloud: true, allow: ['https://grok.com/connectors-oauth-exchange-code/'],
     connect: 'In Grok (grok.com): Settings › Connectors › Add connector, and paste the address.',
     where: 'Settings › Customize › Custom instructions. Replace any older brain text.' },
   { slug: 'grok-build', name: 'Grok Build', file: true,

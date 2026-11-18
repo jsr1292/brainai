@@ -258,3 +258,18 @@ test("a later export removes a skill's non-Markdown files too", async (t) => {
   writeTree(dir, exportTree({ ...deps, skills }, new Date()));
   assert.equal(existsSync(join(dir, 'skills', 'tooling', 'scripts', 'run.sh')), false);
 });
+
+test("writeTree writes nothing outside its folder for names with '..', backslashes or colons, and lists them as skipped", (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'export-escape-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = join(root, 'out');
+  mkdirSync(dir);
+  const paths = ['facts/../../x.md', 'skills/a/../../../y', 'pages/unsorted/../../../z/p.md', 'facts/a\\b.md', 'facts/c:d.md'];
+  const tree = new Map<string, string>([...paths.map((p) => [p, 'dummy\n'] as [string, string]), ['facts/ok.md', 'fine\n']]);
+  const result = writeTree(dir, tree);
+  assert.deepEqual(result.skipped.sort(), [...paths].sort());
+  assert.deepEqual(readdirSync(root), ['out']);
+  assert.deepEqual(readdirSync(dir), ['facts']);
+  assert.deepEqual(readdirSync(join(dir, 'facts')), ['ok.md']);
+  assert.equal(result.written, 1);
+});

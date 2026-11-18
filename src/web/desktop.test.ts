@@ -8,7 +8,7 @@ import { request } from 'node:http';
 import { toolEnv } from './desktopRoutes.js';
 import { cachedAskCommands } from '../desktop/askCommands.js';
 import { fakeHome } from '../testing/fakeTools.js';
-import { loggedIn, makePages, makeService, startTestApp } from '../testing/helpers.js';
+import { appSession, loggedIn, makePages, makeService, startTestApp } from '../testing/helpers.js';
 import { openDb } from '../db.js';
 import { packArchive } from '../saved/archive.js';
 import { backupNow } from '../backup.js';
@@ -34,8 +34,10 @@ async function start(t: TestContext, opts: { localMode?: boolean } = { localMode
   return { app, f };
 }
 
-/** A page load as a browser sends it, signed in by local mode; returns the body and the session cookie. */
-function openPage(baseUrl: string, path: string, cookie = ''): Promise<{ status: number; body: string; cookie: string; location?: string }> {
+/** A page load as the app window sends it: with no cookie given, it first gets its session from the ticket (where the app has one). */
+async function openPage(baseUrl: string, path: string, cookie = ''): Promise<{ status: number; body: string; cookie: string; location?: string }> {
+  // Some tests give the app their own key (KEY), the rest have the test default.
+  for (const appSecret of ['test-app-secret', KEY]) if (!cookie) cookie = await appSession({ baseUrl, deps: { appSecret } }).catch(() => '');
   const u = new URL(baseUrl);
   return new Promise((resolve, reject) => {
     const req = request({ host: '127.0.0.1', port: u.port, path, method: 'GET', setHost: false, headers: { Host: `localhost:${u.port}`, 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Site': 'none', ...(cookie ? { Cookie: cookie } : {}) } }, (res) => {
@@ -69,6 +71,30 @@ test('Settings › Tools on this Mac lists the tools and connects and disconnect
   assert.match(after.body, /\/mcp, choose brainai and Authenticate/, 'the next step is said');
   assert.match(after.body, /action="\/settings\/tools\/claude-code\/disconnect"/);
   assert.equal((await post(app.baseUrl, '/settings/tools/claude-code/disconnect', settings.cookie)).status, 303);
+  assert.deepEqual(f.servers('claude'), {});
+});
+
+test("Disconnect ends the tool's sign-in: its grants are revoked, other apps' are not", async (t) => {
+  const { app, f } = await start(t);
+  const { provider } = app.deps;
+  const cookie = (await openPage(app.baseUrl, '/settings')).cookie;
+  const code = provider.issueLocalGrant({ name: 'Claude Code', clientName: 'Claude Code' });
+  const codeOld = provider.issueLocalGrant({ name: 'Claude Code (old)', clientName: 'claude code' });
+  provider.revokeGrant(codeOld.grantId);
+  const other = provider.issueLocalGrant({ name: 'Codex', clientName: 'Codex' });
+  const said = async () => (await openPage(app.baseUrl, '/settings/tools?tool=claude-code', cookie)).body;
+  await post(app.baseUrl, '/settings/tools/claude-code/connect', cookie);
+  assert.equal((await post(app.baseUrl, '/settings/tools/claude-code/disconnect', cookie)).status, 303);
+  assert.match(await said(), /Disconnected\. Its sign-in was ended too\./);
+  await assert.rejects(provider.verifyAccessToken(code.token), 'the tool\'s own sign-in stopped working');
+  assert.ok((await provider.verifyAccessToken(other.token)).token, 'Codex keeps its sign-in');
+  const revoked = (id: string) => provider.listGrants().find((g) => g.id === id)!.revokedAt;
+  assert.ok(revoked(code.grantId));
+  assert.equal(revoked(other.grantId), null);
+  // Nothing left to end: the page says where to look.
+  await post(app.baseUrl, '/settings/tools/claude-code/connect', cookie);
+  await post(app.baseUrl, '/settings/tools/claude-code/disconnect', cookie);
+  assert.match(await said(), /Disconnected\. If it is still listed in Settings › Connections, revoke it there\./);
   assert.deepEqual(f.servers('claude'), {});
 });
 
@@ -326,7 +352,7 @@ test('the welcome is a desktop setup: its own frame, the four steps with the cur
   const p = await openPage(app.baseUrl, '/welcome?step=3', cookie);
   assert.match(p.body, /<body class="setup"/, 'not the phone-width sign-in layout');
   assert.doesNotMatch(p.body, /class="top solo"/, 'the brand lives in the step list');
-  assert.match(p.body, /<ol class="setup-steps" aria-label="Setup steps">/);
+  assert.match(p.body, /<ol class="setup-rail-steps" aria-label="Setup steps">/);
   assert.match(p.body, /<li class="done"><span class="step-mark"><svg[^]*?<\/svg><\/span><span>Your name<\/span><span class="visually-hidden"> \(done\)<\/span><\/li>/);
   assert.match(p.body, /<li class="current" aria-current="step"><span class="step-mark">3<\/span><span>Connect<\/span><\/li>/);
   assert.match(p.body, /<li class="todo"><span class="step-mark">4<\/span><span>Try it<\/span><\/li>/);
@@ -752,6 +778,18 @@ test("revoking Claude's desktop app on the Connections page deletes its key file
   assert.ok(f.read(CLAUDE_CONFIG));
 });
 
+test("disconnecting Claude's desktop app says its key was revoked, and does not send the owner to Connections", async (t) => {
+  const { app } = await startWith(t, { claude: true });
+  const s = await openPage(app.baseUrl, '/settings');
+  await post(app.baseUrl, '/settings/tools/claude-desktop/connect', s.cookie);
+  const grant = app.deps.provider.listGrants().find((g) => g.clientName === 'Claude (desktop app)')!;
+  assert.equal((await post(app.baseUrl, '/settings/tools/claude-desktop/disconnect', s.cookie)).status, 303);
+  assert.ok(app.deps.provider.listGrants().find((g) => g.id === grant.id)!.revokedAt, 'its key is revoked');
+  const body = (await openPage(app.baseUrl, '/settings/tools?tool=claude-desktop', s.cookie)).body;
+  assert.match(body, /Disconnected\. Its key was revoked\./);
+  assert.doesNotMatch(body, /revoke it there/);
+});
+
 test('a revoked key and a changed address both count as not live', async (t) => {
   const { app } = await startWith(t, { claude: true });
   const p = app.deps.provider;
@@ -775,4 +813,84 @@ test('the Tools page keeps its lede true for the new rows, and ChatGPT points at
       assert.ok(chat.includes(`href="${link}"`), `${platform} ${path}`);
     }
   }
+});
+
+// ---- The off-site nudge on Home ----
+
+const NUDGE = /Your backups are only on this computer\. Keep a copy in OneDrive, Dropbox or another folder that syncs\./;
+async function startNudge(t: TestContext, opts: { localMode?: boolean; ageDays?: number } = {}) {
+  const r = await startUpdate(t, { localMode: opts.localMode ?? true });
+  await r.app.deps.service.remember({ kind: 'decision', content: 'The first thing saved here', project: 'demo' }, { type: 'owner' });
+  r.app.advance((opts.ageDays ?? 5) * 86_400_000);
+  return r;
+}
+
+test('Home nudges toward an off-site copy once the brain is three days old, with a link and Later', async (t) => {
+  const { app } = await startNudge(t);
+  const home = await openPage(app.baseUrl, '/');
+  assert.match(home.body, NUDGE);
+  assert.match(home.body, /<a[^>]*href="\/settings#backup-copy"/);
+  assert.match(home.body, /<form[^>]*action="\/app\/offsite\/later"[^>]*>\s*<button[^>]*>Later<\/button>/);
+});
+
+test('the off-site nudge waits for a new brain', async (t) => {
+  assert.doesNotMatch((await openPage((await startNudge(t, { ageDays: 1 })).app.baseUrl, '/')).body, NUDGE);
+});
+
+test('a server never shows the off-site nudge, even for an old brain, once signed in', async (t) => {
+  const f = fakeHome();
+  t.after(() => f.cleanup());
+  const statusDir = mkdtempSync(join(tmpdir(), 'brainai-status-'));
+  writeFileSync(join(statusDir, 'welcome-done'), '');
+  const app = await startTestApp({ localMode: false, statusDir, tools: { home: f.home, path: `${f.bin}:${dirname(process.execPath)}:/usr/bin:/bin`, apps: f.apps } });
+  t.after(() => app.close());
+  await app.deps.service.remember({ kind: 'decision', content: 'The first thing saved here', project: 'demo' }, { type: 'owner' });
+  app.advance(5 * 86_400_000);
+  const get = await loggedIn(app);
+  const home = await get('/');
+  assert.equal(home.status, 200, 'signed in, so this is Home and not the login page');
+  assert.doesNotMatch(await home.text(), NUDGE);
+});
+
+test('the off-site nudge goes away with an off-site folder or a git copy', async (t) => {
+  const a = await startNudge(t);
+  const folder = mkdtempSync(join(tmpdir(), 'brainai-offsite-'));
+  a.app.deps.backupCopy!.set(folder);
+  assert.doesNotMatch((await openPage(a.app.baseUrl, '/')).body, NUDGE);
+  const b = await startNudge(t);
+  writeFileSync(join(b.statusDir, 'git-backup-status.json'), JSON.stringify({ at: '2026-01-01T00:00:00Z', ok: true }));
+  assert.doesNotMatch((await openPage(b.app.baseUrl, '/')).body, NUDGE);
+});
+
+test('Later hides the off-site nudge for 30 days, then it comes back', async (t) => {
+  const { app } = await startNudge(t);
+  const first = await openPage(app.baseUrl, '/');
+  const r = await post(app.baseUrl, '/app/offsite/later', first.cookie);
+  assert.equal(r.status, 303);
+  assert.equal(r.headers.get('location'), '/');
+  assert.doesNotMatch((await openPage(app.baseUrl, '/', first.cookie)).body, NUDGE);
+  app.advance(31 * 86_400_000);
+  assert.match((await openPage(app.baseUrl, '/')).body, NUDGE);
+});
+
+// ---- Settings: update checks that keep failing ----
+
+test('Settings says when update checks have been failing for more than two days', async (t) => {
+  const { app, statusDir } = await startUpdate(t);
+  const cookie = (await openPage(app.baseUrl, '/')).cookie;
+  const since = Math.floor(Date.now() / 1000) - 5 * 86_400;
+  writeFileSync(join(statusDir, 'update-check.json'), JSON.stringify({ failingSince: since, lastFailAt: since + 5 * 86_400 - 60, lastError: 'github.com answered HTTP 407 (Proxy Authentication Required)' }));
+  const s = (await openPage(app.baseUrl, '/settings', cookie)).body;
+  const day = new Date(since * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  assert.ok(s.includes(`BrainAI hasn't been able to check for updates since ${day}.</p>`), s.match(/able to check[^<]*/)?.[0]);
+  assert.match(s, /github\.com answered HTTP 407 \(Proxy Authentication Required\)/);
+  assert.match(s, /On a work network, a proxy or firewall may be blocking github\.com\./);
+  // Failing for one day only, or a good check since: nothing.
+  writeFileSync(join(statusDir, 'update-check.json'), JSON.stringify({ failingSince: Math.floor(Date.now() / 1000) - 86_400, lastFailAt: Math.floor(Date.now() / 1000) }));
+  assert.doesNotMatch((await openPage(app.baseUrl, '/settings', cookie)).body, /able to check for updates/);
+  writeFileSync(join(statusDir, 'update-check.json'), JSON.stringify({ lastOkAt: Math.floor(Date.now() / 1000) }));
+  assert.doesNotMatch((await openPage(app.baseUrl, '/settings', cookie)).body, /able to check for updates/);
+  // The Home page never carries it.
+  writeFileSync(join(statusDir, 'update-check.json'), JSON.stringify({ failingSince: since, lastFailAt: since + 5 * 86_400 - 60 }));
+  assert.doesNotMatch((await openPage(app.baseUrl, '/', cookie)).body, /able to check for updates/);
 });

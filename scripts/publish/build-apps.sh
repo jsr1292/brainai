@@ -40,7 +40,7 @@ CONF_VERSION="$(git -C "$REPO" show HEAD:desktop/src-tauri/tauri.conf.json | nod
   let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => console.log(JSON.parse(s).version))')" || CONF_VERSION=""
 [ "$VERSION" = "$CONF_VERSION" ] || { echo "The version $VERSION is not the one in desktop/src-tauri/tauri.conf.json at HEAD (${CONF_VERSION:-none}): set it there and commit first" >&2; exit 2; }
 HAS_NOTES=1
-git -C "$REPO" show HEAD:CHANGELOG.md 2>/dev/null | grep -qE "^## ${VERSION//./\\.}( |$)" || HAS_NOTES=0
+git -C "$REPO" show HEAD:CHANGELOG.md 2>/dev/null | grep -E "^## ${VERSION//./\\.}( |$)" >/dev/null || HAS_NOTES=0
 [ "$HAS_NOTES" = 1 ] || [ "$ADHOC" = 1 ] || { echo "CHANGELOG.md at HEAD has no \"## $VERSION\" section: the release notes come from it" >&2; exit 2; }
 
 CONFIG_DIR="$HOME/.config/brainai"

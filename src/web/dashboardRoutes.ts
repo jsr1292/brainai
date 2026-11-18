@@ -6,9 +6,11 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { BRIDGE_KEY_FILE } from '../desktop/claudeBridge.js';
 import { syncedCloud } from '../saved/documents.js';
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type RequestHandler, type Response } from 'express';
+import { viaDoor } from '../desktop/publicDoor.js';
 import { InvalidNameError } from '../auth/clientsStore.js';
 import { backupHealth, readBackupStatus } from '../backupStatus.js';
+import { readUpdateCheck, updateCheckProblem } from '../desktop/updateState.js';
 import { connStatuses } from './connStatus.js';
 import { BRAIN_VERSION } from '../version.js';
 import { weekContaining, weekOf } from '../memory/digest.js';
@@ -126,6 +128,7 @@ export function dashboardRoutes(d: AppDeps): Router {
       search: d.localMode && d.models ? { status: d.models.status(), installed: installedNow, keySaved: !!d.statusDir && readKey(d.statusDir) !== null, said: takeSearchSaid(), dataDir: d.statusDir } : undefined,
       projects: d.service.listProjects().map((p) => p.project),
       version: { brain: BRAIN_VERSION, database: d.store.schemaVersion() },
+      updateCheck: d.localMode && d.statusDir ? updateCheckProblem(readUpdateCheck(d.statusDir), d.now()) ?? undefined : undefined,
       brainUrl: d.publicUrl.origin,
       counts: { facts: KINDS.reduce((n, kind) => n + d.store.list({ kind }).length, 0), projects: d.registry.list().length, pages: d.pages.count() },
       pictures: d.images.totals(),
@@ -144,7 +147,9 @@ export function dashboardRoutes(d: AppDeps): Router {
 
 
   // Settings › Backups (the app): the second folder for the daily backups.
-  router.post('/settings/backup-copy', owner, (req, res, next) => {
+  // Through the public door this page does not exist.
+  const here: RequestHandler = (req, _res, next) => (viaDoor(req) ? next('router') : next());
+  router.post('/settings/backup-copy', here, owner, (req, res, next) => {
     const copy = d.backupCopy;
     if (!d.localMode || !copy) return next();
     if (str(req, 'action') === 'off') { copy.set(null); return res.redirect(303, '/settings#backup-copy'); }

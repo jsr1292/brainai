@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { totpAt } from '../auth/totp.js';
-import { loggedIn, startTestApp } from '../testing/helpers.js';
+import { appSession, loggedIn, startTestApp } from '../testing/helpers.js';
 import { fakeTailscale } from '../testing/fakeTailscale.js';
 import { fakeCloudflared, type FakeCloudflaredState } from '../testing/fakeCloudflared.js';
 import { prepareTunnel, startSignIn } from '../desktop/cloudflared.js';
@@ -21,8 +21,9 @@ async function start(t: TestContext, opts: { localMode?: boolean } = { localMode
   return app;
 }
 
-/** A page load as a browser sends it; returns the body and the cookie it ends up with. */
-export function openPage(baseUrl: string, path: string, cookie = '', host?: string): Promise<{ status: number; body: string; cookie: string; location?: string }> {
+/** A page load as the app window sends it; returns the body and the cookie it ends up with. With no cookie given (and no other host), it first gets its session from the ticket, where the app has one. */
+export async function openPage(baseUrl: string, path: string, cookie = '', host?: string): Promise<{ status: number; body: string; cookie: string; location?: string }> {
+  if (!cookie && host === undefined) cookie = await appSession({ baseUrl, deps: { appSecret: 'test-app-secret' } }).catch(() => '');
   const u = new URL(baseUrl);
   return new Promise((resolve, reject) => {
     const req = request({ host: '127.0.0.1', port: u.port, path, method: 'GET', setHost: false, headers: { Host: host ?? `localhost:${u.port}`, 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Site': 'none', ...(cookie ? { Cookie: cookie } : {}) } }, (res) => {
@@ -75,9 +76,9 @@ test('the password and the authenticator are set from the dashboard, in order, a
   await post(app.baseUrl, '/settings/reach/authenticator/confirm', cookie, { code: totpAt(secret, step) });
   assert.equal(app.deps.owner.isConfigured(), true);
   // From now on a new browser has to log in: nothing signs in by itself.
-  const fresh = await openPage(app.baseUrl, '/');
+  const fresh = await fetch(app.baseUrl + '/', { redirect: 'manual' });
   assert.equal(fresh.status, 302);
-  assert.match(fresh.location!, /^\/login/);
+  assert.match(fresh.headers.get('location')!, /^\/login/);
 });
 
 test('an authenticator code is only accepted within 10 minutes of showing the QR code', async (t) => {
@@ -266,7 +267,7 @@ test('once a password exists the dashboard cannot replace it, and adding the aut
   assert.doesNotMatch(await (await f('/settings/reach')).text(), /data-secret=/);
 });
 
-test('a saved Reach comes back at start on its own door; if that port is taken it is shared again from a new one, and a failure turns it off', async (t) => {
+test('a saved Reach comes back at start on its own door; if that port is taken it is shared again from a new one', async (t) => {
   const ts = fakeTailscale({ backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' });
   t.after(() => ts.cleanup());
   const tools = { home: ts.home, path: `${ts.bin}:${dirname(process.execPath)}:/usr/bin:/bin` };
@@ -277,7 +278,7 @@ test('a saved Reach comes back at start on its own door; if that port is taken i
   await same.deps.reach!.ready;
   assert.equal(same.deps.door!.port(), free);
   assert.equal(same.deps.reach!.url()?.origin, PUBLIC);
-  assert.ok(!ts.calls().some((c) => c.startsWith('funnel')), 'same port: Tailscale already points there');
+  assert.ok(ts.calls().includes(`funnel --bg --https=443 --yes http://127.0.0.1:${free}`), 'same port: Funnel is turned back on at the door');
   same.deps.door!.close();
   // The saved port is held by another program: a new door, and Funnel re-pointed at it.
   const squatter = createServer();
@@ -291,17 +292,6 @@ test('a saved Reach comes back at start on its own door; if that port is taken i
   assert.ok(now !== null && now !== free);
   assert.ok(ts.calls().includes(`funnel --bg --https=443 --yes http://127.0.0.1:${now}`));
   assert.equal(JSON.parse(readFileSync(join(dir2, 'reach.json'), 'utf8')).port, now);
-  // Tailscale signed out meanwhile: Reach is turned off and the page says why.
-  const out = fakeTailscale({ backend: 'NeedsLogin' });
-  t.after(() => out.cleanup());
-  const dir3 = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
-  writeFileSync(join(dir3, 'reach.json'), JSON.stringify({ url: PUBLIC, port: free }));
-  const off = await configuredApp(t, { statusDir: dir3, tools: { home: out.home, path: `${out.bin}:${dirname(process.execPath)}:/usr/bin:/bin` } });
-  await off.deps.reach!.ready;
-  assert.equal(off.deps.door!.port(), null);
-  assert.equal(off.deps.reach!.saved(), null);
-  const f = await loggedIn(off);
-  assert.match(await (await f('/settings/reach')).text(), /Reach was turned off[\s\S]*sign in/i);
 });
 
 test('turning Reach on shares BrainAI at the public address and the web apps get it; turning it off takes it back', async (t) => {
@@ -551,4 +541,302 @@ test('on Windows the Reach page says it is Mac-only for now, and never looks for
   assert.deepEqual(ts.calls(), []);
   assert.deepEqual(cf.calls(), []);
   assert.equal(app.deps.reach!.saved(), null);
+});
+
+const FORM = { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: '' };
+const tsTools = (ts: { home: string; bin: string }) => ({ home: ts.home, path: `${ts.bin}:${dirname(process.execPath)}:/usr/bin:/bin` });
+const setTs = (ts: { home: string }, state: Record<string, unknown>) => writeFileSync(join(ts.home, 'tailscale.json'), JSON.stringify(state));
+const safely = (t: TestContext, app: { close(): Promise<void> }) => t.after(() => app.close().catch(() => {}));
+/** Polls a page until `ok` holds, for at most about 10 s. */
+const untilPage = async (what: string, page: () => Promise<string>, ok: (body: string) => boolean) => {
+  let body = '';
+  for (let i = 0; i < 400; i++) { body = await page(); if (ok(body)) return; await new Promise((r) => setTimeout(r, 25)); }
+  assert.fail(`${what}: ${body.slice(0, 300)}`);
+};
+const until = async (what: string, ok: () => boolean) => { for (let i = 0; i < 200 && !ok(); i++) await new Promise((r) => setTimeout(r, 25)); assert.ok(ok(), what); };
+
+test('stopping BrainAI turns Funnel off, and the next start turns it back on at the door', async (t) => {
+  const ts = fakeTailscale({ backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  const first = await startTestApp({ localMode: true, statusDir: dir, tools: tsTools(ts) });
+  safely(t, first);
+  const f = await loggedIn(first);
+  assert.equal((await f('/settings/reach/on', FORM)).status, 303);
+  assert.equal(ts.state().funnel, true);
+  const offsBefore = ts.calls().filter((c) => c === 'funnel --https=443 off').length;
+  first.deps.reach!.shutdown(); // what the server's exit does
+  assert.equal(ts.calls().filter((c) => c === 'funnel --https=443 off').length, offsBefore + 1, 'one funnel off at stop');
+  assert.equal(ts.state().funnel, false, 'nothing is left forwarding to the door');
+  assert.ok(first.deps.reach!.saved(), 'Reach stays saved for the next start');
+  await first.close();
+  const second = await startTestApp({ localMode: true, statusDir: dir, tools: tsTools(ts) });
+  t.after(() => second.close());
+  await second.deps.reach!.ready;
+  assert.equal(ts.state().funnel, true, 'turned back on');
+  assert.equal(ts.calls().at(-1), `funnel --bg --https=443 --yes http://127.0.0.1:${second.deps.door!.port()}`);
+  assert.equal(second.deps.reach!.url()?.origin, PUBLIC);
+});
+
+test('stopping BrainAI with Reach off does not ask Tailscale to turn Funnel off', async (t) => {
+  const ts = fakeTailscale({ backend: 'Running' });
+  t.after(() => ts.cleanup());
+  const app = await startTestApp({ localMode: true, statusDir: mkdtempSync(join(tmpdir(), 'brainai-reach-')), tools: tsTools(ts) });
+  safely(t, app);
+  app.deps.reach!.shutdown();
+  await app.close();
+  assert.deepEqual(ts.calls(), []);
+});
+
+test('a Turn off whose funnel off failed is retried at the next start until Tailscale confirms', async (t) => {
+  const ts = fakeTailscale({ backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  const app = await startTestApp({ localMode: true, statusDir: dir, tools: tsTools(ts) });
+  safely(t, app);
+  const f = await loggedIn(app);
+  await f('/settings/reach/on', FORM);
+  setTs(ts, { backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.', funnel: true, offFails: true });
+  await f('/settings/reach/off', FORM);
+  assert.equal(existsSync(join(dir, 'reach.json')), false);
+  assert.equal(existsSync(join(dir, 'funnel-off-pending')), true, 'the failed off is remembered');
+  await app.close();
+  // Next start: Tailscale still refuses, so it is remembered still.
+  const again = await startTestApp({ localMode: true, statusDir: dir, tools: tsTools(ts) });
+  safely(t, again);
+  await again.deps.reach!.ready;
+  assert.equal(existsSync(join(dir, 'funnel-off-pending')), true);
+  await again.close();
+  // Then Tailscale confirms: the marker is gone, Funnel is off.
+  setTs(ts, { backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.', funnel: true });
+  const last = await startTestApp({ localMode: true, statusDir: dir, tools: tsTools(ts) });
+  t.after(() => last.close());
+  await last.deps.reach!.ready;
+  assert.equal(ts.state().funnel, false);
+  assert.equal(existsSync(join(dir, 'funnel-off-pending')), false);
+});
+
+test('Turn on through Tailscale forgets an earlier failed off', async (t) => {
+  const ts = fakeTailscale({ backend: 'Running', offFails: true });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  writeFileSync(join(dir, 'funnel-off-pending'), '');
+  const app = await startTestApp({ localMode: true, statusDir: dir, tools: tsTools(ts) });
+  t.after(() => app.close());
+  const f = await loggedIn(app);
+  await app.deps.reach!.ready;
+  assert.equal(existsSync(join(dir, 'funnel-off-pending')), true, 'Tailscale still refuses at start');
+  await f('/settings/reach/on', FORM);
+  assert.equal(existsSync(join(dir, 'funnel-off-pending')), false);
+});
+
+const RUNNING = { backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' } as const;
+
+test('if Tailscale is not ready at start, Reach waits and retries instead of turning off', async (t) => {
+  const ts = fakeTailscale({ backend: 'NeedsLogin' });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  writeFileSync(join(dir, 'reach.json'), JSON.stringify({ url: PUBLIC, port: 0 }));
+  const app = await configuredApp(t, { statusDir: dir, tools: tsTools(ts), reachRetry: { everyMs: 30, max: 10, laterMs: 30 } });
+  await app.deps.reach!.ready;
+  assert.ok(app.deps.reach!.saved(), 'still saved');
+  assert.equal(existsSync(join(dir, 'reach.json')), true);
+  const f = await loggedIn(app);
+  assert.match(await (await f('/settings/reach')).text(), /Reach is waiting for Tailscale/);
+  setTs(ts, { backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' });
+  await until('Funnel turned on by a retry', () => ts.state().funnel === true);
+  assert.equal(app.deps.reach!.url()?.origin, PUBLIC);
+  assert.ok(ts.calls().includes(`funnel --bg --https=443 --yes http://127.0.0.1:${app.deps.door!.port()}`));
+});
+
+test('after max quick tries Reach waits the longer interval, then a try turns Funnel on once Tailscale is ready', async (t) => {
+  const ts = fakeTailscale({ backend: 'NeedsLogin' });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  writeFileSync(join(dir, 'reach.json'), JSON.stringify({ url: PUBLIC, port: 0 }));
+  const app = await configuredApp(t, { statusDir: dir, tools: tsTools(ts), reachRetry: { everyMs: 10, max: 3, laterMs: 700 } });
+  await app.deps.reach!.ready;
+  const tries = () => ts.calls().filter((c) => c.startsWith('status')).length;
+  await until('the first try and 3 quick retries ran', () => tries() >= 4);
+  assert.equal(tries(), 4);
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(tries(), 4, 'no try within the longer interval');
+  assert.ok(app.deps.reach!.saved(), 'still saved after more than max tries');
+  setTs(ts, { backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' });
+  await until('a try after the longer interval', () => tries() >= 5);
+  await until('Funnel turned on, as the fake Tailscale shows', () => ts.state().funnel === true);
+  assert.ok(ts.calls().includes(`funnel --bg --https=443 --yes http://127.0.0.1:${app.deps.door!.port()}`));
+});
+
+test('failed tries while Reach waits do not rebuild the public side again', async (t) => {
+  const ts = fakeTailscale({ backend: 'NeedsLogin' });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  writeFileSync(join(dir, 'reach.json'), JSON.stringify({ url: PUBLIC, port: 0 }));
+  const app = await configuredApp(t, { statusDir: dir, tools: tsTools(ts), reachRetry: { everyMs: 10, max: 10, laterMs: 10 } });
+  await app.deps.reach!.ready;
+  let changes = 0;
+  app.deps.reach!.onChange(() => { changes++; });
+  const tries = () => ts.calls().filter((c) => c.startsWith('status')).length;
+  const before = tries();
+  await until('6 more failed tries', () => tries() >= before + 6);
+  assert.equal(changes, 0, 'the saved address was not saved again');
+});
+
+test('the page says Reach is waiting while the first try is still running', async (t) => {
+  const ts = fakeTailscale({ ...RUNNING, delayMs: 1500 });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  writeFileSync(join(dir, 'reach.json'), JSON.stringify({ url: PUBLIC, port: 0 }));
+  const app = await configuredApp(t, { statusDir: dir, tools: tsTools(ts) });
+  const f = await loggedIn(app);
+  await until('the first try is running', () => ts.calls().some((c) => c.startsWith('funnel --bg')));
+  const body = await (await f('/settings/reach')).text();
+  assert.match(body, /Reach is waiting for Tailscale/);
+  assert.doesNotMatch(body, /On ✓/);
+  await app.deps.reach!.ready;
+  await untilPage('On after the try', async () => (await f('/settings/reach')).text(), (b) => b.includes('On ✓'));
+});
+
+test('while Reach waits, the page shows what Tailscale last said', async (t) => {
+  const ts = fakeTailscale({ backend: 'NeedsLogin' });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  writeFileSync(join(dir, 'reach.json'), JSON.stringify({ url: PUBLIC, port: 0 }));
+  const app = await configuredApp(t, { statusDir: dir, tools: tsTools(ts), reachRetry: { everyMs: 20, max: 3, laterMs: 20 } });
+  await app.deps.reach!.ready;
+  const f = await loggedIn(app);
+  assert.match(await (await f('/settings/reach')).text(), /What Tailscale said: Open Tailscale and sign in/);
+});
+
+test('Turn off while Reach waits and Tailscale cannot confirm says so plainly and leaves the marker', async (t) => {
+  const ts = fakeTailscale({ backend: 'NeedsLogin', offFails: true });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  writeFileSync(join(dir, 'reach.json'), JSON.stringify({ url: PUBLIC, port: 0 }));
+  const app = await configuredApp(t, { statusDir: dir, tools: tsTools(ts), reachRetry: { everyMs: 20, max: 3, laterMs: 20 } });
+  await app.deps.reach!.ready;
+  const f = await loggedIn(app);
+  await f('/settings/reach/off', FORM);
+  const body = await (await f('/settings/reach')).text();
+  assert.match(body, /Reach is off\. Tailscale did not let BrainAI check that Funnel is off/);
+  assert.doesNotMatch(body, /still lists it/);
+  assert.equal(existsSync(join(dir, 'funnel-off-pending')), true);
+});
+
+test('Reach turns off at start when Funnel is not allowed for the account', async (t) => {
+  const ts = fakeTailscale({ ...RUNNING, needsApproval: true });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  writeFileSync(join(dir, 'reach.json'), JSON.stringify({ url: PUBLIC, port: 0 }));
+  const app = await configuredApp(t, { statusDir: dir, tools: tsTools(ts), reachRetry: { everyMs: 20, max: 3, laterMs: 20 } });
+  await app.deps.reach!.ready;
+  assert.equal(app.deps.reach!.saved(), null);
+  assert.equal(existsSync(join(dir, 'reach.json')), false);
+  assert.equal(app.deps.door!.port(), null);
+  const f = await loggedIn(app);
+  assert.match(await (await f('/settings/reach')).text(), /Reach was turned off[\s\S]*Funnel/i);
+});
+
+test('Reach turns off at start when Tailscale is not installed', async (t) => {
+  const ts = fakeTailscale(null);
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  writeFileSync(join(dir, 'reach.json'), JSON.stringify({ url: PUBLIC, port: 0 }));
+  const app = await configuredApp(t, { statusDir: dir, tools: tsTools(ts), reachRetry: { everyMs: 20, max: 3, laterMs: 20 } });
+  await app.deps.reach!.ready;
+  assert.equal(app.deps.reach!.saved(), null);
+  assert.equal(existsSync(join(dir, 'reach.json')), false);
+});
+
+test('while Reach waits for Tailscale, every visit to the page says so and never shows Reach as on', async (t) => {
+  const ts = fakeTailscale({ backend: 'NeedsLogin' });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  writeFileSync(join(dir, 'reach.json'), JSON.stringify({ url: PUBLIC, port: 0 }));
+  const app = await configuredApp(t, { statusDir: dir, tools: tsTools(ts), reachRetry: { everyMs: 20, max: 3, laterMs: 20 } });
+  await app.deps.reach!.ready;
+  const f = await loggedIn(app);
+  for (let visit = 1; visit <= 3; visit++) {
+    const body = await (await f('/settings/reach')).text();
+    assert.match(body, /Reach is waiting for Tailscale/, `visit ${visit}`);
+    assert.doesNotMatch(body, /On ✓/, `visit ${visit}`);
+  }
+  setTs(ts, { backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' });
+  await until('Funnel turned on', () => ts.state().funnel === true);
+  // BrainAI clears the waiting state when the fake's process has exited, a moment after it wrote its state.
+  await untilPage('On after Funnel is on', async () => (await f('/settings/reach')).text(), (b) => b.includes('On ✓'));
+  assert.doesNotMatch(await (await f('/settings/reach')).text(), /Reach is waiting/);
+});
+
+test('turning Reach off while it waits for Tailscale stops the retries', async (t) => {
+  const ts = fakeTailscale({ backend: 'NeedsLogin' });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  writeFileSync(join(dir, 'reach.json'), JSON.stringify({ url: PUBLIC, port: 0 }));
+  const app = await configuredApp(t, { statusDir: dir, tools: tsTools(ts), reachRetry: { everyMs: 20, max: 10, laterMs: 20 } });
+  await app.deps.reach!.ready;
+  const f = await loggedIn(app);
+  await f('/settings/reach/off', FORM);
+  await new Promise((r) => setTimeout(r, 100));
+  const n = ts.calls().length;
+  setTs(ts, { backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' });
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(ts.calls().length, n, 'no more calls');
+  assert.equal(ts.state().funnel, undefined);
+});
+
+const funnelCalls = (ts: { calls(): string[] }) => ts.calls().filter((c) => c.startsWith('funnel'));
+
+test('a Turn off that arrives while a retry\'s funnel on is still running ends with Reach off and Funnel off', async (t) => {
+  const ts = fakeTailscale({ backend: 'NeedsLogin' });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  writeFileSync(join(dir, 'reach.json'), JSON.stringify({ url: PUBLIC, port: 0 }));
+  const app = await configuredApp(t, { statusDir: dir, tools: tsTools(ts), reachRetry: { everyMs: 30, max: 10, laterMs: 30 } });
+  await app.deps.reach!.ready;
+  const f = await loggedIn(app);
+  setTs(ts, { ...RUNNING, delayMs: 600 });
+  await until('the retry\'s funnel call is running', () => funnelCalls(ts).some((c) => c.startsWith('funnel --bg')));
+  assert.equal((await f('/settings/reach/off', FORM)).status, 303);
+  await new Promise((r) => setTimeout(r, 900));
+  assert.equal(app.deps.reach!.saved(), null, 'Reach stays off');
+  assert.equal(existsSync(join(dir, 'reach.json')), false);
+  assert.equal(ts.state().funnel, false, 'Funnel is off');
+});
+
+test('a Turn on during a retry ends with exactly the new door\'s funnel target, one call at a time', async (t) => {
+  const ts = fakeTailscale({ backend: 'NeedsLogin' });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  writeFileSync(join(dir, 'reach.json'), JSON.stringify({ url: PUBLIC, port: 0 }));
+  const app = await configuredApp(t, { statusDir: dir, tools: tsTools(ts), reachRetry: { everyMs: 30, max: 10, laterMs: 30 } });
+  await app.deps.reach!.ready;
+  const f = await loggedIn(app);
+  setTs(ts, { ...RUNNING, delayMs: 500 });
+  await until('the retry\'s funnel call is running', () => funnelCalls(ts).some((c) => c.startsWith('funnel --bg')));
+  assert.equal((await f('/settings/reach/on', FORM)).status, 303);
+  await new Promise((r) => setTimeout(r, 700));
+  const door = app.deps.door!.port();
+  assert.equal(app.deps.reach!.url()?.origin, PUBLIC);
+  assert.equal(ts.state().funnel, true);
+  const target = `funnel --bg --https=443 --yes http://127.0.0.1:${door}`;
+  assert.equal(funnelCalls(ts).at(-1), target);
+  assert.deepEqual(funnelCalls(ts), [target, 'funnel --https=443 off', target], 'the stale retry is undone before the Turn on runs');
+});
+
+test('the second backup folder can only be chosen on this computer, never through the public door', async (t) => {
+  const statusDir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  const app = await configuredApp(t, { statusDir });
+  const local = new URL(app.baseUrl);
+  const cookie = await appSession(app);
+  const door = await reachOn(app);
+  const folder = mkdtempSync(join(tmpdir(), 'brainai-second-'));
+  const form = { 'Content-Type': 'application/x-www-form-urlencoded', Origin: PUBLIC, Cookie: cookie };
+  const res = await call(door, 'POST', '/settings/backup-copy', PUBLIC_HOST, form, new URLSearchParams({ action: 'save', folder }).toString());
+  assert.equal(res.status, 404);
+  const named = await call(door, 'POST', '/settings/backup-copy', local.host, { ...form, Origin: local.origin }, new URLSearchParams({ action: 'save', folder }).toString());
+  assert.notEqual(named.status, 303, "a request naming localhost is still refused");
+  assert.equal(existsSync(join(statusDir, 'backup-copy.json')), false);
+  assert.equal(app.deps.backupCopy!.folder(), null);
 });

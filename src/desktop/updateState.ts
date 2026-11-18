@@ -63,3 +63,74 @@ export function updateLine(u: UpdateFile): { title: string; text: string; busy: 
     default: return { title, text: '', busy: false, failed: false };
   }
 }
+
+// ---- update-check.json: how the app's checks for a newer release have gone ----
+
+/**
+ * <dataDir>/update-check.json, written only by the desktop app (atomic, unix seconds). `failingSince` is set by the
+ * first failed check after a good one and cleared by the next good check; `lastFailAt` is the latest failed check;
+ * `lastError` is the short reason.
+ */
+export interface UpdateCheck { lastOkAt?: number; failingSince?: number; lastFailAt?: number; lastError?: string }
+
+const MAX_ERROR = 300;
+/** Checks failing for longer than this are worth a line in Settings. */
+const CHECK_FAILING_DAYS = 2;
+
+const seconds = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : undefined);
+
+/** null: absent or not a JSON object. Fields that are not what they should be are left out. */
+export function readUpdateCheck(dataDir: string): UpdateCheck | null {
+  let raw: unknown;
+  try { raw = JSON.parse(readFileSync(join(dataDir, 'update-check.json'), 'utf8')); } catch { return null; }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const c: UpdateCheck = {};
+  const ok = seconds(r.lastOkAt);
+  const since = seconds(r.failingSince);
+  if (ok !== undefined) c.lastOkAt = ok;
+  if (since !== undefined) c.failingSince = since;
+  const lastFail = seconds(r.lastFailAt);
+  if (lastFail !== undefined) c.lastFailAt = lastFail;
+  if (typeof r.lastError === 'string') c.lastError = r.lastError.slice(0, MAX_ERROR);
+  return c;
+}
+
+/**
+ * What Settings says when checks have been failing for more than two days: the day it started ("16 Nov") and the short
+ * reason. The days are counted between the first and the latest failed check, not up to now: one failure and a laptop
+ * that stayed off for three days says nothing until a retry has failed too. A file without lastFailAt says nothing.
+ */
+export function updateCheckProblem(c: UpdateCheck | null, now: Date): { since: string; error?: string } | null {
+  if (!c || c.failingSince === undefined || c.lastFailAt === undefined) return null;
+  if (c.lastFailAt - c.failingSince < CHECK_FAILING_DAYS * 86_400) return null;
+  if (c.lastFailAt * 1000 > now.getTime() + 86_400_000) return null; // a failure from the future: the clock is off
+  const since = new Date(c.failingSince * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return { since, ...(c.lastError ? { error: c.lastError } : {}) };
+}
+
+// ---- The off-site nudge on Home ----
+
+const NUDGE_FILE = 'offsite-later';
+const NUDGE_MIN_AGE_DAYS = 3;
+const NUDGE_LATER_DAYS = 30;
+const DAY_MS = 86_400_000;
+
+/** Whether Home nudges toward a copy off this disk: the app only, no off-site folder, no git copy, and a brain a few days old. */
+export function offsiteNudgeDue(i: { localMode: boolean; offsiteSet: boolean; gitSet: boolean; firstMemoryAt: string | null; now: Date }): boolean {
+  if (!i.localMode || i.offsiteSet || i.gitSet || i.firstMemoryAt === null) return false;
+  const first = Date.parse(i.firstMemoryAt);
+  return Number.isFinite(first) && i.now.getTime() - first >= NUDGE_MIN_AGE_DAYS * DAY_MS;
+}
+
+/** "Later" was chosen less than 30 days ago. */
+export function offsiteNudgeHidden(dataDir: string, now: Date): boolean {
+  try {
+    const until = Date.parse(readFileSync(join(dataDir, NUDGE_FILE), 'utf8').trim());
+    return Number.isFinite(until) && now.getTime() < until;
+  } catch { return false; }
+}
+
+export function setOffsiteLater(dataDir: string, now: Date): void {
+  writeFileSync(join(dataDir, NUDGE_FILE), new Date(now.getTime() + NUDGE_LATER_DAYS * DAY_MS).toISOString());
+}

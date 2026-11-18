@@ -82,7 +82,7 @@ const noNetwork = (async () => { throw new Error('no network in tests'); }) as u
  * non-replayed code. `publicUrl` overrides PUBLIC_URL (default http://localhost:<port>);
  * `trustCfConnectingIp` is passed to the app as given; `sectionMatch` to the page service (undefined: the constant).
  */
-export async function startTestApp(opts: { publicUrl?: string; trustCfConnectingIp?: boolean; statusDir?: string; startAt?: Date; sectionMatch?: number | null; setupOverlay?: SetupOverlay; localMode?: boolean; appSecret?: string | null; backupDir?: string | null; noPassword?: boolean; tools?: AppDeps['tools']; models?: AppDeps['models']; hardware?: AppDeps['hardware'] } = {}): Promise<{
+export async function startTestApp(opts: { publicUrl?: string; trustCfConnectingIp?: boolean; statusDir?: string; startAt?: Date; sectionMatch?: number | null; setupOverlay?: SetupOverlay; localMode?: boolean; appSecret?: string | null; backupDir?: string | null; noPassword?: boolean; tools?: AppDeps['tools']; models?: AppDeps['models']; hardware?: AppDeps['hardware']; reachRetry?: AppDeps['reachRetry'] } = {}): Promise<{
   baseUrl: string;
   deps: AppDeps;
   nextTotp(): string;
@@ -134,7 +134,7 @@ export async function startTestApp(opts: { publicUrl?: string; trustCfConnecting
     allowlist,
     publicUrl, store, service, registry, projects, graph, discussions, growth, reviews, pages, images, diagramChecks: new DiagramChecks(db, now), uploadLinks: new UploadLinks(db, now), skills, skillSync: new SkillSync(db, now, skills), notes: new NoteService(db, pages, now), devices, folders, imports: new ImportLog(db, now), relatedSimilarity: 0.2, sameProjectFloor: 0.88, learning, provider, owner, sessions: new SessionStore(db, now), limiter: new LoginLimiter(), clients, now,
     trustCfConnectingIp: opts.trustCfConnectingIp, statusDir: opts.statusDir, setupOverlay: opts.setupOverlay,
-    localMode: opts.localMode, appSecret: opts.appSecret, backupDir: opts.backupDir, db, models: opts.models, hardware: opts.hardware,
+    localMode: opts.localMode, appSecret: opts.appSecret === undefined && opts.localMode ? 'test-app-secret' : opts.appSecret ?? undefined, backupDir: opts.backupDir, db, models: opts.models, hardware: opts.hardware, reachRetry: opts.reachRetry,
     // Tests never reach the real Tailscale app on this computer, only a fake on the given PATH, and never fall back to
     // the real system variables or the real Claude config folder, on any OS.
     tools: opts.tools ? { tailscaleApp: '/nonexistent/Tailscale', system: {}, claudeConfig: join(opts.tools.home ?? tmpdir(), 'brainai-test-claude', 'claude_desktop_config.json'), ...opts.tools } : undefined,
@@ -187,6 +187,22 @@ export async function loggedIn(app: { baseUrl: string; nextTotp(): string }, opt
       headers: { ...headers, Cookie: [cookie, headers?.Cookie].filter(Boolean).join('; '), Origin: app.baseUrl },
     });
   };
+}
+
+/**
+ * The session the desktop app's window gets in local mode: a ticket asked for with the app's key, then opened.
+ * Returns the `mem_session=…` cookie. The app needs a secret (startTestApp gives local mode 'test-app-secret').
+ */
+export async function appSession(app: { baseUrl: string; deps: Pick<AppDeps, 'appSecret'> }): Promise<string> {
+  const key = app.deps.appSecret;
+  if (!key) throw new Error('appSession needs an app secret');
+  const res = await fetch(app.baseUrl + '/app/ticket', { method: 'POST', headers: { 'X-App-Key': key } });
+  if (res.status !== 200) throw new Error(`ticket refused: ${res.status}`);
+  const { ticket } = await res.json() as { ticket: string };
+  const open = await fetch(`${app.baseUrl}/app/open?ticket=${ticket}`, { redirect: 'manual' });
+  const cookie = open.headers.getSetCookie().map((c) => c.split(';')[0]).filter((c) => c!.startsWith('mem_session=')).join('; ');
+  if (open.status !== 303 || !cookie) throw new Error(`app open failed: ${open.status}`);
+  return cookie;
 }
 
 const CALLBACK = 'http://localhost:9999/callback';

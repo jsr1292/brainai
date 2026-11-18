@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fakeHome, type FakeHome } from '../testing/fakeTools.js';
 import { setupText } from '../setup/texts.js';
-import { backupFiles, tracesOfThisBrain, childEnv, commandLine, connect, disconnect, findCommand, toolStates, withCodexApproval, type ToolEnv } from './tools.js';
+import { backupFiles, tracesOfThisBrain, childEnv, commandLine, connect, disconnect, findCommand, toolStates, withCodexApproval, type Tool, type ToolEnv } from './tools.js';
 import { findBlock } from './rulesBlock.js';
 
 const URL_ = 'http://localhost:3100/mcp';
@@ -371,6 +371,20 @@ test("Claude (desktop app): disconnect removes only brainai, revokes the stored 
   assert.ok(backupFiles(c.env).includes(join(c.f.home, `${CLAUDE_CONFIG}.brainai-backup`)));
 });
 
+test("disconnect asks to end a tool's sign-in by its name, except for Claude's desktop app, whose key is revoked already", async (t) => {
+  const asked: string[] = [];
+  const c = claudeWorld(t);
+  c.env.endSignIns = (name) => { asked.push(name); return 2; };
+  await connect('claude-desktop', c.env, {});
+  assert.deepEqual(await disconnect('claude-desktop', c.env), { ok: true, signIn: '', ended: 0 });
+  const { f, env } = world(t);
+  env.endSignIns = c.env.endSignIns;
+  await connect('claude-code', env, {});
+  assert.deepEqual(await disconnect('claude-code', env), { ok: true, signIn: '', ended: 2 });
+  assert.deepEqual(asked, ['Claude Code']);
+  assert.deepEqual(f.servers('claude'), {});
+});
+
 test("Claude (desktop app): connected means the key works: a revoked or deleted key needs connecting again, and Connect fixes it without Replace", async (t) => {
   const c = claudeWorld(t);
   await connect('claude-desktop', c.env, {});
@@ -475,4 +489,20 @@ test("Claude (desktop app): Connect is refused from a disk image or a translocat
     assert.equal(c.log.issued, 0);
     assert.equal(c.f.read(CLAUDE_CONFIG), null);
   }
+});
+
+test('toolStates looks at the tools at the same time and keeps the order of the list', async (t) => {
+  const { env } = world(t, []);
+  let running = 0; let peak = 0;
+  const fake = (id: string, delay: number, installed = true) => ({
+    id, name: id, slug: id, signIn: '', installed: () => installed,
+    server: async () => { running++; peak = Math.max(peak, running); await new Promise((r) => setTimeout(r, delay)); running--; return URL_; },
+    rulesFile: () => null,
+  }) as unknown as Tool;
+  // The slowest comes first: with a sequential loop the order would still hold, but the peak would be 1.
+  const tools = [fake('claude-code', 60), fake('codex', 10), fake('opencode', 0, false), fake('cursor', 30)];
+  const states = await toolStates(env, tools);
+  assert.deepEqual(states.map((s) => s.id), ['claude-code', 'codex', 'opencode', 'cursor']);
+  assert.deepEqual(states.map((s) => s.installed), [true, true, false, true]);
+  assert.equal(peak, 3, 'the three installed tools were looked at together');
 });

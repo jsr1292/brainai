@@ -2,6 +2,7 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { chmodSync } from 'node:fs';
 import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync, writeSync, closeSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +11,7 @@ import { openDb, latestSchema } from '../db.js';
 import { makeService, makePages, seedSignIn } from '../testing/helpers.js';
 import { makeMoveFile, moveFile } from '../desktop/move.js';
 import { handTar, tarOf } from './testArchives.js';
-import { checkArchive, packArchive, liveCounts, moveAcrossDisks, ARCHIVE_NAME } from './archive.js';
+import { checkArchive, listLines, packArchive, liveCounts, moveAcrossDisks, ARCHIVE_NAME } from './archive.js';
 
 const T = new Date('2026-11-06T10:00:00Z');
 const me = { type: 'owner' } as const;
@@ -113,6 +114,33 @@ test('checkArchive refuses an extra top-level entry', async (t) => {
   await refused(tarOf(x, join(tmp(t), 'a.tar.gz'), ['memory.db', 'notes.txt']), /notes\.txt/);
 });
 
+test('a saved file whose names use backslashes or colons is refused', async (t) => {
+  // Both names sit under images/, so the stray-entry rule alone would let them through. On Windows tar, `\` separates
+  // folders (so the first one climbs out of images/) and `:` reaches drive-relative paths and alternate streams.
+  for (const [folder, name] of [['', 'ab\\..\\..\\evil.txt'], ['ab', 'x:y.jpg']] as const) {
+    const x = await goodFolder(t);
+    mkdirSync(join(x, 'images', folder), { recursive: true });
+    writeFileSync(join(x, 'images', folder, name), 'x');
+    await refused(tarOf(x, join(tmp(t), 'a.tar.gz'), ['memory.db', 'images']), /backslash or colon/);
+  }
+});
+
+test('listings with CRLF line ends are read like LF ones', async (t) => {
+  assert.deepEqual(listLines('a\r\nb/c\r\n\r\nd\n'), ['a', 'b/c', 'd']);
+  // A tar that ends its listing lines with CRLF, as Windows tar output may.
+  const { out } = await packed(t);
+  const bin = tmp(t, 'fake-tar-');
+  writeFileSync(join(bin, 'tar'), '#!/bin/sh\ncase "$1" in -tvzf|-tzf) /usr/bin/tar "$@" | sed \'s/$/\'"$(printf \'\\r\')"\'/\' ;; *) exec /usr/bin/tar "$@" ;; esac\n');
+  chmodSync(join(bin, 'tar'), 0o755);
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}:${before}`;
+  try {
+    assert.deepEqual(await checkArchive(out), { ok: true, facts: 2, pages: 1, schema: latestSchema() });
+  } finally {
+    process.env.PATH = before;
+  }
+});
+
 test('checkArchive refuses a database from a newer BrainAI', async (t) => {
   const x = await goodFolder(t);
   const db = openDb(join(x, 'memory.db'));
@@ -157,4 +185,19 @@ test('moveAcrossDisks falls back to copy-then-rename next to the destination whe
   // The second rename went from a temp name in the destination's own folder.
   assert.deepEqual(readdirSync(to), ['out.tar.gz']);
   assert.throws(() => moveAcrossDisks(join(from, 'none'), join(to, 'x'), () => { throw Object.assign(new Error('nope'), { code: 'EACCES' }); }), /nope/);
+});
+
+test('a stray entry with a very long name is refused with a short reason', async (t) => {
+  const x = await goodFolder(t);
+  // Three components under the 255 limit make a path of over 750 characters, which only a PAX header can carry.
+  const deep = join(x, ...['a', 'b', 'c'].map((c) => c.repeat(250)));
+  mkdirSync(deep, { recursive: true });
+  writeFileSync(join(deep, 'f.txt'), 'x');
+  const out = join(tmp(t), 'a.tar.gz');
+  execFileSync('tar', ['--format', 'pax', '-czf', out, '-C', x, 'memory.db', 'a'.repeat(250)]);
+  const r = await checkArchive(out);
+  assert.equal(r.ok, false);
+  const reason = (r as { reason: string }).reason;
+  assert.match(reason, /holds something else/);
+  assert.ok(reason.length < 200, `${reason.length}`);
 });

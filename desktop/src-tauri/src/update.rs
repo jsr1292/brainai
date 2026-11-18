@@ -130,6 +130,108 @@ pub fn read_state(data: &Path) -> Option<UpdateFile> {
     serde_json::from_slice(&std::fs::read(data.join(STATE_FILE)).ok()?).ok()
 }
 
+/// `<data>/update-check.json`, written only by the app (the server reads it for Settings): how the checks for a newer
+/// release have gone, in unix seconds. `failingSince` starts with the first failed check after a good one and goes
+/// with the next good one; `lastFailAt` is the latest failed check.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UpdateCheck {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_ok_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failing_since: Option<u64>,
+    /// The time of the latest failed check; Settings warns only when this is two days past `failing_since`, so a
+    /// laptop that was off for days after one failure says nothing before it has tried again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_fail_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+const CHECK_FILE: &str = "update-check.json";
+
+/// A good check: the time is kept, the failure is gone.
+pub fn record_ok(prev: UpdateCheck, now: u64) -> UpdateCheck {
+    let _ = prev;
+    UpdateCheck { last_ok_at: Some(now), failing_since: None, last_fail_at: None, last_error: None }
+}
+
+/// A failed check: the failing clock starts if it is not running, and the reason is the latest.
+pub fn record_failure(prev: UpdateCheck, now: u64, error: &str) -> UpdateCheck {
+    UpdateCheck { failing_since: prev.failing_since.or(Some(now)), last_fail_at: Some(now), last_error: Some(short_error(error)), ..prev }
+}
+
+/// The reason as Settings shows it: the first line, at most 200 characters.
+pub fn short_error(e: &str) -> String {
+    let line = e.trim().lines().next().unwrap_or("").trim();
+    if line.is_empty() {
+        return "The check failed.".into();
+    }
+    line.chars().take(200).collect()
+}
+
+/// An error and each of its causes (`Error::source`), so the log shows the real reason (a proxy, a certificate, DNS)
+/// and not only the plugin's own sentence.
+pub fn error_chain(e: &dyn std::error::Error) -> String {
+    let mut out = e.to_string();
+    let mut cause = e.source();
+    while let Some(c) = cause {
+        out.push_str(&format!(": caused by: {c}"));
+        cause = c.source();
+    }
+    out
+}
+
+/// Where the release endpoints are written in tauri.conf.json (`plugins.updater.endpoints`).
+pub fn configured_endpoints(updater_config: Option<&serde_json::Value>) -> Vec<String> {
+    updater_config
+        .and_then(|c| c.get("endpoints"))
+        .and_then(|e| e.as_array())
+        .map(|a| a.iter().filter_map(|u| u.as_str().map(str::to_owned)).collect())
+        .unwrap_or_default()
+}
+
+/// What an endpoint's answer means in a sentence: "github.com answered HTTP 407 (Proxy Authentication Required)".
+pub fn status_reason(host: &str, status: u16, canonical: Option<&str>) -> String {
+    match canonical {
+        Some(text) if !text.is_empty() => format!("{host} answered HTTP {status} ({text})"),
+        _ => format!("{host} answered HTTP {status}"),
+    }
+}
+
+/// The plugin reports a non-2xx answer only as "Could not fetch a valid release JSON from the remote" and logs the
+/// status where nothing reads it. One plain GET of the same endpoint (same timeout, the system proxy) finds the
+/// real reason: the status the server or a proxy gave, or why the connection failed.
+async fn probe_endpoint(url: &Url, timeout: Duration) -> String {
+    let host = url.host_str().unwrap_or("the update server").to_owned();
+    let client = match reqwest::Client::builder().timeout(timeout).user_agent("BrainAI update check").build() {
+        Ok(c) => c,
+        Err(e) => return error_chain(&e.without_url()),
+    };
+    match client.get(url.as_str()).send().await {
+        Ok(res) => {
+            let status = res.status();
+            status_reason(&host, status.as_u16(), status.canonical_reason())
+        }
+        Err(e) => error_chain(&e.without_url()),
+    }
+}
+
+/// Written whole, like `write_state`: to a temporary file, then renamed.
+pub fn write_check(data: &Path, c: &UpdateCheck) -> io::Result<()> {
+    std::fs::create_dir_all(data)?;
+    let tmp = data.join(format!("{CHECK_FILE}.tmp"));
+    std::fs::write(&tmp, serde_json::to_vec(c)?)?;
+    std::fs::rename(&tmp, data.join(CHECK_FILE)).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
+/// Absent or broken reads as nothing known yet.
+pub fn read_check(data: &Path) -> UpdateCheck {
+    std::fs::read(data.join(CHECK_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
 /// No update known: the card goes away.
 pub fn clear_state(data: &Path) {
     let _ = std::fs::remove_file(data.join(STATE_FILE));
@@ -261,6 +363,15 @@ fn check(app: &AppHandle) -> Result<Option<Update>, tauri_plugin_updater::Error>
     tauri::async_runtime::block_on(updater.check())
 }
 
+/// The endpoint a check asked: BRAINAI_UPDATE_ENDPOINT when set, else the first of tauri.conf.json's.
+fn probe_url(app: &AppHandle) -> Option<Url> {
+    if let Some(url) = endpoint_override(std::env::var("BRAINAI_UPDATE_ENDPOINT").ok().as_deref()) {
+        return Some(url);
+    }
+    let cfg = app.config().plugins.0.get("updater");
+    configured_endpoints(cfg).first().and_then(|u| Url::parse(u).ok())
+}
+
 /// One update job at a time: a check and its write, or the whole Update and restart. Only ever taken on background
 /// threads (never the main thread, never inside on_navigation), so a click during a check just waits for it.
 fn update_lock(app: &AppHandle) -> std::sync::MutexGuard<'_, ()> {
@@ -298,8 +409,8 @@ fn no_update(app: &AppHandle) {
     crate::show_update_dot(app, None);
 }
 
-/// One check, then the time it was made. An error is logged and changes nothing on screen (and the next look tries
-/// again).
+/// One check, then the time it was made. An error is logged with its causes and recorded in update-check.json (Settings
+/// says so after two days); nothing else changes on screen, and the next look tries again.
 fn check_now(app: &AppHandle) {
     let _job = update_lock(app);
     // Update and restart may have started (and finished) while this waited: its state is not overwritten.
@@ -309,7 +420,24 @@ fn check_now(app: &AppHandle) {
     match check(app) {
         Ok(Some(update)) => offer(app, update),
         Ok(None) => no_update(app),
-        Err(e) => return log(app, &format!("The update check failed: {e}")),
+        Err(e) => {
+            let mut chain = error_chain(&e);
+            if matches!(e, tauri_plugin_updater::Error::ReleaseNotFound) {
+                if let Some(url) = probe_url(app) {
+                    chain = tauri::async_runtime::block_on(probe_endpoint(&url, CHECK_TIMEOUT));
+                }
+            }
+            log(app, &format!("The update check failed: {chain}"));
+            let dir = state_dir(app);
+            if let Err(w) = write_check(&dir, &record_failure(read_check(&dir), now_unix(), &chain)) {
+                log(app, &format!("update-check.json could not be written: {w}"));
+            }
+            return;
+        }
+    }
+    let dir = state_dir(app);
+    if let Err(w) = write_check(&dir, &record_ok(read_check(&dir), now_unix())) {
+        log(app, &format!("update-check.json could not be written: {w}"));
     }
     let _ = std::fs::write(checked_file(app), now_unix().to_string());
 }
@@ -620,5 +748,94 @@ mod tests {
         assert_eq!(endpoint_override(Some("not a url")), None);
         assert_eq!(endpoint_override(Some("")), None);
         assert_eq!(endpoint_override(None), None);
+    }
+
+    #[test]
+    fn a_failed_check_starts_the_failing_clock_once_and_keeps_the_last_good_time() {
+        let first = record_failure(UpdateCheck { last_ok_at: Some(100), ..Default::default() }, 1000, "no route");
+        assert_eq!(first, UpdateCheck { last_ok_at: Some(100), failing_since: Some(1000), last_fail_at: Some(1000), last_error: Some("no route".into()) });
+        let again = record_failure(first, 5000, "still no route");
+        assert_eq!(again.failing_since, Some(1000), "the start does not move");
+        assert_eq!(again.last_fail_at, Some(5000), "the latest failure does");
+        assert_eq!(again.last_error.as_deref(), Some("still no route"), "the reason is the latest");
+        assert_eq!(again.last_ok_at, Some(100));
+    }
+
+    #[test]
+    fn a_good_check_clears_the_failure() {
+        let failing = UpdateCheck { last_ok_at: Some(100), failing_since: Some(1000), last_fail_at: Some(2000), last_error: Some("no route".into()) };
+        assert_eq!(record_ok(failing, 9000), UpdateCheck { last_ok_at: Some(9000), failing_since: None, last_fail_at: None, last_error: None });
+    }
+
+    #[test]
+    fn the_short_error_is_one_line_and_cut() {
+        assert_eq!(short_error("  first line\nsecond line  "), "first line");
+        assert_eq!(short_error(""), "The check failed.");
+        assert_eq!(short_error(&"x".repeat(500)).chars().count(), 200);
+    }
+
+    #[test]
+    fn the_error_chain_lists_every_cause() {
+        #[derive(Debug)]
+        struct Inner;
+        impl std::fmt::Display for Inner {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "proxy refused the connection") }
+        }
+        impl std::error::Error for Inner {}
+        #[derive(Debug)]
+        struct Outer(Inner);
+        impl std::fmt::Display for Outer {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "Could not fetch a valid release JSON from the remote") }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(&self.0) }
+        }
+        assert_eq!(error_chain(&Outer(Inner)), "Could not fetch a valid release JSON from the remote: caused by: proxy refused the connection");
+        assert_eq!(error_chain(&Inner), "proxy refused the connection", "no source, no suffix");
+    }
+
+    #[test]
+    fn the_check_file_uses_the_names_the_server_reads_and_leaves_out_what_is_unset() {
+        let c = UpdateCheck { last_ok_at: Some(5), failing_since: None, last_fail_at: None, last_error: None };
+        assert_eq!(serde_json::to_string(&c).unwrap(), r#"{"lastOkAt":5}"#);
+        let c = UpdateCheck { last_ok_at: None, failing_since: Some(7), last_fail_at: Some(9), last_error: Some("x".into()) };
+        assert_eq!(serde_json::to_string(&c).unwrap(), r#"{"failingSince":7,"lastFailAt":9,"lastError":"x"}"#);
+    }
+
+    #[test]
+    fn the_check_file_round_trips_and_a_broken_one_reads_as_empty() {
+        let dir = std::env::temp_dir().join(format!("brainai-check-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(read_check(&dir), UpdateCheck::default());
+        let c = UpdateCheck { last_ok_at: Some(1), failing_since: Some(2), last_fail_at: Some(3), last_error: Some("e".into()) };
+        write_check(&dir, &c).unwrap();
+        assert_eq!(read_check(&dir), c);
+        assert!(!dir.join("update-check.json.tmp").exists());
+        std::fs::write(dir.join("update-check.json"), b"{nope").unwrap();
+        assert_eq!(read_check(&dir), UpdateCheck::default());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_status_becomes_a_short_reason() {
+        assert_eq!(status_reason("github.com", 407, Some("Proxy Authentication Required")), "github.com answered HTTP 407 (Proxy Authentication Required)");
+        assert_eq!(status_reason("github.com", 403, Some("Forbidden")), "github.com answered HTTP 403 (Forbidden)");
+        assert_eq!(status_reason("example.org", 599, None), "example.org answered HTTP 599");
+        assert_eq!(status_reason("example.org", 599, Some("")), "example.org answered HTTP 599");
+    }
+
+    #[test]
+    fn the_endpoints_are_read_from_the_updater_config() {
+        let cfg = serde_json::json!({ "endpoints": ["https://a.example/latest.json", 5, "https://b.example/l.json"], "pubkey": "k" });
+        assert_eq!(configured_endpoints(Some(&cfg)), vec!["https://a.example/latest.json", "https://b.example/l.json"]);
+        assert!(configured_endpoints(Some(&serde_json::json!({}))).is_empty());
+        assert!(configured_endpoints(None).is_empty());
+    }
+
+    #[test]
+    fn an_old_check_file_without_the_latest_failure_still_reads() {
+        let c: UpdateCheck = serde_json::from_str(r#"{"failingSince":7,"lastError":"x"}"#).unwrap();
+        assert_eq!(c.last_fail_at, None);
+        assert_eq!(c.failing_since, Some(7));
     }
 }

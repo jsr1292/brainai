@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { MemoryService } from '../memory/service.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { Supersession } from '../memory/supersessions.js';
@@ -136,6 +136,14 @@ function folders(dir: string): string[] {
 
 const isLink = (p: string): boolean => { try { return lstatSync(p).isSymbolicLink(); } catch { return false; } };
 
+/** Whether a tree path stays inside `dir`: no empty, `.` or `..` segment, none with `\`, `:` or NUL, and it resolves below `dir`. */
+function staysInside(dir: string, path: string): boolean {
+  const segments = path.split('/');
+  if (segments.some((s) => s === '' || s === '.' || s === '..' || /[\\:\0]/.test(s))) return false;
+  const rel = relative(resolve(dir), resolve(dir, ...segments));
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
 /**
  * Writes the tree into `dir`: only files whose content changed, and removes .md files under pages/ and facts/ that are
  * gone. Never through a link (audit F05): a top folder that is a link is left alone, a file whose path has a link on
@@ -166,6 +174,7 @@ export function writeTree(dir: string, tree: Map<string, string>): { written: nu
     for (const f of folders(join(dir, top))) if (readdirSync(f).length === 0) rmdirSync(f);
   }
   for (const [path, content] of tree) {
+    if (!staysInside(dir, path)) { skipped.push(path); continue; }
     if (linkedTops.has(path.split('/')[0]!)) continue;
     if (linkOnTheWay(path)) { skipped.push(path); continue; }
     const full = join(dir, path);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { laterVersion, readUpdate, setLater, updateLine, type UpdateFile } from './updateState.js';
+import { laterVersion, offsiteNudgeDue, offsiteNudgeHidden, readUpdate, readUpdateCheck, setLater, setOffsiteLater, updateCheckProblem, updateLine, type UpdateFile } from './updateState.js';
 
 const dir = () => mkdtempSync(join(tmpdir(), 'brainai-update-'));
 const write = (d: string, v: unknown) => writeFileSync(join(d, 'update.json'), typeof v === 'string' ? v : JSON.stringify(v));
@@ -54,4 +54,78 @@ test('updateLine says each state in plain words', () => {
   assert.equal(failed.failed, true);
   assert.equal(failed.busy, false);
   assert.equal(updateLine(file({ state: 'blocked', problem: 'Close the other BrainAI first.' })).text, 'Close the other BrainAI first.');
+});
+
+// ---- update-check.json: what the app's last checks found ----
+
+const DAY = 86_400;
+const checkFile = (d: string, v: unknown) => writeFileSync(join(d, 'update-check.json'), typeof v === 'string' ? v : JSON.stringify(v));
+
+test('readUpdateCheck is null for no file, broken JSON, or nothing useful; it keeps only valid fields', () => {
+  const d = dir();
+  assert.equal(readUpdateCheck(d), null);
+  checkFile(d, '{nope');
+  assert.equal(readUpdateCheck(d), null);
+  checkFile(d, []);
+  assert.equal(readUpdateCheck(d), null);
+  checkFile(d, { lastOkAt: 'yesterday', failingSince: -5, lastError: 7 });
+  assert.deepEqual(readUpdateCheck(d), {});
+  checkFile(d, { lastOkAt: 100, failingSince: 200, lastError: 'x'.repeat(900) });
+  assert.deepEqual(readUpdateCheck(d), { lastOkAt: 100, failingSince: 200, lastError: 'x'.repeat(300) });
+});
+
+test('updateCheckProblem speaks only when checks kept failing for two days', () => {
+  const failing = 1_763_251_200 + 43_200; // 2025-11-16T12:00:00Z
+  const at = (secs: number) => new Date(secs * 1000);
+  const since = new Date(failing * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  assert.equal(updateCheckProblem(null, at(failing)), null);
+  assert.equal(updateCheckProblem({ lastOkAt: failing }, at(failing + 9 * DAY)), null);
+  assert.equal(updateCheckProblem({ failingSince: failing, lastFailAt: failing + 2 * DAY - 1 }, at(failing + 9 * DAY)), null);
+  const p = updateCheckProblem({ failingSince: failing, lastFailAt: failing + 2 * DAY, lastError: 'Could not fetch a valid release JSON from the remote' }, at(failing + 2 * DAY));
+  assert.equal(p?.since, since);
+  assert.equal(p?.error, 'Could not fetch a valid release JSON from the remote');
+  assert.equal(updateCheckProblem({ failingSince: failing, lastFailAt: failing + 3 * DAY }, at(failing + 3 * DAY))?.error, undefined);
+  // One failure, then the laptop was off for days: no retry has failed yet, so no warning.
+  assert.equal(updateCheckProblem({ failingSince: failing, lastFailAt: failing }, at(failing + 3 * DAY)), null);
+  // An old file without lastFailAt says nothing.
+  assert.equal(updateCheckProblem({ failingSince: failing }, at(failing + 9 * DAY)), null);
+  // A clock that moved backwards is not a failure of days.
+  assert.equal(updateCheckProblem({ failingSince: failing + 5 * DAY, lastFailAt: failing }, at(failing)), null);
+});
+
+test('readUpdateCheck keeps lastFailAt when it is a time', () => {
+  const d = dir();
+  checkFile(d, { failingSince: 200, lastFailAt: 900 });
+  assert.deepEqual(readUpdateCheck(d), { failingSince: 200, lastFailAt: 900 });
+  checkFile(d, { failingSince: 200, lastFailAt: 'soon' });
+  assert.deepEqual(readUpdateCheck(d), { failingSince: 200 });
+});
+
+// ---- the off-site nudge on Home ----
+
+const NOW = new Date('2026-11-20T10:00:00Z');
+const nudge = (o: Partial<Parameters<typeof offsiteNudgeDue>[0]> = {}) => offsiteNudgeDue({
+  localMode: true, offsiteSet: false, gitSet: false, firstMemoryAt: '2026-11-10T09:00:00Z', now: NOW, ...o,
+});
+
+test('the off-site nudge shows only for an app brain at least three days old with no off-site folder and no git copy', () => {
+  assert.equal(nudge(), true);
+  assert.equal(nudge({ localMode: false }), false);
+  assert.equal(nudge({ offsiteSet: true }), false);
+  assert.equal(nudge({ gitSet: true }), false);
+  assert.equal(nudge({ firstMemoryAt: null }), false);
+  assert.equal(nudge({ firstMemoryAt: 'garbage' }), false);
+  assert.equal(nudge({ firstMemoryAt: '2026-11-17T10:00:01Z' }), false);
+  assert.equal(nudge({ firstMemoryAt: '2026-11-17T10:00:00Z' }), true);
+});
+
+test('Later hides the off-site nudge for 30 days', () => {
+  const d = dir();
+  assert.equal(offsiteNudgeHidden(d, NOW), false);
+  setOffsiteLater(d, NOW);
+  assert.equal(offsiteNudgeHidden(d, NOW), true);
+  assert.equal(offsiteNudgeHidden(d, new Date(NOW.getTime() + 29 * DAY * 1000)), true);
+  assert.equal(offsiteNudgeHidden(d, new Date(NOW.getTime() + 30 * DAY * 1000)), false);
+  writeFileSync(join(d, 'offsite-later'), 'junk');
+  assert.equal(offsiteNudgeHidden(d, NOW), false);
 });

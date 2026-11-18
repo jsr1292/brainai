@@ -197,7 +197,7 @@ function panel(d: ProjectDetail, now: Date, error?: string): SafeHtml {
   const gitline = g === null ? null : html`<li class="gitline">Folder <code>~/Projects/${g.name}</code> · ${g.git
     ? html`${g.branch ?? 'no branch'} · ${g.uncommitted === null || g.unpushed === null ? 'git state unknown (git did not answer on the Mac)' : html`${g.uncommitted} uncommitted · ${g.unpushed} not pushed`}${g.lastCommit ? html` · last commit ${timeAgo(g.lastCommit, now)}` : ' · no commits yet'}`
     : 'not a git repo'}${g.reportedAt && now.getTime() - Date.parse(g.reportedAt) > DAY_MS ? html` · <strong class="late-text">last report from the Mac ${pastLabel(g.reportedAt, now)}</strong>` : ''}</li>`;
-  const lives = [gitline ?? (p.folder ? html`<li>Folder <code>~/Projects/${p.folder}</code></li>` : html``),
+  const lives = [gitline ?? (p.folder ? html`<li>Folder <code class="path">~/Projects/${p.folder}</code></li>` : html``),
     ...p.remotes.map((r) => html`<li>Remote <code>${r}</code></li>`),
     p.url ? html`<li><a href="${p.url}" rel="noreferrer">${p.url}</a></li>` : html``];
   const rowLink = (href: string, text: string) => html`<a class="row nolead" href="${href}"><span class="txt">${text}</span><span class="chev"></span></a>`;
@@ -282,6 +282,8 @@ export interface HomeViewInput {
   modelsLine?: SafeHtml;
   /** The update card (the app only), above the models line. */
   updateCard?: SafeHtml;
+  /** The off-site backup nudge (the app only), under the update card. */
+  offsiteCard?: SafeHtml;
 }
 
 /**
@@ -309,7 +311,7 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   return html`<div class="plist">
   <h1>Projects${plain ? html`<span class="phome-date" hidden>${longDate(now)}</span>` : ''}</h1>
   ${errorBlock(v.error)}
-  ${banner}${v.updateCard ?? ''}${v.modelsLine ?? ''}
+  ${banner}${v.updateCard ?? ''}${v.offsiteCard ?? ''}${v.modelsLine ?? ''}
   <form method="post" action="/projects/ideas" class="idea"><label class="visually-hidden" for="idea-text">A new idea</label><input id="idea-text" name="text" maxlength="140" placeholder="An idea…" autocomplete="off"><button type="submit" class="primary">Add idea</button></form>
   ${forYou.value === '' ? '' : html`<h2 class="fy-h" id="foryou" hidden>For you</h2>`}${forYou}
   ${!empty ? '' : v.connected === false

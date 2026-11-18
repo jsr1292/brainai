@@ -418,12 +418,14 @@ function screen() {
 
 // ---- The keys sheet ----
 
+/** The command key's name here: ⌘ on Apple devices, Ctrl elsewhere (platform.js sets window.__pc before the first paint). */
+const MOD = typeof window !== 'undefined' && window.__pc === true ? 'Ctrl ' : '⌘';
 let keysDialog = null;
 function keysSheet() {
   if (keysDialog) return keysDialog;
   const k = (keys, words) => [el('dt', {}, ...keys.flatMap((x, i) => (i ? [' ', el('kbd', { text: x })] : [el('kbd', { text: x })]))), el('dd', { text: words })];
   const rows = [
-    [['⌘K'], 'Search'],
+    [[MOD + 'K'], 'Search'],
     [['1', '4'], 'Projects, Pages, Week, Graph'],
     [['↑', '↓'], 'Move in the list, the sheet follows'],
     [['Esc'], 'Close, back to the overview'],
@@ -434,7 +436,7 @@ function keysSheet() {
     [['n'], 'Write an idea (Projects)'],
     [['/'], 'Filter the list (Facts)'],
     [['←', '→'], 'Older or newer week (Week)'],
-    [['⌘↵'], 'Approve or decide, inside the sheet'],
+    [[MOD + '↵'], 'Approve or decide, inside the sheet'],
     [['?'], 'This sheet'],
   ];
   const dl = el('dl');
@@ -559,7 +561,7 @@ function thisMac() {
     return el('li', {}, el('span', { class: 'desk-mac-name', text: title }), el('span', { class: 'desk-mac-note', id: noteId, text: note }), sw);
   };
   const list = add(el('ul', { class: 'desk-mac' },
-    row('keys', 'keys', 'Keyboard shortcuts', 'Single keys such as 1–4, x and e. ⌘K and Esc always work.'),
+    row('keys', 'keys', 'Keyboard shortcuts', `Single keys such as 1–4, x and e. ${MOD}K and Esc always work.`),
     row('beside', 'beside', 'Open things beside the list', 'Off opens every project, page and fact as its own page, like the iPhone.')));
   const head = section.querySelector('.panel-head');
   if (head) head.after(list); else section.prepend(list);
@@ -720,8 +722,8 @@ function shapeApproval(node, id) {
   const approve = form?.querySelector('button.primary');
   // ⌘↵ approves from the form's text field (Edit first); a delete has none, so no hint there.
   if (approve && form.querySelector('textarea[name="content"]')) {
-    approve.setAttribute('aria-keyshortcuts', 'Meta+Enter');
-    approve.append(el('kbd', { 'aria-hidden': 'true', text: '⌘↵' }));
+    approve.setAttribute('aria-keyshortcuts', 'Meta+Enter Control+Enter');
+    approve.append(el('kbd', { 'aria-hidden': 'true', text: MOD + '↵' }));
   }
   const edit = card.querySelector('.edit-first > summary');
   if (edit && prefs().keys) {
@@ -2254,7 +2256,7 @@ function buildPalette() {
     el('div', { class: 'desk-pal-foot' },
       el('span', {}, el('kbd', { text: '↑' }), ' ', el('kbd', { text: '↓' }), ' move'), el('span', { class: 'desk-sep', text: ' · ' }),
       el('span', {}, el('kbd', { text: '↵' }), ' open beside the list'), el('span', { class: 'desk-sep', text: ' · ' }),
-      el('span', {}, el('kbd', { text: '⌘↵' }), ' open as its own page'),
+      el('span', {}, el('kbd', { text: MOD + '↵' }), ' open as its own page'),
       el('span', { class: 'desk-pal-scope', text: 'Searches projects, pages, facts and page sections' }))));
   input.addEventListener('input', () => {
     clearTimeout(palTimer);

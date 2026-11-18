@@ -41,7 +41,7 @@ HEAD="$(git -C "$REPO" rev-parse HEAD)"
 if [ "$(cd "$SELF_ROOT" && pwd -P)" = "$(cd "$REPO" && pwd -P)" ] && ! git -C "$REPO" diff --quiet HEAD -- scripts/publish src/scripts/secretScan.ts; then
   echo "There are uncommitted changes to the gate (scripts/publish or src/scripts/secretScan.ts): commit or undo them first" >&2; exit 2
 fi
-git -C "$REPO" show "$HEAD:CHANGELOG.md" 2>/dev/null | grep -qE "^## ${VERSION//./\\.}( |$)" || { echo "CHANGELOG.md has no \"## $VERSION\" entry: write it and commit first" >&2; exit 2; }
+git -C "$REPO" show "$HEAD:CHANGELOG.md" 2>/dev/null | grep -E "^## ${VERSION//./\\.}( |$)" >/dev/null || { echo "CHANGELOG.md has no \"## $VERSION\" entry: write it and commit first" >&2; exit 2; }
 git ls-remote --exit-code --tags "$PUBLIC" "refs/tags/v$VERSION" >/dev/null 2>&1
 case $? in
   0) echo "v$VERSION is already on the public repo" >&2; exit 2 ;;

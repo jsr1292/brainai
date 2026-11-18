@@ -2,7 +2,7 @@
  * Tailscale Funnel for Reach from phone and web (D4): the Mac's public address, https://<mac>.<tailnet>.ts.net,
  * forwarding to BrainAI on this Mac. Runs Tailscale's own command (no shell, a time limit, never waiting for input).
  */
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
 
@@ -15,7 +15,8 @@ export interface TailscaleEnv {
   timeoutMs?: number;
   extraEnv?: Record<string, string>;
 }
-export type FunnelResult = { ok: true; url: string } | { ok: false; reason: string };
+/** `refused`: a definite no (Tailscale is not installed, or Funnel is not allowed for the account). Any other failure may pass. */
+export type FunnelResult = { ok: true; url: string } | { ok: false; reason: string; refused?: true };
 
 const APP_CLI = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
 const INSTALL = 'Install Tailscale (tailscale.com/download/mac) and sign in, then press Turn on again.';
@@ -68,7 +69,7 @@ export async function tailscaleState(env: TailscaleEnv): Promise<{ installed: bo
  */
 export async function funnelOn(env: TailscaleEnv, port: number): Promise<FunnelResult> {
   const cli = findCli(env);
-  if (!cli) return { ok: false, reason: INSTALL };
+  if (!cli) return { ok: false, reason: INSTALL, refused: true };
   const s = await statusOf(env, cli);
   if (s.timedOut) return { ok: false, reason: 'Tailscale did not answer within 30 seconds. Try again in a moment.' };
   if (!s.running || !s.host) return { ok: false, reason: 'Open Tailscale and sign in, then press Turn on again.' };
@@ -77,7 +78,7 @@ export async function funnelOn(env: TailscaleEnv, port: number): Promise<FunnelR
   await funnelOff(env);
   if (r.timedOut) return { ok: false, reason: 'Tailscale did not answer within 30 seconds. Try again in a moment.' };
   const approve = /https:\/\/login\.tailscale\.com\/[^\s"'<>)\]]+/.exec(r.out)?.[0]?.replace(/[.,;:]+$/, '');
-  if (approve) return { ok: false, reason: `Tailscale needs Funnel allowed for your account first: open ${approve}, allow it, then press Turn on again.` };
+  if (approve) return { ok: false, reason: `Tailscale needs Funnel allowed for your account first: open ${approve}, allow it, then press Turn on again.`, refused: true };
   return { ok: false, reason: `Tailscale could not share BrainAI: ${r.out.trim().slice(0, 200) || `it stopped with code ${r.code}`}` };
 }
 
@@ -87,4 +88,19 @@ export async function funnelOff(env: TailscaleEnv): Promise<{ ok: true } | { ok:
   const r = await run(env, cli, ['funnel', '--https=443', 'off']);
   if (r.code === 0) return { ok: true };
   return { ok: false, reason: r.timedOut ? 'Tailscale did not answer within 30 seconds.' : `Tailscale could not stop sharing: ${r.out.trim().slice(0, 200)}` };
+}
+
+/**
+ * The same `funnel --https=443 off`, blocking, for the exit path (process 'exit' allows nothing asynchronous).
+ * True when Tailscale confirmed, or when there is no Tailscale to ask.
+ */
+export function funnelOffSync(env: TailscaleEnv, timeoutMs = 3000): boolean {
+  const cli = findCli(env);
+  if (!cli) return true;
+  try {
+    execFileSync(cli, ['funnel', '--https=443', 'off'], { env: { PATH: env.path, HOME: env.home, ...env.extraEnv }, timeout: timeoutMs, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
 }

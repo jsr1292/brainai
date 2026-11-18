@@ -588,36 +588,71 @@ ALTER TABLE project_checks ADD COLUMN report_at_set TEXT;
  * row's removal takes it off. Keys as embedding_staging's: a fact's or observation's id, a section's page id and anchor.
  * A later migration that rebuilds memories, page_sections or observations (a table copy, as migration 11 did) drops
  * these triggers with the old table: it must create them again, or placeholders saved after it are never embedded.
+ *
+ * BrainAI's own database triggers: migration 37 creates them, and openDb checks them on every open (ensureOwnTriggers),
+ * because a restore or import drops every trigger of the incoming file (saved/backupFile.ts stripSignIn: the file is
+ * untrusted) and migrations only run once per schema version.
  */
-const MIGRATION_37 = `
-CREATE TABLE embedding_pending(tbl TEXT NOT NULL, key TEXT NOT NULL, PRIMARY KEY(tbl, key));
-CREATE TRIGGER memories_pending_insert AFTER INSERT ON memories WHEN NEW.embedding = zeroblob(length(NEW.embedding))
-BEGIN INSERT OR IGNORE INTO embedding_pending(tbl, key) VALUES ('m', NEW.id); END;
-CREATE TRIGGER memories_pending_update AFTER UPDATE OF id, embedding ON memories
+export const OWN_TRIGGERS: { name: string; sql: string }[] = [
+  {
+    name: 'memories_pending_insert',
+    sql: `CREATE TRIGGER memories_pending_insert AFTER INSERT ON memories WHEN NEW.embedding = zeroblob(length(NEW.embedding))
+BEGIN INSERT OR IGNORE INTO embedding_pending(tbl, key) VALUES ('m', NEW.id); END`,
+  },
+  {
+    name: 'memories_pending_update',
+    sql: `CREATE TRIGGER memories_pending_update AFTER UPDATE OF id, embedding ON memories
 BEGIN
   DELETE FROM embedding_pending WHERE tbl = 'm' AND key = OLD.id;
   INSERT OR IGNORE INTO embedding_pending(tbl, key) SELECT 'm', NEW.id WHERE NEW.embedding = zeroblob(length(NEW.embedding));
-END;
-CREATE TRIGGER memories_pending_delete AFTER DELETE ON memories
-BEGIN DELETE FROM embedding_pending WHERE tbl = 'm' AND key = OLD.id; END;
-CREATE TRIGGER sections_pending_insert AFTER INSERT ON page_sections WHEN NEW.embedding = zeroblob(length(NEW.embedding))
-BEGIN INSERT OR IGNORE INTO embedding_pending(tbl, key) VALUES ('s', NEW.page_id || char(10) || NEW.anchor); END;
-CREATE TRIGGER sections_pending_update AFTER UPDATE OF page_id, anchor, embedding ON page_sections
+END`,
+  },
+  {
+    name: 'memories_pending_delete',
+    sql: `CREATE TRIGGER memories_pending_delete AFTER DELETE ON memories
+BEGIN DELETE FROM embedding_pending WHERE tbl = 'm' AND key = OLD.id; END`,
+  },
+  {
+    name: 'sections_pending_insert',
+    sql: `CREATE TRIGGER sections_pending_insert AFTER INSERT ON page_sections WHEN NEW.embedding = zeroblob(length(NEW.embedding))
+BEGIN INSERT OR IGNORE INTO embedding_pending(tbl, key) VALUES ('s', NEW.page_id || char(10) || NEW.anchor); END`,
+  },
+  {
+    name: 'sections_pending_update',
+    sql: `CREATE TRIGGER sections_pending_update AFTER UPDATE OF page_id, anchor, embedding ON page_sections
 BEGIN
   DELETE FROM embedding_pending WHERE tbl = 's' AND key = OLD.page_id || char(10) || OLD.anchor;
   INSERT OR IGNORE INTO embedding_pending(tbl, key) SELECT 's', NEW.page_id || char(10) || NEW.anchor WHERE NEW.embedding = zeroblob(length(NEW.embedding));
-END;
-CREATE TRIGGER sections_pending_delete AFTER DELETE ON page_sections
-BEGIN DELETE FROM embedding_pending WHERE tbl = 's' AND key = OLD.page_id || char(10) || OLD.anchor; END;
-CREATE TRIGGER observations_pending_insert AFTER INSERT ON observations WHEN NEW.embedding = zeroblob(length(NEW.embedding))
-BEGIN INSERT OR IGNORE INTO embedding_pending(tbl, key) VALUES ('o', NEW.id); END;
-CREATE TRIGGER observations_pending_update AFTER UPDATE OF id, embedding ON observations
+END`,
+  },
+  {
+    name: 'sections_pending_delete',
+    sql: `CREATE TRIGGER sections_pending_delete AFTER DELETE ON page_sections
+BEGIN DELETE FROM embedding_pending WHERE tbl = 's' AND key = OLD.page_id || char(10) || OLD.anchor; END`,
+  },
+  {
+    name: 'observations_pending_insert',
+    sql: `CREATE TRIGGER observations_pending_insert AFTER INSERT ON observations WHEN NEW.embedding = zeroblob(length(NEW.embedding))
+BEGIN INSERT OR IGNORE INTO embedding_pending(tbl, key) VALUES ('o', NEW.id); END`,
+  },
+  {
+    name: 'observations_pending_update',
+    sql: `CREATE TRIGGER observations_pending_update AFTER UPDATE OF id, embedding ON observations
 BEGIN
   DELETE FROM embedding_pending WHERE tbl = 'o' AND key = OLD.id;
   INSERT OR IGNORE INTO embedding_pending(tbl, key) SELECT 'o', NEW.id WHERE NEW.embedding = zeroblob(length(NEW.embedding));
-END;
-CREATE TRIGGER observations_pending_delete AFTER DELETE ON observations
-BEGIN DELETE FROM embedding_pending WHERE tbl = 'o' AND key = OLD.id; END;
+END`,
+  },
+  {
+    name: 'observations_pending_delete',
+    sql: `CREATE TRIGGER observations_pending_delete AFTER DELETE ON observations
+BEGIN DELETE FROM embedding_pending WHERE tbl = 'o' AND key = OLD.id; END`,
+  },
+];
+
+const MIGRATION_37 = `
+CREATE TABLE embedding_pending(tbl TEXT NOT NULL, key TEXT NOT NULL, PRIMARY KEY(tbl, key));
+${OWN_TRIGGERS.map((t) => t.sql + ';').join('\n')}
 `;
 
 const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] = [
@@ -716,6 +751,39 @@ export function latestSchema(): number {
   return MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);
 }
 
+const squash = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+
+/** The tables embedding_pending lists rows of, with the key the triggers use (the keys of embedding_staging). */
+const PENDING_BACKFILL = [
+  "INSERT OR IGNORE INTO embedding_pending(tbl, key) SELECT 'm', id FROM memories WHERE embedding = zeroblob(length(embedding))",
+  "INSERT OR IGNORE INTO embedding_pending(tbl, key) SELECT 's', page_id || char(10) || anchor FROM page_sections WHERE embedding = zeroblob(length(embedding))",
+  "INSERT OR IGNORE INTO embedding_pending(tbl, key) SELECT 'o', id FROM observations WHERE embedding = zeroblob(length(embedding))",
+];
+
+/**
+ * Makes sure BrainAI's own triggers (OWN_TRIGGERS) are all there with our SQL, every time the database opens: a restore
+ * or import drops them (the incoming file is untrusted) and a migration never runs twice. A missing trigger, or one of
+ * our names with other SQL, is (re)created; nothing else in the database is touched. When something had to be repaired,
+ * the rows already holding a placeholder vector that the missing triggers never listed are listed in embedding_pending
+ * (with the triggers' own condition), so a model embeds them. Returns what was done, for the log. Needs schema 37.
+ */
+export function ensureOwnTriggers(db: DB): { triggers: string[]; listed: number } {
+  return db.transaction(() => {
+    const stored = new Map((db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'").all() as { name: string; sql: string }[]).map((r) => [r.name, r.sql]));
+    const triggers: string[] = [];
+    for (const t of OWN_TRIGGERS) {
+      const have = stored.get(t.name);
+      if (have !== undefined && squash(have) === squash(t.sql)) continue;
+      if (have !== undefined) db.exec(`DROP TRIGGER "${t.name}"`);
+      db.exec(t.sql);
+      triggers.push(t.name);
+    }
+    let listed = 0;
+    if (triggers.length > 0) for (const sql of PENDING_BACKFILL) listed += db.prepare(sql).run().changes;
+    return { triggers, listed };
+  })();
+}
+
 export function openDb(path: string, opts: { upTo?: number } = {}): DB {
   const db = new Database(path);
   db.pragma('foreign_keys = ON');
@@ -741,6 +809,13 @@ export function openDb(path: string, opts: { upTo?: number } = {}): DB {
       })();
     } finally {
       if (m.foreignKeysOff) db.pragma('foreign_keys = ON');
+    }
+  }
+  // Only a database at schema 37 or later has the table the triggers write to (tests stop earlier with `upTo`).
+  if ((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version >= 37) {
+    const fixed = ensureOwnTriggers(db);
+    if (fixed.triggers.length > 0) {
+      console.log(`restored ${fixed.triggers.length} of BrainAI's own database triggers that a restore or import had dropped (${fixed.triggers.join(', ')}); ${fixed.listed} rows saved without a search model are now queued to be embedded`);
     }
   }
   return db;

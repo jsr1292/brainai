@@ -423,3 +423,61 @@ for (const form of document.querySelectorAll('[data-models-form]')) {
   form.addEventListener('change', update);
   update();
 }
+
+// A tool's sign-in while the owner account is not fully set up (local mode): its browser page waits, then goes on to the tool once the owner has
+// decided in BrainAI's window. Asks every 1.5 s; stops, saying so, when the request is gone.
+for (const wait of document.querySelectorAll('[data-consent-wait]')) {
+  const status = wait.querySelector('[data-consent-status]');
+  let errors = 0;
+  const tick = async () => {
+    try {
+      const r = await fetch(wait.dataset.consentWait, { headers: { accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store' });
+      if (r.ok) {
+        errors = 0;
+        const a = await r.json();
+        if (a.state === 'done' && typeof a.location === 'string') { location.replace(a.location); return; }
+        if (a.state === 'gone') { if (status) status.textContent = 'This request expired. Start the connection again from the app.'; return; }
+      } else errors++;
+    } catch { errors++; /* the app may be restarting */ }
+    if (errors >= 20) return;
+    setTimeout(tick, 1500);
+  };
+  setTimeout(tick, 1500);
+}
+
+// BrainAI's window (local mode): one banner per tool sign-in waiting for approval, with a Review link. Asks every 3 s
+// while the page is visible. A refused answer (no session, or not local mode) stops it.
+if (document.body && document.body.dataset && document.body.dataset.consentsWaiting) {
+  const url = document.body.dataset.consentsWaiting;
+  const shown = new Map();
+  let stopped = false;
+  const tick = async () => {
+    if (stopped) return;
+    if (document.visibilityState === 'hidden') { setTimeout(tick, 3000); return; }
+    try {
+      const r = await fetch(url, { headers: { accept: 'application/json' }, credentials: 'same-origin', redirect: 'manual', cache: 'no-store' });
+      if (r.type === 'opaqueredirect' || r.redirected || r.status === 401 || r.status === 403 || r.status === 404 || (r.status >= 300 && r.status < 400)) { stopped = true; return; }
+      if (r.ok) {
+        const list = await r.json();
+        const ids = new Set(list.map((x) => x.id));
+        for (const [id, el] of shown) if (!ids.has(id)) { el.remove(); shown.delete(id); }
+        const main = document.querySelector('main');
+        for (const x of list) {
+          if (shown.has(x.id) || !main || location.pathname === '/consent/' + encodeURIComponent(x.id)) continue;
+          const el = document.createElement('p');
+          el.className = 'notice consent-banner';
+          el.setAttribute('role', 'status');
+          el.append(document.createTextNode(x.clientName + ' wants access to your memory. '));
+          const a = document.createElement('a');
+          a.href = '/consent/' + encodeURIComponent(x.id);
+          a.textContent = 'Review';
+          el.append(a);
+          main.prepend(el);
+          shown.set(x.id, el);
+        }
+      }
+    } catch { /* the app may be restarting */ }
+    setTimeout(tick, 3000);
+  };
+  tick();
+}

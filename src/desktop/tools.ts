@@ -36,6 +36,8 @@ export interface ToolEnv {
   revokeKey?: (grantId: string) => void;
   /** Claude's desktop app: whether a key's grant still works here (not revoked, made for this address). Wired by the routes. */
   keyLive?: (grantId: string) => boolean;
+  /** Ends the OAuth sign-in of every live grant whose app name starts with the tool's name; returns how many. Wired by the routes. */
+  endSignIns?: (toolName: string) => number;
 }
 export interface ToolState {
   id: ToolId; name: string; installed: boolean;
@@ -45,7 +47,7 @@ export interface ToolState {
   /** The one step after Connect: how the tool signs in. */
   signIn: string;
 }
-export type Outcome = { ok: true; signIn: string } | { ok: false; reason: string };
+export type Outcome = { ok: true; signIn: string; ended?: number } | { ok: false; reason: string };
 
 const NAME = 'brainai';
 const TIMEOUT_MS = 30_000;
@@ -159,7 +161,7 @@ function writeWithBackup(path: string, text: string): void {
   writeFileSync(path, text);
 }
 
-interface Tool {
+export interface Tool {
   id: ToolId; name: string; slug: string;
   installed(env: ToolEnv): boolean;
   /** Where its brainai server points now (null: none), or an error when its config cannot be read safely. */
@@ -490,15 +492,14 @@ function stateFrom(tool: Tool, env: ToolEnv, l: Look): Pick<ToolState, 'state' |
   return { state: l.server === env.mcpUrl && rulesOk ? 'connected' : 'not-connected' };
 }
 
-export async function toolStates(env: ToolEnv): Promise<ToolState[]> {
-  const out: ToolState[] = [];
-  for (const tool of TOOLS) {
+/** Each look starts a CLI (slow on Windows), so the tools are looked at together; the list keeps the order of TOOLS. `tools` is a seam for tests. */
+export async function toolStates(env: ToolEnv, tools: Tool[] = TOOLS): Promise<ToolState[]> {
+  return Promise.all(tools.map(async (tool): Promise<ToolState> => {
     const installed = tool.installed(env);
     const base = { id: tool.id, name: tool.name, installed, signIn: tool.signIn };
-    if (!installed) { out.push({ ...base, state: 'not-connected' }); continue; }
-    out.push({ ...base, ...stateFrom(tool, env, await look(tool, env)) });
-  }
-  return out;
+    if (!installed) return { ...base, state: 'not-connected' };
+    return { ...base, ...stateFrom(tool, env, await look(tool, env)) };
+  }));
 }
 
 export async function connect(id: ToolId, env: ToolEnv, opts: { replace?: boolean }): Promise<Outcome> {
@@ -561,7 +562,9 @@ export async function disconnect(id: ToolId, env: ToolEnv): Promise<Outcome> {
   } catch (e) {
     return { ok: false, reason: `BrainAI could not write ${file}: ${(e as Error).message}` };
   }
-  return { ok: true, signIn: '' };
+  // The desktop app's key is a grant that cleanup already revoked; every other tool signed in with OAuth.
+  const ended = tool.id === 'claude-desktop' ? 0 : (env.endSignIns?.(tool.name) ?? 0);
+  return { ok: true, signIn: '', ended };
 }
 
 /**

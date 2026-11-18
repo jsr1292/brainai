@@ -21,6 +21,8 @@ export interface Brief {
   decisions: Memory[];
   /** Statuses and decisions left out to keep the briefing short (the oldest statuses, the middle decisions). */
   omitted: number;
+  /** How many of the first decisions are the project's founding ones (kept when the middle ones were left out); 0 when none were. */
+  founding: number;
 }
 
 /** Everything active in one project, or undefined when it has no active memories. */
@@ -40,5 +42,6 @@ export function projectBrief(store: MemoryStore, project: string): Brief | undef
     statuses: keptStatuses,
     decisions: keptDecisions,
     omitted: statuses.length - keptStatuses.length + decisions.length - keptDecisions.length,
+    founding: decisions.length > MAX_DECISIONS ? FOUNDING_DECISIONS : 0,
   };
 }

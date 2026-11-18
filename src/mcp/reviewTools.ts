@@ -84,7 +84,8 @@ function healthParts(health: (() => Health) | undefined): { sentence: string; da
 export function registerReviewTools(server: McpServer, reviews: ReviewService, o: { actorName: string; scope: Scope; health?: () => Health }, guard: Guard): void {
   server.registerTool('weekly_review', {
     title: 'Weekly review',
-    description: 'Use when the owner asks how the week went, what happened last week, or for a weekly review.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    description: 'Use when the owner asks how the week went, what happened last week, or for a weekly review. When the finished week has no stored snapshot yet, it is built and stored before the result is returned.',
     inputSchema: {
       week: z.string().optional().describe('"now" for this week so far, or a date YYYY-MM-DD (any day of the week). Default: the last finished week.'),
     },

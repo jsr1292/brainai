@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import type { Response } from 'express';
 import type { AuthorizationParams, OAuthServerProvider } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
@@ -458,13 +458,27 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
     return { grantId, token };
   }
 
-  /** Whether a local grant's access token still works: grant and token not revoked, not expired, made for this resource. */
-  isLocalGrantLive(grantId: string, resource: string): boolean {
+  /** The stored hash of a local grant's access token while it still works: grant and token not revoked, not expired, made for `resource`. */
+  private liveTokenHash(grantId: string, resource: string): string | undefined {
     const row = this.db.prepare(
-      `SELECT 1 FROM oauth_grants g JOIN oauth_tokens t ON t.grant_id = g.id
+      `SELECT t.token_hash AS hash FROM oauth_grants g JOIN oauth_tokens t ON t.grant_id = g.id
        WHERE g.id = ? AND g.revoked_at IS NULL AND t.type = 'access' AND t.revoked_at IS NULL AND t.resource = ? AND t.expires_at > ?`,
-    ).get(grantId, resource, this.iso());
-    return row !== undefined;
+    ).get(grantId, resource, this.iso()) as { hash: string } | undefined;
+    return row?.hash;
+  }
+
+  /** Whether a local grant's access token still works. */
+  isLocalGrantLive(grantId: string, resource: string): boolean {
+    return this.liveTokenHash(grantId, resource) !== undefined;
+  }
+
+  /**
+   * What a local grant's server shows to prove it knows the grant's key before the bridge sends that key: an HMAC-SHA256
+   * of `challenge + port`, keyed by the stored hash of the live access token. Null when the grant has no such token.
+   */
+  bridgeProof(grantId: string, resource: string, challenge: string, port: string): string | null {
+    const hash = this.liveTokenHash(grantId, resource);
+    return hash === undefined ? null : createHmac('sha256', hash).update(challenge + port).digest('hex');
   }
 
   revokeGrant(id: string): void {

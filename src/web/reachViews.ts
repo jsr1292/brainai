@@ -48,12 +48,20 @@ ${v.said ? html`<p class="notice" role="status">${v.said}</p>` : ''}
 
 /** Step 3: the switch, once the password and the authenticator are set: Tailscale (no domain) or Cloudflare (yours). */
 export function reachSwitch(v: {
+  /** Reach is saved, but Funnel is off until Tailscale is ready: never shown as on. */
+  waiting?: boolean;
+  /** What Tailscale last said, while Reach waits. */
+  reason?: string | null;
   on: URL | null;
   via: 'tailscale' | 'cloudflare';
   tailscale: { installed: boolean; running: boolean; host: string | null };
   /** signingIn: Cloudflare's page while a sign-in waits ('' until cloudflared prints it), else null. */
   cloudflare: { installed: boolean; signedIn: boolean; signingIn: string | null };
 }): SafeHtml {
+  if (v.waiting) {
+    return html`<p>Reach is waiting for Tailscale: BrainAI tries again by itself until Tailscale is ready. Nothing is shared until then.</p>${v.reason ? html`<p class="meta">What Tailscale said: ${v.reason}</p>` : ''}
+<form method="post" action="/settings/reach/off"><button type="submit" class="secondary">Turn off</button></form>`;
+  }
   if (v.on) {
     return html`<p><span class="ok">On ✓</span> BrainAI answers at <code>${v.on.origin}</code>${v.via === 'cloudflare' ? ' (through Cloudflare)' : ''}</p>
 <p>Phone and web reach BrainAI only while this Mac is on and awake. The tools on this Mac keep using it directly. Need it always on? <a href="/settings/move">Move it to a server</a>.</p>

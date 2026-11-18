@@ -7,8 +7,10 @@ import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { plain } from './shown.js';
 import Database from 'better-sqlite3';
-import { checkArchive } from './archive.js';
+import { checkArchive, listLines } from './archive.js';
+import { restoredRowsProblem } from './rowChecks.js';
 import { checkBackupFile, kindOfFile, pictureRows, picturesCanBeRemoved, stripSignIn } from './backupFile.js';
 
 const run = promisify(execFile);
@@ -57,7 +59,7 @@ export function isEmptyBrain(dbPath: string): boolean {
 async function extract(archive: string, into: string): Promise<void> {
   mkdirSync(into, { recursive: true, mode: 0o700 });
   // Named exactly as the archive lists them (`./memory.db` stays `./memory.db`), so tar always finds them.
-  const listed = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }).split('\n').filter(Boolean);
+  const listed = listLines(execFileSync('tar', ['-tzf', archive], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }));
   const top = (n: string) => n.replace(/^\.\//, '').split('/')[0];
   const wanted = [listed.find((n) => n.replace(/^\.\//, '') === 'memory.db')!, ...listed.filter((n) => top(n) === 'images')];
   await run('tar', ['-xzf', archive, '-C', into, '--no-same-owner', ...wanted]);
@@ -82,6 +84,8 @@ async function unpack(file: string, kind: 'archive' | 'database', into: string):
     copyFileSync(file, join(into, 'memory.db'));
   }
   stripSignIn(join(into, 'memory.db'));
+  const problem = restoredRowsProblem(join(into, 'memory.db'));
+  if (problem) throw new Error(`This saved copy holds names BrainAI would never write (${problem}), so it is not brought back.`);
   if (kind === 'archive') return 0;
   // A backup file holds no pictures: count the live ones (not deleted for good), then mark them removed on the staged
   // copy, so the restored brain does not list pictures it cannot have and the backup check has nothing to flag.
@@ -112,8 +116,17 @@ function swapIn(from: string, dataDir: string): void {
   renameSync(join(from, 'memory.db'), join(dataDir, 'memory.db'));
 }
 
+/** An error from a crafted file may carry its text (SQLite quotes a constraint name): bounded and safe to print or show. */
+async function safely<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (e) {
+    throw new Error(plain(e instanceof Error ? e.message : e));
+  }
+}
+
 /** Restores into the data folder now. For the CLI, which runs with the server stopped. */
-export async function restoreInto(file: string, dataDir: string): Promise<Restored> {
+async function restoreIntoRaw(file: string, dataDir: string): Promise<Restored> {
   const { kind, counts } = await checked(file);
   if (!isEmptyBrain(join(dataDir, 'memory.db'))) throw new Error(NOT_EMPTY);
   mkdirSync(dataDir, { recursive: true });
@@ -128,8 +141,10 @@ export async function restoreInto(file: string, dataDir: string): Promise<Restor
   return counts;
 }
 
+export const restoreInto = (file: string, dataDir: string): Promise<Restored> => safely(() => restoreIntoRaw(file, dataDir));
+
 /** Checks the file and unpacks it into `<data>/restore-pending/`, for the server to swap in at its next start. */
-export async function stageRestore(file: string, dataDir: string): Promise<Restored> {
+async function stageRestoreRaw(file: string, dataDir: string): Promise<Restored> {
   const { kind, counts } = await checked(file);
   if (!isEmptyBrain(join(dataDir, 'memory.db'))) throw new Error(NOT_EMPTY);
   const pending = join(dataDir, 'restore-pending');
@@ -142,6 +157,8 @@ export async function stageRestore(file: string, dataDir: string): Promise<Resto
   }
   return counts;
 }
+
+export const stageRestore = (file: string, dataDir: string): Promise<Restored> => safely(() => stageRestoreRaw(file, dataDir));
 
 /**
  * At startup, before the database opens: swaps a staged restore in when the brain is still empty, and leaves a note in

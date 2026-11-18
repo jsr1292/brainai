@@ -19,10 +19,12 @@ export function setupRoutes(d: AppDeps, refused: RefusedRedirects): Router {
     // While Reach is on (D4), apps on the web and the phone use the public address; tools on this Mac keep localhost.
     const reach = d.reach?.url();
     const mcpUrl = new URL('/mcp', reach && !app.file ? reach : d.publicUrl).href;
+    // A cloud app is called from the vendor's servers: with no public address (local mode, Reach off) there is nothing to give it.
+    const ctx = { needsReach: !!d.localMode && !reach, signIn: d.owner.isConfigured() ? 'password' as const : 'window' as const };
     const v = currentSetupVersion(d.setupOverlay);
     // An address allowed since (here, another page or the terminal) leaves the list.
     const allow = { allowed: (app.allow ?? []).every((e) => d.allowlist.isAllowed(e)), refused: refused.list().filter((r) => !d.allowlist.isAllowed(r.uri)) };
-    res.type('html').send(page(`Set up ${app.name}`, setupPage(app, setupText(app.slug, mcpUrl, d.setupOverlay), mcpUrl, setupStatusLine(app, d.provider.listGrants(), v), v, allow),
+    res.type('html').send(page(`Set up ${app.name}`, setupPage(app, setupText(app.slug, mcpUrl, d.setupOverlay), mcpUrl, setupStatusLine(app, d.provider.listGrants(), v), v, allow, ctx),
       { nav: true, tab: null, back: { href: '/settings#connections', label: 'Settings' } }));
   });
 

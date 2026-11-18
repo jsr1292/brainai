@@ -33,6 +33,7 @@ import { checklist, serverTunnel, webAppNames } from './saved/checklist.js';
 import { factsAndPages, makeSavedCopy } from './saved/savedCopy.js';
 import { plural } from './web/dashboardViews.js';
 import { restoreInto } from './saved/restore.js';
+import { shown } from './saved/shown.js';
 import { disconnect, tracesOfThisBrain, type ToolEnv, type ToolId } from './desktop/tools.js';
 import { runClaudeBridge } from './desktop/claudeBridge.js';
 
@@ -223,7 +224,7 @@ async function exportBrain({ db, args = [] }: CliContext): Promise<void> {
   const pageFiles = [...tree.keys()].filter((k) => k.startsWith('pages/')).length;
   const factFiles = [...tree.keys()].filter((k) => k.startsWith('facts/')).length;
   console.log(`export-brain: ${pageFiles} pages, ${factFiles} fact files (written ${r.written}, removed ${r.removed})`);
-  if (r.skipped.length > 0) console.log(`export-brain: left alone because of a link on the way: ${r.skipped.slice(0, 10).join(', ')}${r.skipped.length > 10 ? ` and ${r.skipped.length - 10} more` : ''}`);
+  if (r.skipped.length > 0) console.log(`export-brain: left alone, because the path has a link on the way or a name that is not allowed (it climbs out of the folder, or holds a backslash or colon): ${r.skipped.slice(0, 10).map((p) => shown(p)).join(', ')}${r.skipped.length > 10 ? ` and ${r.skipped.length - 10} more` : ''}`);
 }
 
 /**

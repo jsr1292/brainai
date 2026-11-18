@@ -263,7 +263,7 @@ test('the approval sheet is shaped as the mockup: the sentence is the h1, the wr
   assert.ok(/el\('h1'/.test(shape), 'the head becomes the h1');
   assert.ok(/'Suggested'/.test(shape) && /'Replaces'/.test(shape), 'Suggested and Replaces labels');
   assert.ok(/classList\.add\('replaced'\)/.test(shape), 'the replaced text is marked for the strike');
-  assert.ok(/'⌘↵'/.test(shape) && /aria-keyshortcuts/.test(shape), 'Approve carries ⌘↵');
+  assert.ok(/MOD \+ '↵'/.test(shape) && /'aria-keyshortcuts', 'Meta\+Enter Control\+Enter'/.test(shape), 'Approve shows the modifier+Enter hint and announces both Meta+Enter and Control+Enter');
   assert.ok(/text: 'E'/.test(shape), 'Edit first carries E');
   assert.ok(/shapeApproval\(/.test(fnBody('fillSheet')), 'fillSheet shapes an approval');
 });
