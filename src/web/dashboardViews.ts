@@ -5,7 +5,7 @@ import type { BackupRun, BackupStatus, SimpleRun } from '../backupStatus.js';
 import { deletedDay, HOLD_REASON, MAX_CONTENT, MAX_ROADMAP } from '../memory/service.js';
 import type { Overlap } from '../memory/tidy.js';
 import type { ActivityRow } from '../memory/store.js';
-import { KINDS, type HistoryEntry, type Kind, type Memory, type Suggestion } from '../memory/types.js';
+import { KINDS, type FactMeta, type HistoryEntry, type Kind, type Memory, type Suggestion } from '../memory/types.js';
 import { formatRoadmap, parseRoadmap, roadmapOneLine } from '../memory/roadmap.js';
 import { deviceLabel } from './deviceLabel.js';
 import type { FactEvent, FactStory } from '../memory/factStory.js';
@@ -68,7 +68,7 @@ export function suggestionPhrase(s: Pick<Suggestion, 'action' | 'kind'>): string
 
 /** `replaces`: the facts a held save would replace once approved (section 16), so the owner never approves blind. */
 /** `deleted`: the fact the owner deleted that a held save is close to (§17a), quoted above what it saves. */
-export function suggestionCard(s: Suggestion, current: string | undefined, o: { back: '/' | '/approvals'; /** The Inbox item to open after this answer (its key). */ next?: string | null; replaces?: Memory[]; deleted?: Memory; /** A harvested near-duplicate: the existing fact it is close to. */ similar?: Memory; /** Shown inside its harvest's pane: the pane says where it comes from and what the buttons do. */ inBatch?: boolean; /** The fact's date and source now, for an update. */ currentMeta?: Pick<Memory, 'validUntil' | 'source' | 'sourceNote' | 'sourceBy'> }): SafeHtml {
+export function suggestionCard(s: Suggestion, current: string | undefined, o: { back: '/' | '/approvals'; /** The Inbox item to open after this answer (its key). */ next?: string | null; replaces?: Memory[]; deleted?: Memory; /** A harvested near-duplicate: the existing fact it is close to. */ similar?: Memory; /** Shown inside its harvest's pane: the pane says where it comes from and what the buttons do. */ inBatch?: boolean; /** The fact's date and source now, for an update. */ currentMeta?: Pick<Memory, 'validUntil' | 'source' | 'sourceNote' | 'sourceBy'>; /** What approving stores (MemoryService.heldOutcome). */ heldOutcome?: FactMeta }): SafeHtml {
   const replaces = o.replaces ?? [];
   const deleting = s.action === 'delete';
   const quote = (cls: string, text: string | undefined) => html`<blockquote class="${cls}">${text ?? '(already gone)'}</blockquote>`;
@@ -79,7 +79,7 @@ export function suggestionCard(s: Suggestion, current: string | undefined, o: { 
   // B9: the search words the save carries (a keys-only change has the same text on both sides).
   const keys = !deleting && s.keys ? html`<p class="sg-keys">Search words: ${s.keys}</p>` : '';
   // A1/A2: the date and the source the save carries (A12).
-  const heldMeta = deleting ? '' : heldMetaLines(s, o.currentMeta, s.action === 'update' && s.content === current && !s.keys);
+  const heldMeta = deleting ? '' : heldMetaLines(s, o.currentMeta, s.action === 'update' && s.content === current && !s.keys, o.heldOutcome);
   const gone = o.deleted?.deletedAt ? o.deleted : undefined;
   const deletedQuote = gone && !deleting
     ? html`<p class="label">You deleted, ${deletedDay(gone.deletedAt!)}:</p><blockquote class="dim">${gone.content}</blockquote>

@@ -6,13 +6,14 @@ import { findSimilar, hybridSearch, type SearchHit } from './search.js';
 import { RERANK_POOL, type Reranker } from './reranker.js';
 import { SwitchableReranker } from '../models/switchable.js';
 import { looksLikeInstruction, looksLikeInstructionForHold } from './instructionLike.js';
-import { isPastDate, metaChanged, metaOf, MetaError, NO_META, resolveMeta, type MetaInput } from './factMeta.js';
+import { looksLikeAssistantSuggestion, MIXED_SOURCE_REASON } from './mixedSource.js';
+import { isPastDate, metaChanged, metaOf, MetaError, NO_META, resolveAiMeta, resolveMeta, type AiMetaResult, type MetaInput } from './factMeta.js';
 import { checkRoadmap, keepTicked, parseRoadmap, type Roadmap, type WaitingItem } from './roadmap.js';
 import { looksLikeSecret } from './secrets.js';
 import { words } from './words.js';
 import type { MemoryStore, ReplacedFilter } from './store.js';
 import type { ProjectStateName } from '../projects/types.js';
-import { actorLabel, KINDS, OWNER_LABEL as OWNER, type Actor, type FactMeta, type Kind, type Memory, type Suggestion } from './types.js';
+import { actorLabel, KINDS, OWNER_LABEL as OWNER, type Actor, type FactMeta, type Kind, type Memory, type Source, type Suggestion } from './types.js';
 import type { MeaningHook } from '../graph/threads.js';
 import { MAX_WHY, type Disagreement } from './disagreements.js';
 import { MAX_SUPERSEDES, replaceableKind, type Replaceable, type Supersession } from './supersessions.js';
@@ -87,7 +88,8 @@ export const MAX_HARVEST_LABEL = 80;
 export type HarvestItem = { content: string; kind: string; project?: string; keys?: string; validUntil?: string; source?: string | null; sourceNote?: string };
 /** What became of one harvested item: held for the owner, or why it was not (nothing is ever saved by the call). */
 export type HarvestOutcome =
-  | { status: 'held'; suggestion: Suggestion; similar: { id: string; excerpt: string }[] }
+  /** `storedSource`: the source the item would be saved with if approved now (an owner_said without the owner's words is inferred). */
+  | { status: 'held'; suggestion: Suggestion; storedSource: Source | null; similar: { id: string; excerpt: string }[] }
   | { status: 'refused'; code: 'secret_detected' | 'invalid' | 'already_waiting' | 'no_room'; why: string };
 /** recent_work returns at most this many decisions, newest first, so a long window still fits in one tool result. */
 export const MAX_RECENT_DECISIONS = 50;
@@ -120,41 +122,63 @@ const changedSince = (m: Memory) => new MemoryError('changed',
   `Not saved: this ${m.kind === 'summary' ? 'status' : m.kind} changed since you read it (updated ${m.updatedAt} by ${m.updatedBy}). `
   + `Merge your change into its current text below, keeping what the other save added, and save again with base_updated_at ${m.updatedAt}.`, m);
 
-/** A1/A2 as the fields after a change; a bad value is an 'invalid' MemoryError with a plain message. */
-function metaFor(current: FactMeta, input: MetaInput | undefined, fromAi: boolean, by: string | null): FactMeta {
+/** A1/A2 as the fields after a change, with what really changed; a bad value is an 'invalid' MemoryError with a plain message. */
+function metaResult(current: FactMeta, input: MetaInput | undefined, fromAi: boolean, by: string | null, contentChanged = true): AiMetaResult {
   try {
-    return resolveMeta(current, input ?? {}, fromAi, by);
+    // One place for the quote rule: an assistant's change goes through resolveAiMeta (see there).
+    if (fromAi) return resolveAiMeta(current, input ?? {}, by, contentChanged);
+    const meta = resolveMeta(current, input ?? {}, false, by);
+    return { meta, changedSource: meta.source !== current.source || meta.sourceBy !== current.sourceBy, changedNote: meta.sourceNote !== current.sourceNote };
   } catch (e) {
     if (e instanceof MetaError) throw new MemoryError('invalid', e.message);
     throw e;
   }
 }
+const metaFor = (current: FactMeta, input: MetaInput | undefined, fromAi: boolean, by: string | null, contentChanged = true): FactMeta =>
+  metaResult(current, input, fromAi, by, contentChanged).meta;
+
+/** Why an assistant's owner_said text is held: it reads like it carries the assistant's own suggestion. */
+const mixedReason = (meta: FactMeta, content: string, fromAi: boolean): string | null =>
+  fromAi && meta.source === 'owner_said' && meta.sourceBy !== OWNER && looksLikeAssistantSuggestion(content, meta.sourceNote) ? MIXED_SOURCE_REASON : null;
 
 /**
- * The fields of a held save over `base` (the fact's own, or none): '' clears, null keeps. The source is set by the
- * assistant that held the save. A note whose source ends up cleared or missing is dropped, never an error.
+ * A held save, judged on the fact as it is when it is approved (`current`: the fact now, or NO_META for an add; `text`:
+ * the text it will be saved with; `contentChanged`: that text differs from the fact's now). The row holds the claim the
+ * assistant made (source and source_note as given: null = not given, '' = clear), so this is the same decision the
+ * direct path makes (resolveAiMeta), plus the mixed-suggestion check: an owner_said an assistant set on text that
+ * carries its own suggestion cannot stand, whoever approves it. The date is the row's (null = keep, '' = clear).
  */
-function heldFields(s: Suggestion, base: FactMeta): FactMeta {
-  const source = s.source === undefined || s.source === null ? base.source : s.source === '' ? null : s.source;
-  return metaFor(base, {
-    validUntil: s.validUntil ?? undefined,
-    source: s.source ?? undefined,
-    sourceNote: source === null ? undefined : s.sourceNote ?? undefined,
-  }, false, s.sourceBy ?? s.suggestedBy);
+function judgeHeld(s: Suggestion, current: FactMeta, text: string, contentChanged: boolean): FactMeta {
+  const by = s.suggestedBy;
+  const input: MetaInput = { validUntil: s.validUntil ?? undefined, source: s.source ?? undefined, sourceNote: s.sourceNote ?? undefined };
+  // A note with no source to hang on (the fact lost its source while this waited) is dropped, never an error at approval.
+  if ((input.source === undefined || input.source === null) && current.source === null) input.sourceNote = undefined;
+  if (by === OWNER) return metaFor(current, input, false, by);
+  const meta = metaFor(current, input, true, by, contentChanged);
+  const claimed = input.source !== undefined || input.sourceNote !== undefined;
+  if ((contentChanged || claimed) && meta.source === 'owner_said' && meta.sourceBy !== OWNER && looksLikeAssistantSuggestion(text, meta.sourceNote)) {
+    return { ...meta, source: 'inferred', sourceBy: by, sourceNote: null };
+  }
+  return meta;
 }
 
 /**
- * What a held save records: only what the writer gave (null = not given, '' = clear), the rest follows the fact on
- * approval. `earlier` is the writer's own held save this one replaces: what it held and this one does not touch stays.
+ * What a held save records: the claim, not the outcome. Source and note exactly as the assistant gave them (null = not
+ * given, '' = given empty or null), also when the rule made them a no-op now: the fact may change before approval,
+ * and approval judges the claim again. `earlier` is the writer's own held save this one replaces: what it claimed and
+ * this one does not mention stays. The date is the resolved one.
  */
-function heldMeta(next: FactMeta, given: MetaInput | undefined, by: string, earlier?: Suggestion): Pick<Suggestion, 'validUntil' | 'source' | 'sourceNote' | 'sourceBy'> {
+function heldMeta(res: AiMetaResult, given: MetaInput | undefined, by: string, earlier?: Suggestion, carryClaim = true): Pick<Suggestion, 'validUntil' | 'source' | 'sourceNote' | 'sourceBy'> {
   const g = given ?? {};
-  const source = g.source === undefined ? earlier?.source ?? null : next.source ?? '';
+  const claim = (v: string | null | undefined, before: string | null | undefined): string | null =>
+    v === undefined ? before ?? null : v === null ? '' : v;
+  // New text is a new save: the earlier call's quote does not move to it (the follow-up claims for itself).
+  const source = claim(g.source, carryClaim ? earlier?.source : undefined);
   return {
-    validUntil: g.validUntil === undefined ? earlier?.validUntil ?? null : next.validUntil ?? '',
-    source,
-    sourceNote: g.sourceNote === undefined ? earlier?.sourceNote ?? null : next.sourceNote ?? '',
-    sourceBy: source === null || source === '' ? null : g.source === undefined ? earlier?.sourceBy ?? by : by,
+    validUntil: g.validUntil === undefined ? earlier?.validUntil ?? null : res.meta.validUntil ?? '',
+    source: source as Suggestion['source'],
+    sourceNote: claim(g.sourceNote, carryClaim ? earlier?.sourceNote : undefined),
+    sourceBy: source === null || source === '' ? null : by,
   };
 }
 
@@ -610,7 +634,8 @@ export class MemoryService {
     const tags = checkTags(input.tags);
     const keys = normalizeKeys(input.keys);
     if (actor.type === 'ai') checkAiKeys(keys);
-    const meta = metaFor(NO_META, input.meta, actor.type === 'ai', actorLabel(actor));
+    const metaR = metaResult(NO_META, input.meta, actor.type === 'ai', actorLabel(actor));
+    const meta = metaR.meta;
     const project = this.resolveProject(input.project);
     if (kind === 'roadmap') {
       if (project === null) throw new MemoryError('invalid', 'A roadmap belongs to a project: give its project name.');
@@ -647,8 +672,8 @@ export class MemoryService {
       this.checkHeldRoom();
       const similar = findSimilar(this.store, vector, { kind }, this.opts.duplicateThreshold);
       const deleted = this.deletedMatch(vector, { kind, tags, project: null }, undefined, content);
-      const reason = looksLikeInstructionForHold(content) ?? (deleted ? deletedReason(deleted) : null) ?? input.hold ?? null;
-      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, reason, suggestedBy: by, deletedMatch: deleted?.id ?? null, ...heldMeta(meta, input.meta, by) });
+      const reason = looksLikeInstructionForHold(content) ?? mixedReason(meta, content, true) ?? (deleted ? deletedReason(deleted) : null) ?? input.hold ?? null;
+      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, reason, suggestedBy: by, deletedMatch: deleted?.id ?? null, ...heldMeta(metaR, input.meta, by) });
       return { status: 'suggested', suggestion, similar };
     }
     // Statuses this save replaces are not "the existing ones": they are being superseded by it.
@@ -672,15 +697,15 @@ export class MemoryService {
       const pending = await this.matchingPendingSuggestion(vector, kind, project);
       if (pending) return { status: 'already_suggested', suggestion: pending };
       this.checkHeldRoom();
-      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, kind, project, reason: looksLikeInstructionForHold(content) ?? deletedReason(deleted), suggestedBy: by, supersedes: ids, deletedMatch: deleted.id, ...heldMeta(meta, input.meta, by) });
+      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, kind, project, reason: looksLikeInstructionForHold(content) ?? mixedReason(meta, content, fromAi) ?? deletedReason(deleted), suggestedBy: by, supersedes: ids, deletedMatch: deleted.id, ...heldMeta(metaR, input.meta, by) });
       return { status: 'suggested', suggestion, similar: [] };
     }
-    const reason = actor.type === 'ai' ? looksLikeInstructionForHold(content) ?? input.hold ?? null : null;
+    const reason = actor.type === 'ai' ? looksLikeInstructionForHold(content) ?? mixedReason(meta, content, true) ?? input.hold ?? null : null;
     if (reason) {
       const pending = await this.matchingPendingSuggestion(vector, kind, project);
       if (pending) return { status: 'already_suggested', suggestion: pending };
       this.checkHeldRoom();
-      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, kind, project, reason, suggestedBy: by, supersedes: ids, ...heldMeta(meta, input.meta, by) });
+      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, kind, project, reason, suggestedBy: by, supersedes: ids, ...heldMeta(metaR, input.meta, by) });
       return { status: 'suggested', suggestion, similar: [] };
     }
     let memory: Memory;
@@ -857,7 +882,8 @@ export class MemoryService {
     const content = checkContent(item.content, maxFor(kind));
     const keys = normalizeKeys(item.keys);
     checkAiKeys(keys);
-    const meta = metaFor(NO_META, { validUntil: item.validUntil, source: item.source, sourceNote: item.sourceNote }, true, by);
+    const metaR = metaResult(NO_META, { validUntil: item.validUntil, source: item.source, sourceNote: item.sourceNote }, true, by);
+    const meta = metaR.meta;
     const project = kind === 'profile' ? null : this.resolveProject(item.project);
     if (kind !== 'profile' && project === null) throw new MemoryError('invalid', 'project: a decision or status belongs to a project.');
     checkAiLabels(project, []);
@@ -871,15 +897,15 @@ export class MemoryService {
     const deleted = this.deletedMatch(vector, { kind, tags: [], project }, undefined, content);
     // The same check remember makes: text that matches a replaced fact is held with that as its reason, so Approve all leaves it.
     const was = this.wasReplaced(vector, { kind, tags: [], project }, new Set());
-    const reasons = [looksLikeInstructionForHold(content), deleted ? deletedReason(deleted) : null, similar.length > 0 ? 'is close to a memory the owner already has' : null,
+    const reasons = [looksLikeInstructionForHold(content), mixedReason(meta, content, true), deleted ? deletedReason(deleted) : null, similar.length > 0 ? 'is close to a memory the owner already has' : null,
       was?.status === 'was_replaced' ? 'matches a fact that was replaced by a newer one' : null].filter((r): r is string => r !== null);
     if (reasons.length === 0 && hold) reasons.push(hold);
     const suggestion = this.store.addSuggestion({
       action: 'add', memoryId: null, content, tags: [], keys, kind, project, reason: reasons.length > 0 ? reasons.join(' and ') : null,
-      suggestedBy: by, deletedMatch: deleted?.id ?? null, similarId: similar[0]?.memory.id ?? null, ...heldMeta(meta, { validUntil: item.validUntil, source: item.source, sourceNote: item.sourceNote }, by), harvest,
+      suggestedBy: by, deletedMatch: deleted?.id ?? null, similarId: similar[0]?.memory.id ?? null, ...heldMeta(metaR, { validUntil: item.validUntil, source: item.source, sourceNote: item.sourceNote }, by), harvest,
     });
     pendingVectors.set(suggestion.id, vector);
-    return { status: 'held', suggestion, similar: similar.map((x) => ({ id: x.memory.id, excerpt: x.memory.content.slice(0, 160) })) };
+    return { status: 'held', suggestion, storedSource: this.heldOutcome(suggestion).source, similar: similar.map((x) => ({ id: x.memory.id, excerpt: x.memory.content.slice(0, 160) })) };
   }
 
   /** The waiting harvested suggestions of one call, oldest first. */
@@ -935,6 +961,33 @@ export class MemoryService {
     return p === null ? null : this.canonical(p);
   }
 
+  /**
+   * The fact approving a held save would change: the active memory for an update, the project's roadmap for a roadmap
+   * add that lands on one; undefined for a plain add (and for an update whose fact is gone).
+   */
+  heldTarget(s: Suggestion): Memory | undefined {
+    if (s.action === 'update') {
+      const m = s.memoryId ? this.store.get(s.memoryId) : undefined;
+      return m && !m.deletedAt ? m : undefined;
+    }
+    if (s.action === 'add' && s.kind === 'roadmap') {
+      return s.project === null ? undefined : this.roadmapOf(this.canonical(s.project));
+    }
+    return undefined;
+  }
+
+  /**
+   * The date and source approving a held save stores, as of now: the one decision approval makes (approval calls this
+   * with the text it saves), so a reply or card can never say something else. `text`: the text it will be saved with
+   * (default: the row's, or the fact's own for a change that leaves the text alone).
+   */
+  heldOutcome(s: Suggestion, text?: string, known?: Memory | null): FactMeta {
+    // `known`: the heldTarget already looked up (null: there is none), so a card looks it up once.
+    const target = known === undefined ? this.heldTarget(s) : known ?? undefined;
+    const content = text ?? s.content ?? target?.content ?? '';
+    return judgeHeld(s, target ? metaOf(target) : NO_META, content, target ? content !== target.content : true);
+  }
+
   private activeMemory(id: string): Memory {
     const m = this.store.get(id);
     if (!m || m.deletedAt) throw notFound(id);
@@ -970,7 +1023,7 @@ export class MemoryService {
       ? this.store.listSuggestions('pending').find((s) => s.action === 'update' && s.memoryId === id && s.suggestedBy === by)
       : undefined;
     const base: { content: string; tags: string[]; keys: string; meta: FactMeta } = own
-      ? { content: own.content ?? current.content, tags: own.tags, keys: own.keys ?? current.keys, meta: heldFields(own, metaOf(current)) }
+      ? { content: own.content ?? current.content, tags: own.tags, keys: own.keys ?? current.keys, meta: judgeHeld(own, metaOf(current), own.content ?? current.content, own.content !== null && own.content !== current.content) }
       : { content: current.content, tags: current.tags, keys: current.keys, meta: metaOf(current) };
     // Content left out (B9: only new search words): the text as it is now, read again on every retry.
     const content = checkContent(input.content ?? base.content, maxFor(current.kind));
@@ -978,14 +1031,15 @@ export class MemoryService {
     // B9: search words left out keep the fact's own; '' clears them.
     const keys = input.keys === undefined ? base.keys : normalizeKeys(input.keys);
     if (actor.type === 'ai' && input.keys !== undefined) checkAiKeys(keys);
-    // An assistant who rewrites a fact the owner said, without saying where the new words came from, does not leave
-    // "you said this" on text the owner never said: the source goes (the owner's own edit keeps it).
-    const givenMeta: MetaInput | undefined = actor.type === 'ai' && content !== current.content && current.source === 'owner_said'
-      && input.meta?.source === undefined && (own === undefined || own.source === null || own.source === undefined)
-      ? { ...input.meta, source: null } : input.meta;
     // A1/A2: left out keeps the fact's own; the date and the source never touch the text, the vector or the keyword index.
-    const meta = metaFor(base.meta, givenMeta, actor.type === 'ai', by);
+    // The quote rule (resolveAiMeta) judges the text against the base this change applies to (a held follow-up's own earlier text).
+    const textNew = content !== base.content;
+    const metaR = metaResult(base.meta, input.meta, actor.type === 'ai', by, textNew);
+    const meta = metaR.meta;
     const metaDiffers = metaChanged(metaOf(current), meta);
+    // A claim made now (new text, or source or note given) is looked at, never an older fact left alone.
+    const claimedNow = input.meta?.source !== undefined || input.meta?.sourceNote !== undefined;
+    const mixed = textNew || content !== current.content || claimedNow ? mixedReason(meta, content, actor.type === 'ai') : null;
     this.checkKindKept(current, tags, actor);
     const project = input.project === undefined ? current.project : this.resolveProject(input.project);
     if (current.kind === 'roadmap' && actor.type === 'ai' && content !== current.content && checkRoadmap(content) === null && checkRoadmap(current.content) === null) {
@@ -1013,13 +1067,13 @@ export class MemoryService {
       }
     }
     if (actor.type === 'ai' && current.kind === 'profile') {
-      const reason = looksLikeInstructionForHold(content) ?? opts.hold ?? null;
+      const reason = looksLikeInstructionForHold(content) ?? mixed ?? opts.hold ?? null;
       // Its newer edit of a profile memory replaces its own edit still waiting, so re-saves don't pile up.
       const superseded = this.store.listSuggestions('pending')
         .filter((s) => s.action === 'update' && s.memoryId === id && s.suggestedBy === by);
       this.checkHeldRoom(superseded.length);
       for (const s of superseded) this.store.resolveSuggestion(s.id, 'rejected');
-      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, keys: input.keys === undefined ? own?.keys ?? null : keys, reason, suggestedBy: by, ...heldMeta(meta, givenMeta, by, own) });
+      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, keys: input.keys === undefined ? own?.keys ?? null : keys, reason, suggestedBy: by, ...heldMeta(metaR, input.meta, by, own, !textNew) });
       return { status: 'suggested', suggestion };
     }
     /** Adds the replacement rows in the caller's transaction, decided again on the fact as it is now. */
@@ -1036,11 +1090,12 @@ export class MemoryService {
       for (const s of superseded) this.store.resolveSuggestion(s.id, 'rejected');
       // Only a project the AI chose is recorded: approval otherwise keeps whatever project the memory has by then.
       const chosen = input.project === undefined ? null : project;
-      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, keys: input.keys === undefined ? null : keys, kind: current.kind, project: chosen, reason, suggestedBy: by, supersedes: ids, deletedMatch, ...heldMeta(meta, givenMeta, by) });
+      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, keys: input.keys === undefined ? null : keys, kind: current.kind, project: chosen, reason, suggestedBy: by, supersedes: ids, deletedMatch, ...heldMeta(metaR, input.meta, by) });
       return { status: 'suggested', suggestion };
     };
     if (content === current.content) {
       // A label-only change on a connection whose saves wait: a plain hold (no text to warn about).
+      if (mixed) return holdUpdate(mixed);
       if (opts.hold && actor.type === 'ai') return holdUpdate(opts.hold);
       // Same text: only the labels change, and the memory keeps its date (moving a status must not make it the latest).
       const same = project === current.project && tags.length === current.tags.length && tags.every((t, i) => t === current.tags[i]);
@@ -1065,7 +1120,7 @@ export class MemoryService {
       this.indexFacts([id]);
       return { status: 'updated', memory: relabelled, replaced: this.memories(ids) };
     }
-    const reason = actor.type === 'ai' ? looksLikeInstructionForHold(content) : null;
+    const reason = actor.type === 'ai' ? looksLikeInstructionForHold(content) ?? mixed : null;
     if (reason) return holdUpdate(reason);
     const embedding = await this.embedder.embed(embedText(content, keys), 'passage');
     // Forgetting that sticks (§17a): an assistant can't rewrite a fact into one the owner deleted.
@@ -1465,8 +1520,8 @@ export class MemoryService {
         // A roadmap saved meanwhile for the same project is the one this approval updates (one per project).
         const existing = s.kind === 'roadmap' && chosen !== null ? this.roadmapOf(chosen) : undefined;
         applied = existing
-          ? this.store.update(existing.id, { content: content!, project: existing.project, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy, meta: heldFields(s, metaOf(existing)) })
-          : this.store.insert({ kind: s.kind, content: content!, project: chosen, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy, meta: heldFields(s, NO_META) });
+          ? this.store.update(existing.id, { content: content!, project: existing.project, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy, meta: this.heldOutcome(s, content!) })
+          : this.store.insert({ kind: s.kind, content: content!, project: chosen, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy, meta: this.heldOutcome(s, content!) });
       } else {
         const target = this.activeMemory(s.memoryId ?? '');
         // The owner approves this: a fact linked by a replacement since it was held keeps its kind.
@@ -1474,7 +1529,7 @@ export class MemoryService {
         const project = s.kind === 'profile' ? target.project : (chosen ?? target.project);
         // Only new search words (B9): not a version and not an edit, as when an assistant changes them directly.
         const keysOnly = content === target.content && project === target.project && JSON.stringify(s.tags) === JSON.stringify(target.tags);
-        const meta = heldFields(s, metaOf(target));
+        const meta = this.heldOutcome(s, content!);
         applied = keysOnly
           ? this.store.setKeys(target.id, keys, embedding!)
           : this.store.update(target.id, { content: content!, project, tags: s.tags, keys, embedding: embedding!, by: s.suggestedBy, meta });

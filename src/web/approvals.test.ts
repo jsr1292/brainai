@@ -237,3 +237,13 @@ test('the Inbox says so when nothing waits', async (t) => {
   assert.match(body, /Nothing waits for you\. Suggestions from assistants, facts that disagree, possible tidy-ups and discussions that need your answer land here\./);
   assert.doesNotMatch(body, /inbox-list/);
 });
+
+test('a held row whose note no longer validates still lets /approvals and the home page open', async (t) => {
+  const app = await start(t);
+  app.deps.store.addSuggestion({ action: 'add', memoryId: null, content: 'Harbor note', tags: [], keys: null, kind: 'decision', project: 'harbor', reason: 'x', suggestedBy: 'Grok', source: 'inferred', sourceNote: 'AKIA' + 'IOSFODNN7EXAMPLE', sourceBy: 'Grok' });
+  const f = await loggedIn(app);
+  const a = await f('/approvals');
+  assert.equal(a.status, 200);
+  assert.match(await a.text(), /Harbor note/);
+  assert.equal((await f('/')).status, 200);
+});

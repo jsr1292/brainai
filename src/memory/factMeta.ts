@@ -39,6 +39,12 @@ export function sourceLabel(source: Source, by: string | null | undefined): stri
   }
 }
 
+/** What the owner sees for a source, with the owner's words when an assistant says the owner said it: Claude Code says you said: “...”. */
+export function sourceText(source: Source, by: string | null | undefined, note: string | null | undefined): string {
+  if (source === 'owner_said' && by !== OWNER_LABEL && note) return `${cap(asApp(by))} says you said: “${note}”`;
+  return sourceLabel(source, by);
+}
+
 export const isSource = (s: unknown): s is Source => typeof s === 'string' && (SOURCES as readonly string[]).includes(s);
 
 /** Cleans one date: '' or null clears (null); anything else must be a real calendar day. */
@@ -86,6 +92,66 @@ export function resolveMeta(current: FactMeta, input: MetaInput, fromAi: boolean
   }
   const sourceBy = source === null ? null : input.source === undefined || input.source === null ? current.sourceBy : by;
   return { validUntil, source, sourceNote: note, sourceBy };
+}
+
+/** What an assistant's change decided: the fields after it, and whether the source (with who set it) and the note really changed. */
+export interface AiMetaResult { meta: FactMeta; changedSource: boolean; changedNote: boolean }
+
+/**
+ * The quote invariant, for an assistant's change (`input` over `current`, `by` = its app). `current` is the fact as
+ * stored (for a held follow-up: the base the change applies to); `contentChanged`: the text differs from that base;
+ * a claim is made now when source or source_note is given in this call.
+ * A. A source the owner set, on unchanged text: the assistant cannot change its note, and re-stating the same source
+ *    is a no-op (note and who set it stay the owner's). Another explicit source, or clearing it, goes through.
+ *    On new text, an owner_said the owner set is cleared unless the assistant gives its own source (and quote); the
+ *    owner's note is never changed by an assistant that leaves the source alone.
+ * B. When a claim is made now or the text changed, and the result is an owner_said the owner did not set: it holds
+ *    only with a non-empty source_note given in this call (and the source given now, or already this assistant's own).
+ *    Else it is 'inferred' by this assistant with the note given now, or none: never an older quote.
+ * C. No claim and unchanged text: the existing source (anyone's) is left alone.
+ * The caller (a held save) records only what changed here, so approval gives the same fact as the direct path.
+ */
+export function resolveAiMeta(current: FactMeta, input: MetaInput, by: string | null, contentChanged: boolean): AiMetaResult {
+  const inp: MetaInput = { ...input };
+  const given = typeof inp.source === 'string' ? inp.source.trim() : inp.source;
+  const sameSource = typeof given === 'string' && given === current.source;
+  const ownerSet = current.source !== null && current.sourceBy === OWNER_LABEL;
+  if (ownerSet) {
+    if (inp.source === undefined) {
+      inp.sourceNote = undefined;
+      if (contentChanged && current.source === 'owner_said') inp.source = null;
+    } else if (sameSource && !contentChanged) {
+      inp.source = undefined;
+      inp.sourceNote = undefined;
+    }
+  } else if (sameSource && !contentChanged && current.sourceBy === by && inp.sourceNote === undefined) {
+    inp.source = undefined;
+  }
+  // Taking over a source another setter (the owner, or another assistant) set: their note is not carried under this label.
+  if (typeof inp.source === 'string' && inp.source.trim() !== '' && current.source !== null && current.sourceBy !== by && inp.sourceNote === undefined) {
+    inp.sourceNote = '';
+  }
+  // A note alone on a source another assistant set (the owner's is protected above) is this assistant's note: it carries its own label.
+  if (inp.source === undefined && typeof inp.sourceNote === 'string' && inp.sourceNote.trim() !== '' && current.source !== null && current.source !== 'owner_said' && !ownerSet && current.sourceBy !== by) {
+    inp.source = current.source;
+  }
+  let meta = resolveMeta(current, inp, true, by);
+  if (meta.source === 'owner_said' && meta.sourceBy !== OWNER_LABEL) {
+    const claimedNow = inp.source !== undefined || inp.sourceNote !== undefined;
+    if (claimedNow || contentChanged) {
+      const noteNow = typeof inp.sourceNote === 'string' && inp.sourceNote.trim() !== '';
+      const sourceNow = typeof inp.source === 'string' && inp.source.trim() !== '';
+      const ownEarlier = current.source === 'owner_said' && current.sourceBy === by;
+      if (!(noteNow && (sourceNow || ownEarlier))) {
+        meta = { ...meta, source: 'inferred', sourceBy: by, sourceNote: noteNow ? meta.sourceNote : null };
+      }
+    }
+  }
+  return {
+    meta,
+    changedSource: meta.source !== current.source || meta.sourceBy !== current.sourceBy,
+    changedNote: meta.sourceNote !== current.sourceNote,
+  };
 }
 
 export const metaChanged = (a: FactMeta, b: FactMeta): boolean =>

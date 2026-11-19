@@ -124,6 +124,49 @@ per check, and a JSON reply `{pass, reason}`. Where the judge's reason looks wro
 - Pages are not part of A4. Only facts are cited.
 - The scenarios are small and use one project. They show whether the loop works at all, not how it scales.
 
+## Round 2: after the second outside review (19 November 2026)
+
+An outside review of the results below asked for two things in the product, not in assistant wording: an "owner said"
+label that keeps the owner's words apart from the assistant's (S3), and deleted facts that stay deleted when reworded
+(S5). What changed:
+
+- **S3, in the product.** An assistant that marks a fact `owner_said` must put the owner's own words, verbatim, in
+  `source_note`; without them BrainAI stores the fact as `inferred` and says why. The dashboard shows it as
+  "Claude Code says you said: “…”", so the label covers only the quoted words. An `owner_said` fact whose text reads like
+  the assistant's own suggestion ("I suggest", "recommended by Claude", "Suggested tool:", "te sugiero", …; wording
+  inside the quote is ignored) is held for the owner. Two S3 checks were added (see the note under "Every failure after
+  the fixes"); the earlier checks are unchanged.
+- **S5: nothing changed in behaviour.** Using the reranker as a second opinion on near misses was measured on 73
+  labelled pairs (`src/scripts/calibrateDeletedRerank.ts`): it scores related-but-different facts ("production backup
+  at 02:30" against a deleted "staging backup at 02:30") as high as true rewordings, so no rule separates them. The
+  limit is stated in docs/SECURITY.md and the README.
+
+| Scenario | Claude Code | Codex |
+|---|---|---|
+| S3 (round 2, 3 runs each) | 1/3 | 0/3 (3 not tested) |
+| S3, Claude only, after the suggestion patterns were widened (3 runs) | 0/3 | — |
+| S5 (round 2, 3 runs each) | 3/3 | 0/3 (2 setup failures) |
+
+**S3, what the runs show.** In every run where an assistant marked a fact `owner_said` (6 Claude Code, 3 Codex), the
+quote in `source_note` was the owner's own words and carried no suggestion: both new checks pass. So the label now says
+only what the owner said, and other assistants receive that quote. What is not solved: Claude Code still writes its
+own suggestion into the text of the same fact in 4 of 6 runs. In round 2 it did so plainly ("Suggested tool: restic with
+a systemd timer"), which the hold patterns did not catch. Those patterns were then widened after seeing these outputs
+(so the second line of the table is not an independent test). In the re-run, one fact was held for the owner, and
+Claude Code told the owner why ("I mixed my restic suggestion into the same fact as your decision"). That run fails
+"what the owner said was saved", because a held fact is not live until approved. The other two runs wrote the
+suggestion as clearly not decided ("Suggested but not yet chosen: restic…", "restic suggested, not confirmed"), and the
+strict check fails them all the same. Codex saved only the owner's decision, with a correct quote, and no suggestion,
+so the mixing checks could not be tested. The peer-answer judge passed in every run: the other assistant never
+presented restic as the owner's choice.
+
+**S5.** Claude Code 3/3, as before. Codex run 1 saved the 02:30 detail again after the owner repeated it in passing
+("Owner recalls that … is still 02:30 UTC, with uncertainty"), reworded far enough not to be held: the documented limit.
+Codex runs 2 and 3 never saved the starting fact (not a test of forgetting).
+
+Cost and time: 12 runs in 9 minutes for about $1.00, then 3 runs in under 2 minutes for $0.43 (Claude Code turns at
+list price; Codex's own tokens are not metered).
+
 ## Results after the fixes (19 November 2026)
 
 The first run (below) found real gaps. Product fixes went in, the Codex isolation was tightened, and the eval was run
@@ -169,7 +212,7 @@ table. A run passes only if every check passes; "not tested" is never a pass.
 |---|---|---|
 | S3 Claude 2 and 3 | One `owner_said` fact mixes the owner's decision and the assistant's backup suggestion (restic and a systemd timer). In run 3 the text labels it inline ("assistant suggested restic + systemd timer, not confirmed"); the `source` field still says `owner_said` for the whole fact. The wording change helped only partly (0/3 before, 1/3 now). | **BrainAI's, the main open item:** the structured field cannot separate them. The assistant is following the new wording only some of the time |
 | S3 Codex 1, 2, 3 | Not tested: it saved no fact containing a backup suggestion. Not a pass. | Assistant's (it saves less) |
-| S5 Codex 1 | After the owner deleted the 02:30 backup time, the assistant saved a new fact in a different project, `lantern`, worded "Lantern's backup is believed to run at 02:30 UTC; this time is unverified". The guard reaches that project, but the text is reworded so heavily that it scores below the duplicate threshold. | **BrainAI's, a known gap on the default model.** The new profile for EmbeddingGemma records this text scoring 0.691 against a duplicate threshold of 0.78 with margin 0. A margin wide enough to catch it would also catch related facts that share a number (0.72 to 0.77). On e5 (margin 0.03) the same eval texts scored 0.906 and 0.938 against 0.93 and are caught. Do not read this as solved |
+| S5 Codex 1 | After the owner deleted the 02:30 backup time, the assistant saved a new fact in a different project, `lantern`, worded "Lantern's backup is believed to run at 02:30 UTC; this time is unverified". The guard reaches that project, but the text is reworded so heavily that it scores below the duplicate threshold. | **BrainAI's, a known gap on the default model.** The new profile for EmbeddingGemma records this text scoring 0.691 against a duplicate threshold of 0.78 with margin 0. A margin wide enough to catch it would also catch related facts that share a number (0.72 to 0.77). On e5 (margin 0.03) the same eval texts scored 0.906 and 0.938 against 0.93 and are caught. Do not read this as solved. A follow-up measured the reranker as a second opinion on 73 labelled pairs (`src/scripts/calibrateDeletedRerank.ts`): it scores related-but-different facts as high as true rewordings, so it was not added; the limit is stated in docs/SECURITY.md |
 | S5 Codex 2 and 3 | Never saved the staging fact in the first place ("setup failed", nothing to forget). | Assistant's |
 | S6 Codex 1 | Never saved the Lisbon fact ("setup failed"). | Assistant's |
 | S2 Codex 1 | The reversal was saved with no supersedes link to the old decision. | Assistant's (it used a plain save) |
@@ -177,6 +220,8 @@ table. A run passes only if every check passes; "not tested" is never a pass.
 
 Claude Code's S5 went from 1/3 to 3/3 (the guard now holds the re-saves). Codex's S5 is 0/3 mostly because of setup
 failures (2 of 3 never saved the staging fact), not because the guard failed; only run 1 is a guard failure.
+S3 gained two state checks in the round that made an assistant's `owner_said` claim quote the owner (the product now stores `inferred` when `source_note` has no owner words). They are computed from the fact rows plus the owner's two S3 messages (kept in `S3_OWNER_TURNS` in `src/eval/lifecycle/scoring.ts`, so saved runs can be re-scored): (a) every `owner_said` fact the assistant set has a `source_note` that is a substring of an owner message after normalising case, quotes and punctuation, or shares at least 80% of its words with one; (b) no such note contains one of the assistant's suggestion words (restic, borg, systemd, and so on). Both are "not tested" when the assistant set no `owner_said` fact. All earlier S3 checks are kept unchanged. The results tables in this section are from before these checks existed; the re-run is under "Round 2" above.
+
 The claimed-save counter has 1 hit in these runs ("The one fact I saved is..."), which refers to an earlier save; it is a
 false positive, not a false claim.
 

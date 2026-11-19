@@ -14,7 +14,7 @@ ${v.said ? html`<p class="notice" role="alert">${v.said}</p>` : ''}
 <ol>
 <li>${v.synced === null ? 'A saved copy of every memory and page is made in your Documents folder.' : 'A saved copy of every memory and page is made in the folder you choose below: your Documents folder or your home folder.'}</li>
 <li>Reach from phone and web is turned off, and the Cloudflare tunnel is deleted if you made one.</li>
-<li>Claude Code, Codex, OpenCode and Cursor are disconnected from this BrainAI. A tool that uses another BrainAI is left alone.</li>
+<li>Claude Code, Codex, OpenCode, Cursor and Gemini CLI are disconnected from this BrainAI. A tool that uses another BrainAI is left alone.</li>
 <li>${v.mac ? html`BrainAI's Claude Code hooks and the folder report on ${thisComputer()} are removed` : "BrainAI's Claude Code hooks are removed"}, unless they belong to another brain.</li>
 <li>The original tool settings BrainAI backed up go into the saved copy.</li>
 <li>A checklist shows what only you can remove, such as the connectors in Claude, ChatGPT and Grok.</li>

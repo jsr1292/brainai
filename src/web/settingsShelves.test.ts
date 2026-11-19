@@ -20,22 +20,22 @@ async function local(t: TestContext, opts: { nightly?: boolean } = {}) {
 }
 const ids = (body: string) => [...body.matchAll(/<section id="([a-z-]+)"/g)].map((m) => m[1]);
 const index = (body: string) => [...body.matchAll(/<a class="row" href="#([a-z-]+)"><span class="txt">([^<]+)<\/span><span class="st">([\s\S]*?)<\/span><span class="chev">/g)].map((m) => [m[1], m[2], m[3]!.replace(/<[^>]+>/g, '').trim()]);
-const backups = (body: string) => body.slice(body.indexOf('<section id="health"'), body.indexOf('<section id="devices"'));
+const backups = (body: string) => body.slice(body.indexOf('<section id="health"'), body.indexOf('<section id="version"'));
 
 test("the app's Settings: This computer, Assistants, Search, Backups and copies, Other computers, Your login, Remove", async (t) => {
   const { f } = await local(t, { nightly: true });
   const body = await (await f('/settings')).text();
   // Search needs the model manager, which this app does not have: the shelf is left out (settingsSearch.test covers it).
-  assert.deepEqual(ids(body), ['this-device', 'connections', 'health', 'devices', 'login', 'remove']);
+  assert.deepEqual(ids(body), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'remove']);
   const rows = index(body);
-  assert.deepEqual(rows.map((r) => r[0]), ['this-device', 'connections', 'health', 'devices', 'login', 'remove']);
-  assert.deepEqual(rows.slice(1, 5).map((r) => r[1]), ['Assistants', 'Backups and copies', 'Other computers', 'Your login']);
-  assert.match(rows[5]![1]!, /^Remove BrainAI from this /);
+  assert.deepEqual(rows.map((r) => r[0]), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'remove']);
+  assert.deepEqual(rows.slice(1, 6).map((r) => r[1]), ['Assistants', 'Backups and copies', 'Version', 'Other computers', 'Your login']);
+  assert.match(rows[6]![1]!, /^Remove BrainAI from this /);
   assert.equal(rows[2]![2], '● Backups: all fine · 14:30');
-  assert.equal(rows[4]![2], '1 browser signed in');
+  assert.equal(rows[5]![2], '1 browser signed in');
   assert.match(body, /<section id="remove" class="panel danger-zone">[\s\S]*href="\/settings\/remove"/);
   // Anchors other pages link to still exist.
-  for (const id of ['connections', 'setup', 'backup-copy', 'health', 'devices', 'login', 'this-device', 'brain-health']) assert.match(body, new RegExp(`id="${id}"`), id);
+  for (const id of ['connections', 'setup', 'backup-copy', 'health', 'devices', 'login', 'this-device', 'brain-health', 'version']) assert.match(body, new RegExp(`id="${id}"`), id);
 });
 
 test('Assistants: the added-tools line, the two groups, Set up an app, then the connections', async (t) => {

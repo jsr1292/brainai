@@ -60,7 +60,7 @@ function customChoice(body: Record<string, unknown>, o: { online: false } | { on
   return null;
 }
 
-const IDS: readonly ToolId[] = ['claude-code', 'codex', 'opencode', 'cursor', 'claude-desktop'];
+const IDS: readonly ToolId[] = ['claude-code', 'codex', 'opencode', 'cursor', 'gemini', 'claude-desktop'];
 const isId = (s: string): s is ToolId => (IDS as readonly string[]).includes(s);
 
 const windows = (env: ToolEnv) => (env.platform ?? process.platform) === 'win32';

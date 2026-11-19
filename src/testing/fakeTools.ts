@@ -1,5 +1,5 @@
 /**
- * A throwaway HOME with fake `claude`, `codex` and `opencode` commands for the Connect tests (D3): they keep their
+ * A throwaway HOME with fake `claude`, `codex`, `opencode` and `gemini` commands for the Connect tests (D3): they keep their
  * servers in a JSON file in that HOME, print what the real CLIs print (claude mcp get's "URL:" line, codex's --json),
  * and log every call. The real HOME and the real tools are never touched.
  */
@@ -7,7 +7,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const SCRIPT = (tool: 'claude' | 'codex' | 'opencode') => `#!/usr/bin/env node
+const SCRIPT = (tool: 'claude' | 'codex' | 'opencode' | 'gemini') => `#!/usr/bin/env node
 const fs = require('fs'); const path = require('path');
 const home = process.env.HOME; const args = process.argv.slice(2);
 fs.appendFileSync(path.join(home, 'calls.log'), ${JSON.stringify(tool)} + ' ' + args.join(' ') + '\\n');
@@ -37,7 +37,7 @@ process.exit(0);
 
 export interface FakeHome { home: string; bin: string; apps: string; calls(): string[]; read(rel: string): string | null; write(rel: string, text: string): void; servers(tool: 'claude' | 'codex'): Record<string, string>; cleanup(): void }
 
-export function fakeHome(tools: ('claude' | 'codex' | 'opencode')[] = ['claude', 'codex', 'opencode']): FakeHome {
+export function fakeHome(tools: ('claude' | 'codex' | 'opencode' | 'gemini')[] = ['claude', 'codex', 'opencode']): FakeHome {
   const root = mkdtempSync(join(tmpdir(), 'brainai-tools-'));
   const home = join(root, 'home');
   const bin = join(root, 'bin');

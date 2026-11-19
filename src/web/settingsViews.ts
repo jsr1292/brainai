@@ -18,6 +18,9 @@ import { metaLine } from './metaLine.js';
 import { needsLook, type ConnStatus } from './connStatus.js';
 import { setupApps } from '../setup/texts.js';
 import { thisComputer } from '../desktop/computer.js';
+import { spaceBlock, spaceTotalText } from './spaceViews.js';
+import type { SpaceBreakdown } from '../diskSpace.js';
+import { versionPanel, type VersionPanelInput } from './versionViews.js';
 
 /** "This iPhone", "This Mac"… from a deviceLabel ("iPhone · Safari"), for the section round 2 §11 fills. */
 export function thisDevice(label: string): string {
@@ -54,8 +57,8 @@ export function settingsView(v: {
   brainUrl?: string;
   /** The running brain and its database schema, so an update can be checked. */
   version?: { brain: string; database: number };
-  /** The app's update checks have been failing for days: the day it began and the short reason. */
-  updateCheck?: { since: string; error?: string };
+  /** The Version panel: what runs, the last update check and Check for updates (versionViews). */
+  versionPanel?: VersionPanelInput;
   /** Live pictures (ImageStore.totals), for the pictures line under Backups and health. */
   pictures?: { count: number; bytes: number; unused: number };
   devices: Device[];
@@ -76,6 +79,8 @@ export function settingsView(v: {
   copy?: { keep: number; folder: string | null; last: CopyResult | null; ask?: { folder: string; cloud: string }; /** A folder the window's folder picker just chose: put in the box, not saved until the owner presses Save. */ picked?: string };
   /** The app only: whether Reach (phone and web) is on, for the Assistants shelf. */
   reach?: { on: boolean };
+  /** The app only: how much space BrainAI uses here; null while it is being worked out; absent on a server. */
+  space?: SpaceBreakdown | null;
   /** The app only: Back up now and Show in Finder/Explorer are offered (the shell and the backup folder exist). */
   backupNow?: boolean;
   /** What Back up now and the second folder's form just did, said once (settingsSaid). */
@@ -87,8 +92,8 @@ export function settingsView(v: {
   // "this device", Search or Remove: Assistants, Backups and copies, Other computers, Your login. The ids stay as
   // other pages link them (#connections, #health, #setup, #devices, #search, #login).
   const sections: [string, string][] = v.localMode
-    ? [['this-device', device], ['connections', 'Assistants'], ...(v.search ? [['search', 'Search'] as [string, string]] : []), ['health', 'Backups and copies'], ['devices', 'Other computers'], ['login', 'Your login'], ['remove', `Remove BrainAI from ${here}`]]
-    : [['connections', 'Assistants'], ['health', 'Backups and copies'], ['devices', 'Other computers'], ['login', 'Your login'], ['this-device', 'This browser']];
+    ? [['this-device', device], ['connections', 'Assistants'], ...(v.search ? [['search', 'Search'] as [string, string]] : []), ['health', 'Backups and copies'], ...(v.versionPanel ? [['version', 'Version'] as [string, string]] : []), ['devices', 'Other computers'], ['login', 'Your login'], ['remove', `Remove BrainAI from ${here}`]]
+    : [['connections', 'Assistants'], ['health', 'Backups and copies'], ...(v.versionPanel ? [['version', 'Version'] as [string, string]] : []), ['devices', 'Other computers'], ['login', 'Your login'], ['this-device', 'This browser']];
   const assistants = v.grants.filter((g) => !g.revokedAt).length;
   const liveDevices = v.devices.filter((x) => x.revokedAt === null).length;
   // Backups only: a dot and the nightly's time when all is well; a dot that needs a look otherwise; nothing set up yet.
@@ -99,7 +104,7 @@ export function settingsView(v: {
       ? html`<span class="st-dot ok" aria-hidden="true">●</span> Backups: all fine · ${timeOfDay(v.backups.status.nightly!.at)}`
       : html`<span class="st-dot${v.backups.status.nightly && !v.backups.status.nightly.ok ? ' failed' : ' looks'}" aria-hidden="true">●</span> Backups: needs a look`;
   const statuses: Record<string, SafeHtml> = {
-    'this-device': v.localMode ? html`${v.version ? `BrainAI ${v.version.brain}` : ''}` : html``,
+    'this-device': v.localMode ? html`<span data-space-status>${[v.version ? `BrainAI ${v.version.brain}` : '', spaceTotalText(v.space)].filter(Boolean).join(' · ')}</span>` : html``,
     connections: [...(v.connStatus?.values() ?? [])].some(needsLook)
       ? html`<span class="st-dot looks" aria-hidden="true">●</span> Needs a look`
       // On the app, tools can be added without being signed in yet (the page says so after its own check): "None" would be wrong, so nothing is said.
@@ -107,6 +112,7 @@ export function settingsView(v: {
     search: html`${v.search ? searchStatus(v.search) : ''}`,
     devices: html`${liveDevices === 0 ? 'None yet' : plural(liveDevices, 'computer', 'computers')}`,
     health: healthStatus,
+    version: html`${v.version ? `BrainAI ${v.version.brain}` : ''}`,
     login: html`${v.sessions.length} ${v.sessions.length === 1 ? 'browser' : 'browsers'} signed in`,
     remove: html``,
   };
@@ -124,11 +130,7 @@ export function settingsView(v: {
     ? html`<p class="meta"><span>${plural(pics.unused, 'picture', 'pictures')} no current page shows <a href="/settings/pictures">Review</a></span></p>`
     : '';
   const picturesLine = html`${keptLine}${reviewLine}`;
-  const updateCheckLine = v.updateCheck
-    ? html`<p class="attention">BrainAI hasn't been able to check for updates since ${v.updateCheck.since}.</p>${v.updateCheck.error ? html`<p class="meta">${v.updateCheck.error}</p>` : ''}<p class="meta">On a work network, a proxy or firewall may be blocking github.com.</p>`
-    : '';
   const counts = html`<p class="meta">${plural(v.counts.facts, 'fact', 'facts')} · ${plural(v.counts.projects, 'project', 'projects')} · ${plural(v.counts.pages, 'page', 'pages')}</p>`;
-  const versionLines = html`${v.version ? html`<p class="meta">BrainAI ${v.version.brain} · database ${v.version.database}</p>` : ''}${updateCheckLine}`;
   const saveRow = v.localMode ? '' : html`<ul class="group"><li><a class="row nolead" href="/import"><span class="txt">Import<span class="sub">Bring in ChatGPT, Claude or Gemini memory, project folders, or a file</span></span><span class="chev"></span></a></li><li><a class="row nolead" href="/settings/save"><span class="txt">Save a copy of everything<span class="sub">Every memory and page, to keep or take elsewhere</span></span><span class="chev"></span></a></li></ul>`;
   const saidLine = (text: string | null | undefined): SafeHtml => (text ? html`<p class="notice" role="status">${text}</p>` : html``);
   const copyLast = !v.copy?.last ? ''
@@ -189,8 +191,8 @@ ${quietAppsBlock(v.quiet?.apps, v.quiet?.local ?? false) ?? ''}`;
   ${brainHealth}
 </section>`
     : v.backups
-      ? backupsPanel(v.backups, { id: 'health', title: 'Backups and copies', extra: html`${copyAnchor}${saveRow}`, after: html`${sizeLines}${versionLines}${brainHealth}` })
-      : html`<section id="health" class="panel"><div class="panel-head"><h2>Backups and copies</h2></div>${copyAnchor}${saveRow}${sizeLines}${versionLines}${brainHealth}</section>`;
+      ? backupsPanel(v.backups, { id: 'health', title: 'Backups and copies', extra: html`${copyAnchor}${saveRow}`, after: html`${sizeLines}${brainHealth}` })
+      : html`<section id="health" class="panel"><div class="panel-head"><h2>Backups and copies</h2></div>${copyAnchor}${saveRow}${sizeLines}${brainHealth}</section>`;
   const reachOn = v.reach?.on === true;
   const assistantsBody = v.localMode
     ? html`<p class="meta">The AI apps that can use your brain.</p>
@@ -220,7 +222,7 @@ ${quietAppsBlock(v.quiet?.apps, v.quiet?.local ?? false) ?? ''}`;
 </section>` : html`<section id="this-device" class="panel">
   <div class="panel-head"><h2>${device}</h2></div>
   <p class="meta">BrainAI runs here, in the menu bar or tray. Its data, backups and search models live in its own folder on ${here}.</p>
-  ${versionLines}
+  ${v.space === undefined ? '' : spaceBlock(v.space)}
 </section>`;
   const removeSection = !v.localMode ? '' : html`<section id="remove" class="panel danger-zone">
   <div class="panel-head"><h2>Remove BrainAI from ${here}</h2></div>
@@ -243,6 +245,7 @@ ${v.localMode ? thisDeviceSection : ''}
 </section>
 ${v.search ? searchSection(v.search) : ''}
 ${health}
+${v.versionPanel ? versionPanel(v.versionPanel) : ''}
 ${devicesSection(v.devices, v.created, v.now, v.brainUrl)}
 <section id="login" class="panel">
   <div class="panel-head"><h2>Your login</h2></div>

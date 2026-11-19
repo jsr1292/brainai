@@ -136,9 +136,9 @@ test('the tool descriptions steer a harvest to suggest_memories and away from re
   assert.match(tools.find((x) => x.name === 'remember')!.description!, /harvest.*suggest_memories/is);
 });
 
-test('the source description on remember says to keep the owner\'s words and your own suggestion apart', async () => {
+test('the source description on remember says to keep the owner\'s words and your own suggestion apart (in a separate inferred fact)', async () => {
   const { connect } = setup();
   const { client } = await connect();
   const remember = (await client.listTools()).tools.find((x) => x.name === 'remember')!;
-  assert.match((remember.inputSchema.properties as any).source.description, /separate facts, each with its own source: never one fact that mixes them \(a status may sum up both\)\./);
+  assert.match((remember.inputSchema.properties as any).source.description, /your own conclusion or suggestion \(keep it in a separate fact\)/);
 });

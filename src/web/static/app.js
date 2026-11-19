@@ -455,6 +455,67 @@ for (const card of document.querySelectorAll('[data-update-state]')) {
   setTimeout(tick, 1000);
 }
 
+// Settings › This computer (the app): while the sizes are still being worked out, asks every two seconds and puts the
+// answer into the panel and the index row, in place (no reload).
+for (const box of document.querySelectorAll('[data-space]:not([data-ready])')) {
+  let tries = 0;
+  const tick = async () => {
+    tries++;
+    try {
+      const r = await fetch(box.dataset.space, { headers: { accept: 'application/json' }, credentials: 'same-origin', redirect: 'manual' });
+      if (r.ok) {
+        const a = await r.json();
+        if (a.ready) {
+          box.innerHTML = a.html.replace(/^<div[^>]*>/, '').replace(/<\/div>\s*$/, '');
+          box.setAttribute('data-ready', '');
+          const st = document.querySelector('[data-space-status]');
+          if (st && a.total) st.textContent = st.textContent.trim() ? `${st.textContent.trim()} · ${a.total}` : a.total;
+          return;
+        }
+      }
+    } catch { /* the app may be busy for a moment */ }
+    if (tries < 90) setTimeout(tick, 2000);
+    else { const p = box.querySelector('p.meta'); if (p) p.textContent = 'The sizes are not ready yet. Reload this page in a minute.'; }
+  };
+  setTimeout(tick, 1500);
+}
+
+// Settings › Version (the app): Check for updates is a link the app's window takes itself (it runs its normal check). The
+// page then asks the server every two seconds whether a newer check has been written, and loads Settings again to show it.
+for (const box of document.querySelectorAll('[data-check-updates]')) {
+  const link = box.querySelector('[data-check-link]');
+  const status = box.querySelector('[data-check-status]');
+  const since = Number(box.dataset.since) || 0;
+  let running = false;
+  link?.addEventListener('click', (e) => {
+    if (running) { e.preventDefault(); return; }
+    running = true;
+    link.setAttribute('aria-disabled', 'true');
+    if (status) { status.hidden = false; status.textContent = 'Checking…'; }
+    const started = Date.now();
+    const tick = async () => {
+      try {
+        const r = await fetch(box.dataset.checkUpdates, { headers: { accept: 'application/json' }, credentials: 'same-origin', redirect: 'manual' });
+        if (r.ok && (await r.json()).at > since) {
+          // A same-URL replace keeping the scroll (as "fresh on return" does), never location.reload.
+          const url = location.href.split('#')[0];
+          try { sessionStorage.setItem(scrollKey(url), String(scrollY)); } catch { /* storage off: the page opens at the top */ }
+          location.replace(url);
+          return;
+        }
+      } catch { /* the app may be busy for a moment */ }
+      if (Date.now() - started > 70_000) {
+        running = false;
+        link.removeAttribute('aria-disabled');
+        if (status) status.textContent = 'No answer yet. Try again in a minute.';
+        return;
+      }
+      setTimeout(tick, 2000);
+    };
+    setTimeout(tick, 2000);
+  });
+}
+
 // The welcome's "Choose the models myself": the button says how much will download for the pair picked.
 for (const form of document.querySelectorAll('[data-models-form]')) {
   const button = form.querySelector('[data-models-button]');

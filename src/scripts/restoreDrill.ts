@@ -639,6 +639,7 @@ async function pathD(r: Report, root: string, source: App, appDir: string, fp: F
 export interface DrillOptions { realModel?: boolean; modelDir?: string; keep?: boolean; /** Leave the off-site pack out (it needs age; the CI test runs without it). */ noOffsite?: boolean; log?: (line: string) => void }
 
 export async function runDrill(opts: DrillOptions = {}): Promise<{ checks: Check[]; embedder: string; schema: number }> {
+  let embedderName = 'fake test embedder';
   const root = mkdtempSync(join(tmpdir(), 'brainai-drill-'));
   const homeBefore = process.env.HOME; // undefined stays undefined afterwards
   const home = join(root, 'home');
@@ -654,7 +655,8 @@ export async function runDrill(opts: DrillOptions = {}): Promise<{ checks: Check
     if (opts.realModel) {
       const p = profileFor(process.env.EMBED_MODEL);
       embedder = await createLocalEmbedder({ modelDir: opts.modelDir ?? join(REPO, 'models'), allowRemote: false, model: p });
-      serviceOpts = { duplicateThreshold: p.duplicate, minRecallSimilarity: p.minRecall, recallConfidentSimilarity: p.confident, recallWindow: p.window, keywordWeight: p.keywordWeight, closeFacts: p.closeFacts };
+      serviceOpts = { duplicateThreshold: p.duplicate, minRecallSimilarity: p.minRecall, recallConfidentSimilarity: p.confident, recallWindow: p.window, keywordWeight: p.keywordWeight, closeFacts: p.closeFacts, deletedMargin: p.deletedMargin };
+      embedderName = `real local model: ${p.id}`;
       minPageSimilarity = p.minRecall;
     }
     const env: Env = { embedder, serviceOpts, minPageSimilarity };
@@ -691,7 +693,7 @@ export async function runDrill(opts: DrillOptions = {}): Promise<{ checks: Check
       log(`restore path ${name}`);
       try { await work(); } catch (e) { r.add(`path ${name}`, 'the drill step ran', false, e instanceof Error ? e.message : String(e)); }
     }
-    return { checks: r.checks, embedder: opts.realModel ? 'real local model' : 'fake test embedder', schema: fp.schema };
+    return { checks: r.checks, embedder: embedderName, schema: fp.schema };
   } finally {
     await source?.close().catch(() => {});
     if (homeBefore === undefined) delete process.env.HOME; else process.env.HOME = homeBefore;
@@ -716,8 +718,8 @@ async function main(): Promise<void> {
   console.log(`\n${table(res.checks)}\n`);
   const count = (s: Status) => res.checks.filter((c) => c.status === s).length;
   mkdirSync(out, { recursive: true });
-  const file = join(out, `restore-drill-${today()}.json`);
-  writeFileSync(file, JSON.stringify({ date: today(), node: process.version, embedder: realModel ? 'real local model' : 'fake test embedder', schema: res.schema, seconds: Math.round((Date.now() - t0) / 1000), summary: { pass: count('PASS'), fail: count('FAIL'), skipped: count('SKIPPED') }, checks: res.checks }, null, 2));
+  const file = join(out, `restore-drill-${today()}-${realModel ? profileFor(process.env.EMBED_MODEL).id : 'fake'}.json`);
+  writeFileSync(file, JSON.stringify({ date: today(), node: process.version, embedder: res.embedder, schema: res.schema, seconds: Math.round((Date.now() - t0) / 1000), summary: { pass: count('PASS'), fail: count('FAIL'), skipped: count('SKIPPED') }, checks: res.checks }, null, 2));
   console.log(`PASS ${count('PASS')}  FAIL ${count('FAIL')}  SKIPPED ${count('SKIPPED')}  -> ${file}`);
   process.exitCode = count('FAIL') > 0 ? 1 : 0;
   // The in-process apps and the model leave handles open; the report is written, so end here.

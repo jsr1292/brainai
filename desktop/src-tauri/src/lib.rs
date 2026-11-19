@@ -605,6 +605,12 @@ pub fn run() {
                         std::thread::spawn(move || update::update_and_restart(&app));
                         return false;
                     }
+                    if nav::is_check_updates(url.as_str(), port.load(Ordering::SeqCst)) {
+                        // Cancelled: the window stays on Settings, which follows update-check.json for the answer.
+                        let app = leaving.clone();
+                        std::thread::spawn(move || update::check_now_manual(&app));
+                        return false;
+                    }
                     if nav::is_choose_folder(url.as_str(), port.load(Ordering::SeqCst)) {
                         // Cancelled: the window keeps its page; a chosen folder is sent to Settings to fill a box.
                         let app = leaving.clone();

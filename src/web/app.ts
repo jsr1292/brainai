@@ -143,6 +143,9 @@ export interface AppDeps {
   trustCfConnectingIp?: boolean;
   /** Where the backup runs record their outcome (the data folder); the home page shows it. None: no backup panel. */
   statusDir?: string;
+  /** Server mode's Check for updates: the release address and fetch, which tests replace (default: GitHub's latest release, global fetch). */
+  releaseApiUrl?: string;
+  releaseFetch?: typeof fetch;
   /** The desktop app's local mode (Config.localMode): answers only to localhost; signed in until a password exists. */
   localMode?: boolean;
   /** The desktop app's key (Config.appSecret): GET /app/open?key=… opens a session for the app's window. */
@@ -155,6 +158,8 @@ export interface AppDeps {
   backupKeep?: number;
   /** Where the in-app backups go (Config.backupDir); POST /app/backup-now writes there before an update. */
   backupDir?: string | null;
+  /** Local mode: where the models are and where the running program is, for Settings' space breakdown (tests point them at temp folders). */
+  space?: { modelDir?: string; execPath?: string; platform?: NodeJS.Platform };
   /** Local mode: the public door Tailscale Funnel forwards to, open only while Reach is in use. Created by createApp. */
   door?: PublicDoor;
   /** Local mode: shows a file in Finder (Move to a server). Tests replace it. */
@@ -334,6 +339,7 @@ export function createApp(d: AppDeps): express.Express {
       ...(app ? [{ label: 'Settings › Reach from phone and web', href: '/settings/reach', alias: 'Reach' }] : []),
       ...(app && d.models ? [{ label: 'Settings › Search', href: '/settings#search' }] : []),
       { label: 'Settings › Backups', href: '/settings#health' },
+      { label: 'Settings › Version and updates', href: '/settings#version', alias: 'Check for updates' },
       ...(files ? [{ label: 'Settings › Save a copy', href: '/settings/save' }] : []),
       ...(app && files ? [{ label: 'Settings › Move', href: '/settings/move' }, { label: 'Settings › Remove', href: '/settings/remove' }] : []),
     ]);

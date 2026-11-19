@@ -1,4 +1,4 @@
-# BrainAI plugin for Claude Code (1.5.2)
+# BrainAI plugin for Claude Code (1.6.0)
 
 One install gives Claude Code the connection to your own BrainAI server, the save reminders and the harvest skill.
 It is generated from BrainAI's sources (`npm run build:plugins`); do not edit it by hand.

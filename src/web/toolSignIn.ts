@@ -7,7 +7,7 @@ import { appOfGrant } from '../setup/texts.js';
 import type { ToolState } from '../desktop/tools.js';
 
 /** The slugs appOfGrant gives each tool (Cursor has none: its grant is matched by name). */
-const SLUG: Partial<Record<ToolState['id'], string>> = { 'claude-code': 'claude-code', codex: 'codex', opencode: 'opencode' };
+const SLUG: Partial<Record<ToolState['id'], string>> = { 'claude-code': 'claude-code', codex: 'codex', opencode: 'opencode', gemini: 'gemini-cli' };
 
 /** A live grant made by this tool: its name starts with the tool's name (as Disconnect ends them), or it is the tool's app. */
 export function hasSignedIn(t: Pick<ToolState, 'id' | 'name'>, grants: readonly GrantInfo[]): boolean {

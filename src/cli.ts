@@ -349,7 +349,7 @@ async function disconnectToolsCommand(dataDir: string): Promise<number> {
       },
     };
     if (!env.home) return 0;
-    for (const id of ['claude-code', 'codex', 'opencode', 'cursor', 'claude-desktop'] as ToolId[]) {
+    for (const id of ['claude-code', 'codex', 'opencode', 'cursor', 'gemini', 'claude-desktop'] as ToolId[]) {
       try {
         if ((await tracesOfThisBrain(id, env)) !== 'yes') continue;
         const r = await disconnect(id, env);

@@ -49,20 +49,21 @@ test("A server's Settings holds four things, in order", async (t) => {
   assert.match(body, /<title>Settings<\/title>/);
   assert.match(body, /<a class="settings-link" href="\/settings" aria-current="page"/);
   const ids = [...body.matchAll(/<section id="([a-z-]+)"/g)].map((m) => m[1]!);
-  assert.deepEqual(ids, ['connections', 'health', 'devices', 'login', 'this-device']);
+  assert.deepEqual(ids, ['connections', 'health', 'version', 'devices', 'login', 'this-device']);
   for (const gone of ['approvals', 'activity', 'growth', 'tidy', 'moved', 'facts']) assert.ok(!ids.includes(gone), gone);
   assert.doesNotMatch(body, /href="\/discussions"/, 'the Discussions link left with the moved sections');
   // The phone's index: one row per section, each with a one-line status.
   const rows = [...body.matchAll(/<a class="row" href="#([a-z-]+)"><span class="txt">([^<]+)<\/span><span class="st">([\s\S]*?)<\/span><span class="chev"><\/span><\/a>/g)]
     .map((m) => [m[1]!, m[2]!, m[3]!.replace(/<[^>]+>/g, '').trim()] as const);
-  assert.deepEqual(rows.map((r) => r[0]), ['connections', 'health', 'devices', 'login', 'this-device']);
-  assert.deepEqual(rows.map((r) => r[1]), ['Assistants', 'Backups and copies', 'Other computers', 'Your login', 'This browser']);
+  assert.deepEqual(rows.map((r) => r[0]), ['connections', 'health', 'version', 'devices', 'login', 'this-device']);
+  assert.deepEqual(rows.map((r) => r[1]), ['Assistants', 'Backups and copies', 'Version', 'Other computers', 'Your login', 'This browser']);
   assert.equal(rows[0]![2], '1 assistant');
   assert.equal(rows[1]![2], '● Backups: all fine · 03:10');
-  assert.equal(rows[2]![2], 'None yet');
-  assert.equal(rows[3]![2], '1 browser signed in');
+  assert.match(rows[2]![2], /^BrainAI \d+\.\d+\.\d+$/);
+  assert.equal(rows[3]![2], 'None yet');
+  assert.equal(rows[4]![2], '1 browser signed in');
   // A server keeps a minimal "This browser" for desk.js's two switches: no version line, no iPhone/Mac naming.
-  assert.equal(rows[4]![2], '');
+  assert.equal(rows[5]![2], '');
   const mine = body.slice(body.indexOf('<section id="this-device"'), body.indexOf('</section>', body.indexOf('<section id="this-device"')));
   assert.match(mine, /<h2>This browser<\/h2>/);
   assert.doesNotMatch(mine, /BrainAI \d|database \d/);
@@ -315,7 +316,7 @@ test('a connection named like no app links to the setup list, and the list names
   const body = await (await f('/settings')).text();
   assert.match(connRow(body, 'My laptop'), /<a href="\/settings#setup">Paste the setup text<\/a>/);
   const list = body.slice(body.indexOf('<h3 id="setup">Set up an app</h3>'));
-  for (const slug of ['claude', 'chatgpt', 'grok', 'grok-build', 'claude-code', 'codex', 'opencode']) assert.ok(list.includes(`href="/settings/setup/${slug}"`), slug);
+  for (const slug of ['claude', 'chatgpt', 'grok', 'grok-build', 'claude-code', 'codex', 'opencode', 'gemini-cli']) assert.ok(list.includes(`href="/settings/setup/${slug}"`), slug);
 });
 
 test('a connection without load_profile (discussions only) has no setup line and never asks for a look', async (t) => {
@@ -352,11 +353,11 @@ test('the Devices line says devices keep shared skills in step', async (t) => {
   assert.match(await (await f('/settings')).text(), /Add a computer so BrainAI knows which project folders are on it, and so the skills you turn on reach it\./);
 });
 
-test('Backups and health shows the brain version and the database version (O1)', async (t) => {
+test('Settings › Version shows the brain version and the database schema (O1)', async (t) => {
   const { f } = await start(t);
   const { BRAIN_VERSION } = await import('../version.js');
   assert.match(BRAIN_VERSION, /^\d+\.\d+\.\d+$/);
-  assert.match(await (await f('/settings')).text(), new RegExp(`BrainAI ${BRAIN_VERSION.replace(/\./g, '\\.')} · database \\d+`));
+  assert.match(await (await f('/settings')).text(), new RegExp(`BrainAI ${BRAIN_VERSION.replace(/\./g, '\\.')} · database schema \\d+`));
 });
 
 async function startApp(t: TestContext, opts: { localMode: boolean }) {

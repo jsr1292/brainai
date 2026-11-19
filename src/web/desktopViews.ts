@@ -267,6 +267,7 @@ const SIGN_IN_HINT: Record<ToolState['id'], string> = {
   codex: 'In a terminal: codex mcp login brainai.',
   opencode: 'In a terminal: opencode mcp auth brainai.',
   cursor: 'Cursor asks you to sign in the first time it uses BrainAI.',
+  gemini: 'In Gemini CLI: /mcp auth brainai.',
   'claude-desktop': 'Quit Claude completely and open it again.',
 };
 

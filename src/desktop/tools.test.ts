@@ -28,7 +28,7 @@ const stateOf = async (env: ToolEnv, id: string) => (await toolStates(env)).find
 test('tools that are not installed are listed as such, and nothing is called', async (t) => {
   const { f, env } = world(t, []);
   const states = await toolStates(env);
-  assert.deepEqual(states.map((s) => [s.id, s.installed]), [['claude-code', false], ['codex', false], ['opencode', false], ['cursor', false], ['claude-desktop', false]]);
+  assert.deepEqual(states.map((s) => [s.id, s.installed]), [['claude-code', false], ['codex', false], ['opencode', false], ['cursor', false], ['gemini', false], ['claude-desktop', false]]);
   assert.deepEqual(f.calls(), []);
 });
 
@@ -140,6 +140,102 @@ test('OpenCode: a plain opencode.json gains mcp.brainai; one with comments, or b
     assert.match((res as { reason: string }).reason, /Set up an app › OpenCode/);
     assert.equal(w.f.read(`.config/opencode/${name}`), text);
   }
+});
+
+// ---- Gemini CLI (untested against a real one): ~/.gemini/settings.json, mcpServers.brainai.httpUrl, ~/.gemini/GEMINI.md ----
+const gemWorld = (t: TestContext) => world(t, ['claude', 'codex', 'opencode', 'gemini']);
+
+test('Gemini CLI: found on the PATH only; Connect adds mcpServers.brainai.httpUrl to an empty home, with the rules and the sign-in step', async (t) => {
+  const none = world(t, []);
+  assert.equal((await stateOf(none.env, 'gemini')).installed, false, 'no gemini command: not installed');
+  none.f.write('.gemini/settings.json', '{}');
+  assert.equal((await stateOf(none.env, 'gemini')).installed, false, 'a ~/.gemini folder alone is not enough');
+  const { f, env } = gemWorld(t);
+  assert.deepEqual(await stateOf(env, 'gemini'), { id: 'gemini', name: 'Gemini CLI', installed: true, state: 'not-connected', signIn: 'In Gemini CLI, type /mcp auth brainai; your browser asks you to Allow.', hooks: 'none' });
+  const r = await connect('gemini', env, {});
+  assert.deepEqual(r, { ok: true, signIn: 'In Gemini CLI, type /mcp auth brainai; your browser asks you to Allow.' });
+  assert.deepEqual(JSON.parse(f.read('.gemini/settings.json')!), { mcpServers: { brainai: { httpUrl: URL_ } } });
+  assert.equal(findBlock(f.read('.gemini/GEMINI.md')!)!.host, 'localhost:3100');
+  assert.equal((await stateOf(env, 'gemini')).state, 'connected');
+  assert.equal(f.read('.gemini/hooks.json'), null, 'no save reminders for Gemini CLI');
+  assert.deepEqual(f.calls().filter((c) => c.startsWith('gemini')), [], 'the gemini command itself is never run');
+});
+
+test('Gemini CLI: other servers and keys stay, a backup of the original is written once, and Connect twice changes nothing', async (t) => {
+  const { f, env } = gemWorld(t);
+  const original = JSON.stringify({ theme: 'Default', mcpServers: { github: { command: 'gh-mcp', args: ['x'] }, memory: { httpUrl: 'https://other.example/mcp' } }, general: { vimMode: true } }, null, 2);
+  f.write('.gemini/settings.json', original);
+  f.write('.gemini/GEMINI.md', '# Mine\nBe brief.\n');
+  assert.equal((await connect('gemini', env, {})).ok, true);
+  const cfg = JSON.parse(f.read('.gemini/settings.json')!);
+  assert.deepEqual(cfg.mcpServers, { github: { command: 'gh-mcp', args: ['x'] }, memory: { httpUrl: 'https://other.example/mcp' }, brainai: { httpUrl: URL_ } });
+  assert.equal(cfg.theme, 'Default');
+  assert.deepEqual(cfg.general, { vimMode: true });
+  assert.equal(f.read('.gemini/settings.json.brainai-backup'), original, 'a backup first');
+  assert.equal(f.read('.gemini/GEMINI.md.brainai-backup'), '# Mine\nBe brief.\n');
+  assert.ok(f.read('.gemini/GEMINI.md')!.startsWith('# Mine\nBe brief.\n'));
+  const after = f.read('.gemini/settings.json');
+  assert.equal((await connect('gemini', env, {})).ok, true);
+  assert.equal(f.read('.gemini/settings.json'), after, 'already present: unchanged');
+  assert.equal(f.read('.gemini/settings.json.brainai-backup'), original, 'the first backup is kept');
+});
+
+test('Gemini CLI: Disconnect takes out only brainai and BrainAI\'s rules', async (t) => {
+  const { f, env } = gemWorld(t);
+  f.write('.gemini/settings.json', JSON.stringify({ theme: 'Default', mcpServers: { github: { command: 'gh-mcp' } } }));
+  f.write('.gemini/GEMINI.md', '# Mine\n');
+  await connect('gemini', env, {});
+  const r = await disconnect('gemini', env);
+  assert.equal(r.ok, true);
+  assert.deepEqual(JSON.parse(f.read('.gemini/settings.json')!), { theme: 'Default', mcpServers: { github: { command: 'gh-mcp' } } });
+  assert.equal(f.read('.gemini/GEMINI.md'), '# Mine\n');
+  assert.equal((await stateOf(env, 'gemini')).state, 'not-connected');
+  // a brainai entry of another BrainAI is left alone
+  f.write('.gemini/settings.json', JSON.stringify({ mcpServers: { brainai: { httpUrl: HOME_BRAINAI } } }));
+  const other = await disconnect('gemini', env);
+  assert.equal(other.ok, false);
+  assert.equal(JSON.parse(f.read('.gemini/settings.json')!).mcpServers.brainai.httpUrl, HOME_BRAINAI);
+});
+
+test('Gemini CLI: Disconnect with no settings file creates none', async (t) => {
+  const { f, env } = gemWorld(t);
+  await disconnect('gemini', env);
+  assert.equal(f.read('.gemini/settings.json'), null);
+});
+
+test('Gemini CLI: another BrainAI asks for Replace; an SSE-style entry (url only) is not taken for ours', async (t) => {
+  const { f, env } = gemWorld(t);
+  f.write('.gemini/settings.json', JSON.stringify({ mcpServers: { brainai: { httpUrl: HOME_BRAINAI } } }));
+  const s = await stateOf(env, 'gemini');
+  assert.equal(s.state, 'other-brainai');
+  assert.match(s.detail!, /memory\.example\.com/);
+  assert.equal((await connect('gemini', env, {})).ok, false);
+  assert.equal((await connect('gemini', env, { replace: true })).ok, true);
+  assert.equal(JSON.parse(f.read('.gemini/settings.json')!).mcpServers.brainai.httpUrl, URL_);
+  f.write('.gemini/settings.json', JSON.stringify({ mcpServers: { brainai: { url: URL_ } } }));
+  assert.equal((await stateOf(env, 'gemini')).state, 'other-brainai', 'url is the SSE transport');
+});
+
+test('Gemini CLI: a settings.json that is not plain JSON is refused and left untouched', async (t) => {
+  for (const text of ['{ // mine\n "theme": "x" }\n', '{ "theme": ', '[1]', '{ "mcpServers": [] }']) {
+    const { f, env } = gemWorld(t);
+    f.write('.gemini/settings.json', text);
+    const r = await connect('gemini', env, {});
+    assert.equal(r.ok, false, text);
+    assert.match((r as { reason: string }).reason, /not plain JSON.*Set up an app › Gemini CLI/);
+    assert.equal(f.read('.gemini/settings.json'), text);
+    assert.equal(f.read('.gemini/settings.json.brainai-backup'), null);
+    assert.equal(f.read('.gemini/GEMINI.md'), null, 'no rules either');
+    assert.equal((await disconnect('gemini', env)).ok, false);
+    assert.equal(await tracesOfThisBrain('gemini', env), 'unreadable');
+  }
+});
+
+test('Gemini CLI: its files are among those Remove BrainAI keeps a backup of', async (t) => {
+  const { f, env } = gemWorld(t);
+  f.write('.gemini/settings.json', '{}');
+  await connect('gemini', env, {});
+  assert.ok(backupFiles(env).includes(join(f.home, '.gemini', 'settings.json.brainai-backup')));
 });
 
 test('Cursor: connect writes only ~/.cursor/mcp.json, keeping the servers already there', async (t) => {

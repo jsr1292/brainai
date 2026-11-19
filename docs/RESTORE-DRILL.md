@@ -23,8 +23,8 @@ checks that the brain is whole. It is scripted, so anyone can run it again.
 ## How to run it
 
 ```bash
-npm run drill:restore                       # fake search model, writes bench-results/restore-drill-<date>.json
-MODEL_DIR=./models npm run drill:restore -- --real-model   # the real local search model
+npm run drill:restore                       # fake search model, writes bench-results/restore-drill-<date>-fake.json
+MODEL_DIR=./models npm run drill:restore -- --real-model   # the real default search model (EMBED_MODEL=e5 for the other)
 npm run drill:restore -- --out some-folder --no-offsite --keep
 ```
 
@@ -43,10 +43,19 @@ It takes about 5 seconds. The exit code is 1 if any check fails. `bench-results/
 | d1 failed migration | a migration that really throws half-way | nothing to restore: the drill checks the database is left untouched and a copy exists |
 | d2 failed upgrade | the copy in `data/pre-migrate/` | RUNBOOK section 3 with that copy |
 
-## Results of the run on 2026-11-18
+## Results of the runs on 2026-11-19
 
-Real local search model (multilingual-e5-small), schema 43, Node 26. 192 checks: 192 PASS, 0 FAIL, 0 SKIPPED (source 4, a1 30, a2 30, b1 31, b2 30, c 32, d1 6, d2 29).
-The same run with the fake model passes the same checks.
+Run once with each real local search model, schema 43, Node 26. The default model (EmbeddingGemma) and the older
+multilingual-e5-small each pass all 192 checks: 192 PASS, 0 FAIL, 0 SKIPPED (source 4, a1 30, a2 30, b1 31, b2 30,
+c 32, d1 6, d2 29). The same run with the fake model passes the same checks.
+
+```bash
+EMBED_MODEL=gemma MODEL_DIR=./models npm run drill:restore -- --real-model   # the default model
+EMBED_MODEL=e5 MODEL_DIR=./models npm run drill:restore -- --real-model
+```
+
+The report now records which model it ran with (`embedder` in the JSON, and the file name). The first published run,
+on 2026-11-18, said it used e5, but its report did not record the model; these two runs replace it.
 
 | Check | a1 | a2 | b1 | b2 | c | d2 |
 |---|---|---|---|---|---|---|

@@ -6,6 +6,7 @@
 import type { Request, Response } from 'express';
 import type { Memory, Suggestion } from '../memory/types.js';
 import type { AppDeps } from './app.js';
+import { heldView } from './factMetaViews.js';
 import { suggestionCard, tidyView, writerName } from './dashboardViews.js';
 import { disagreementsView, pairs, type OpenDisagreement } from './disagreeViews.js';
 import { html, page, type SafeHtml } from './html.js';
@@ -44,7 +45,7 @@ export function makeInbox(d: AppDeps) {
   const pendingCards = () => d.service.pendingSuggestions().map((suggestion) => ({
     suggestion,
     current: suggestion.memoryId ? d.store.get(suggestion.memoryId)?.content : undefined,
-    currentMeta: suggestion.memoryId ? d.store.get(suggestion.memoryId) : undefined,
+    ...heldView(d.service, suggestion),
     replaces: suggestion.supersedes.map((id) => d.store.get(id)).filter((m): m is Memory => m !== undefined && m.deletedAt === null),
     deleted: suggestion.deletedMatch ? d.store.get(suggestion.deletedMatch) : undefined,
     similar: suggestion.similarId ? d.store.get(suggestion.similarId) : undefined,
@@ -72,7 +73,7 @@ export function makeInbox(d: AppDeps) {
 <p class="lede">${writerName(h.suggestedBy)} went over its session and suggests ${items.length === 1 ? 'one memory' : `these ${items.length} memories`}. Nothing is saved until you approve.${plain < items.length ? ` Approve ${plain === 0 ? 'all' : plain} leaves ${items.length - plain === 1 ? 'the 1 item that carries a warning' : `the ${items.length - plain} items that carry a warning`}: answer ${items.length - plain === 1 ? 'it' : 'those'} on ${items.length - plain === 1 ? 'its' : 'their'} own card.` : ''}</p>
 <p class="meta">Approve and Reject on a card bring you back here, and the item goes.</p>
 <form method="post" class="actions">${plain > 0 ? html`<button type="submit" class="primary" formaction="/harvest/${batch}/approve">Approve ${plain}</button> ` : ''}<button type="submit" class="ghost" formaction="/harvest/${batch}/reject" formnovalidate>Reject all</button></form>
-${cards.map((c) => suggestionCard(c.suggestion, c.current, { back: '/approvals', next: `batch:${batch}`, currentMeta: c.currentMeta, replaces: c.replaces, deleted: c.deleted, similar: c.similar, inBatch: true }))}
+${cards.map((c) => suggestionCard(c.suggestion, c.current, { back: '/approvals', next: `batch:${batch}`, currentMeta: c.currentMeta, heldOutcome: c.heldOutcome, replaces: c.replaces, deleted: c.deleted, similar: c.similar, inBatch: true }))}
 </div>`;
   };
 
@@ -130,7 +131,7 @@ ${cards.map((c) => suggestionCard(c.suggestion, c.current, { back: '/approvals',
       if (item.kind === 'suggestion') {
         crumb = 'Approvals';
         const p = pendingCards().find((c) => c.suggestion.id === item!.id);
-        if (p) pane = html`<div class="approvals">${suggestionCard(p.suggestion, p.current, { back: '/approvals', next, currentMeta: p.currentMeta, replaces: p.replaces, deleted: p.deleted, similar: p.similar })}</div>`;
+        if (p) pane = html`<div class="approvals">${suggestionCard(p.suggestion, p.current, { back: '/approvals', next, currentMeta: p.currentMeta, heldOutcome: p.heldOutcome, replaces: p.replaces, deleted: p.deleted, similar: p.similar })}</div>`;
       } else if (item.kind === 'proposal') {
         crumb = 'Approvals';
         const p = d.skills.pendingProposals().find((x) => x.id === item!.id);

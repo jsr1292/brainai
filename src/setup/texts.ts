@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 export const SETUP_VERSION = 2;
 /** sha256 of every text (not the menu lines) rendered at host HOST; texts.test.ts prints the new value when a text changes. */
-export const SETUP_HASH = '1501c756530b7dcffdc25322d1402dd795ea498bba9b7972496157adddffc3ff';
+export const SETUP_HASH = '00f4311ac905e1625bdee2035015c3b8d62e664c9a09505f7d4a10eb2319bd1c';
 
 export interface SetupApp {
   slug: string;
@@ -52,6 +52,9 @@ const APPS: SetupApp[] = [
   { slug: 'opencode', name: 'OpenCode', file: true, reports: false,
     connect: 'In ~/.config/opencode/opencode.json, under "mcp": a remote server with this address; sign in when it asks, and give it Discussions only.',
     where: 'In ~/.config/opencode/AGENTS.md: replace the part between the two brain-setup lines, or add it at the end.' },
+  { slug: 'gemini-cli', name: 'Gemini CLI', file: true,
+    connect: 'In ~/.gemini/settings.json, under "mcpServers": "NAME": { "httpUrl": "ADDRESS" }; then type /mcp auth NAME in Gemini CLI to sign in. Not tested yet.',
+    where: 'In ~/.gemini/GEMINI.md: replace the part between the two brain-setup lines, or add it at the end.' },
 ];
 
 export function setupApps(): SetupApp[] {
@@ -99,7 +102,7 @@ export function loadSetupOverlay(dir: string): SetupOverlay | undefined {
 /** The setup number apps report: the overlay's when the owner has one, else the code's. */
 export const currentSetupVersion = (o?: SetupOverlay): number => o?.version ?? SETUP_VERSION;
 
-const CODING = new Set(['grok-build', 'claude-code', 'codex']);
+const CODING = new Set(['grok-build', 'claude-code', 'codex', 'gemini-cli']);
 
 /** The text for one app, with the brain's MCP address and the owner's overlay lines in it. Throws for an unknown app. */
 export function setupText(slug: string, mcpUrl: string, overlay?: SetupOverlay): string {
@@ -115,6 +118,7 @@ export function setupText(slug: string, mcpUrl: string, overlay?: SetupOverlay):
     case 'grok-build':
     case 'claude-code':
     case 'codex':
+    case 'gemini-cli':
       return wrap(`${habits(host)}\n\n${layers}\n${extra}\n${ask(v)}`, v);
     case 'opencode':
       // Discussions only: that connection has no load_profile, so it reports no setup number.
@@ -131,6 +135,7 @@ export function appOfGrant(name: string): string | null {
   if (n.includes('codex')) return 'codex';
   if (n.includes('grok build')) return 'grok-build';
   if (n.includes('opencode')) return 'opencode';
+  if (n.includes('gemini')) return 'gemini-cli';
   if (n.includes('chatgpt') || n.includes('gpt')) return 'chatgpt';
   if (n.includes('grok')) return 'grok';
   if (n.includes('claude')) return 'claude';

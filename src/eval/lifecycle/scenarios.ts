@@ -5,7 +5,7 @@
  */
 import { shortTool } from './assistants.js';
 import type { Ctx, Scenario } from './scenario.js';
-import { allFacts, citesFacts, historyHas, isHarbor, live, matching, matchesAll, NUMBER_CLAIM, s3StateChecks, suggestions, supersedeLink, supersessions } from './scoring.js';
+import { allFacts, citesFacts, historyHas, isHarbor, live, matching, matchesAll, NUMBER_CLAIM, s3StateChecks, S3_OWNER_TURNS, suggestions, supersedeLink, supersessions } from './scoring.js';
 import { NUDGE } from '../../hooks/memorySave.js';
 
 const wrote = (calls: { name: string }[]): boolean => calls.some((c) => ['remember', 'update_memory', 'suggest_memories'].includes(shortTool(c.name)));
@@ -92,10 +92,10 @@ export const SCENARIOS: Scenario[] = [
     id: 'S3', title: 'An assistant inference stays distinguishable from what the owner said', covers: ['S3'],
     async run(ctx) {
       const s = ctx.session(ctx.primary);
-      await s.say("I'm sorting out backups for harbor. It runs on my Hetzner box in Falkenstein and I already have a Backblaze B2 bucket I don't use for anything. What would you suggest for nightly backups?");
-      await s.say("Good, B2 it is then, and everything stays on the Hetzner box. I'll sort the rest out later.");
+      await s.say(S3_OWNER_TURNS[0]!);
+      await s.say(S3_OWNER_TURNS[1]!);
       const facts = live(allFacts(ctx.brain));
-      ctx.note('facts', facts.map((f) => ({ content: f.content, source: f.source, source_by: f.source_by })));
+      ctx.note('facts', facts.map((f) => ({ content: f.content, source: f.source, source_by: f.source_by, source_note: f.source_note })));
       for (const c of s3StateChecks(allFacts(ctx.brain), ctx.primary.connection)) ctx.check(c);
       const q = 'What is the plan for harbor backups? What did I decide, and what is just a suggestion?';
       const a = await ctx.session(ctx.peer).say(q);

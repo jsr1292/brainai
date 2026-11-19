@@ -122,7 +122,7 @@ test('two inferred facts, or facts with no source, get no "you said" line', asyn
 
 test('an assistant\'s "owner said" is never shown as the owner\'s own word, on the fact page or in a disagreement', async (t) => {
   const { app, f, save } = await start(t);
-  const a = await save('The server listens on port 3000', { source: 'owner_said' }, ai, 'homelab');
+  const a = await save('The server listens on port 3000', { source: 'owner_said', sourceNote: 'port 3000 it is' }, ai, 'homelab');
   const b = await save('The server listens on port 3100', { source: 'inferred' }, ai, 'homelab');
   const mine = await save('The backup runs at night', { source: 'owner_said' }, owner, 'homelab');
   app.deps.service.flagDisagreement(a.id, b.id, 'Two different ports', ai);
@@ -130,7 +130,7 @@ test('an assistant\'s "owner said" is never shown as the owner\'s own word, on t
   assert.match(body, /Claude Code says you said this on one side, inferred by Claude Code on the other\./);
   assert.doesNotMatch(body, /You said this/);
   const page = await (await f(`/memories/${a.id}`)).text();
-  assert.match(page, /Source: Claude Code says you said this/);
+  assert.match(page, /Source: Claude Code says you said: “port 3000 it is”/);
   assert.doesNotMatch(page, /Source: You said this/);
   assert.match(await (await f(`/memories/${mine.id}`)).text(), /Source: You said this/);
 });
@@ -230,10 +230,10 @@ test('an approval card shows the date and the source a held save carries, and wh
   const fact = (await svc.approveSuggestion(id))!;
   assert.equal(fact.sourceBy, 'Claude Code');
   // Held update: date and source change, text the same -> current -> proposed, and "Changes only".
-  await svc.update(fact.id, { meta: { validUntil: '2027-09-01', source: 'owner_said' } }, ai);
+  await svc.update(fact.id, { meta: { validUntil: '2027-09-01', source: 'owner_said', sourceNote: 'my words' } }, ai);
   card = await (await f('/approvals')).text();
   assert.match(card, /Valid until: 2027-04-01 → 2027-09-01/);
-  assert.match(card, /Source: Inferred by Claude Code → Claude Code says you said this/);
+  assert.match(card, /Source: Inferred by Claude Code → Claude Code says you said: “my words”/);
   assert.match(card, /Changes only the date and the source; the text stays as it is\./);
   // Held update that clears both.
   await svc.update(fact.id, { meta: { validUntil: '', source: null } }, ai);
@@ -353,4 +353,11 @@ test('the sidebar lights Facts on a fact page, also for a fact that has a projec
   const side = body.slice(body.indexOf('<nav class="side"'), body.indexOf('</nav>', body.indexOf('<nav class="side"')));
   assert.match(side, /<a class="side-place" href="\/facts" aria-current="page">Facts/);
   assert.doesNotMatch(side, /href="\/" aria-current/);
+});
+
+test('an assistant-set owner_said with its note shows the owner\'s words, escaped; owner-set ones are unchanged', async () => {
+  const { sourceLine, heldMetaLines } = await import('./factMetaViews.js');
+  assert.equal(sourceLine({ source: 'owner_said', sourceBy: 'Claude Code', sourceNote: 'B2 it is <b>' }).value, '<p class="fact-keys fact-source">Source: Claude Code says you said: “B2 it is &lt;b&gt;”</p>');
+  assert.equal(sourceLine({ source: 'owner_said', sourceBy: 'owner', sourceNote: 'hi' }).value, '<p class="fact-keys fact-source">Source: You said this · “hi”</p>');
+  assert.match(heldMetaLines({ action: 'add', source: 'owner_said', sourceBy: 'Codex', sourceNote: 'go with B2', suggestedBy: 'Codex' }, undefined, false, { validUntil: null, source: 'owner_said', sourceNote: 'go with B2', sourceBy: 'Codex' }).value, /Source: Codex says you said: “go with B2”/);
 });

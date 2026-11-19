@@ -27,7 +27,7 @@ server later without losing a memory.
 | **A cloud server** | The same, without a machine at home | A small rented Linux server, Docker, a domain on Cloudflare | `docs/CLOUD.md` |
 
 - **Your computer:** the app runs BrainAI with no server, no domain and no password, and connects Claude Code,
-  Codex, OpenCode, Cursor and Claude's desktop app in one click each (with save reminders where the tool allows). *Reach from phone and web* adds a public address (through Tailscale,
+  Codex, OpenCode, Cursor, Gemini CLI (not tested yet) and Claude's desktop app in one click each (with save reminders where the tool allows). *Reach from phone and web* adds a public address (through Tailscale,
   or your own domain on Cloudflare) while the Mac is on. The Mac app is about 281 MiB: it does not carry the search
   models. On first run it suggests models for your computer and downloads the ones you pick (change them later in
   Settings › Search). It tells you when a new version is out and updates itself when you say so.
@@ -51,13 +51,16 @@ server later without losing a memory.
   have nicknames, and an assistant can send an English version of a question asked in another language. How well it
   finds things is measured on two public tests, LoCoMo and LongMemEval, retrieval only (`docs/BENCHMARK.md`); whether
   the whole loop (saving, replacing, forgetting, answering) works with real assistants is measured in a small end-to-end
-  eval, with its failures and open gaps published (`docs/LIFECYCLE-EVAL.md`).
+  eval, with its failures and open gaps published (`docs/LIFECYCLE-EVAL.md`). `docs/REPRODUCE.md` has the commands to check each claim yourself.
 - **Facts that say how long they hold and where they came from.** An assistant can mark a fact as valid until a date
   (a deadline, a version, who holds a job): every assistant then sees when it is past its date. Each fact can say
-  whether you said it or an assistant inferred it, and who recorded that, so an assistant's claim never reads as your
-  own words.
+  whether you said it or an assistant inferred it, and who recorded that. An assistant that says you said something
+  has to quote your words, and the label covers only that quote; without one the fact is stored as its own inference.
+  Assistants still sometimes write their suggestion into the same fact (`docs/LIFECYCLE-EVAL.md`, S3).
 - **You approve what matters.** Changes to your profile, and memories that read like instructions to an assistant,
-  wait for you in one Inbox, grouped, with Undo. What you delete stays deleted. Passwords and keys are refused.
+  wait for you in one Inbox, grouped, with Undo. What you delete stays deleted: an assistant that saves it again, in the same or
+  similar words, is held for your approval. A heavy rewording can still get through (measured limits in
+  `docs/SECURITY.md`). Passwords and keys are refused.
 - **You see and control what assistants do.** Activity lists what each assistant saved, changed or deleted, with Undo
   on each fact. "Saves wait for me" holds one assistant's saves for your approval; "Pause all saves" stops them all.
 - **Nothing gets lost at the end of a session.** Save reminders for Claude Code, Codex and Cursor, and a harvest
@@ -175,8 +178,9 @@ Anything personal lives in `overlay/`, which is never committed and never touche
 - `docs/CLOUD.md`: running BrainAI on a rented server.
 - `docs/IMPORT.md`: bringing in what you already have.
 - `docs/ARCHITECTURE.md`: how it is built.
-- `docs/BENCHMARK.md`: how well recall finds things, measured on LoCoMo.
+- `docs/BENCHMARK.md`: how well recall finds things, measured on LoCoMo and LongMemEval.
 - `docs/LIFECYCLE-EVAL.md`: the end-to-end memory loop with real assistants, failures included.
+- `docs/REPRODUCE.md`: every claim above with the command that checks it, to run on your own computer.
 - `SECURITY.md`: how it is kept safe, and how to report a problem.
 
 ## Developing

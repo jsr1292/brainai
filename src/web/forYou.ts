@@ -6,7 +6,7 @@
  * except the approval card, whose Approve is its own one loud thing (it opens in place under the row, a sheet on
  * the phone); two or more waiting become one row to /approvals.
  */
-import type { Memory, Suggestion } from '../memory/types.js';
+import type { FactMeta, Memory, Suggestion } from '../memory/types.js';
 import type { HomeSuggestion } from '../projects/service.js';
 import { suggestionCard, suggestionPhrase } from './dashboardViews.js';
 import { disagreeRow } from './disagreeViews.js';
@@ -21,7 +21,7 @@ export interface ApprovalSummary {
   count: number;
   first: { by: string; kind: string; action: 'create' | 'update' | 'delete' } | null;
   /** The one waiting suggestion as a full card, set only when `count === 1`. */
-  single?: { suggestion: Suggestion; current: string | undefined; currentMeta?: Memory; replaces: Memory[]; deleted?: Memory };
+  single?: { suggestion: Suggestion; current: string | undefined; currentMeta?: Memory; heldOutcome?: FactMeta; replaces: Memory[]; deleted?: Memory };
 }
 
 const SHOWN = 3;
@@ -32,7 +32,7 @@ const action = (name: string, what: string): string => `/projects/${encodeURICom
 function approvalRow(a: ApprovalSummary): SafeHtml {
   if (a.count === 1 && a.single) {
     const s = a.single.suggestion;
-    return html`<details class="fy-approval"><summary class="row">${dot()}<span class="txt"><b>${s.suggestedBy === 'owner' ? 'You' : s.suggestedBy}</b> suggests ${suggestionPhrase(s)}</span>${chev}</summary>${suggestionCard(s, a.single.current, { back: '/', currentMeta: a.single.currentMeta, replaces: a.single.replaces, deleted: a.single.deleted })}</details>`;
+    return html`<details class="fy-approval"><summary class="row">${dot()}<span class="txt"><b>${s.suggestedBy === 'owner' ? 'You' : s.suggestedBy}</b> suggests ${suggestionPhrase(s)}</span>${chev}</summary>${suggestionCard(s, a.single.current, { back: '/', currentMeta: a.single.currentMeta, heldOutcome: a.single.heldOutcome, replaces: a.single.replaces, deleted: a.single.deleted })}</details>`;
   }
   return html`<a class="row" href="/approvals">${dot()}<span class="txt">${a.count === 1 ? '1 change waits' : `${a.count} changes wait`} for your approval</span>${chev}</a>`;
 }

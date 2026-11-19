@@ -12,7 +12,7 @@ import { thisComputer } from './computer.js';
 import { BRIDGE_KEY_FILE } from './claudeBridge.js';
 import { hasHooks, hooksState, installHooks, removeToolHooks } from './hooksInstall.js';
 
-export type ToolId = 'claude-code' | 'codex' | 'opencode' | 'cursor' | 'claude-desktop';
+export type ToolId = 'claude-code' | 'codex' | 'opencode' | 'cursor' | 'gemini' | 'claude-desktop';
 export interface ToolEnv {
   home: string;
   /** Where to look for the tools' commands (the owner's login-shell PATH, from the app). */
@@ -337,6 +337,8 @@ const cursor: Tool = {
   async remove(env) {
     const c = cursorConfig(env);
     if ('refuse' in c) return c.refuse;
+    // Nothing of ours there: leave the file (or its absence) alone.
+    if (c.json.mcpServers?.[NAME] === undefined) return null;
     const servers = { ...c.json.mcpServers };
     delete servers[NAME];
     writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcpServers: servers }, null, 2)}\n`);
@@ -345,6 +347,61 @@ const cursor: Tool = {
   // Cursor's rules live in its own settings, not a file.
   rulesFile: () => null,
   signIn: 'Cursor asks you to sign in the first time it uses BrainAI. Paste the rules below into Cursor › Settings › Rules.',
+};
+
+const GEMINI_DIR = (env: ToolEnv) => join(env.home, '.gemini');
+const MANUAL_GEMINI = "Gemini CLI's ~/.gemini/settings.json is not plain JSON (comments, or a mistake): BrainAI will not rewrite it. Add it by hand from Settings › Set up an app › Gemini CLI.";
+
+/** ~/.gemini/settings.json parsed, or why it cannot be changed safely. Everything but mcpServers.brainai is kept as it is. */
+function geminiConfig(env: ToolEnv): { path: string; json: { mcpServers?: Record<string, unknown> } & Record<string, unknown> } | { refuse: string } {
+  const path = join(GEMINI_DIR(env), 'settings.json');
+  const text = read(path);
+  if (text === null) return { path, json: {} };
+  try {
+    const json = JSON.parse(text) as unknown;
+    if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('not an object');
+    const servers = (json as { mcpServers?: unknown }).mcpServers;
+    if (servers !== undefined && (!servers || typeof servers !== 'object' || Array.isArray(servers))) throw new Error('mcpServers is not an object');
+    return { path, json: json as Record<string, unknown> };
+  } catch {
+    return { refuse: MANUAL_GEMINI };
+  }
+}
+
+/**
+ * Google's Gemini CLI. Remote Streamable HTTP servers use `httpUrl` (`url` is for SSE), per its MCP documentation. Written
+ * to the file like Cursor and OpenCode, not through `gemini mcp add`, which has no way to read an entry back. Untested
+ * against a real Gemini CLI. No save reminders: see docs/CLIENTS.md.
+ */
+const gemini: Tool = {
+  id: 'gemini', name: 'Gemini CLI', slug: 'gemini-cli',
+  installed: (env) => onPath(env, 'gemini'),
+  async server(env) {
+    const c = geminiConfig(env);
+    if ('refuse' in c) return { refuse: c.refuse };
+    const entry = c.json.mcpServers?.[NAME] as { httpUrl?: unknown } | undefined;
+    if (entry === undefined) return null;
+    // An entry with only `url` is an SSE server: not ours, whatever it points at.
+    return typeof entry === 'object' && entry !== null && typeof entry.httpUrl === 'string' ? entry.httpUrl : NO_ADDRESS;
+  },
+  async add(env) {
+    const c = geminiConfig(env);
+    if ('refuse' in c) return c.refuse;
+    writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcpServers: { ...c.json.mcpServers, [NAME]: { httpUrl: env.mcpUrl } } }, null, 2)}\n`);
+    return null;
+  },
+  async remove(env) {
+    const c = geminiConfig(env);
+    if ('refuse' in c) return c.refuse;
+    // Nothing of ours there: leave the file (or its absence) alone.
+    if (c.json.mcpServers?.[NAME] === undefined) return null;
+    const servers = { ...c.json.mcpServers };
+    delete servers[NAME];
+    writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcpServers: servers }, null, 2)}\n`);
+    return null;
+  },
+  rulesFile: (env) => join(GEMINI_DIR(env), 'GEMINI.md'),
+  signIn: 'In Gemini CLI, type /mcp auth brainai; your browser asks you to Allow.',
 };
 
 const NEEDS_AGAIN = 'needs connecting again';
@@ -449,6 +506,8 @@ const claudeDesktop: Tool = {
   async remove(env) {
     const c = claudeDesktopConfig(env);
     if ('refuse' in c) return c.refuse;
+    // Nothing of ours there: leave the file (or its absence) alone.
+    if (c.json.mcpServers?.[NAME] === undefined) return null;
     const servers = { ...c.json.mcpServers };
     delete servers[NAME];
     try { writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcpServers: servers }, null, 2)}\n`); } catch (e) { return `BrainAI could not write ${c.path}: ${(e as Error).message}`; }
@@ -464,7 +523,7 @@ const claudeDesktop: Tool = {
   cleanup: (env) => dropKey(env),
 };
 
-const TOOLS: Tool[] = [claudeCode, codex, opencode, cursor, claudeDesktop];
+const TOOLS: Tool[] = [claudeCode, codex, opencode, cursor, gemini, claudeDesktop];
 
 interface Look {
   server: string | null; refuse?: string;
@@ -597,7 +656,7 @@ export async function disconnect(id: ToolId, env: ToolEnv): Promise<Outcome> {
 
 /**
  * The `.brainai-backup` files BrainAI made beside the owner's originals (CLAUDE.md, Codex's config.toml and AGENTS.md,
- * OpenCode's opencode.json and AGENTS.md, Cursor's mcp.json, the hook files of Codex and Cursor; not Claude Code's settings.json backup, see dropSettingsBackup) that exist now, as absolute paths. Removing BrainAI
+ * OpenCode's opencode.json and AGENTS.md, Cursor's mcp.json, Gemini CLI's settings.json and GEMINI.md, the hook files of Codex and Cursor; not Claude Code's settings.json backup, see dropSettingsBackup) that exist now, as absolute paths. Removing BrainAI
  * moves them into the saved folder, so the owner's originals are kept in one place.
  */
 export function backupFiles(env: ToolEnv): string[] {
@@ -608,6 +667,8 @@ export function backupFiles(env: ToolEnv): string[] {
     join(OPENCODE_DIR(env), 'opencode.json'),
     join(OPENCODE_DIR(env), 'AGENTS.md'),
     join(env.home, '.cursor', 'mcp.json'),
+    join(GEMINI_DIR(env), 'settings.json'),
+    join(GEMINI_DIR(env), 'GEMINI.md'),
     join(env.home, '.codex', 'hooks.json'),
     join(env.home, '.cursor', 'hooks.json'),
     claudeConfigPath(env),

@@ -17,7 +17,7 @@ const MAX_NOTES = 1500;
 const LATER_FILE = 'update-later';
 
 /** x.y.z compared as numbers; anything else counts as 0. Negative: a is older. */
-function compareVersions(a: string, b: string): number {
+export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
   const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < 3; i++) {

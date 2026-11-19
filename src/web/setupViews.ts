@@ -40,7 +40,7 @@ function allowBlock(app: SetupApp, a: { allowed: boolean; refused: readonly Refu
 export interface SetupContext { needsReach: boolean; signIn: 'password' | 'window'; local?: boolean }
 
 /** The terminal tools that Tools on this Mac connects in one click; their manual steps are for another computer. */
-const TOOLS_APPS = new Set(['claude-code', 'codex', 'opencode']);
+const TOOLS_APPS = new Set(['claude-code', 'codex', 'opencode', 'gemini-cli']);
 export const toolsOnThisComputer = (app: SetupApp, ctx: SetupContext): boolean => !!ctx.local && TOOLS_APPS.has(app.slug);
 
 const toolsBox = () => html`<p class="notice">On this computer, use <a href="/settings/tools">Tools on ${thisComputer()}</a>: one click does all of this. The steps below are for another computer.</p>`;

@@ -38,7 +38,7 @@ test('remember and update_memory describe valid_until, source and source_note pr
     const props = (tools.find((t) => t.name === name)!.inputSchema as any).properties;
     assert.match(props.valid_until.description, /YYYY-MM-DD.*real calendar date/);
     assert.match(props.valid_until.description, /past date is accepted/);
-    assert.match(props.source.description, /"owner_said" only for what the owner actually said, "inferred" for your own conclusion/);
+    assert.match(props.source.description, /"owner_said" only for what the owner actually said.*"inferred" for your own conclusion/);
     assert.match(props.source_note.description, /at most 200 characters/);
   }
   assert.match((tools.find((t) => t.name === 'update_memory')!.inputSchema as any).properties.valid_until.description, /empty string clears it/);
@@ -109,7 +109,7 @@ test('update_memory sets, changes and clears: an empty string clears the date an
   assert.equal(cleared.source, 'inferred');
   const none = dataOf((await call('update_memory', { id, source: null })).text)[0];
   assert.ok(!('source' in none));
-  const again = dataOf((await call('update_memory', { id, source: 'owner_said' })).text)[0];
+  const again = dataOf((await call('update_memory', { id, source: 'owner_said', source_note: 'owner words' })).text)[0];
   assert.equal(again.source, 'owner_said');
   const cleared2 = dataOf((await call('update_memory', { id, source: '' })).text)[0];
   assert.ok(!('source' in cleared2));
@@ -164,11 +164,12 @@ test('an assistant\'s profile save with a date is held and keeps it', async () =
 test('results carry source_by, and a source an assistant gives is recorded as set by its app', async () => {
   const { connect } = setup();
   const { call } = await connect('Codex');
-  const saved = await call('remember', { kind: 'decision', project: 'casa', new_project: true, content: 'The boiler is serviced yearly', source: 'owner_said' });
+  const saved = await call('remember', { kind: 'decision', project: 'casa', new_project: true, content: 'The boiler is serviced yearly', source: 'owner_said', source_note: 'yearly, he said' });
   const row = dataOf(saved.text)[0];
   assert.deepEqual([row.source, row.source_by], ['owner_said', 'Codex']);
   const rewritten = dataOf((await call('update_memory', { id: row.id, content: 'The boiler is serviced every two years' })).text)[0];
-  assert.ok(!('source' in rewritten) && !('source_by' in rewritten), 'a rewrite with no source drops "you said this"');
+  // An assistant's own owner_said rewritten without a fresh quote is no longer "you said this": inferred by that assistant.
+  assert.deepEqual([rewritten.source, rewritten.source_by], ['inferred', 'Codex']);
 });
 
 test('recall without a limit counts the source note toward its size budget', async () => {
@@ -182,4 +183,28 @@ test('recall without a limit counts the source note toward its size budget', asy
   const size = (rows as any[]).reduce((n, r) => n + r.content.length + (r.source_note?.length ?? 0), 0);
   assert.ok(rows.length >= 5 && rows.length < 12, `${rows.length} rows`);
   assert.ok(size - (rows.at(-1).content.length + (rows.at(-1).source_note?.length ?? 0)) <= 8000, 'the pack stopped at the budget, notes included');
+});
+
+test('owner_said without the owner\'s words is stored as inferred and the reply says so; with a note it stays', async () => {
+  const { connect, service } = setup();
+  const { call } = await connect();
+  const r = await call('remember', { kind: 'decision', content: 'Harbor backups go to Backblaze B2', project: 'harbor', new_project: true, source: 'owner_said' });
+  assert.match(r.text, /Saved with source inferred: owner_said needs the owner's own words in source_note\. If the owner said this, call update_memory with source "owner_said" and source_note set to their words\./);
+  const m = dataOf(r.text)[0];
+  assert.equal(m.source, 'inferred');
+  const u = await call('update_memory', { id: m.id, source: 'owner_said' });
+  assert.match(u.text, /Updated with source inferred: owner_said needs the owner's own words/);
+  const ok = await call('update_memory', { id: m.id, source: 'owner_said', source_note: 'B2 it is then' });
+  assert.doesNotMatch(ok.text, /source inferred/);
+  assert.equal(service.get(m.id)!.source, 'owner_said');
+  const held = await call('suggest_memories', { session: 's', items: [{ content: 'Harbor runs on Hetzner', kind: 'decision', project: 'harbor', source: 'owner_said' }] });
+  assert.match(held.text, /"source_stored_as":"inferred"/);
+});
+
+test('the tool texts say owner_said needs the owner\'s own words in source_note', async () => {
+  const { connect } = setup();
+  const { client } = await connect();
+  const props = (((await client.listTools()).tools.find((t) => t.name === 'remember')!.inputSchema) as any).properties;
+  assert.match(props.source.description, /owner's own words in source_note/);
+  assert.match(props.source_note.description, /verbatim/);
 });

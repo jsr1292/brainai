@@ -1,7 +1,7 @@
 import type { Disagreement } from '../memory/disagreements.js';
 import type { Memory } from '../memory/types.js';
 import { writer, writerName } from './dashboardViews.js';
-import { sourceWords } from './factMetaViews.js';
+import { sourceWords, sourceWordsNote } from './factMetaViews.js';
 import { html, type SafeHtml } from './html.js';
 import { metaLine } from './metaLine.js';
 import { stripProjectPrefix } from './stripProject.js';
@@ -20,7 +20,7 @@ export function disagreeGroup(project: string, list: OpenDisagreement[], now: Da
 
 /** A2: where one side came from ("You said this", "An assistant inferred this"); nothing for a fact with no source. Display only. */
 const sourceTag = (m: Memory): SafeHtml => (m.source
-  ? html`<p class="dg-source meta">${sourceWords(m)}${m.sourceNote ? html` · “${m.sourceNote}”` : ''}</p>` : html``);
+  ? html`<p class="dg-source meta">${sourceWordsNote(m)}</p>` : html``);
 
 /** When one side is what the owner said and the other an assistant's inference, the pair says so. Settling is unchanged. */
 const youVsAssistant = (d: OpenDisagreement): SafeHtml => {

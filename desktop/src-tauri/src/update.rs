@@ -17,6 +17,17 @@ pub fn due(last_check_unix: Option<u64>, now_unix: u64) -> bool {
     }
 }
 
+/// A manual check (Settings › Version › Check for updates) is ignored when the previous one began less than this ago.
+pub const MANUAL_GAP: Duration = Duration::from_secs(30);
+
+/// Whether a manual check may start: the first one, one at least MANUAL_GAP after the last, or a clock that moved backwards.
+pub fn manual_check_allowed(last_manual_unix: Option<u64>, now_unix: u64) -> bool {
+    match last_manual_unix {
+        None => true,
+        Some(last) => last > now_unix || now_unix - last >= MANUAL_GAP.as_secs(),
+    }
+}
+
 /// Said on the card when the app runs from a disk image or from the temporary copy macOS makes of a quarantined app.
 pub const MOVE_FIRST: &str = "BrainAI can't update itself while it runs from a disk image or a temporary copy. Move BrainAI to Applications and open it from there, or download the new version.";
 /// Said on the card when the app cannot replace its own files where it is installed.
@@ -442,6 +453,26 @@ fn check_now(app: &AppHandle) {
     let _ = std::fs::write(checked_file(app), now_unix().to_string());
 }
 
+/// When the last manual check began (unix seconds; 0 = none yet).
+static LAST_MANUAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Settings › Version › Check for updates: the same check as the daily one (the same endpoints, the same signature
+/// check, the same files written), now. At most one per MANUAL_GAP; a press sooner is ignored (the page rests its button
+/// too). Runs on a background thread, never inside on_navigation.
+pub fn check_now_manual(app: &AppHandle) {
+    let now = now_unix();
+    // One atomic step: two presses at once cannot both pass the gap check.
+    if LAST_MANUAL
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |last| {
+            manual_check_allowed((last != 0).then_some(last), now).then_some(now)
+        })
+        .is_err()
+    {
+        return;
+    }
+    check_now(app);
+}
+
 /// Before the server starts: the state of the update that just ran (its version is this app's now) is removed, and an
 /// update stopped half way is offered again. A state that stays shows the dot.
 /// Returns true right after an update, when the window must show whatever the start's arguments say.
@@ -630,6 +661,17 @@ mod tests {
         assert!(due(Some(now - 24 * HOUR), now), "24 hours ago");
         assert!(due(Some(now + HOUR), now), "the clock moved backwards");
         assert_eq!(CHECK_EVERY, Duration::from_secs(24 * HOUR));
+    }
+
+    #[test]
+    fn a_manual_check_is_allowed_once_per_half_minute() {
+        let now = 1_800_000_000;
+        assert!(manual_check_allowed(None, now), "the first press");
+        assert!(!manual_check_allowed(Some(now), now), "the same second");
+        assert!(!manual_check_allowed(Some(now - 29), now), "29 s ago");
+        assert!(manual_check_allowed(Some(now - 30), now), "30 s ago");
+        assert!(manual_check_allowed(Some(now + 5), now), "the clock moved backwards");
+        assert_eq!(MANUAL_GAP, Duration::from_secs(30));
     }
 
     #[test]

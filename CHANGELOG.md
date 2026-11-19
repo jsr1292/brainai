@@ -2,7 +2,30 @@
 
 Each release says what changed and whether updating needs anything from you. Updating is always
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
-any change to it. Settings › Backups and health shows the version you run.
+any change to it. Settings › Version shows the version you run.
+
+## 1.6.0 (2026-11-19)
+
+Updating needs nothing from you. There is no database change. Saves already waiting in your Inbox are judged by the new rule when you approve them.
+
+**An assistant's "you said" now has to quote you**
+- When an assistant saves a fact as "you said this", it must give your own words in the source note. Without them BrainAI stores the fact as "inferred" instead and tells the assistant how to fix it. Where you see it (fact page, Inbox, disagreements) it reads "Claude Code says you said: “your words”", so the label covers only your words, not the assistant's wording around them.
+- A fact marked as your words that also reads like the assistant's own suggestion ("I suggest...", "recommended by Claude", "te sugiero...") is held in the Inbox with the reason "Marked as your words but reads like it includes an assistant's suggestion". Approving it keeps your quoted words.
+- Assistants are told to put their own suggestions in a separate fact marked "inferred". Facts you or the dashboard mark as yours, imported facts and facts from files are unchanged. Updating needs nothing from you.
+- A save waiting in your Inbox is judged again when you approve it, against the fact as it is then, and the card shows what approving will store.
+
+**Forgetting, measured**
+- **Documented a limit of "forgetting sticks".** On the default model, a deleted fact that an assistant saves again in heavily different words (measured similarity 0.691 and 0.559, against a hold at 0.78) is saved without being held; lowering the threshold would also hold related facts that share its numbers (0.72-0.77). Using the reranker as a second opinion was measured (`src/scripts/calibrateDeletedRerank.ts`, 73 labelled pairs) and does not separate them, so nothing changed in behaviour. See docs/SECURITY.md.
+
+**Evidence you can check**
+- `docs/REPRODUCE.md` lists every published claim with the command that checks it, what it needs and how long it takes.
+- The restore drill now records which search model it ran with, and passes all 192 checks on both the default model (EmbeddingGemma) and e5.
+- The memory loop eval has a second round (docs/LIFECYCLE-EVAL.md): the quoted words were the owner's in every run, and Claude Code still often writes its own suggestion into the same fact.
+
+**Settings and setup**
+- **Settings › This computer shows how much disk space BrainAI uses (the desktop app).** One total and a breakdown in plain sizes: the app itself, search models (each model by name), your memories (database and pictures), backups on this computer, and everything else. A second backup folder is not counted. The total also shows in the Settings list. The sizes are worked out in the background and kept for ten minutes, so Settings opens at once and says "Working out the sizes…" the first time. A server shows nothing new.
+- **Settings has a Version panel with "Check for updates".** It shows the BrainAI version and database schema, when BrainAI last checked for an update, the warning if checks keep failing, and whether a newer version is waiting. In the desktop app the button runs the same check the app makes by itself each day, now (at most once every 30 seconds). On a server the button asks GitHub for the latest release, only when you press it, and says whether you are up to date or what to run (`git pull && docker compose up -d --build`). BrainAI still never looks for updates on a server by itself.
+- **Gemini CLI can be set up from Settings › Tools (not tested yet).** Connect adds BrainAI to `~/.gemini/settings.json` (your other settings and servers stay, a backup is kept) and its rules to `~/.gemini/GEMINI.md`, then you type `/mcp auth brainai` in Gemini CLI. Disconnect takes only BrainAI out. This follows Google's documentation but has not been tried against a real Gemini CLI, and it adds no save reminders.
 
 ## 1.5.2 (2026-11-19)
 

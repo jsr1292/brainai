@@ -26,7 +26,7 @@ Only what the owner said or the work concluded:
 
 1. Check what is already saved: `project_brief` for each project you worked on.
 2. Write each item as one short, self-contained statement that makes sense with no surrounding context. Put the project name in `project` (the git repository's folder name for code) and a date in anything that will change. Set `valid_until` when a fact stops being true on a known date.
-3. Mark `source` honestly: `owner_said` only for what the owner actually said, `inferred` for your own conclusions, `from_file` for something you read in a file. When unsure, leave it out.
+3. Mark `source` honestly: `owner_said` only for what the owner actually said, with their own words in `source_note` (without them it is stored as `inferred`), `inferred` for your own conclusions, `from_file` for something you read in a file. When unsure, leave it out.
 4. Send at most 20 items, in one call, with one short `session` label for the whole session (for example "billing export, 18 Nov").
 5. Read the answer. An item marked refused was not sent: fix it or drop it. An item marked as close to an existing memory is still waiting; tell the owner in one line if it matters.
 6. Tell the owner in one sentence how many suggestions wait in their Inbox and under which group name. Do not list them again.

@@ -134,6 +134,7 @@ the picture upload link is dead while paused, while saves wait, after the grant 
 
 - Bookkeeping writes listed above.
 - The pause banner says "assistants cannot save, change or forget anything" (`src/web/html.ts:186`); Settings says nothing is saved (`src/web/settingsViews.ts:209`). Both are true for content; usage counters still tick.
+- **Forgetting sticks only up to a point.** A deleted fact that an assistant says again in heavily different words can still be saved without being held. Saves are compared with what you deleted by meaning, and on the default model (EmbeddingGemma) a text is held at 0.78 similarity or above. In the lifecycle eval, two re-saves of a deleted fact in other words scored 0.691 and 0.559 and were not held. Related but different facts that share the deleted fact's numbers score 0.72-0.77, so a lower threshold would hold them too. The reranker is no help either: measured on 73 labelled pairs (`src/scripts/calibrateDeletedRerank.ts`), it scores "production backup runs at 02:30" against a deleted "staging backup runs at 02:30" at 10.1, as high as a true rewording (positives 2.0-10.9, hard negatives up to 10.5), and no rule separates them.
 
 ## 6. Area 3: can malicious imported pages or memories bypass the instruction-approval checks?
 

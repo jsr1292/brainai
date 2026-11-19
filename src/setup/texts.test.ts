@@ -35,7 +35,7 @@ test("the chat apps' texts fit ChatGPT's 1500-character field", () => {
 });
 
 test('the apps, in order', () => {
-  assert.deepEqual(setupApps().map((a) => a.slug), ['claude', 'chatgpt', 'grok', 'grok-build', 'claude-code', 'codex', 'opencode']);
+  assert.deepEqual(setupApps().map((a) => a.slug), ['claude', 'chatgpt', 'grok', 'grok-build', 'claude-code', 'codex', 'opencode', 'gemini-cli']);
   assert.throws(() => setupText('nope', 'https://x/mcp'));
 });
 
@@ -69,5 +69,5 @@ test('an overlay adds its lines before the closing ask, per app and for every co
 
 test('the brain-setup marker carries the overlay number for every file app, even when a line mentions another (O1 review)', () => {
   const o = { version: 9, extra: { coding: ['- An example: pass setup: 4. is not ours.'] } };
-  for (const slug of ['grok-build', 'claude-code', 'codex', 'opencode']) assert.match(setupText(slug, 'https://HOST/mcp', o), /^<!-- brain setup 9 -->/, slug);
+  for (const slug of ['grok-build', 'claude-code', 'codex', 'opencode', 'gemini-cli']) assert.match(setupText(slug, 'https://HOST/mcp', o), /^<!-- brain setup 9 -->/, slug);
 });

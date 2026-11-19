@@ -98,6 +98,12 @@ pub fn is_reveal_backups(url: &str, port: u16) -> bool {
     url == format!("http://localhost:{port}/app/reveal-backups")
 }
 
+/// Settings › Version › Check for updates: the window going there means "run the update check now". The link is
+/// cancelled (the page stays and follows update-check.json). Exact match, like the update address.
+pub fn is_check_updates(url: &str, port: u16) -> bool {
+    url == format!("http://localhost:{port}/app/check-updates")
+}
+
 /// Where the window goes after a folder was chosen: Settings with the path in the query, to fill the second-folder box.
 /// Nothing is saved by this: the page only shows the path, and Save is the owner's own press.
 pub fn folder_page(port: u16, folder: &str) -> String {
@@ -179,6 +185,17 @@ pub fn install_location_ok(exe: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn check_for_updates_is_only_the_apps_own_address() {
+        assert!(is_check_updates("http://localhost:3100/app/check-updates", 3100));
+        assert!(!is_check_updates("http://localhost:3100/app/check-updates?x=1", 3100), "a query string");
+        assert!(!is_check_updates("http://localhost:3100/app/check-updates/", 3100));
+        assert!(!is_check_updates("http://localhost:3101/app/check-updates", 3100), "another port");
+        assert!(!is_check_updates("http://127.0.0.1:3100/app/check-updates", 3100), "another host");
+        assert!(!is_check_updates("https://evil.example/app/check-updates", 3100));
+        assert!(!is_check_updates("http://localhost:3100/app/update", 3100));
+    }
 
     #[test]
     fn update_and_restart_is_only_the_apps_own_update_address() {

@@ -78,8 +78,8 @@ test('A1/A2: the rules say when to set valid_until and how to mark the source, i
   const rule = (n: number) => OPERATING_RULES.split('\n').find((l) => l.startsWith(`${n}. `))!;
   assert.match(rule(7), /When a fact stops being true on a known date, also set valid_until \(YYYY-MM-DD\) on it\./);
   assert.match(rule(7), /past_date is true, check it before relying on it/);
-  assert.match(rule(3), /Mark source honestly: owner_said only for what the owner actually said, inferred for your own conclusions\./);
-  assert.ok(!/valid_until|owner_said/.test(SERVER_INSTRUCTIONS), 'the server instructions leave the source labels to the full rules');
+  assert.match(rule(3), /Mark source honestly: owner_said only with the owner's own words, verbatim, in source_note/);
+  assert.ok(!/valid_until/.test(SERVER_INSTRUCTIONS), 'the server instructions leave valid_until to the full rules');
 });
 
 test('the operating rules mention suggest_memories and the harvest skill for the end of a long session, and the initialize text names it once', () => {
@@ -101,8 +101,8 @@ test('asking to harvest a session means suggest_memories (Inbox), not remember, 
   assert.match(OPERATING_RULES, say);
 });
 
-test('rules and instructions keep what the owner said and your own suggestion in separate facts, each with its own source', () => {
-  const say = /keep what the owner said and your own suggestion or inference in separate facts, each with its own source[^.]*\(a status may sum up both\)/i;
+test('rules and instructions: owner_said needs the owner\'s words in source_note, your own suggestion goes in a separate inferred fact', () => {
+  const say = /owner_said (?:only with|needs) the owner's own words[\s\S]*?source_note[\s\S]*?your own suggestion[^.;]*separate[^.;]*inferred[^.]*\(a status may sum up both\)/i;
   assert.match(OPERATING_RULES, say);
   assert.match(SERVER_INSTRUCTIONS, say);
 });

@@ -192,7 +192,7 @@ test('an assistant\'s held rewrite of an owner_said profile fact clears the sour
   const { service } = make();
   const prof = (await service.remember({ kind: 'profile', content: 'Lives in Lisbon', meta: { source: 'owner_said' } } as never, owner)) as any;
   const u = await service.update(prof.memory.id, { content: 'Lives in Porto' }, ai) as any;
-  assert.equal(u.suggestion.source, '');
+  assert.equal(u.suggestion.source, null); // no claim made; approval judges the rewrite on the fact as it is
   const after = await service.approveSuggestion(u.suggestion.id);
   assert.deepEqual([after!.content, after!.source, after!.sourceBy], ['Lives in Porto', null, null]);
 });

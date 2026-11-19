@@ -148,7 +148,7 @@ if (config.backupDir) scheduleBackups(db, config.backupDir, config.backupKeep, n
 const tidy = new TidyService({ db, store, service, pages, now, cuts: () => ({ related: cut().related, duplicate: cut().duplicate }) });
 const deps: AppDeps = {
   tidy,
-  statusDir: config.dataDir, backupKeep: config.backupKeep, backupDir: config.backupDir, db,
+  statusDir: config.dataDir, backupKeep: config.backupKeep, backupDir: config.backupDir, db, space: { modelDir: config.modelDir },
   publicUrl: config.publicUrl, allowlist, store, service, registry, projects, discussions, growth, reviews, pages, images, diagramChecks, uploadLinks, setupOverlay: loadSetupOverlay(config.overlayDir), skills, skillSync: new SkillSync(db, now, skills), notes, devices, folders, imports: new ImportLog(db, now), learning, graph, provider, owner, sessions, limiter, clients, now,
   trustCfConnectingIp: config.trustCfConnectingIp, askCommands: () => config.askCommands, localMode: config.localMode, appSecret: config.appSecret,
   tools: config.localMode ? { home: homedir(), path: config.toolPath ?? `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${homedir()}/.local/bin` } : undefined,

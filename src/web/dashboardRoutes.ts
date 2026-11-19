@@ -11,7 +11,9 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { viaDoor } from '../desktop/publicDoor.js';
 import { InvalidNameError } from '../auth/clientsStore.js';
 import { backupHealth, readBackupStatus } from '../backupStatus.js';
-import { readUpdateCheck, updateCheckProblem } from '../desktop/updateState.js';
+import { readUpdate, readUpdateCheck, updateCheckProblem } from '../desktop/updateState.js';
+import { checkLatestRelease, type ReleaseResult } from '../desktop/releaseCheck.js';
+import { CHECK_GAP_S, lastAttempt, type VersionPanelInput } from './versionViews.js';
 import { connStatuses } from './connStatus.js';
 import { BRAIN_VERSION } from '../version.js';
 import { weekContaining, weekOf } from '../memory/digest.js';
@@ -34,6 +36,8 @@ import { takeSearchSaid } from './searchSaid.js';
 import { saySettings, takeSettingsSaid } from './settingsSaid.js';
 import { timeOfDay } from '../timezone.js';
 import { readKey } from '../models/onlineKey.js';
+import { computeSpace, SpaceCache } from '../diskSpace.js';
+import { spaceBlock, spaceTotalText } from './spaceViews.js';
 import { settingsView } from './settingsViews.js';
 import { html, page, type SafeHtml } from './html.js';
 import { backFrom, factBackDefault, nextHref, suggestionBack, withFrom, type Back } from './back.js';
@@ -72,6 +76,9 @@ const newMeta = (v: MemoryFormValues): { validUntil?: string; source?: string; s
   return { ...(validUntil ? { validUntil } : {}), ...(source ? { source, ...(sourceNote ? { sourceNote } : {}) } : {}) };
 };
 const tagList = (raw: string): string[] => raw.split(/[\s,]+/).filter((t) => t !== '');
+
+/** Settings waits this long for the sizes of the data folder; slower than that, the page says it is working them out. */
+const SPACE_WAIT_MS = 200;
 
 export function dashboardRoutes(d: AppDeps): Router {
   const router = Router();
@@ -125,11 +132,30 @@ export function dashboardRoutes(d: AppDeps): Router {
   /** The Inbox (its own place): everything that waits, in one grouped list, with the first item (or the one asked for) beside it. */
   const approvals = (res: Response, status = 200, error?: string, notice?: string) => inbox.approvals(res, status, error, notice);
 
+  // Settings › Version. The app: what update-check.json and update.json say (the shell writes them). A server: only
+  // what the owner's last press of Check for updates answered, kept in memory.
+  let serverCheck: { at: string; result: ReleaseResult } | null = null;
+  const versionInput = (tooSoon = false): VersionPanelInput => {
+    const base = { brain: BRAIN_VERSION, database: d.store.schemaVersion(), now: d.now() };
+    if (!d.localMode) return { ...base, server: serverCheck, ...(tooSoon ? { tooSoon } : {}) };
+    const check = d.statusDir ? readUpdateCheck(d.statusDir) : null;
+    return { ...base, desktop: { check, problem: updateCheckProblem(check, d.now()), update: d.statusDir ? readUpdate(d.statusDir, BRAIN_VERSION) : null } };
+  };
+
+  // Settings › This computer: the space BrainAI uses here (the app only). Walked in the background, kept ten minutes.
+  const spaceCache = new SpaceCache(() => computeSpace({
+    dataDir: d.statusDir!, modelDir: d.space?.modelDir ?? join(d.statusDir!, 'models'), backupDir: d.backupDir, copyFolder: d.backupCopy?.folder() ?? null,
+    execPath: d.space?.execPath, platform: d.space?.platform, localMode: true,
+  }));
+  const spaceOn = () => !!d.localMode && !!d.statusDir;
+
   /** Settings: the owner's device, connections, devices, backups and health, and their login. */
-  const settings = async (req: Request, res: Response, status = 200, error?: string, created?: { name: string; token: string }, ask?: { folder: string; cloud: string }) => {
+  const settings = async (req: Request, res: Response, status = 200, error?: string, created?: { name: string; token: string }, ask?: { folder: string; cloud: string }, tooSoon = false) => {
     const installedNow = d.localMode && d.models ? await d.models.installedIds() : [];
+    const space = spaceOn() && !viaDoor(req) ? await spaceCache.get(SPACE_WAIT_MS) : undefined;
     const token = readCookie(req, SESSION_COOKIE);
     send(res, status, 'Settings', settingsView({
+      space,
       error,
       grants: d.provider.listGrants(),
       connStatus: connStatuses(d, d.provider.listGrants()),
@@ -140,7 +166,7 @@ export function dashboardRoutes(d: AppDeps): Router {
       projects: d.service.listProjects().map((p) => p.project),
       savesPausedSince: d.service.savesPausedSince(),
       version: { brain: BRAIN_VERSION, database: d.store.schemaVersion() },
-      updateCheck: d.localMode && d.statusDir ? updateCheckProblem(readUpdateCheck(d.statusDir), d.now()) ?? undefined : undefined,
+      versionPanel: versionInput(tooSoon),
       brainUrl: d.publicUrl.origin,
       counts: { facts: KINDS.reduce((n, kind) => n + d.store.list({ kind }).length, 0), projects: d.registry.list().length, pages: d.pages.count() },
       pictures: d.images.totals(),
@@ -207,12 +233,33 @@ export function dashboardRoutes(d: AppDeps): Router {
     const clean = [d.statusDir, d.backupDir].reduce<string>((t, p) => t.replaceAll(p, 'the data folder'), run.error ?? 'The backup did not finish.');
     return settings(req, res, 500, `The backup did not finish: ${clean}`);
   });
+  // Check for updates. The app: the link /app/check-updates is taken by the shell (see below), which runs its normal check
+  // and writes update-check.json; the page asks this route whether a newer check is in. A server: one request to GitHub,
+  // only on this press (owner session and the same-origin check on every POST), at most one per CHECK_GAP_S.
+  router.get('/settings/space', here, owner, (_req, res, next) => {
+    if (!spaceOn()) return next();
+    const s = spaceCache.peek();
+    res.set('Cache-Control', 'no-store').json(s ? { ready: true, total: spaceTotalText(s), html: spaceBlock(s).value } : { ready: false });
+  });
+  router.get('/settings/version/state', here, owner, (_req, res, next) => {
+    if (!d.localMode || !d.statusDir) return next();
+    res.set('Cache-Control', 'no-store').json({ at: lastAttempt(readUpdateCheck(d.statusDir)) });
+  });
+  let lastServerCheckMs = 0;
+  router.post('/settings/version/check', here, owner, async (req, res, next) => {
+    if (d.localMode) return next();
+    const nowMs = d.now().getTime();
+    if (nowMs - lastServerCheckMs < CHECK_GAP_S * 1000) return settings(req, res, 429, undefined, undefined, undefined, true);
+    lastServerCheckMs = nowMs;
+    serverCheck = { at: d.now().toISOString(), result: await checkLatestRelease(BRAIN_VERSION, { url: d.releaseApiUrl, fetch: d.releaseFetch }) };
+    res.redirect(303, '/settings#version');
+  });
   // The shell (BrainAI's own window) takes these two links itself: the native folder picker and Show in Finder. In an
   // ordinary browser tab they land here instead, so the link never dead-ends.
-  for (const path of ['/app/choose-folder', '/app/reveal-backups']) {
+  for (const path of ['/app/choose-folder', '/app/reveal-backups', '/app/check-updates']) {
     router.get(path, here, owner, (_req, res, next) => {
       if (!d.localMode) return next();
-      res.type('html').send(page('BrainAI window only', html`<div class="narrow"><h1>Use BrainAI's own window</h1><p>${path === '/app/choose-folder' ? 'The folder picker opens from BrainAI\'s own window (the menu bar or tray icon opens it).' : 'Show in Finder opens from BrainAI\'s own window (the menu bar or tray icon opens it).'}</p><p><a href="/settings#health">Back to Settings</a></p></div>`, { nav: true, tab: null, back: { href: '/settings#health', label: 'Settings' } }));
+      res.type('html').send(page('BrainAI window only', html`<div class="narrow"><h1>Use BrainAI's own window</h1><p>${path === '/app/choose-folder' ? 'The folder picker opens from BrainAI\'s own window (the menu bar or tray icon opens it).' : path === '/app/check-updates' ? 'Check for updates runs from BrainAI\'s own window (the menu bar or tray icon opens it).' : 'Show in Finder opens from BrainAI\'s own window (the menu bar or tray icon opens it).'}</p><p><a href="/settings#health">Back to Settings</a></p></div>`, { nav: true, tab: null, back: { href: '/settings#health', label: 'Settings' } }));
     });
   }
 

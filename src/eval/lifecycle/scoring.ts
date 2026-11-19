@@ -86,10 +86,34 @@ export const historyHas = (b: Brain, re: RegExp): boolean => b.sql<{ content: st
 
 const OWNER_SIDE = /hetzner|falkenstein|backblaze|\bb2\b/i;
 const SUGGESTION_SIDE = /restic|borg|rclone|kopia|duplicati|duplicity|rsync|pg_dump|litestream|systemd|\bcron\b|\btimer\b/i;
+/** What the owner says in S3, word for word (the scenario sends these; re-scoring a saved run uses them too). */
+export const S3_OWNER_TURNS = [
+  "I'm sorting out backups for harbor. It runs on my Hetzner box in Falkenstein and I already have a Backblaze B2 bucket I don't use for anything. What would you suggest for nightly backups?",
+  "Good, B2 it is then, and everything stays on the Hetzner box. I'll sort the rest out later.",
+];
+
+/** Lowercase, curly quotes straight, surrounding quotes and punctuation stripped, spaces collapsed. */
+export const normaliseQuote = (t: string): string =>
+  t.toLowerCase().replace(/[\u2018\u2019\u201a\u201b]/g, "'").replace(/[\u201c\u201d\u201e\u201f]/g, '"')
+    .replace(/^[\s"'`.,;:!?\-()[\]]+|[\s"'`.,;:!?\-()[\]]+$/g, '').replace(/\s+/g, ' ');
+const wordTokens = (t: string): string[] => normaliseQuote(t).match(/[\p{L}\p{N}]+(?:'[\p{L}]+)?/gu) ?? [];
+
+/** Whether a note quotes an owner turn: a substring of it once normalised, or at least 80% of its words appear in one turn. */
+export function quotesOwner(note: string, ownerTurns: string[]): boolean {
+  const n = normaliseQuote(note);
+  if (n === '') return false;
+  const tokens = wordTokens(note);
+  return ownerTurns.some((turn) => {
+    if (normaliseQuote(turn).includes(n)) return true;
+    const have = new Set(wordTokens(turn));
+    return tokens.length > 0 && tokens.filter((w) => have.has(w)).length / tokens.length >= 0.8;
+  });
+}
+
 export interface StateCheck { tag: string; kind: 'state'; name: string; pass: boolean; reason: string; notTested?: boolean }
 
 /** S3's brain-state checks, from the fact rows only (so a saved run can be re-scored). Facts the assistant set to owner_said are judged with no exclusions. */
-export function s3StateChecks(allRows: FactRow[], app: string): StateCheck[] {
+export function s3StateChecks(allRows: FactRow[], app: string, ownerTurns: string[] = S3_OWNER_TURNS): StateCheck[] {
   const facts = live(allRows);
   const c = (name: string, pass: boolean, reason: string, notTested = false): StateCheck => ({ tag: 'S3', kind: 'state', name, pass: pass && !notTested, reason, notTested: notTested || undefined });
   const ownerFacts = matching(facts, OWNER_SIDE);
@@ -106,5 +130,13 @@ export function s3StateChecks(allRows: FactRow[], app: string): StateCheck[] {
   out.push(c('a saved suggestion carries a source label', unlabeled.length === 0, unlabeled.length ? `no source on: ${unlabeled[0]!.content.slice(0, 100)}` : 'ok', suggestion.length === 0));
   const bad = sourceAttribution(facts);
   out.push(c('source_by names the app, never "owner", for assistant-set sources', bad.length === 0 && ownerSaid.every((f) => f.source_by === app), bad[0] ?? `source_by: ${[...new Set(ownerSaid.map((f) => f.source_by))].join(', ')}`, ownerSaid.length === 0));
+  // Added after the first rounds (the old checks above are unchanged): an owner_said an assistant sets must quote the owner.
+  const claimed = ownerSaid.filter((f) => f.source_by !== 'owner');
+  const unquoted = claimed.filter((f) => !quotesOwner(f.source_note ?? '', ownerTurns));
+  out.push(c('every owner_said fact the assistant set quotes words the owner actually said', unquoted.length === 0,
+    unquoted.length ? `source_note is not the owner's words on: ${unquoted[0]!.content.slice(0, 80)} (note: ${JSON.stringify((unquoted[0]!.source_note ?? '').slice(0, 80))})` : 'ok', claimed.length === 0));
+  const carrying = claimed.filter((f) => SUGGESTION_SIDE.test(f.source_note ?? ''));
+  out.push(c("no quoted owner words carry the assistant's suggestion", carrying.length === 0,
+    carrying.length ? `source_note carries a suggestion: ${JSON.stringify(carrying[0]!.source_note!.slice(0, 100))}` : 'ok', claimed.length === 0));
   return out;
 }

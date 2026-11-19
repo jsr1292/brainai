@@ -7,6 +7,7 @@ import { LIST_CHANGED, MemoryError } from '../memory/service.js';
 import type { Memory } from '../memory/types.js';
 import { AREAS, ProjectError, type Area, type ProjectStateName } from '../projects/types.js';
 import type { AppDeps } from './app.js';
+import { heldView } from './factMetaViews.js';
 import { requireOwner } from './authRoutes.js';
 import { nextHref, safeBack, withBackError } from './back.js';
 import { html, page } from './html.js';
@@ -80,7 +81,7 @@ export function projectRoutes(d: AppDeps): Router {
       single: pending.length === 1 && proposals.length === 0 && tidyWaiting === 0 && s ? {
         suggestion: s,
         current: s.memoryId ? d.store.get(s.memoryId)?.content : undefined,
-        currentMeta: s.memoryId ? d.store.get(s.memoryId) : undefined,
+        ...heldView(d.service, s),
         replaces: s.supersedes.map((id) => d.store.get(id)).filter((m): m is Memory => m !== undefined && m.deletedAt === null),
         deleted: s.deletedMatch ? d.store.get(s.deletedMatch) : undefined,
       } : undefined,

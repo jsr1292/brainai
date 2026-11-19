@@ -43,6 +43,7 @@ Settings › Tools on this Mac, with **Disconnect**.
 | Codex | `codex mcp add brainai --url …`, tools approved in `~/.codex/config.toml`, rules in `~/.codex/AGENTS.md` | Your browser opens to sign it in |
 | OpenCode | `mcp.brainai` in `~/.config/opencode/opencode.json`, rules in `~/.config/opencode/AGENTS.md` | `opencode mcp auth brainai` |
 | Cursor | `mcpServers.brainai` in `~/.cursor/mcp.json` | Paste the rules shown into Cursor › Settings › Rules |
+| Gemini CLI (not tested yet) | `mcpServers.brainai.httpUrl` in `~/.gemini/settings.json`, rules in `~/.gemini/GEMINI.md`; found when `gemini` is on your PATH | In Gemini CLI: `/mcp auth brainai` |
 
 Each tool's sign-in opens your browser, which waits and says to open BrainAI's window. There a banner shows the tool; press Review, then Approve or Deny. The browser then goes on to the tool by itself. (With a password set for Reach, the browser signs in with the password and shows the consent page, as before.) Connect never changes a tool that already uses
 another BrainAI (for example a home server, under the name `memory`) unless you press **Replace**, and even then it
@@ -158,7 +159,7 @@ clear text: it suggests your home folder instead, and you can still choose Docum
 
 1. Saves a copy and checks it. If that fails, nothing is removed.
 2. Turns Reach off, and deletes the Cloudflare tunnel BrainAI made, if there was one.
-3. Disconnects Claude Code, Codex, OpenCode, Cursor and Claude's desktop app (its entry goes and its key is revoked), and takes out BrainAI's rules. Your own text stays. A tool
+3. Disconnects Claude Code, Codex, OpenCode, Cursor, Gemini CLI and Claude's desktop app (its entry goes and its key is revoked), and takes out BrainAI's rules. Your own text stays. A tool
    connected to another BrainAI is left alone.
 4. Removes BrainAI's Claude Code hooks and folder report, if you had them, and moves the tools' original settings
    (`<name>.brainai-backup`) into the saved folder.
