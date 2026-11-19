@@ -1,0 +1,31 @@
+import type { errPages } from '../en/errPages.js';
+import type { Entry } from '../core.js';
+
+export const errPages_es: Record<keyof typeof errPages, Entry> = {
+  'err.page.title': 'El título debe ser una sola línea de 1 a {max} caracteres',
+  'err.page.noProject': 'No hay ningún proyecto llamado {name}',
+  'err.page.needsArea': 'Una página sin proyecto necesita un área',
+  'err.page.tooLong': 'La página tiene {length} caracteres; el límite es {max}',
+  'err.page.exists': 'Ya existe una página llamada “{title}”',
+  'err.page.secret': 'La página parece contener un secreto ({reason}). Los secretos no se guardan nunca.',
+  'err.page.secretTitle': 'La página parece contener un secreto ({reason}) en el título. Los secretos no se guardan nunca.',
+  'err.page.secretLine': 'La página parece contener un secreto ({reason}) en la línea {line}, en “{excerpt}”. Los secretos no se guardan nunca.',
+  'err.page.notFound': 'No hay ninguna página con el id {id}',
+  'err.page.conflict': 'Esta página ha cambiado desde que la abriste (ahora es la versión {version})',
+  'err.page.noSection': 'No hay ninguna sección {anchor} en esta página',
+  'err.page.noVersion': 'No hay ninguna versión {version} de esta página',
+  'err.page.undoGone': 'Desde entonces, otra cosa ha actualizado esta página, así que ya no se puede deshacer.',
+  'err.note.lengthNote': 'Una nota tiene de 1 a {max} caracteres',
+  'err.note.lengthReply': 'Una respuesta tiene de 1 a {max} caracteres',
+  'err.note.secretNote': 'La nota parece contener un secreto ({reason}). Los secretos no se guardan nunca.',
+  'err.note.secretReply': 'La respuesta parece contener un secreto ({reason}). Los secretos no se guardan nunca.',
+  'err.note.resolved': 'Esta nota ya está resuelta',
+  'err.note.withdrawn': 'Esta nota se retiró',
+  'err.note.noSection': 'No hay ninguna sección {anchor} en esta página',
+  'err.note.noPage': 'No hay ninguna página con el id {id}',
+  'err.note.noNote': 'No hay ninguna nota con el id {id}',
+  'err.md.pictureMissing': 'Falta la imagen: {alt}',
+  'err.md.pictureDeleted': 'Esta imagen se borró el {date}',
+  'err.md.addedBy': 'Añadida por {who}',
+  'err.md.you': 'ti',
+};

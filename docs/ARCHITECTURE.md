@@ -1,3 +1,5 @@
+Leer en español: [docs/es/ARCHITECTURE.md](es/ARCHITECTURE.md)
+
 # How the brain is built
 
 One Node process (TypeScript, Express 5) with one SQLite database (better-sqlite3), in one Docker container behind a

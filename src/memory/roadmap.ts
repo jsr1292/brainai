@@ -84,13 +84,14 @@ export function parseRoadmap(content: string): Roadmap {
 
 /**
  * A roadmap as one line for a result list or a heading: "Now: member sign-in (3/4) · Next: newsletter signup". Done and Later
- * are left out. Null when it has neither a Now nor a Next (the caller shows the text as it is).
+ * are left out. Null when it has neither a Now nor a Next (the caller shows the text as it is). `labels` is for a screen in
+ * the owner's language (see `roadmapLine` in src/web/dashboardViews.ts); assistants always get the English default.
  */
-export function roadmapOneLine(content: string): string | null {
+export function roadmapOneLine(content: string, labels: { now: string; next: string } = { now: 'Now', next: 'Next' }): string | null {
   const r = parseRoadmap(content);
   const now = r.now === null ? null : r.progress ? `${r.now} (${r.progress.done}/${r.progress.total})` : r.now;
   const next = r.nextSteps[0] ?? r.next;
-  const parts = [now === null ? null : `Now: ${now}`, next === null || next === undefined ? null : `Next: ${next}`].filter((x): x is string => x !== null);
+  const parts = [now === null ? null : `${labels.now}: ${now}`, next === null || next === undefined ? null : `${labels.next}: ${next}`].filter((x): x is string => x !== null);
   return parts.length === 0 ? null : parts.join(' · ');
 }
 

@@ -12,6 +12,7 @@ import { contrast, palettes, parse, propIn, rgb } from '../testing/css.js';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
 import { html, page, setGoTo } from './html.js';
 import { setSideStatus } from './sideStatus.js';
+import { decodeEntities } from '../testing/entities.js';
 
 const deskCss = readFileSync(new URL('./static/desk.css', import.meta.url), 'utf8');
 const deskRules = parse(deskCss);
@@ -824,7 +825,7 @@ test('review I7: on the overview only the extras\' folds open the list pane; an 
 test('the page carries the palette\'s extra Go to pages for this mode only', async (t) => {
   const { f } = await app(t);
   const body = await (await f('/')).text();
-  const goto = JSON.parse(body.match(/data-goto="([^"]*)"/)![1]!.replaceAll('&quot;', '"').replaceAll('&#39;', "'").replaceAll('&gt;', '>').replaceAll('&amp;', '&')) as { label: string; href: string }[];
+  const goto = JSON.parse(decodeEntities(body.match(/data-goto="([^"]*)"/)![1]!)) as { label: string; href: string }[];
   const hrefs = goto.map((g) => g.href);
   for (const h of ['/skills', '/map', '/discussions', '/disagreements', '/facts/tidy', '/settings#health']) assert.ok(hrefs.includes(h), h);
   // The server install has no Tools, Reach, Search, Move or Remove pages.

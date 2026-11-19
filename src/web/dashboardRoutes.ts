@@ -1,3 +1,6 @@
+import { t } from '../i18n/core.js';
+import { errorText } from './errorText.js';
+import { isUiLanguage, storedChoice, UI_LANGUAGE_SWITCH, writeUiLanguageFile } from '../i18n/uiLanguage.js';
 import { DEFAULT_BACKUP_KEEP } from '../config.js';
 import { runBackup } from '../backup.js';
 import { healthOf, profileHealth, quietAppsOf } from './healthData.js';
@@ -25,7 +28,7 @@ import { factStory } from '../memory/factStory.js';
 import { replaceableKind } from '../memory/supersessions.js';
 import { KINDS, type Kind, type Memory } from '../memory/types.js';
 import type { AppDeps } from './app.js';
-import { PICK_A_PROJECT, pickedProjects, readCookie, requireOwner, SESSION_COOKIE, sessionCookieOptions } from './authRoutes.js';
+import { pickedProjects, readCookie, requireOwner, SESSION_COOKIE, sessionCookieOptions } from './authRoutes.js';
 import {
   detailView, groupFacts, listView, newView, NO_PROJECT, PAGE_SIZE, valuesOf,
   type FactsShow, type MemoryFormValues, type ReplacedItem,
@@ -40,9 +43,9 @@ import { computeSpace, SpaceCache } from '../diskSpace.js';
 import { spaceBlock, spaceTotalText } from './spaceViews.js';
 import { settingsView } from './settingsViews.js';
 import { html, page, type SafeHtml } from './html.js';
-import { backFrom, factBackDefault, nextHref, suggestionBack, withFrom, type Back } from './back.js';
+import { backFrom, factBackDefault, nextHref, suggestionBack, withFrom, type Back, type BackTarget } from './back.js';
 import { backLookups } from './backLookups.js';
-import { ALREADY_ANSWERED } from './approvalsViews.js';
+import { alreadyAnswered } from './approvalsViews.js';
 import { makeInbox } from './inboxPage.js';
 import { TidyError } from '../memory/tidyService.js';
 import { invalidateSideStatus } from './sideStatus.js';
@@ -85,13 +88,15 @@ export function dashboardRoutes(d: AppDeps): Router {
   // Guard per route, not router.use: unknown paths must still fall through to the 404 page.
   const owner = requireOwner(d.sessions);
 
-  const send = (res: Response, status: number, title: string, body: SafeHtml, back?: Back) => {
-    const tab = title === 'Settings' ? 'settings' : title === 'Inbox' ? 'inbox' : ['Facts', 'Fact', 'Tidy up', 'New fact'].includes(title) ? 'facts' : title === 'Not found' || title === 'Bad request' ? null : 'pages';
-    const fixed = title === 'Tidy up' ? { href: '/facts', label: 'Facts' } : title === 'Moved from Outline' ? { href: '/pages', label: 'Pages' } : title === 'New fact' ? { href: '/facts', label: 'Facts' } : title === 'Settings' ? { href: '/', label: 'Projects' } : undefined;
-    res.status(status).type('html').send(page(title, body, { nav: true, tab: back?.tab ?? tab, ...(title === 'Fact' && back?.tab !== 'inbox' ? { sideTab: 'facts' as const } : {}), back: back ?? fixed, crumb: title === 'Settings' ? false : undefined }));
+  /** What a page is, chosen by the caller (never from its title, which is translated): decides the lit tab, the back link and the crumb. */
+  type PageKind = 'settings' | 'facts' | 'fact' | 'newFact' | 'notFound' | 'badRequest';
+  const send = (res: Response, status: number, kind: PageKind, title: string, body: SafeHtml, back?: Back) => {
+    const tab = kind === 'settings' ? 'settings' : kind === 'notFound' || kind === 'badRequest' ? null : 'facts';
+    const fixed: BackTarget | undefined = kind === 'newFact' ? { href: '/facts', labelKey: 'shell.nav.facts' } : kind === 'settings' ? { href: '/', labelKey: 'shell.nav.projects' } : undefined;
+    res.status(status).type('html').send(page(title, body, { nav: true, tab: back?.tab ?? tab, ...(kind === 'fact' && back?.tab !== 'inbox' ? { sideTab: 'facts' as const } : {}), back: back ?? fixed, crumb: kind === 'settings' ? false : undefined }));
   };
-  const notFound = (res: Response) => send(res, 404, 'Not found', html`<h1>Not found</h1>`);
-  const badRequest = (res: Response) => send(res, 400, 'Bad request', html`<h1>Bad request</h1>`);
+  const notFound = (res: Response) => send(res, 404, 'notFound', t('common.notFound'), html`<h1>${t('common.notFound')}</h1>`);
+  const badRequest = (res: Response) => send(res, 400, 'badRequest', t('common.badRequest'), html`<h1>${t('common.badRequest')}</h1>`);
   const activeMemory = (id: string): Memory | undefined => {
     const m = d.store.get(id);
     return m && !m.deletedAt ? m : undefined;
@@ -105,7 +110,7 @@ export function dashboardRoutes(d: AppDeps): Router {
     } catch (e) {
       if (!(e instanceof MemoryError)) throw e;
       if (e.code === 'not_found') notFound(res);
-      else onError(e.message);
+      else onError(errorText(e));
       return false;
     }
   };
@@ -115,7 +120,7 @@ export function dashboardRoutes(d: AppDeps): Router {
   const tidy = (res: Response, status = 200, error?: string) => inbox.tidy(res, status, error);
   const look = backLookups(d);
   /** After a tidy answer: a "Done." line on the next screen, then back to Tidy up, or to the Inbox when the card sat in its pane. */
-  const tidyDone = (req: Request, res: Response, message = 'Done.'): void => {
+  const tidyDone = (req: Request, res: Response, message = t('inbox.said.done')): void => {
     noteDecision(d.service, { id: 'tidy', at: d.now().getTime(), message });
     res.redirect(303, str(req, 'back') === 'inbox' ? '/approvals' : '/facts/tidy');
   };
@@ -154,7 +159,7 @@ export function dashboardRoutes(d: AppDeps): Router {
     const installedNow = d.localMode && d.models ? await d.models.installedIds() : [];
     const space = spaceOn() && !viaDoor(req) ? await spaceCache.get(SPACE_WAIT_MS) : undefined;
     const token = readCookie(req, SESSION_COOKIE);
-    send(res, status, 'Settings', settingsView({
+    send(res, status, 'settings', t('shell.nav.settings'), settingsView({
       space,
       error,
       grants: d.provider.listGrants(),
@@ -177,6 +182,7 @@ export function dashboardRoutes(d: AppDeps): Router {
       health: healthOf(d, d.now()),
       profile: profileHealth(d),
       quiet: { apps: quietAppsOf(d, d.now()), local: !!d.localMode },
+      language: { choice: storedChoice(d.store.switchValue(UI_LANGUAGE_SWITCH)) },
       said: { backupNow: takeSettingsSaid('backup-now'), copy: takeSettingsSaid('backup-copy') },
       copy: d.localMode && d.backupCopy ? { keep: d.backupKeep ?? DEFAULT_BACKUP_KEEP, folder: d.backupCopy.folder(), last: d.backupCopy.lastResult(), ask, ...(pickedFolder(req) ? { picked: pickedFolder(req)! } : {}) } : undefined,
       reach: d.localMode ? { on: d.reach?.url() != null } : undefined,
@@ -205,19 +211,19 @@ export function dashboardRoutes(d: AppDeps): Router {
   router.post('/settings/backup-copy', here, owner, (req, res, next) => {
     const copy = d.backupCopy;
     if (!d.localMode || !copy) return next();
-    if (str(req, 'action') === 'off') { copy.set(null); saySettings('backup-copy', 'Turned off. Backups stay on this computer only. ✓'); return res.redirect(303, '/settings#backup-copy'); }
+    if (str(req, 'action') === 'off') { copy.set(null); saySettings('backup-copy', t('inbox.settings.copyOff')); return res.redirect(303, '/settings#backup-copy'); }
     const folder = str(req, 'folder').trim();
     const refuse = (why: string) => settings(req, res, 400, why);
-    if (isNetworkPath(folder)) return refuse('A network address (\\\\server or //server) is not accepted here. Choose a folder on this computer, or one that is synced to it.');
-    if (!isAbsolute(folder)) return refuse('Give the full path of the folder, starting with / (or the drive letter on Windows).');
-    if (!existsSync(folder) || !statSync(folder).isDirectory()) return refuse(`${folder} doesn't exist. Make the folder first, then save it here.`);
+    if (isNetworkPath(folder)) return refuse(t('inbox.settings.copyNetwork'));
+    if (!isAbsolute(folder)) return refuse(t('inbox.settings.copyFull'));
+    if (!existsSync(folder) || !statSync(folder).isDirectory()) return refuse(t('inbox.settings.copyMissing', { folder }));
     const real = (p: string) => { try { return realpathSync(p); } catch { return resolve(p); } };
     const inside = (child: string, parent: string) => { const r = relative(real(parent), real(child)); return r === '' || (!r.startsWith('..') && !isAbsolute(r)); };
-    if (d.statusDir && inside(folder, d.statusDir)) return refuse("That folder is inside BrainAI's own data folder. Choose one outside it.");
+    if (d.statusDir && inside(folder, d.statusDir)) return refuse(t('inbox.settings.copyInside'));
     const cloud = syncedCloud(folder, { home: d.tools?.home ?? homedir(), platform: d.tools?.platform ?? process.platform, env: { ...process.env, ...d.tools?.extraEnv } });
     if (cloud !== null && str(req, 'confirm') !== '1') return settings(req, res, 200, undefined, undefined, { folder, cloud });
     copy.set(folder);
-    saySettings('backup-copy', `Saved. Each daily backup is now copied to ${folder} ✓`);
+    saySettings('backup-copy', t('inbox.settings.copySaved', { folder }));
     res.redirect(303, '/settings#backup-copy');
   });
 
@@ -227,11 +233,11 @@ export function dashboardRoutes(d: AppDeps): Router {
     if (!d.localMode || !d.db || !d.backupDir || !d.statusDir) return next();
     const run = await runBackup(d.db, d.backupDir, d.backupKeep ?? DEFAULT_BACKUP_KEEP, d.now(), d.statusDir, d.backupCopy);
     if (run.ok) {
-      saySettings('backup-now', `Backed up at ${timeOfDay(d.now().toISOString())} ✓`);
+      saySettings('backup-now', t('inbox.settings.backedUp', { time: timeOfDay(d.now().toISOString()) }));
       return res.redirect(303, '/settings#health');
     }
-    const clean = [d.statusDir, d.backupDir].reduce<string>((t, p) => t.replaceAll(p, 'the data folder'), run.error ?? 'The backup did not finish.');
-    return settings(req, res, 500, `The backup did not finish: ${clean}`);
+    const clean = [d.statusDir, d.backupDir].reduce<string>((text, p) => text.replaceAll(p, t('inbox.settings.dataFolder')), run.error ?? t('inbox.settings.backupNoFinish'));
+    return settings(req, res, 500, t('inbox.settings.backupFailed', { why: clean }));
   });
   // Check for updates. The app: the link /app/check-updates is taken by the shell (see below), which runs its normal check
   // and writes update-check.json; the page asks this route whether a newer check is in. A server: one request to GitHub,
@@ -259,7 +265,7 @@ export function dashboardRoutes(d: AppDeps): Router {
   for (const path of ['/app/choose-folder', '/app/reveal-backups', '/app/check-updates']) {
     router.get(path, here, owner, (_req, res, next) => {
       if (!d.localMode) return next();
-      res.type('html').send(page('BrainAI window only', html`<div class="narrow"><h1>Use BrainAI's own window</h1><p>${path === '/app/choose-folder' ? 'The folder picker opens from BrainAI\'s own window (the menu bar or tray icon opens it).' : path === '/app/check-updates' ? 'Check for updates runs from BrainAI\'s own window (the menu bar or tray icon opens it).' : 'Show in Finder opens from BrainAI\'s own window (the menu bar or tray icon opens it).'}</p><p><a href="/settings#health">Back to Settings</a></p></div>`, { nav: true, tab: null, back: { href: '/settings#health', label: 'Settings' } }));
+      res.type('html').send(page(t('inbox.settings.windowOnlyTitle'), html`<div class="narrow"><h1>${t('inbox.settings.windowOnlyH1')}</h1><p>${path === '/app/choose-folder' ? t('inbox.settings.windowFolder') : path === '/app/check-updates' ? t('inbox.settings.windowUpdates') : t('inbox.settings.windowReveal')}</p><p><a href="/settings#health">${t('inbox.settings.backToSettings')}</a></p></div>`, { nav: true, tab: null, back: { href: '/settings#health', labelKey: 'shell.nav.settings' } }));
     });
   }
 
@@ -282,7 +288,7 @@ export function dashboardRoutes(d: AppDeps): Router {
       justAdded.set(key, { name: device.name, token, at: Date.now() });
       res.redirect(303, `/settings?added=${key}#devices`);
     } catch (e) {
-      return settings(req, res, 400, e instanceof Error ? e.message : 'Could not add the device');
+      return settings(req, res, 400, e instanceof Error ? e.message : t('inbox.settings.couldNotAddDevice'));
     }
   });
   router.post('/settings/devices/:id/revoke', owner, (req, res) => {
@@ -302,7 +308,7 @@ export function dashboardRoutes(d: AppDeps): Router {
   router.post('/suggestions/:id/approve', owner, async (req: Request, res) => {
     const id = req.params.id as string;
     // Answered on another device since this page was made: say so here, never a bare 404, and change nothing.
-    if (!d.service.pendingSuggestions().some((s) => s.id === id)) return approvals(res, 400, ALREADY_ANSWERED);
+    if (!d.service.pendingSuggestions().some((s) => s.id === id)) return approvals(res, 400, alreadyAnswered());
     const content = str(req, 'content');
     const back = suggestionBack(str(req, 'back'));
     let skipped: { id: string; why: string }[] = [];
@@ -318,24 +324,24 @@ export function dashboardRoutes(d: AppDeps): Router {
       // a replacement alters facts that were already there, so those are confirmed without Undo.
       const profile = held.kind === 'profile';
       const added = held.action === 'add' && held.kind !== 'roadmap' && held.supersedes.length === 0 && made !== null;
-      const message = held.action === 'delete' ? (profile ? 'Removed from your profile.' : 'Removed from your memory.')
-        : held.action === 'update' ? (profile ? 'Profile updated.' : 'Memory updated.')
-        : profile ? 'Added to your profile.' : 'Saved to your memory.';
+      const message = held.action === 'delete' ? (profile ? t('inbox.said.removedProfile') : t('inbox.said.removedMemory'))
+        : held.action === 'update' ? (profile ? t('inbox.said.updatedProfile') : t('inbox.said.updatedMemory'))
+        : profile ? t('inbox.said.addedProfile') : t('inbox.said.savedMemory');
       noteDecision(d.service, { id, at: d.now().getTime(), message, undo: added ? { kind: 'approve-add', memoryId: (made as unknown as Memory).id } : undefined });
       // Facts it could no longer replace are named on the page that loads; otherwise the approval is its own confirmation.
       const after = back === '/approvals' ? nextHref(str(req, 'next')) ?? back : back;
       if (skipped.length === 0) return res.redirect(303, after);
-      const lead = skipped.length === 1 ? 'Approved. 1 fact was not replaced:' : `Approved. ${skipped.length} facts were not replaced:`;
+      const lead = t('inbox.said.skipped', { count: skipped.length });
       approvals(res, 200, undefined, `${lead} ${skipped.map((x) => x.why).join('; ')}`);
     }
   });
 
   router.post('/suggestions/:id/reject', owner, async (req: Request, res) => {
     const id = req.params.id as string;
-    if (!d.service.pendingSuggestions().some((s) => s.id === id)) return approvals(res, 400, ALREADY_ANSWERED);
+    if (!d.service.pendingSuggestions().some((s) => s.id === id)) return approvals(res, 400, alreadyAnswered());
     if (await attempt(res, () => d.service.rejectSuggestion(id), (m) => approvals(res, 400, m))) {
       invalidateSideStatus();
-      noteDecision(d.service, { id, at: d.now().getTime(), message: 'Rejected.', undo: { kind: 'reject-suggestion' } });
+      noteDecision(d.service, { id, at: d.now().getTime(), message: t('inbox.said.rejected'), undo: { kind: 'reject-suggestion' } });
       const back = suggestionBack(str(req, 'back'));
       res.redirect(303, back === '/approvals' ? nextHref(str(req, 'next')) ?? back : back);
     }
@@ -345,12 +351,12 @@ export function dashboardRoutes(d: AppDeps): Router {
   for (const answer of ['approve', 'reject'] as const) {
     router.post(`/harvest/:batch/${answer}`, owner, async (req: Request, res) => {
       const batch = req.params.batch as string;
-      if (d.service.harvestBatch(batch).length === 0) return approvals(res, 400, ALREADY_ANSWERED);
+      if (d.service.harvestBatch(batch).length === 0) return approvals(res, 400, alreadyAnswered());
       const r = await d.service.answerHarvest(batch, answer);
       invalidateSideStatus();
-      const flagged = r.flagged === 0 ? '' : ` ${r.flagged} flagged ${r.flagged === 1 ? 'item needs' : 'items need'} your own answer.`;
-      const said = answer === 'approve' && r.flagged > 0 ? `Saved ${r.done}.${flagged}` : `${answer === 'approve' ? 'Saved' : 'Rejected'} ${r.done} ${r.done === 1 ? 'suggestion' : 'suggestions'}.`;
-      if (r.left.length > 0) return approvals(res, 200, undefined, `${said} ${r.left.length} could not be ${answer === 'approve' ? 'saved' : 'rejected'} and still wait: ${[...new Set(r.left.map((x) => x.why))].join('; ')}`);
+      const flagged = r.flagged === 0 ? '' : ` ${t('inbox.harvest.flagged', { count: r.flagged })}`;
+      const said = answer === 'approve' && r.flagged > 0 ? `${t('inbox.harvest.savedFlagged', { done: r.done })}${flagged}` : answer === 'approve' ? t('inbox.harvest.savedN', { count: r.done }) : t('inbox.harvest.rejectedN', { count: r.done });
+      if (r.left.length > 0) return approvals(res, 200, undefined, t(answer === 'approve' ? 'inbox.harvest.leftSaved' : 'inbox.harvest.leftRejected', { said: said, count: r.left.length, why: [...new Set(r.left.map((x) => x.why))].join('; ') }));
       noteDecision(d.service, { id: batch, at: d.now().getTime(), message: said });
       // Flagged items still wait: stay on this harvest, where they are.
       res.redirect(303, r.flagged > 0 ? `/approvals?batch=${encodeURIComponent(batch)}` : '/approvals');
@@ -362,7 +368,7 @@ export function dashboardRoutes(d: AppDeps): Router {
   router.post('/inbox/undo', owner, (req: Request, res) => {
     const id = str(req, 'id');
     const dec = undoable(d.service, id, d.now().getTime());
-    if (!dec?.undo) return approvals(res, 400, 'That can no longer be undone: it was more than 2 minutes ago, or another answer came since.');
+    if (!dec?.undo) return approvals(res, 400, t('inbox.said.cannotUndo'));
     try {
       if (dec.undo.kind === 'reject-suggestion') d.service.undoRejectSuggestion(id);
       else if (dec.undo.kind === 'approve-add') d.service.undoApprovedAdd(id, dec.undo.memoryId);
@@ -371,10 +377,10 @@ export function dashboardRoutes(d: AppDeps): Router {
       else d.skills.reopenRejected(id);
     } catch (e) {
       if (!(e instanceof MemoryError || e instanceof SkillError || e instanceof TidyError)) throw e;
-      return approvals(res, 400, e.message);
+      return approvals(res, 400, errorText(e));
     }
     invalidateSideStatus();
-    noteDecision(d.service, { id, at: d.now().getTime(), message: 'Undone. It waits for you again.' });
+    noteDecision(d.service, { id, at: d.now().getTime(), message: t('inbox.said.undone') });
     res.redirect(303, '/approvals');
   });
 
@@ -397,8 +403,8 @@ export function dashboardRoutes(d: AppDeps): Router {
     const filter = { kind, project: noneProject ? NO_PROJECT : project, q };
     // The grouped view is the plain page: a filter at all (an empty one is no filter) asks for the flat list.
     const grouped = q === undefined && kind === undefined && project === undefined && show === 'current' && pageNo === 1;
-    const factsBack: Back | undefined = project && !noneProject ? { href: `/?project=${encodeURIComponent(d.service.projectNamed(project))}#panel`, label: d.service.projectNamed(project), tab: 'facts' } : kind || q || show !== 'current' || pageNo > 1 || noneProject ? { href: '/facts', label: 'Facts', tab: 'facts' } : undefined;
-    const factsSend = (body: SafeHtml) => send(res, 200, 'Facts', body, factsBack);
+    const factsBack: Back | undefined = project && !noneProject ? { href: `/?project=${encodeURIComponent(d.service.projectNamed(project))}#panel`, label: d.service.projectNamed(project), tab: 'facts' } : kind || q || show !== 'current' || pageNo > 1 || noneProject ? { href: '/facts', labelKey: 'shell.nav.facts', tab: 'facts' } : undefined;
+    const factsSend = (body: SafeHtml) => send(res, 200, 'facts', t('shell.nav.facts'), body, factsBack);
     const now = d.now();
     const counts = { all: d.store.countCurrent(), profile: d.store.countCurrent({ kind: 'profile' }), replaced: d.store.supersessions.replacedCount({}) };
     const common = { counts, tidy: tidySentence(tidySummary(tidyItems())), from: req.originalUrl };
@@ -439,7 +445,7 @@ export function dashboardRoutes(d: AppDeps): Router {
   });
 
   router.get('/memories/new', owner, (req, res) =>
-    send(res, 200, 'New fact', newView({ kind: 'decision', content: '', project: query(req, 'project') ?? '', tags: '' })));
+    send(res, 200, 'newFact', t('inbox.facts.newFact'), newView({ kind: 'decision', content: '', project: query(req, 'project') ?? '', tags: '' })));
 
   router.post('/memories', owner, async (req: Request, res) => {
     const values = formValues(req, str(req, 'kind'));
@@ -450,7 +456,7 @@ export function dashboardRoutes(d: AppDeps): Router {
         meta: newMeta(values),
       }, OWNER);
       if (r.status === 'saved' || r.status === 'roadmap_updated') id = r.memory.id;
-    }, (m) => send(res, 400, 'New fact', newView(values, m)));
+    }, (m) => send(res, 400, 'newFact', t('inbox.facts.newFact'), newView(values, m)));
     if (ok) res.redirect(303, `/memories/${id}`);
   });
 
@@ -458,7 +464,7 @@ export function dashboardRoutes(d: AppDeps): Router {
 
   /** A fact's page, with what section 16 adds: its replacements and, on a current fact, the owner's picker. `from` is an origin `backFrom` already accepted. */
   const detail = (res: Response, m: Memory, status = 200, values = valuesOf(m), error?: string, pickAll = false, open?: 'edit' | 'history' | 'picker', selectedBy?: string, from?: string) =>
-    send(res, status, 'Fact', detailView(m, d.store.history(m.id), values, error, {
+    send(res, status, 'fact', t('shell.back.fact'), detailView(m, d.store.history(m.id), values, error, {
       story: factStory(d.store, m.id), picker: d.service.pickerChoices(m.id, pickAll), pickAll, now: d.now(), open, selectedBy,
       where: {
         project: m.project === null ? null : d.service.projectNamed(m.project),
@@ -487,12 +493,12 @@ export function dashboardRoutes(d: AppDeps): Router {
     const by = str(req, 'by');
     const pickAll = str(req, 'pick') === 'all';
     const o = origin(req);
-    if (by === '') return detail(res, m, 400, valuesOf(m), 'Pick the fact that holds now.', pickAll, 'picker', undefined, o.raw);
+    if (by === '') return detail(res, m, 400, valuesOf(m), t('inbox.facts.pickHolds'), pickAll, 'picker', undefined, o.raw);
     try {
       d.service.supersede([id], by, OWNER);
     } catch (e) {
       if (!(e instanceof MemoryError)) throw e;
-      return detail(res, m, 400, valuesOf(m), e.message, pickAll, 'picker', by, o.raw);
+      return detail(res, m, 400, valuesOf(m), errorText(e), pickAll, 'picker', by, o.raw);
     }
     res.redirect(303, withFrom(`/memories/${id}`, o.raw));
   });
@@ -540,14 +546,15 @@ export function dashboardRoutes(d: AppDeps): Router {
     // A change the owner made to a field that someone else changed meanwhile is not applied: show what it is now.
     const was = { validUntil: m.validUntil ?? '', source: m.source ?? '', sourceNote: m.sourceNote ?? '' };
     const clash = [
-      dateChanged && values.origValidUntil !== undefined && was.validUntil !== values.origValidUntil.trim() ? 'date' : '',
-      sourceChanged && values.origSource !== undefined && was.source !== values.origSource.trim() ? 'source' : '',
-      noteChanged && values.origSourceNote !== undefined && was.sourceNote !== values.origSourceNote.trim() ? 'source note' : '',
+      dateChanged && values.origValidUntil !== undefined && was.validUntil !== values.origValidUntil.trim() ? t('inbox.facts.clashDate') : '',
+      sourceChanged && values.origSource !== undefined && was.source !== values.origSource.trim() ? t('inbox.facts.clashSource') : '',
+      noteChanged && values.origSourceNote !== undefined && was.sourceNote !== values.origSourceNote.trim() ? t('inbox.facts.clashNote') : '',
     ].filter((x) => x !== '');
     if (clash.length > 0) {
-      const by = m.updatedBy === 'owner' ? 'you' : m.updatedBy;
+      const by = m.updatedBy === 'owner' ? t('inbox.youLower') : m.updatedBy;
+      const nowReads = [m.validUntil ? t('inbox.facts.nowValid', { date: m.validUntil }) : t('inbox.facts.nowNoDate'), m.source ? (m.sourceBy ? t('inbox.facts.nowSourceBy', { source: m.source, by: m.sourceBy }) : t('inbox.facts.nowSource', { source: m.source })) : t('inbox.facts.nowNoSource')].join(', ');
       return detail(res, m, 409, { ...values, source: keepSource ? 'keep' : values.source, sourceBy: m.sourceBy, base: m.updatedAt, origValidUntil: was.validUntil, origSource: was.source, origSourceNote: was.sourceNote },
-        `The ${clash.join(' and ')} of this fact changed since you opened it (it now reads: ${[m.validUntil ? `valid until ${m.validUntil}` : 'no date', m.source ? `source ${m.source}${m.sourceBy ? ` set by ${m.sourceBy}` : ''}` : 'no source'].join(', ')}; last saved by ${by}). Nothing was saved. Your values are still in the form below: check them, then save again.`, false, 'edit', undefined, o.raw);
+        t('inbox.facts.clash', { what: clash.reduce((a, b) => t('inbox.facts.clashJoin', { a, b })), now: nowReads, by: by }), false, 'edit', undefined, o.raw);
     }
     if (await attempt(res, () => d.service.update(id, { content: values.content, project: values.project || null, tags: tagList(values.tags), keys: values.keys, meta }, OWNER, { base: values.base }),
       (msg) => {
@@ -555,9 +562,9 @@ export function dashboardRoutes(d: AppDeps): Router {
         // Save (from this page, with the current text in view) go through.
         const now = d.store.get(id);
         if (values.base && now && !now.deletedAt && now.updatedAt !== values.base) {
-          const by = now.updatedBy === 'owner' ? 'you' : now.updatedBy;
+          const by = now.updatedBy === 'owner' ? t('inbox.youLower') : now.updatedBy;
           return detail(res, now, 409, { ...values, base: now.updatedAt },
-            `This fact changed since you opened it (saved by ${by} at ${now.updatedAt.slice(0, 16).replace('T', ' ')} UTC). It now reads: “${now.content}”. Your text is still in the form below: merge in what you want to keep, then save again.`, false, 'edit', undefined, o.raw);
+            t('inbox.facts.changedSince', { by: by, time: now.updatedAt.slice(0, 16).replace('T', ' '), text: now.content }), false, 'edit', undefined, o.raw);
         }
         detail(res, m, 400, values, msg, false, 'edit', undefined, o.raw);
       })) {
@@ -700,7 +707,7 @@ export function dashboardRoutes(d: AppDeps): Router {
     if (access !== 'full' && access !== 'discussions' && access !== 'projects') return badRequest(res);
     const projects = access === 'projects' ? pickedProjects(req.body, d.service.listProjects().map((p) => p.project)) : undefined;
     if (access === 'projects' && !projects) {
-      return send(res, 400, 'Bad request', html`<h1>Bad request</h1><p>${PICK_A_PROJECT}</p><p><a href="/settings#connections">Back to Settings</a></p>`);
+      return send(res, 400, 'badRequest', t('common.badRequest'), html`<h1>${t('common.badRequest')}</h1><p>${t('auth.consent.pickProject')}</p><p><a href="/settings#connections">${t('inbox.settings.backToSettings')}</a></p>`);
     }
     d.provider.setGrantAccess(id, access, projects);
     res.redirect(303, '/settings#connections');
@@ -732,6 +739,17 @@ export function dashboardRoutes(d: AppDeps): Router {
     res.redirect(303, backToPage(req));
   });
 
+  // Settings › Language: the owner's choice (auto, en, es) in brain_switches. The app also writes it where the desktop shell reads it.
+  router.post('/settings/language', owner, (req: Request, res) => {
+    const choice = str(req, 'language');
+    if (!isUiLanguage(choice)) return badRequest(res);
+    d.store.setSwitch(UI_LANGUAGE_SWITCH, choice);
+    if (d.localMode && d.statusDir) {
+      try { writeUiLanguageFile(d.statusDir, choice, d.now()); } catch (e) { console.error('writing ui-language.json failed:', e); }
+    }
+    res.redirect(303, '/settings#language');
+  });
+
   router.post('/clients/:grantId/name', owner, (req: Request, res) => {
     const grant = d.provider.listGrants().find((g) => g.id === (req.params.grantId as string));
     if (!grant) return notFound(res);
@@ -739,7 +757,7 @@ export function dashboardRoutes(d: AppDeps): Router {
       d.provider.setGrantName(grant.id, str(req, 'name'));
     } catch (e) {
       if (!(e instanceof InvalidNameError)) throw e;
-      return send(res, 400, 'Bad request', html`<h1>Bad request</h1><p>${e.message}</p><p><a href="/settings#connections">Back to Settings</a></p>`);
+      return send(res, 400, 'badRequest', t('common.badRequest'), html`<h1>${t('common.badRequest')}</h1><p>${e.message}</p><p><a href="/settings#connections">${t('inbox.settings.backToSettings')}</a></p>`);
     }
     res.redirect(303, '/settings#connections');
   });

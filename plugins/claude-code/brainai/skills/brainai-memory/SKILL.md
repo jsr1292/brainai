@@ -14,4 +14,4 @@ The brain has two layers. Facts are short: decisions, statuses, roadmaps and my 
 - Never put passwords, keys or tokens in either.
 - Follow the page rules in the brain's instructions and its page "How this brain is organised".
 
-When you call load_profile, pass setup: 2.
+When you call load_profile, pass setup: 3.

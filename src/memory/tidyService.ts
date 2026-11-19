@@ -1,3 +1,5 @@
+import { SayableError, type Say } from '../i18n/errors.js';
+import type { Key } from '../i18n/core.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
@@ -42,12 +44,18 @@ const toProposal = (r: Row): TidyProposal => ({
   proposedBy: r.proposed_by, proposedAt: r.proposed_at, status: r.status, decidedAt: r.decided_at, result: r.result === null ? null : JSON.parse(r.result) as TidyProposal['result'],
 });
 
-export class TidyError extends Error {
-  constructor(public code: 'invalid' | 'not_found' | 'changed' | 'page' | 'answered', message: string) {
-    super(message);
+/** The English `.message` is what assistants read; `say` carries the same sentence as a catalog key for the dashboard (`errorText`). */
+export class TidyError extends SayableError {
+  constructor(public code: 'invalid' | 'not_found' | 'changed' | 'page' | 'answered', message: string, say?: Say) {
+    super(message, say);
     this.name = 'TidyError';
   }
 }
+/** The key of a wrapped memory-layer or page error, when it has one. */
+const sayOf = (e: unknown): Say | undefined => {
+  const k = e as { key?: Key; params?: Record<string, string | number> };
+  return k.key !== undefined ? { key: k.key, ...(k.params ? { params: k.params } : {}) } : undefined;
+};
 /** The heading of a page section as the page shows it ("Key decisions"), not its anchor ("key-decisions"). */
 export function sectionTitle(body: string, anchor: string): string {
   const s = splitSections(body).find((x) => x.anchor === anchor);
@@ -212,9 +220,9 @@ export class TidyService {
   // ---- proposing ----
   private current(id: string): Memory {
     const m = this.d.store.get(id);
-    if (!m || m.deletedAt) throw new TidyError('not_found', `No current fact ${id}. Call tidy_session again.`);
-    if (this.d.store.supersessions.liveFor(id)) throw new TidyError('changed', `Fact ${id} was replaced meanwhile. Call tidy_session again.`);
-    if (replaceableKind(m) === null) throw new TidyError('invalid', `Fact ${id} is a ${m.kind}: tidy only handles decisions and statuses.`);
+    if (!m || m.deletedAt) throw new TidyError('not_found', `No current fact ${id}. Call tidy_session again.`, { key: 'err.tidy.noFact', params: { id } });
+    if (this.d.store.supersessions.liveFor(id)) throw new TidyError('changed', `Fact ${id} was replaced meanwhile. Call tidy_session again.`, { key: 'err.tidy.factReplaced', params: { id } });
+    if (replaceableKind(m) === null) throw new TidyError('invalid', `Fact ${id} is a ${m.kind}: tidy only handles decisions and statuses.`, { key: 'err.tidy.factKind', params: { id, kind: m.kind } });
     return m;
   }
 
@@ -224,22 +232,28 @@ export class TidyService {
     reason: string;
   }, by: string): TidyProposal {
     const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
-    if (reason === '' || reason.length > MAX_REASON_CHARS) throw new TidyError('invalid', `reason: say why, in 1 to ${MAX_REASON_CHARS} characters.`);
+    if (reason === '' || reason.length > MAX_REASON_CHARS) throw new TidyError('invalid', `reason: say why, in 1 to ${MAX_REASON_CHARS} characters.`, { key: 'err.tidy.reason', params: { max: MAX_REASON_CHARS } });
     const kinds = (['supersede', 'merge', 'move_to_page', 'keep'] as const).filter((k) => input.proposal?.[k] !== undefined);
-    if (kinds.length !== 1) throw new TidyError('invalid', `proposal: give exactly one of supersede, merge, move_to_page, keep (got ${kinds.length === 0 ? 'none' : kinds.join(' and ')}).`);
+    if (kinds.length !== 1) {
+      const text = `proposal: give exactly one of supersede, merge, move_to_page, keep (got ${kinds.length === 0 ? 'none' : kinds.join(' and ')}).`;
+      throw new TidyError('invalid', text, kinds.length === 0 ? { key: 'err.tidy.oneProposalNone' } : { key: 'err.tidy.oneProposal', params: { kinds: kinds.join(' / ') } });
+    }
     // The group the proposal is about: its facts are the most it may touch.
     let scope: string[];
     if (input.clusterId !== undefined) {
       const c = this.clusterById(input.clusterId);
-      if (!c) throw new TidyError('not_found', `No group ${input.clusterId} any more (the facts changed, or it was handled). Call tidy_session again.`);
+      if (!c) throw new TidyError('not_found', `No group ${input.clusterId} any more (the facts changed, or it was handled). Call tidy_session again.`, { key: 'err.tidy.noGroup', params: { id: input.clusterId } });
       scope = c.ids;
     } else if (input.ids !== undefined && input.ids.length > 0) scope = [...new Set(input.ids)];
-    else throw new TidyError('invalid', 'Give cluster_id (from tidy_session) or ids.');
+    else throw new TidyError('invalid', 'Give cluster_id (from tidy_session) or ids.', { key: 'err.tidy.giveGroup' });
     const unique = (ids: string[], what: string, max: number, min = 1): string[] => {
       const u = [...new Set(ids)];
-      if (u.length < min || u.length > max) throw new TidyError('invalid', `${what}: ${min === max ? `exactly ${min}` : `${min} to ${max}`} different fact ids (got ${u.length}).`);
+      if (u.length < min || u.length > max) {
+        throw new TidyError('invalid', `${what}: ${min === max ? `exactly ${min}` : `${min} to ${max}`} different fact ids (got ${u.length}).`,
+          min === max ? { key: 'err.tidy.idsExact', params: { what, min, got: u.length } } : { key: 'err.tidy.idsRange', params: { what, min, max, got: u.length } });
+      }
       const outside = u.filter((id) => !scope.includes(id));
-      if (outside.length > 0) throw new TidyError('invalid', `${what}: ${outside.join(', ')} ${outside.length === 1 ? 'is' : 'are'} not in the group you gave.`);
+      if (outside.length > 0) throw new TidyError('invalid', `${what}: ${outside.join(', ')} ${outside.length === 1 ? 'is' : 'are'} not in the group you gave.`, { key: 'err.tidy.outside', params: { what, ids: outside.join(', '), count: outside.length } });
       return u;
     };
     let body: TidyBody;
@@ -247,22 +261,22 @@ export class TidyService {
     if (p.supersede) {
       const replacedIds = unique(p.supersede.replaced_ids ?? [], 'replaced_ids', MAX_SUPERSEDES);
       const keepId = p.supersede.keep_id;
-      if (replacedIds.includes(keepId)) throw new TidyError('invalid', 'keep_id cannot also be in replaced_ids.');
+      if (replacedIds.includes(keepId)) throw new TidyError('invalid', 'keep_id cannot also be in replaced_ids.', { key: 'err.tidy.keepInReplaced' });
       unique([keepId], 'keep_id', 1);
       body = { type: 'supersede', keepId, replacedIds };
     } else if (p.merge) {
       const ids = unique(p.merge.ids ?? [], 'merge.ids', MAX_SUPERSEDES, 2);
       const content = typeof p.merge.content === 'string' ? p.merge.content.replace(/\r\n?/g, '\n').trim() : '';
-      if (content === '' || content.length > MAX_MERGE_CHARS) throw new TidyError('invalid', `merge.content: 1 to ${MAX_MERGE_CHARS} characters (got ${content.length}).`);
-      if (p.merge.kind !== 'decision' && p.merge.kind !== 'summary') throw new TidyError('invalid', 'merge.kind: "decision" or "summary" (a status).');
+      if (content === '' || content.length > MAX_MERGE_CHARS) throw new TidyError('invalid', `merge.content: 1 to ${MAX_MERGE_CHARS} characters (got ${content.length}).`, { key: 'err.tidy.mergeContent', params: { max: MAX_MERGE_CHARS, got: content.length } });
+      if (p.merge.kind !== 'decision' && p.merge.kind !== 'summary') throw new TidyError('invalid', 'merge.kind: "decision" or "summary" (a status).', { key: 'err.tidy.mergeKind' });
       body = { type: 'merge', ids, content, kind: p.merge.kind };
     } else if (p.move_to_page) {
       const ids = unique(p.move_to_page.ids ?? [], 'move_to_page.ids', MAX_CLUSTER);
       const page = this.d.pages.get(p.move_to_page.page_id);
-      if (!page || page.deletedAt) throw new TidyError('not_found', `No page ${p.move_to_page.page_id}.`);
+      if (!page || page.deletedAt) throw new TidyError('not_found', `No page ${p.move_to_page.page_id}.`, { key: 'err.tidy.noPage', params: { id: p.move_to_page.page_id } });
       const section = p.move_to_page.section ?? KEY_DECISIONS;
       const found = splitSections(page.body).find((s) => s.anchor === section);
-      if (!found) throw new TidyError('not_found', `Page ${page.id} has no section ${section}; its sections are: ${splitSections(page.body).map((s) => s.anchor).join(', ')}.`);
+      if (!found) throw new TidyError('not_found', `Page ${page.id} has no section ${section}; its sections are: ${splitSections(page.body).map((s) => s.anchor).join(', ')}.`, { key: 'err.tidy.noSection', params: { id: page.id, section, sections: splitSections(page.body).map((s) => s.anchor).join(', ') } });
       body = { type: 'move_to_page', ids, pageId: page.id, section, baseVersion: page.version, sectionHash: sha(this.sectionText(page.body, section)) };
     } else {
       body = { type: 'keep', ids: unique(p.keep!.ids ?? [], 'keep.ids', 50) };
@@ -271,34 +285,37 @@ export class TidyService {
     const touched = factsOf(body);
     const facts = touched.map((id) => this.current(id));
     const projects = new Set(facts.map((m) => m.project));
-    if (projects.size !== 1 || facts[0]!.project === null) throw new TidyError('invalid', 'All the facts must be in one project.');
+    if (projects.size !== 1 || facts[0]!.project === null) throw new TidyError('invalid', 'All the facts must be in one project.', { key: 'err.tidy.oneProject' });
     const project = this.d.service.projectNamed(facts[0]!.project!);
     const waiting = this.pendingFactIds();
     const busy = touched.filter((id) => waiting.has(id));
-    if (busy.length > 0) throw new TidyError('invalid', `${busy.join(', ')} already ${busy.length === 1 ? 'waits' : 'wait'} in another proposal for the owner.`);
-    if (this.pendingCount() >= MAX_PENDING_TIDY) throw new TidyError('invalid', `${MAX_PENDING_TIDY} tidy proposals already wait for the owner. Ask the owner to answer them first.`);
+    if (busy.length > 0) throw new TidyError('invalid', `${busy.join(', ')} already ${busy.length === 1 ? 'waits' : 'wait'} in another proposal for the owner.`, { key: 'err.tidy.busy', params: { ids: busy.join(', '), count: busy.length } });
+    if (this.pendingCount() >= MAX_PENDING_TIDY) throw new TidyError('invalid', `${MAX_PENDING_TIDY} tidy proposals already wait for the owner. Ask the owner to answer them first.`, { key: 'err.tidy.tooManyPending', params: { max: MAX_PENDING_TIDY } });
     try {
       if (body.type === 'supersede') this.d.service.checkReplacement(body.replacedIds, this.d.store.get(body.keepId)!);
       else if (body.type === 'merge') {
         if (body.ids.some((id) => (replaceableKind(this.d.store.get(id)!) === 'status') !== (body.kind === 'summary'))) {
-          throw new TidyError('invalid', 'merge.kind must match the facts: "decision" for decisions, "summary" for statuses.');
+          throw new TidyError('invalid', 'merge.kind must match the facts: "decision" for decisions, "summary" for statuses.', { key: 'err.tidy.mergeKindMatch' });
         }
         this.d.service.checkReplacement(body.ids, { kind: body.kind, tags: [], project: facts[0]!.project });
       } else if (body.type === 'move_to_page') {
         const page = this.d.pages.get(body.pageId)!;
-        if (page.project === null || this.d.service.projectNamed(page.project) !== project) throw new TidyError('invalid', `Page ${page.id} belongs to ${page.project ?? 'no project'}, not ${project}.`);
+        if (page.project === null || this.d.service.projectNamed(page.project) !== project) {
+          throw new TidyError('invalid', `Page ${page.id} belongs to ${page.project ?? 'no project'}, not ${project}.`,
+            page.project === null ? { key: 'err.tidy.pageNoProject', params: { id: page.id, other: project } } : { key: 'err.tidy.pageProject', params: { id: page.id, project: page.project, other: project } });
+        }
         const status = facts.filter((m) => replaceableKind(m) !== 'decision');
-        if (status.length > 0) throw new TidyError('invalid', `${status.map((m) => m.id).join(', ')} ${status.length === 1 ? 'is a status' : 'are statuses'}: only decisions go to Key decisions.`);
+        if (status.length > 0) throw new TidyError('invalid', `${status.map((m) => m.id).join(', ')} ${status.length === 1 ? 'is a status' : 'are statuses'}: only decisions go to Key decisions.`, { key: 'err.tidy.onlyDecisions', params: { ids: status.map((m) => m.id).join(', '), count: status.length } });
         const there = facts.filter((m) => page.body.includes(`[[fact:${m.id}]]`) || page.body.includes(`[[fact:${m.id}|`));
-        if (there.length > 0) throw new TidyError('invalid', `${there.map((m) => m.id).join(', ')} already ${there.length === 1 ? 'has' : 'have'} a line on that page.`);
+        if (there.length > 0) throw new TidyError('invalid', `${there.map((m) => m.id).join(', ')} already ${there.length === 1 ? 'has' : 'have'} a line on that page.`, { key: 'err.tidy.alreadyThere', params: { ids: there.map((m) => m.id).join(', '), count: there.length } });
       }
     } catch (e) {
-      if (e instanceof MemoryError) throw new TidyError('invalid', e.message);
+      if (e instanceof MemoryError) throw new TidyError('invalid', e.message, sayOf(e));
       throw e;
     }
     if (body.type === 'merge') {
       // Secrets and size are checked with the same rules as a save.
-      try { void this.d.service.checkContentOf(body.content, body.kind); } catch (e) { if (e instanceof MemoryError) throw new TidyError('invalid', e.message); throw e; }
+      try { void this.d.service.checkContentOf(body.content, body.kind); } catch (e) { if (e instanceof MemoryError) throw new TidyError('invalid', e.message, sayOf(e)); throw e; }
     }
     const stamps = Object.fromEntries(facts.map((m) => [m.id, m.updatedAt]));
     const id = randomUUID().slice(0, 8);
@@ -311,14 +328,28 @@ export class TidyService {
   // ---- answering ----
   /** Why a waiting proposal can no longer be applied, or null. */
   staleReason(p: TidyProposal): string | null {
+    return this.staleWhy(p)?.text ?? null;
+  }
+
+  /** The same reason as a catalog key, for the dashboard. */
+  staleSay(p: TidyProposal): Say | null {
+    return this.staleWhy(p)?.say ?? null;
+  }
+
+  private staleWhy(p: TidyProposal): { text: string; say: Say } | null {
     for (const id of factsOf(p.body)) {
       const m = this.d.store.get(id);
-      if (!m || m.deletedAt || m.updatedAt !== p.stamps[id] || this.d.store.supersessions.liveFor(id)) return CHANGED_SINCE;
+      if (!m || m.deletedAt || m.updatedAt !== p.stamps[id] || this.d.store.supersessions.liveFor(id)) return { text: CHANGED_SINCE, say: { key: 'err.tidy.stale.facts' } };
     }
     if (p.body.type === 'move_to_page') {
       const page = this.d.pages.get(p.body.pageId);
-      if (!page || page.deletedAt) return 'The page is gone. Ask the assistant to look again.';
-      if (page.project === null || this.d.service.projectNamed(page.project) !== this.d.service.projectNamed(p.project)) return `The page now belongs to ${page.project ?? 'no project'}, not ${p.project}. Ask the assistant to look again.`;
+      if (!page || page.deletedAt) return { text: 'The page is gone. Ask the assistant to look again.', say: { key: 'err.tidy.stale.pageGone' } };
+      if (page.project === null || this.d.service.projectNamed(page.project) !== this.d.service.projectNamed(p.project)) {
+        return {
+          text: `The page now belongs to ${page.project ?? 'no project'}, not ${p.project}. Ask the assistant to look again.`,
+          say: page.project === null ? { key: 'err.tidy.stale.pageNoProject', params: { other: p.project } } : { key: 'err.tidy.stale.pageProject', params: { project: page.project, other: p.project } },
+        };
+      }
     }
     return null;
   }
@@ -347,41 +378,41 @@ export class TidyService {
 
   private pendingOf(id: string): TidyProposal {
     const p = this.get(id);
-    if (!p) throw new TidyError('not_found', 'No such tidy proposal.');
-    if (p.status !== 'pending') throw new TidyError('answered', 'That tidy proposal was already answered.');
+    if (!p) throw new TidyError('not_found', 'No such tidy proposal.', { key: 'err.tidy.noProposal' });
+    if (p.status !== 'pending') throw new TidyError('answered', 'That tidy proposal was already answered.', { key: 'err.tidy.answered' });
     return p;
   }
 
   /** Applies a waiting proposal as the owner. `retire`: for move_to_page, also move the facts to Deleted (they can be restored). */
-  async approve(id: string, o: { retire?: boolean } = {}): Promise<{ message: string; undoable: boolean }> {
+  async approve(id: string, o: { retire?: boolean } = {}): Promise<{ message: string; undoable: boolean; say: Say }> {
     const p = this.pendingOf(id);
-    const stale = this.staleReason(p);
-    if (stale) throw new TidyError('changed', stale);
+    const stale = this.staleWhy(p);
+    if (stale) throw new TidyError('changed', stale.text, stale.say);
     const b = p.body;
     const owner = { type: 'owner' as const };
     try {
       if (b.type === 'supersede') {
         const rows = this.d.service.supersede(b.replacedIds, b.keepId, owner, 'owner').map((r) => r.id);
         this.setStatus(id, 'approved', { rows });
-        return { message: `Done: ${b.replacedIds.length === 1 ? '1 fact is' : `${b.replacedIds.length} facts are`} now replaced by the one you kept. They stay as history.`, undoable: true };
+        return { message: `Done: ${b.replacedIds.length === 1 ? '1 fact is' : `${b.replacedIds.length} facts are`} now replaced by the one you kept. They stay as history.`, undoable: true, say: { key: 'err.tidy.done.supersede', params: { count: b.replacedIds.length } } };
       }
       if (b.type === 'merge') {
         const made = await this.d.service.mergeFacts({ ids: b.ids, content: b.content, kind: b.kind, by: p.proposedBy, replacedBy: OWNER_LABEL });
         this.setStatus(id, 'approved', { rows: made.rows.map((r) => r.id), mergedId: made.memory.id });
-        return { message: `Done: ${b.ids.length} facts are replaced by one merged fact. They stay as history.`, undoable: true };
+        return { message: `Done: ${b.ids.length} facts are replaced by one merged fact. They stay as history.`, undoable: true, say: { key: 'err.tidy.done.merge', params: { count: b.ids.length } } };
       }
       if (b.type === 'keep') {
         this.markLooked(b.ids, p.stamps, OWNER_LABEL);
         this.setStatus(id, 'approved');
-        return { message: 'Marked as looked at. They are not offered again until one of them changes.', undoable: false };
+        return { message: 'Marked as looked at. They are not offered again until one of them changes.', undoable: false, say: { key: 'err.tidy.done.keep' } };
       }
       // move_to_page
       const page = this.d.pages.get(b.pageId)!;
       const text = this.sectionText(page.body, b.section);
-      if (text === '') throw new TidyError('page', `The page no longer has a section ${b.section}. Ask the assistant to look again.`);
+      if (text === '') throw new TidyError('page', `The page no longer has a section ${b.section}. Ask the assistant to look again.`, { key: 'err.tidy.pageNoSectionNow', params: { section: b.section } });
       // Another section may have changed; this one must be as the proposal saw it.
       if (page.version !== b.baseVersion && sha(text) !== b.sectionHash) {
-        throw new TidyError('page', `The page changed since the proposal (now version ${page.version}) and its ${b.section} section is not as it was. Ask the assistant again.`);
+        throw new TidyError('page', `The page changed since the proposal (now version ${page.version}) and its ${b.section} section is not as it was. Ask the assistant again.`, { key: 'err.tidy.pageChanged', params: { version: page.version, section: b.section } });
       }
       const style = lineStyle(text);
       const lines = b.ids.map((fid) => moveLine(this.d.store.get(fid)!, style));
@@ -390,10 +421,10 @@ export class TidyService {
       for (const fid of b.ids) if (o.retire) { this.d.service.retireToPage(fid, `${saved.title} › ${sectionTitle(page.body, b.section)}`, owner); retired.push(fid); }
       if (!o.retire) this.markLooked(b.ids, p.stamps, OWNER_LABEL);
       this.setStatus(id, 'approved', { page: saved.version, ...(retired.length > 0 ? { retired } : {}) });
-      return { message: `Added ${lines.length === 1 ? '1 line' : `${lines.length} lines`} to ${saved.title}, ${sectionTitle(page.body, b.section)} (version ${saved.version}).${o.retire ? ' The facts moved to Deleted (you can restore them), and that does not count as forgetting them.' : ' The facts stay.'}`, undoable: false };
+      return { message: `Added ${lines.length === 1 ? '1 line' : `${lines.length} lines`} to ${saved.title}, ${sectionTitle(page.body, b.section)} (version ${saved.version}).${o.retire ? ' The facts moved to Deleted (you can restore them), and that does not count as forgetting them.' : ' The facts stay.'}`, undoable: false, say: { key: o.retire ? 'err.tidy.done.moveRetire' : 'err.tidy.done.moveStay', params: { count: lines.length, title: saved.title, section: sectionTitle(page.body, b.section), version: saved.version } } };
     } catch (e) {
-      if (e instanceof PageError) throw new TidyError('page', e.message);
-      if (e instanceof MemoryError) throw new TidyError('changed', `${e.message} Ask the assistant to look again.`);
+      if (e instanceof PageError) throw new TidyError('page', e.message, sayOf(e));
+      if (e instanceof MemoryError) throw new TidyError('changed', `${e.message} Ask the assistant to look again.`, sayOf(e));
       throw e;
     }
   }
@@ -406,23 +437,23 @@ export class TidyService {
   /** Undo of a rejection: it waits again. */
   reopenRejected(id: string): void {
     const p = this.get(id);
-    if (!p || p.status !== 'rejected') throw new TidyError('invalid', 'That tidy proposal was not rejected.');
+    if (!p || p.status !== 'rejected') throw new TidyError('invalid', 'That tidy proposal was not rejected.', { key: 'err.tidy.notRejected' });
     this.setStatus(id, 'pending');
   }
 
   /** Takes back an approved supersede or merge when that is still clean; the proposal waits again. */
   undoApproved(id: string): void {
     const p = this.get(id);
-    if (!p || p.status !== 'approved' || !p.result?.rows) throw new TidyError('invalid', 'That can no longer be undone.');
+    if (!p || p.status !== 'approved' || !p.result?.rows) throw new TidyError('invalid', 'That can no longer be undone.', { key: 'err.tidy.cannotUndo' });
     try {
       if (p.body.type === 'merge' && p.result.mergedId) this.d.service.undoMerge(p.result.mergedId, p.result.rows);
       else if (p.body.type === 'supersede') {
         const rows = p.result.rows.map((r) => this.d.store.supersessions.get(r));
-        if (rows.some((r) => !r || r.undoneAt !== null)) throw new MemoryError('invalid', 'That can no longer be undone: a replacement was already brought back.');
+        if (rows.some((r) => !r || r.undoneAt !== null)) throw new TidyError('invalid', 'That can no longer be undone: a replacement was already brought back.', { key: 'err.tidy.cannotUndoBrought' });
         for (const r of p.result.rows) this.d.service.undoSupersession(r, { type: 'owner' });
-      } else throw new TidyError('invalid', 'That can no longer be undone.');
+      } else throw new TidyError('invalid', 'That can no longer be undone.', { key: 'err.tidy.cannotUndo' });
     } catch (e) {
-      if (e instanceof MemoryError) throw new TidyError('invalid', e.message);
+      if (e instanceof MemoryError) throw new TidyError('invalid', e.message, sayOf(e));
       throw e;
     }
     this.setStatus(id, 'pending');

@@ -137,26 +137,28 @@ pub fn login_item_action(marker: Option<&str>, enabled: bool) -> LoginAction {
 }
 
 /// The app's last words after a move: how to finish removing it on this system.
-pub fn goodbye_text(windows: bool) -> &'static str {
-    if windows {
-        "BrainAI is off and will not start at login. Uninstall BrainAI from Settings › Apps to finish."
-    } else {
-        "BrainAI is off and will not start at login. Drag BrainAI from Applications to the Trash to finish."
-    }
+pub fn goodbye_text(windows: bool) -> String {
+    crate::lang::tr(if windows { "goodbye.done_win" } else { "goodbye.done_mac" })
+}
+
+fn computer(windows: bool) -> String {
+    crate::lang::tr(if windows { "computer.pc" } else { "computer.mac" })
 }
 
 /// The app's last words after removing itself.
 pub fn removed_text(windows: bool) -> String {
-    format!("BrainAI is removed from this {}. Your saved copy is where the last page said.", if windows { "PC" } else { "Mac" })
+    crate::lang::tr_with("remove.done", &[("computer", &computer(windows))])
 }
 
 /// The question before removing (any link can lead the window to /app/removed, so the owner is always asked).
 pub fn remove_confirm_text(windows: bool, folder: &str) -> String {
-    format!("Remove BrainAI from this {}? Your saved copy is at {folder}.", if windows { "PC" } else { "Mac" })
+    crate::lang::tr_with("remove.confirm", &[("computer", &computer(windows)), ("folder", folder)])
 }
 
 /// Said instead, and nothing touched, when the server does not confirm a removal with a saved copy.
-pub const NOT_SAVED: &str = "BrainAI can't confirm a saved copy for this removal, so nothing was removed. Run Remove BrainAI again from Settings.";
+pub fn not_saved_text() -> String {
+    crate::lang::tr("remove.not_saved")
+}
 
 /// The `.app` bundle a Mac executable lives in: `/Applications/BrainAI.app` for `/Applications/BrainAI.app/Contents/MacOS/brainai`.
 pub fn app_bundle(exe: &str) -> Option<&str> {
@@ -268,7 +270,7 @@ mod tests {
             "Remove BrainAI from this Mac? Your saved copy is at /Users/alex/Documents/BrainAI saved 2026-11-12."
         );
         assert!(remove_confirm_text(true, r"C:\Users\alex\Documents\BrainAI saved 2026-11-12").starts_with("Remove BrainAI from this PC? "));
-        assert_eq!(NOT_SAVED, "BrainAI can't confirm a saved copy for this removal, so nothing was removed. Run Remove BrainAI again from Settings.");
+        assert_eq!(not_saved_text(), "BrainAI can't confirm a saved copy for this removal, so nothing was removed. Run Remove BrainAI again from Settings.");
     }
 
     #[test]

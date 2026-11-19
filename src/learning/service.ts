@@ -4,6 +4,7 @@
  * folder report; the other four are set by assistants (or the owner) with a note. Nothing runs in the background:
  * everything is worked out when it is read.
  */
+import { SayableError, type Say } from '../i18n/errors.js';
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
 import { notPushed, type FolderMatch } from '../folders/match.js';
@@ -25,21 +26,27 @@ const REPORT_FRESH_DAYS = 7;
 /** How bad a status is, for "the worse of the report and the hand status wins". */
 const SEVERITY: Record<CheckStatus, number> = { not_needed: 0, done: 1, look: 2, todo: 3 };
 
-export class LearningError extends Error {
-  constructor(readonly code: 'invalid' | 'not_found', message: string) { super(message); }
+export class LearningError extends SayableError {
+  constructor(readonly code: 'invalid' | 'not_found', message: string, say?: Say) { super(message, say); }
 }
 
 /** A title as a stable key: lower case, no accents, words joined by "-". */
 export const topicSlug = (title: string): string =>
   title.normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
-function checkText(what: string, text: string, max: number): void {
-  if (text.length > max) throw new LearningError('invalid', `The ${what} is at most ${max} characters; this one has ${text.length}.`);
+const TEXT_KEYS = {
+  note: { long: 'err.learning.note.long', instruction: 'err.learning.note.instruction', secret: 'err.learning.note.secret' },
+  'topic title': { long: 'err.learning.topic.long', instruction: 'err.learning.topic.instruction', secret: 'err.learning.topic.secret' },
+} as const;
+
+function checkText(what: 'note' | 'topic title', text: string, max: number): void {
+  const keys = TEXT_KEYS[what];
+  if (text.length > max) throw new LearningError('invalid', `The ${what} is at most ${max} characters; this one has ${text.length}.`, { key: keys.long, params: { max, length: text.length } });
   // Notes and titles are shown to every assistant in project_brief: the full check, as for memories, and no secrets.
   const reason = looksLikeInstruction(text);
-  if (reason) throw new LearningError('invalid', `The ${what} reads like an instruction to AI assistants (${reason}). Describe it plainly.`);
+  if (reason) throw new LearningError('invalid', `The ${what} reads like an instruction to AI assistants (${reason}). Describe it plainly.`, { key: keys.instruction, params: { reason } });
   const secret = looksLikeSecret(text);
-  if (secret) throw new LearningError('invalid', `The ${what} looks like it holds a secret (${secret}): never save passwords, keys or tokens.`);
+  if (secret) throw new LearningError('invalid', `The ${what} looks like it holds a secret (${secret}): never save passwords, keys or tokens.`, { key: keys.secret, params: { reason: secret } });
 }
 
 export class LearningService {
@@ -103,11 +110,11 @@ export class LearningService {
 
   set(name: string, area: CheckArea, s: { status: CheckStatus; note?: string; automatic?: boolean }, by: string): AreaState {
     const p = this.project(name);
-    if (!p) throw new LearningError('not_found', `There is no project ${JSON.stringify(name)}.`);
-    if (!this.inScope(p)) throw new LearningError('invalid', `${p.name} has no five areas: only open or parked projects that are not an area of life do.`);
+    if (!p) throw new LearningError('not_found', `There is no project ${JSON.stringify(name)}.`, { key: 'err.learning.noProject', params: { name: JSON.stringify(name) } });
+    if (!this.inScope(p)) throw new LearningError('invalid', `${p.name} has no five areas: only open or parked projects that are not an area of life do.`, { key: 'err.learning.noAreas', params: { name: p.name } });
     const note = s.note?.trim() || null;
     if (note !== null) checkText('note', note, MAX_NOTE);
-    if (s.status === 'not_needed' && note === null) throw new LearningError('invalid', 'Say in the note why this area is not needed for this project (the reason).');
+    if (s.status === 'not_needed' && note === null) throw new LearningError('invalid', 'Say in the note why this area is not needed for this project (the reason).', { key: 'err.learning.noteReason' });
     const old = this.store.checks(p.name).find((r) => r.area === area);
     this.store.put({
       project: p.name, area, status: s.status, note, automatic: s.automatic ?? old?.automatic ?? false, setBy: by, setAt: this.now().toISOString(),
@@ -119,7 +126,7 @@ export class LearningService {
   /** "Not now" for an area of a project: it is not suggested again for SNOOZE_DAYS. Returns until when. */
   notNow(name: string, area: CheckArea, by: string): string {
     const p = this.project(name);
-    if (!p) throw new LearningError('not_found', `There is no project ${JSON.stringify(name)}.`);
+    if (!p) throw new LearningError('not_found', `There is no project ${JSON.stringify(name)}.`, { key: 'err.learning.noProject', params: { name: JSON.stringify(name) } });
     const until = new Date(this.now().getTime() + SNOOZE_DAYS * DAY_MS).toISOString();
     this.store.snooze(p.name, area, until, by);
     return until;
@@ -147,7 +154,7 @@ export class LearningService {
     const title = t.title.trim();
     checkText('topic title', title, MAX_TOPIC);
     const slug = topicSlug(title);
-    if (slug === '') throw new LearningError('invalid', 'Give the topic a title with words in it.');
+    if (slug === '') throw new LearningError('invalid', 'Give the topic a title with words in it.', { key: 'err.learning.topicWords' });
     const project = t.project === undefined ? undefined : this.projects.named(t.project);
     const old = this.store.topics().find((x) => x.slug === slug);
     const level = old && LESSON_LEVELS.indexOf(old.level) > LESSON_LEVELS.indexOf(t.level) ? old.level : t.level;

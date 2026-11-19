@@ -2,6 +2,7 @@ import { test, mock, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
+import { withoutClientCatalog } from '../testing/entities.js';
 
 const owner = { type: 'owner' } as const;
 
@@ -127,7 +128,7 @@ test('the list puts an unpinned personal project in the closed Personal fold and
   await remember(app, 'loose notes', 'loose');
   const page = await (await f('/graph?view=list').then(() => f('/graph', { headers: { Cookie: 'graph-view=list' } }))).text();
   // One Personal section: the pinned project under its heading, then the closed fold of the others, before Unsorted.
-  assert.equal(page.split('Personal').length - 1, 1, 'one Personal heading, no second Personal section');
+  assert.equal(withoutClientCatalog(page).split('Personal').length - 1, 1, 'one Personal heading, no second Personal section');
   assert.match(page, /<h2>Personal<\/h2>\s*<ul class="graph-rows"><li id="g-career">[\s\S]*?<\/ul>\s*<details class="fold"><summary>Not pinned <span class="n">1<\/span><span class="chev"><\/span><\/summary>[\s\S]*?finances[\s\S]*?<\/details>\s*<h2>Unsorted<\/h2>/);
   const fold = page.slice(page.indexOf('<details class="fold"><summary>Not pinned'));
   assert.doesNotMatch(fold.slice(0, fold.indexOf('</details>')), /career/);

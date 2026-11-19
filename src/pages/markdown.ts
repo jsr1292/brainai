@@ -1,4 +1,6 @@
 import { Marked, type Tokens } from 'marked';
+import { fmt } from '../i18n/fmt.js';
+import { currentLanguage, t as tr } from '../i18n/core.js';
 import { raw, type SafeHtml } from '../web/html.js';
 import type { StoredImage } from '../images/store.js';
 
@@ -154,8 +156,7 @@ function safeSrc(src: string): string | null {
   return /^\/static\/[A-Za-z0-9._/-]+$/.test(u) && !u.includes('..') ? u : null;
 }
 
-const DELETED_DAY = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
-const sizeText = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`);
+const DELETED_DAY = { en: new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }), es: new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) };
 
 /** The picture an image URL names, when it is one of the brain's and the extension matches its stored type. */
 function pictureOf(href: string): { url: string; img: StoredImage | undefined } | null {
@@ -172,8 +173,8 @@ const pictureTag = (url: string, img: StoredImage, alt: string, title: string | 
 
 /** In place of a picture that isn't there: never a broken image. */
 const pictureNotice = (img: StoredImage | undefined, alt: string) => (img === undefined
-  ? `<span class="pic-missing">Missing picture: ${esc(alt)}</span>`
-  : `<span class="pic-gone">This picture was deleted on ${DELETED_DAY.format(new Date(img.removedAt!))}</span>`);
+  ? `<span class="pic-missing">${esc(tr('err.md.pictureMissing', { alt }))}</span>`
+  : `<span class="pic-gone">${esc(tr('err.md.pictureDeleted', { date: DELETED_DAY[currentLanguage()].format(new Date(img.removedAt!)) }))}</span>`);
 
 // marked parses synchronously, so the resolver for the current call is held here.
 let resolving: LinkResolver = () => null;
@@ -232,7 +233,7 @@ marked.use({
       if (!only || !pic?.img || pic.img.removedAt !== null) return `<p>${this.parser.parseInline(tokens)}</p>\n`;
       const img = pic.img;
       const caption = only.title
-        ? `<figcaption><b>${esc(only.title)}</b><span class="pic-meta">Added by ${esc(img.createdBy === 'owner' ? 'you' : img.createdBy)} · ${img.width} × ${img.height} · ${sizeText(img.bytes)}</span></figcaption>`
+        ? `<figcaption><b>${esc(only.title)}</b><span class="pic-meta">${esc(tr('err.md.addedBy', { who: img.createdBy === 'owner' ? tr('err.md.you') : img.createdBy }))} · ${img.width} × ${img.height} · ${esc(fmt.size(img.bytes))}</span></figcaption>`
         : '';
       return `<figure id="pic-${img.id}"><div class="frame">${pictureTag(pic.url, img, only.text, null)}</div>${caption}</figure>\n`;
     },

@@ -8,8 +8,9 @@ import { cosine } from '../memory/embedder.js';
 import { factStory } from '../memory/factStory.js';
 import type { Memory } from '../memory/types.js';
 import type { AppDeps } from './app.js';
-import { activityRow, excerpt, when, type ActivityItem } from './dashboardViews.js';
+import { activityRow, excerpt, kindLabel, when, type ActivityItem } from './dashboardViews.js';
 import { html, type SafeHtml } from './html.js';
+import { t } from '../i18n/core.js';
 import { metaLine } from './metaLine.js';
 
 /** How many facts Near it shows beside a fact. */
@@ -87,9 +88,9 @@ export function deskSideView(b: {
   /** Near it, beside a fact: its links come back to `self`. */
   near?: Memory[];
 }): SafeHtml {
-  const next = b.next ? html`<section class="desk-next"><h3>Next for you</h3><a class="row" href="${b.next.href}" data-sheet><span class="dot" aria-hidden="true"></span><span class="txt">${b.next.title}</span><kbd>↓</kbd></a></section>` : '';
-  const lately = b.lately && b.lately.length > 0 ? html`<section class="desk-lately"><h3>Lately</h3><ul class="plain-list">${b.lately.map((a) => activityRow(a, b.self))}</ul></section>` : '';
+  const next = b.next ? html`<section class="desk-next"><h3>${t('inbox.side.next')}</h3><a class="row" href="${b.next.href}" data-sheet><span class="dot" aria-hidden="true"></span><span class="txt">${b.next.title}</span><kbd>↓</kbd></a></section>` : '';
+  const lately = b.lately && b.lately.length > 0 ? html`<section class="desk-lately"><h3>${t('inbox.side.lately')}</h3><ul class="plain-list">${b.lately.map((a) => activityRow(a, b.self))}</ul></section>` : '';
   const from = b.self ? `?from=${encodeURIComponent(b.self)}` : '';
-  const near = b.near && b.near.length > 0 ? html`<section class="desk-near"><h3>Near it</h3><ul class="plain-list">${b.near.map((m) => html`<li><a href="/memories/${m.id}${from}">${excerpt(m.content)}</a>${metaLine([m.kind, when(m.updatedAt)])}</li>`)}</ul></section>` : '';
+  const near = b.near && b.near.length > 0 ? html`<section class="desk-near"><h3>${t('inbox.side.near')}</h3><ul class="plain-list">${b.near.map((m) => html`<li><a href="/memories/${m.id}${from}">${excerpt(m.content)}</a>${metaLine([kindLabel(m.kind), when(m.updatedAt)])}</li>`)}</ul></section>` : '';
   return html`<aside class="desk-side">${next}${lately}${near}</aside>`;
 }

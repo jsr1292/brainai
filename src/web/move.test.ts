@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { connectClient, loggedIn, startTestApp } from '../testing/helpers.js';
 import { moveFile } from '../desktop/move.js';
 import { revealCommand } from './moveRoutes.js';
+import { decodeEntities } from '../testing/entities.js';
 
 const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
 const PUBLIC = 'https://brainai-mac.tail1234.ts.net';
@@ -130,12 +131,12 @@ test('after a move, Remove from this computer goes on to Remove BrainAI, and the
 
 test('the runbook is a link to the Moving from the app section, and It\'s moved waits for the moving file', async (t) => {
   const { f } = await desktop(t);
-  const before = (await (await f('/settings/move')).text()).replaceAll('&#39;', "'");
+  const before = decodeEntities((await (await f('/settings/move')).text()));
   assert.match(before, /<a href="https:\/\/github\.com\/jsr1292\/brainai\/blob\/main\/docs\/RUNBOOK\.md#4-moving-from-the-app"[^>]*>the runbook<\/a>/);
   assert.match(before, /<button type="submit" class="primary" disabled>It's moved<\/button>/);
   assert.match(before, /Make the moving file first\./);
   await f('/settings/move/file', { method: 'POST', headers: FORM, body: '' });
-  const after = (await (await f('/settings/move')).text()).replaceAll('&#39;', "'");
+  const after = decodeEntities((await (await f('/settings/move')).text()));
   assert.match(after, /<button type="submit" class="primary">It's moved<\/button>/);
   assert.doesNotMatch(after, /Make the moving file first\./);
 });

@@ -8,12 +8,13 @@ import { request } from 'node:http';
 import { appSession, loggedIn, startTestApp } from '../testing/helpers.js';
 import { spaceBlock, spaceTotalText } from './spaceViews.js';
 import type { SpaceBreakdown } from '../diskSpace.js';
+import { decodeEntities } from '../testing/entities.js';
 
 const sample: SpaceBreakdown = { total: 1_500_000_000, app: 300_000_000, models: { bytes: 900_000_000, parts: [{ label: 'Light search model', bytes: 500_000_000 }, { label: 'Standard reranker', bytes: 400_000_000 }] }, memories: 12_000, backups: 200_000_000, other: 100_000_000 };
 const text = (h: { value: string }) => h.value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
 test('the space block, ready', () => {
-  const t = text(spaceBlock(sample));
+  const t = decodeEntities(text(spaceBlock(sample)));
   assert.match(t, /BrainAI uses 1\.5 GB here/);
   for (const part of ['The app itself 300 MB', 'Search models Light search model 500 MB · Standard reranker 400 MB 900 MB', 'Your memories The database and your pictures 12 KB', 'Backups on this computer 200 MB', 'Other Logs and status files 100 MB']) assert.ok(t.includes(part), part);
   assert.ok(t.includes("Copies in your second folder aren't counted."));
@@ -72,7 +73,7 @@ test('the app: the route answers the owner, the page shows the breakdown once it
   const section = page.slice(page.indexOf('<section id="this-device"'), page.indexOf('<section id="connections"'));
   assert.match(section, /Space on this computer/);
   assert.match(section, /The app itself/);
-  assert.match(section, /Copies in your second folder aren&#39;t counted|Copies in your second folder aren't counted/);
+  assert.match(decodeEntities(section), /Copies in your second folder aren't counted/);
   assert.match(page, /<span data-space-status>BrainAI [\d.]+ · [\d.]+ [KMG]B<\/span>/);
 });
 

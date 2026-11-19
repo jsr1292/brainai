@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findBlock, putBlock, removeBlock } from './rulesBlock.js';
+import { findBlock, putBlock, removeBlock, strayBrain } from './rulesBlock.js';
 import { setupText } from '../setup/texts.js';
 
 const block = setupText('claude-code', 'http://localhost:3100/mcp');
@@ -51,4 +51,9 @@ test("the host is read from looser wording too, such as the owner's own line", (
   const owner = '<!-- brain setup 3 -->\nI have a shared memory, the brain (MCP connector "memory", memory.example.net), used by all my assistants.\n<!-- /brain setup -->';
   assert.equal(findBlock(owner)!.host, 'memory.example.net');
   assert.equal(findBlock('<!-- brain setup 2 -->\nthe brain (localhost:3100)\n<!-- /brain setup -->')!.host, 'localhost:3100');
+});
+
+test('the host is read from a Spanish block too, and a Spanish stray brain line is seen', () => {
+  assert.equal(findBlock('<!-- brain setup 3 -->\nTengo una memoria compartida, la memoria de BrainAI (memory.example.net), conectada.\n<!-- /brain setup -->')!.host, 'memory.example.net');
+  assert.equal(strayBrain('Tengo una memoria compartida, la memoria de BrainAI (localhost:3100).\n'), 'localhost:3100');
 });

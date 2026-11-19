@@ -1,14 +1,16 @@
 /**
  * Guided setup (round 2 §17b): the text the owner pastes into each app so it uses the brain, versioned. Changing any
  * text means raising SETUP_VERSION (Settings then tells which apps still run the older one) and updating SETUP_HASH,
- * which texts.test.ts checks. The texts hold no secrets, no profile facts and nothing about the owner's employer.
+ * which texts.test.ts checks. Every text exists in English and Spanish and both languages are in the hash, so changing either one
+ * raises the number. English is the default; callers pass the language of the screen or of the Connect request. The texts hold no secrets, no profile facts and nothing about the owner's employer.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Locale } from '../i18n/core.js';
 
-export const SETUP_VERSION = 2;
-/** sha256 of every text (not the menu lines) rendered at host HOST; texts.test.ts prints the new value when a text changes. */
-export const SETUP_HASH = '00f4311ac905e1625bdee2035015c3b8d62e664c9a09505f7d4a10eb2319bd1c';
+export const SETUP_VERSION = 3;
+/** sha256 of every text, English then Spanish (not the menu lines), rendered at host HOST; texts.test.ts prints the new value when a text changes. */
+export const SETUP_HASH = '5d21fab583a5a79f3b8584dac0f9e6a689c312d4dc0d60267587c03ddc15e800';
 
 export interface SetupApp {
   slug: string;
@@ -61,7 +63,7 @@ export function setupApps(): SetupApp[] {
   return APPS;
 }
 
-const ask = (v: number) => `When you call load_profile, pass setup: ${v}.`;
+const ask = (v: number, lang: Locale) => lang === 'es' ? `Cuando llames a load_profile, pasa setup: ${v}.` : `When you call load_profile, pass setup: ${v}.`;
 
 /** The memory habits every full connection gets; `host` is the brain's own address, so the owner can tell it apart. */
 const habits = (host: string) => `I have a shared memory, the brain (${host}), connected to you as an MCP connector and used by all my AI assistants. At the start of each conversation, load my profile from it. Before answering anything about past work, my projects or my setup, recall from it. Save decisions, conclusions and lasting facts about me there as we go, and save or update a short status whenever a step of the work finishes; don't wait for the end of the conversation. If the connector is missing, needs a login, or a call fails, tell me right away. It is the source of truth for anything that matters across assistants.`;
@@ -75,6 +77,17 @@ const layers = `The brain has two layers. Facts are short: decisions, statuses, 
 
 const chatLayers = 'Facts are short (decisions, statuses, roadmaps, my profile); pages are long documents (read_page, write_page). Keep live status in facts. Never save passwords, keys or tokens.';
 
+
+const habitsEs = (host: string) => `Tengo una memoria compartida, la memoria de BrainAI (${host}), conectada contigo como conector MCP y usada por todos mis asistentes de IA. Al empezar cada conversación, carga mi perfil desde ella. Antes de responder cualquier cosa sobre trabajo anterior, mis proyectos o mi configuración, consúltala con recall. Guarda ahí las decisiones, las conclusiones y los datos duraderos sobre mí a medida que avanzamos, y guarda o actualiza un estado breve cada vez que termine un paso del trabajo; no esperes al final de la conversación. Si falta el conector, pide iniciar sesión o falla una llamada, dímelo enseguida. Es la fuente de verdad para todo lo que importa entre asistentes.`;
+
+const layersEs = `La memoria tiene dos capas. Los datos son breves: decisiones, estados, hojas de ruta y mi perfil. Las páginas son documentos largos y duraderos: qué es cada proyecto, cómo está montado y se ejecuta, por qué se construyó así, guías de operación e investigación.
+- Para ese nivel de detalle, usa primero project_brief y recall, y después abre la página con read_page.
+- Cuando produzcamos algo largo que importará más adelante, escríbelo como una página (write_page, o edit_page_section para una parte) y guarda un dato de una línea que apunte a ella.
+- El estado en curso y las tareas pendientes van en los datos, nunca en una página. Si ambos discrepan, mandan los datos.
+- No pongas nunca contraseñas, claves ni tokens en ninguno de los dos.
+- Sigue las reglas de páginas de las instrucciones de la memoria y de su página "How this brain is organised".`;
+
+const chatLayersEs = 'Los datos son breves (decisiones, estados, hojas de ruta, mi perfil); las páginas son documentos largos (read_page, write_page). Guarda el estado en curso en los datos. No guardes nunca contraseñas, claves ni tokens.';
 
 const wrap = (body: string, v: number) => `<!-- brain setup ${v} -->\n${body}\n<!-- /brain setup -->`;
 
@@ -104,8 +117,12 @@ export const currentSetupVersion = (o?: SetupOverlay): number => o?.version ?? S
 
 const CODING = new Set(['grok-build', 'claude-code', 'codex', 'gemini-cli']);
 
-/** The text for one app, with the brain's MCP address and the owner's overlay lines in it. Throws for an unknown app. */
-export function setupText(slug: string, mcpUrl: string, overlay?: SetupOverlay): string {
+/**
+ * The text for one app, with the brain's MCP address and the owner's overlay lines in it, in English or Spanish
+ * (`lang`; anything but 'es' is English). Throws for an unknown app. The wording of the owner's overlay lines is theirs.
+ */
+export function setupText(slug: string, mcpUrl: string, overlay?: SetupOverlay, lang: Locale = 'en'): string {
+  const es = lang === 'es';
   const host = new URL(mcpUrl).host;
   const v = currentSetupVersion(overlay);
   const lines = [...(overlay?.extra[slug] ?? []), ...(CODING.has(slug) ? overlay?.extra.coding ?? [] : [])];
@@ -114,14 +131,15 @@ export function setupText(slug: string, mcpUrl: string, overlay?: SetupOverlay):
     case 'claude':
     case 'chatgpt':
     case 'grok':
-      return `${habits(host)}\n${chatLayers}\n${extra}${ask(v)}`;
+      return `${es ? habitsEs(host) : habits(host)}\n${es ? chatLayersEs : chatLayers}\n${extra}${ask(v, lang)}`;
     case 'grok-build':
     case 'claude-code':
     case 'codex':
     case 'gemini-cli':
-      return wrap(`${habits(host)}\n\n${layers}\n${extra}\n${ask(v)}`, v);
+      return wrap(`${es ? habitsEs(host) : habits(host)}\n\n${es ? layersEs : layers}\n${extra}\n${ask(v, lang)}`, v);
     case 'opencode':
       // Discussions only: that connection has no load_profile, so it reports no setup number.
+      if (es) return wrap(`Tengo una memoria compartida, la memoria de BrainAI (${host}), conectada contigo como conector MCP. Tu conexión es solo para debates: cuando te pida unirte a un debate, léelo y publica ahí tu respuesta con las herramientas de debates. No guardes nunca contraseñas, claves ni tokens.${extra ? `\n${extra.trimEnd()}` : ''}`, v);
       return wrap(`I have a shared memory, the brain (${host}), connected to you as an MCP connector. Your connection is for discussions only: when I ask you to join a discussion, read it and post your answer there with the discussion tools. Never save passwords, keys or tokens.${extra ? `\n${extra.trimEnd()}` : ''}`, v);
     default:
       throw new Error(`No setup text for ${slug}`);

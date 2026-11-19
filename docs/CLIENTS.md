@@ -1,3 +1,5 @@
+Leer en español: [docs/es/CLIENTS.md](es/CLIENTS.md)
+
 # Connecting your AI apps to the shared memory
 
 Replace `<domain>` with your domain everywhere below. Server setup is in `docs/RUNBOOK.md`; do that first.

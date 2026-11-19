@@ -384,6 +384,7 @@ test('the panel lists up to 3 of the project\'s discussions, open ones first, wi
   assert.equal(list[0]!.label, 'Round 2 · waiting for Grok');
   assert.equal(list[1]!.label, 'Round 1 · ready for you');
   assert.equal(list[2]!.label, 'Decided 1 Nov');
+  assert.deepEqual(list.map((x) => [x.round, x.waitingFor, x.closedAt === null]), [[2, ['Grok'], true], [1, [], true], [list[2]!.round, list[2]!.waitingFor, false]], 'the structured fields a screen words itself from');
   assert.deepEqual(new ProjectsService(registry, memories, store).detail('gps-tracklog', clock())!.discussions, []);
 });
 

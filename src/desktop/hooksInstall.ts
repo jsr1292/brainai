@@ -8,6 +8,7 @@
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { t } from '../i18n/core.js';
 import { removeHooks, matcherFor, withoutOurHooks, writeAtomic } from './leftovers.js';
 import { findCommand, type ToolEnv, type ToolId } from './tools.js';
 
@@ -143,12 +144,12 @@ export function installHooks(id: ToolId, env: ToolEnv): string | null {
   const name = { 'claude-code': 'Claude Code', codex: 'Codex', cursor: 'Cursor' }[id as 'claude-code' | 'codex' | 'cursor'];
   const scripts = w.scripts(env);
   const missing = scripts.find((s) => !existsSync(join(env.hooksDir!, s.from)));
-  if (missing) return `${name}'s save reminders were not added: this BrainAI has no ${missing.from} (run the build).`;
+  if (missing) return t('tools.hooks.missing', { name: name ?? id, file: missing.from });
   const c = readConfig(w.config(env));
-  if ('refuse' in c) return `${name}'s save reminders were not added: ${c.refuse}.`;
+  if ('refuse' in c) return t('tools.hooks.refused', { name: name ?? id, why: c.refuse });
   if (isObject(c.json.hooks)) {
     const odd = w.events.find((e) => (c.json.hooks as Json)[e.event] !== undefined && !Array.isArray((c.json.hooks as Json)[e.event]));
-    if (odd) return `${name}'s save reminders were not added: ${w.config(env)} has an unexpected shape (hooks.${odd.event} is not a list): BrainAI will not rewrite it.`;
+    if (odd) return t('tools.hooks.shape', { name: name ?? id, config: w.config(env), event: odd.event });
   }
   try {
     for (const s of scripts) { mkdirSync(dirname(s.to), { recursive: true }); copyFileSync(join(env.hooksDir, s.from), s.to); }
@@ -159,9 +160,9 @@ export function installHooks(id: ToolId, env: ToolEnv): string | null {
       writeWithBackup(w.config(env), `${JSON.stringify({ ...(id === 'cursor' && c.json.version === undefined ? { version: 1 } : {}), ...c.json, hooks }, null, 2)}\n`);
     }
   } catch (e) {
-    return `${name}'s save reminders were not added: ${e instanceof Error ? e.message : String(e)}.`;
+    return t('tools.hooks.failed', { name: name ?? id, why: e instanceof Error ? e.message : String(e) });
   }
-  return id === 'codex' ? 'Codex asks you to trust the new hooks once: type /hooks in Codex and approve them.' : null;
+  return id === 'codex' ? t('tools.hooks.codexTrust') : null;
 }
 
 /**
@@ -174,8 +175,8 @@ export function removeToolHooks(id: ToolId, env: ToolEnv, otherBrain = false): s
   if (id === 'claude-code') return removeHooks(env, otherBrain).kept;
   const path = w.config(env);
   const c = readConfig(path);
-  if ('refuse' in c) return `${c.refuse}: remove the entries naming memory-nudge.mjs by hand.`;
-  if (otherBrain) return 'The save reminders were left in place: BrainAI could not confirm no other brain uses them.';
+  if ('refuse' in c) return t('tools.hooks.removeByHand', { why: c.refuse });
+  if (otherBrain) return t('tools.hooks.leftInPlace');
   try {
     if (isObject(c.json.hooks)) {
       const next = withoutOurHooks(c.json.hooks, matcherFor(w.ours));
@@ -194,7 +195,7 @@ export function removeToolHooks(id: ToolId, env: ToolEnv, otherBrain = false): s
     const stillUsed = (['codex', 'cursor'] as const).some((other) => other !== id && (read(WIRING[other]!.config(env)) ?? '').includes('memory-nudge.mjs'));
     if (!stillUsed) for (const s of w.scripts(env)) rmSync(s.to, { force: true });
   } catch (e) {
-    return `The save reminders could not be removed (${e instanceof Error ? e.message : String(e)}).`;
+    return t('tools.hooks.removeFailed', { why: e instanceof Error ? e.message : String(e) });
   }
   return null;
 }

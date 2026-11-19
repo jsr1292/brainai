@@ -1,18 +1,21 @@
 import { lstat, readdir } from 'node:fs/promises';
 import { dirname, join, resolve, sep, win32, posix } from 'node:path';
 import { CATALOGUE, modelDirOf } from './models/catalogue.js';
+import { currentLanguage, pseudoWrap, t } from './i18n/core.js';
 
 /** "1.2 GB", "340 MB", "12 KB": 1000-based units, one decimal below 10 and none above. */
 export function formatBytes(bytes: number): string {
   const b = Math.max(0, Math.round(bytes));
-  if (b === 0) return '0 KB';
-  if (b < 1000) return 'less than 1 KB';
+  if (b === 0) return pseudoWrap('0 KB');
+  if (b < 1000) return t('settings.space.lessThan');
   const units = ['KB', 'MB', 'GB', 'TB'];
   let v = b / 1000;
   let i = 0;
   while (v >= 999.5 && i < units.length - 1) { v /= 1000; i++; }
-  const text = v < 9.95 && i > 0 ? v.toFixed(1).replace(/\.0$/, '') : String(Math.round(v));
-  return `${text} ${units[i]}`;
+  let text = v < 9.95 && i > 0 ? v.toFixed(1).replace(/\.0$/, '') : String(Math.round(v));
+  // Spanish writes the decimal comma; nothing else about the output changes.
+  if (currentLanguage() === 'es') text = text.replace('.', ',');
+  return pseudoWrap(`${text} ${units[i]}`);
 }
 
 /** How many lstat/readdir calls a walk has in flight at once, however deep the tree (libuv's thread pool is shared with the database and the models). */

@@ -1,8 +1,11 @@
 import { Router, type Request, type Response } from 'express';
+import { t } from '../i18n/index.js';
 import { MemoryError } from '../memory/service.js';
 import type { AppDeps } from './app.js';
 import { requireOwner } from './authRoutes.js';
 import { discussionsView, discussionView, type Drafts } from './discussionViews.js';
+import type { BackTarget } from './back.js';
+import { errorText } from './errorText.js';
 import { html, page, type SafeHtml } from './html.js';
 import { invalidateSideStatus } from './sideStatus.js';
 import { deskSideView, nextForYou } from './deskSide.js';
@@ -18,9 +21,10 @@ export function discussionRoutes(d: AppDeps): Router {
   // Guard per route, not router.use: unknown paths must still fall through to the 404 page.
   const owner = requireOwner(d.sessions);
 
-  const send = (res: Response, status: number, title: string, body: SafeHtml, back?: { href: string; label: string }) =>
-    res.status(status).type('html').send(page(title, body, { nav: true, tab: title === 'Not found' ? null : 'projects', back: back ?? (title === 'Discussions' ? { href: '/', label: 'Projects' } : undefined) }));
-  const notFound = (res: Response) => send(res, 404, 'Not found', html`<h1>Not found</h1>`);
+  /** `kind` says which page this is (never read from the title, which is translated). */
+  const send = (res: Response, status: number, kind: 'list' | 'one' | 'notFound', body: SafeHtml, back?: BackTarget) =>
+    res.status(status).type('html').send(page(kind === 'list' ? t('discussions.title') : kind === 'one' ? t('discussions.one') : t('common.notFound'), body, { nav: true, tab: kind === 'notFound' ? null : 'projects', back: back ?? (kind === 'list' ? { href: '/', labelKey: 'shell.nav.projects' } : undefined) }));
+  const notFound = (res: Response) => send(res, 404, 'notFound', html`<h1>${t('common.notFound')}</h1>`);
 
   /** The discussion page, or a 404 when it is missing or removed. */
   const show = (res: Response, id: string, status = 200, error?: string, drafts?: Drafts) => {
@@ -28,7 +32,7 @@ export function discussionRoutes(d: AppDeps): Router {
       const projects = d.service.listProjects().map((p) => p.project);
       const discussion = d.discussions.ownerView(id);
       const name = discussion.project ? d.service.projectNamed(discussion.project) : undefined;
-      send(res, status, 'Discussion', discussionView(discussion, projects, error, drafts), name ? { href: `/?project=${encodeURIComponent(name)}#panel`, label: name } : { href: '/discussions', label: 'Discussions' });
+      send(res, status, 'one', discussionView(discussion, projects, error, drafts), name ? { href: `/?project=${encodeURIComponent(name)}#panel`, label: name } : { href: '/discussions', labelKey: 'discussions.title', mark: 'discussions' });
     } catch (e) {
       if (e instanceof MemoryError && e.code === 'not_found') return notFound(res);
       throw e;
@@ -42,7 +46,7 @@ export function discussionRoutes(d: AppDeps): Router {
       await action();
     } catch (e) {
       if (!(e instanceof MemoryError)) throw e;
-      return e.code === 'not_found' ? notFound(res) : show(res, id, 400, e.message, drafts);
+      return e.code === 'not_found' ? notFound(res) : show(res, id, 400, errorText(e), drafts);
     }
     // Any owner action (decide, delete, round, ask, note, sharing) can change what waits on the owner: the sidebar's
     // needs-you dot is worked out again on the next page.
@@ -50,7 +54,7 @@ export function discussionRoutes(d: AppDeps): Router {
     res.redirect(303, to ?? `/discussions/${id}`);
   };
 
-  router.get('/discussions', owner, (_req, res) => send(res, 200, 'Discussions', discussionsView(d.discussions.ownerList())));
+  router.get('/discussions', owner, (_req, res) => send(res, 200, 'list', discussionsView(d.discussions.ownerList())));
 
   router.get('/discussions/:id', owner, (req, res) => {
     const id = req.params.id as string;
@@ -89,14 +93,14 @@ export function discussionRoutes(d: AppDeps): Router {
     const id = req.params.id as string;
     const add = str(req, 'add').trim();
     const remove = str(req, 'remove').trim().toLowerCase();
-    if (add === '' && remove === '') throw new MemoryError('invalid', 'Give a name to add or remove.');
+    if (add === '' && remove === '') throw new MemoryError('invalid', 'Give a name to add or remove.', undefined, { key: 'discussions.err.askName' });
     const current = d.discussions.ownerView(id).ask;
     d.discussions.setAsk(id, add !== '' ? [...current, add] : current.filter((n) => n.trim().toLowerCase() !== remove));
   }));
 
   router.post('/discussions/:id/sharing', owner, (req, res) => act(req, res, () => {
     const include = str(req, 'include');
-    if (include !== 'yes' && include !== 'no') throw new MemoryError('invalid', 'Choose whether to share with discussions-only assistants.');
+    if (include !== 'yes' && include !== 'no') throw new MemoryError('invalid', 'Choose whether to share with discussions-only assistants.', undefined, { key: 'discussions.err.sharing' });
     d.discussions.setIncludeLimited(req.params.id as string, include === 'yes');
   }));
 
@@ -111,7 +115,7 @@ export function discussionRoutes(d: AppDeps): Router {
   router.post('/discussions/:id/delete', owner, (req, res) => act(req, res, () => {
     const id = req.params.id as string;
     d.discussions.ownerView(id); // a missing discussion is a 404 before anything else
-    if (str(req, 'confirm') !== 'yes') throw new MemoryError('invalid', 'Tick the box to confirm the delete.');
+    if (str(req, 'confirm') !== 'yes') throw new MemoryError('invalid', 'Tick the box to confirm the delete.', undefined, { key: 'discussions.err.confirm' });
     d.discussions.remove(id);
   }, undefined, '/discussions'));
 

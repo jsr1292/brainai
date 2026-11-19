@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { SayableError, type Say } from '../i18n/errors.js';
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
 import { looksLikeSecret } from '../memory/secrets.js';
@@ -21,9 +22,9 @@ export interface Note {
   resolvedBy: string | null;
 }
 
-export class NoteError extends Error {
-  constructor(public code: 'invalid' | 'not_found', message: string) {
-    super(message);
+export class NoteError extends SayableError {
+  constructor(public code: 'invalid' | 'not_found', message: string, say?: Say) {
+    super(message, say);
     this.name = 'NoteError';
   }
 }
@@ -32,13 +33,13 @@ interface NoteRow { id: string; page_id: string; anchor: string | null; text: st
 const toNote = (r: NoteRow): Note => ({
   id: r.id, pageId: r.page_id, anchor: r.anchor, text: r.text, createdAt: r.created_at, status: r.status, reply: r.reply, resolvedAt: r.resolved_at, resolvedBy: r.resolved_by,
 });
-const invalid = (message: string) => new NoteError('invalid', message);
+const invalid = (message: string, say?: Say) => new NoteError('invalid', message, say);
 
 function checkText(label: string, value: string): string {
   const s = value.trim();
-  if (s === '' || s.length > MAX_NOTE) throw invalid(`${label} is 1 to ${MAX_NOTE} characters`);
+  if (s === '' || s.length > MAX_NOTE) throw invalid(`${label} is 1 to ${MAX_NOTE} characters`, { key: label === 'A note' ? 'err.note.lengthNote' : 'err.note.lengthReply', params: { max: MAX_NOTE } });
   const secret = looksLikeSecret(s);
-  if (secret) throw invalid(`The ${label.toLowerCase().replace(/^an? /, '')} looks like it contains a secret (${secret}). Secrets are never stored.`);
+  if (secret) throw invalid(`The ${label.toLowerCase().replace(/^an? /, '')} looks like it contains a secret (${secret}). Secrets are never stored.`, { key: label === 'A note' ? 'err.note.secretNote' : 'err.note.secretReply', params: { reason: secret } });
   return s;
 }
 
@@ -48,27 +49,27 @@ export class NoteService {
 
   private livePage(pageId: string): Page {
     const p = this.pages.get(pageId);
-    if (!p || p.deletedAt !== null) throw new NoteError('not_found', `No page with id ${pageId}`);
+    if (!p || p.deletedAt !== null) throw new NoteError('not_found', `No page with id ${pageId}`, { key: 'err.note.noPage', params: { id: pageId } });
     return p;
   }
 
   private must(id: string): Note {
     const n = this.get(id);
-    if (!n) throw new NoteError('not_found', `No note with id ${id}`);
+    if (!n) throw new NoteError('not_found', `No note with id ${id}`, { key: 'err.note.noNote', params: { id } });
     return n;
   }
 
   private mustOpen(id: string): Note {
     const n = this.must(id);
-    if (n.status === 'resolved') throw invalid('This note is already resolved');
-    if (n.status === 'withdrawn') throw invalid('This note was withdrawn');
+    if (n.status === 'resolved') throw invalid('This note is already resolved', { key: 'err.note.resolved' });
+    if (n.status === 'withdrawn') throw invalid('This note was withdrawn', { key: 'err.note.withdrawn' });
     return n;
   }
 
   add(pageId: string, input: { text: string; anchor?: string }): Note {
     this.livePage(pageId);
     const anchor = input.anchor?.trim() || null;
-    if (anchor !== null && !this.pages.sections(pageId).some((s) => s.anchor === anchor)) throw invalid(`No section ${anchor} on this page`);
+    if (anchor !== null && !this.pages.sections(pageId).some((s) => s.anchor === anchor)) throw invalid(`No section ${anchor} on this page`, { key: 'err.note.noSection', params: { anchor } });
     const text = checkText('A note', input.text);
     const id = randomUUID();
     this.db.prepare('INSERT INTO notes(id, page_id, anchor, text, created_at) VALUES (?, ?, ?, ?, ?)').run(id, pageId, anchor, text, this.now().toISOString());

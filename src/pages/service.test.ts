@@ -494,3 +494,13 @@ test('a section hit carries its heading path and the passage that matched (B10)'
   assert.match(hit!.snippet, /restic retention keeps 7 daily/);
   assert.ok(hit!.snippet.startsWith('…'));
 });
+
+test('a PageError shows in Spanish through errorText and keeps its English message', async () => {
+  const { PageError } = await import('./types.js');
+  const { errorText } = await import('../web/errorText.js');
+  const { runWithLocale } = await import('../i18n/core.js');
+  const e = new PageError('not_found', 'No page with id abc', { key: 'err.page.notFound', params: { id: 'abc' } });
+  assert.equal(e.message, 'No page with id abc');
+  assert.equal(runWithLocale('es', () => errorText(e)), 'No hay ninguna página con el id abc');
+  assert.equal(errorText(e), 'No page with id abc');
+});

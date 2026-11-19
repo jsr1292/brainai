@@ -10,25 +10,24 @@ const look: BackLookups = {
 
 test('each allowed origin gives its label, address and tab', () => {
   const cases: [string, Back][] = [
-    ['/facts', { href: '/facts', label: 'Facts', tab: 'facts' }],
-    ['/facts?project=wildlog&kind=decision&page=2', { href: '/facts?kind=decision&project=wildlog&page=2', label: 'Facts', tab: 'facts' }],
-    ['/facts?kind=profile', { href: '/facts?kind=profile', label: 'About you', tab: 'facts' }],
-    ['/facts?show=replaced', { href: '/facts?show=replaced', label: 'Facts', tab: 'facts' }],
-    ['/facts/tidy', { href: '/facts/tidy', label: 'Tidy up', tab: 'facts' }],
-    ['/pages', { href: '/pages', label: 'Pages', tab: 'pages' }],
+    ['/facts', { href: '/facts', labelKey: 'shell.nav.facts', tab: 'facts' }],
+    ['/facts?project=wildlog&kind=decision&page=2', { href: '/facts?kind=decision&project=wildlog&page=2', labelKey: 'shell.nav.facts', tab: 'facts' }],
+    ['/facts?kind=profile', { href: '/facts?kind=profile', labelKey: 'shell.back.aboutYou', tab: 'facts' }],
+    ['/facts?show=replaced', { href: '/facts?show=replaced', labelKey: 'shell.nav.facts', tab: 'facts' }],
+    ['/facts/tidy', { href: '/facts/tidy', labelKey: 'shell.back.tidy', tab: 'facts' }],
+    ['/pages', { href: '/pages', labelKey: 'shell.nav.pages', tab: 'pages' }],
     ['/pages/11111111-2222-3333-4444-555555555555', { href: '/pages/11111111-2222-3333-4444-555555555555', label: 'wildlog — wine cellar', tab: 'pages' }],
-    ['/memories/11111111-2222-3333-4444-555555555555', { href: '/memories/11111111-2222-3333-4444-555555555555', label: 'Fact', tab: 'facts' }],
-    ['/', { href: '/', label: 'Projects', tab: 'projects' }],
+    ['/memories/11111111-2222-3333-4444-555555555555', { href: '/memories/11111111-2222-3333-4444-555555555555', labelKey: 'shell.back.fact', tab: 'facts' }],
+    ['/', { href: '/', labelKey: 'shell.nav.projects', tab: 'projects' }],
     ['/?project=WildLog', { href: '/?project=wildlog#panel', label: 'wildlog', tab: 'projects' }],
-    ['/discussions/d1', { href: '/discussions/d1', label: 'Discussion', tab: 'projects' }],
-    ['/approvals', { href: '/approvals', label: 'Inbox', tab: 'inbox' }],
-    ['/review', { href: '/review', label: 'Last week', tab: 'week' }],
-    ['/review/now', { href: '/review/now', label: 'So far', tab: 'week' }],
-    ['/review/2026-10-26', { href: '/review/2026-10-26', label: 'Week of 26 Oct', tab: 'week' }],
-    ['/graph', { href: '/graph', label: 'Graph', tab: 'graph' }],
-    ['/graph?view=list', { href: '/graph?view=list', label: 'Graph', tab: 'graph' }],
-    ['/graph?view=3d&project=WildLog', { href: '/graph?project=wildlog&view=3d', label: 'Graph', tab: 'graph' }],
-    ['/search?q=wine%20cellar', { href: '/search?q=wine%20cellar', label: 'Search', tab: null }],
+    ['/discussions/d1', { href: '/discussions/d1', labelKey: 'shell.back.discussion', tab: 'projects' }],
+    ['/approvals', { href: '/approvals', labelKey: 'shell.nav.inbox', tab: 'inbox' }],
+    ['/review', { href: '/review', labelKey: 'shell.nav.lastWeek', tab: 'week' }],
+    ['/review/now', { href: '/review/now', labelKey: 'shell.nav.soFar', tab: 'week' }],
+    ['/graph', { href: '/graph', labelKey: 'shell.nav.graph', tab: 'graph' }],
+    ['/graph?view=list', { href: '/graph?view=list', labelKey: 'shell.nav.graph', tab: 'graph' }],
+    ['/graph?view=3d&project=WildLog', { href: '/graph?project=wildlog&view=3d', labelKey: 'shell.nav.graph', tab: 'graph' }],
+    ['/search?q=wine%20cellar', { href: '/search?q=wine%20cellar', labelKey: 'shell.back.search', tab: null }],
   ];
   for (const [from, want] of cases) assert.deepEqual(backFrom(from, look), want, from);
 });
@@ -38,12 +37,12 @@ test('anything else is ignored, and a label is never URL text', () => {
     '/review/all', '/review/../settings', '/graph?view=map', '/graph?project=nobody', '/discussions/d1?x=1', '/search?q=a&from=/x', '/memories/x', '\\evil', 'javascript:alert(1)', '', ['/facts'], undefined])
     assert.equal(backFrom(bad, look), undefined, String(bad));
   assert.equal(backFrom('/search?q=' + 'x'.repeat(500), look)!.href, '/search?q=' + 'x'.repeat(200));
-  assert.equal(backFrom('/facts?q=%3Cscript%3E', look)!.label, 'Facts');
+  assert.equal(backFrom('/facts?q=%3Cscript%3E', look)!.labelKey, 'shell.nav.facts');
 });
 test('a fact with no origin goes back to its project, else to Facts', () => {
   assert.deepEqual(factBackDefault({ project: 'WildLog' }, look), { href: '/?project=wildlog#panel', label: 'wildlog', tab: 'projects' });
-  assert.deepEqual(factBackDefault({ project: 'gone' }, look), { href: '/facts', label: 'Facts', tab: 'facts' });
-  assert.deepEqual(factBackDefault({ project: null }, look), { href: '/facts', label: 'Facts', tab: 'facts' });
+  assert.deepEqual(factBackDefault({ project: 'gone' }, look), { href: '/facts', labelKey: 'shell.nav.facts', tab: 'facts' });
+  assert.deepEqual(factBackDefault({ project: null }, look), { href: '/facts', labelKey: 'shell.nav.facts', tab: 'facts' });
 });
 test('approvals return only to Projects or Approvals', () => {
   assert.equal(suggestionBack('/approvals'), '/approvals');

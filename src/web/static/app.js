@@ -1,3 +1,6 @@
+// T(key, english): the page's text in the owner's language, from static/i18n.js (loaded before this file); a page without it reads English.
+const T = typeof globalThis.T === 'function' ? globalThis.T : (key, english, params) => { const s = english !== undefined ? english : key; return params ? s.replace(/\{(\w+)\}/g, (m, n) => (Object.prototype.hasOwnProperty.call(params, n) ? String(params[n]) : m)) : s; };
+
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
@@ -91,7 +94,8 @@ document.addEventListener('click', (e) => {
 for (const t of document.querySelectorAll('time[datetime]:not(.day)')) {
   const date = new Date(t.dateTime);
   if (Number.isNaN(date.getTime())) continue;
-  t.title = date.toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' });
+  const tag = T.lang === 'es' ? 'es-ES' : T.lang && T.lang !== 'en' ? T.lang : 'en-GB';
+  try { t.title = date.toLocaleString(tag, { dateStyle: 'full', timeStyle: 'short' }); } catch { t.title = date.toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' }); }
 }
 
 // Keep the contents rail aligned with the section the reader has reached.
@@ -146,9 +150,9 @@ document.addEventListener('click', (e) => {
   };
   // Inside a promise, so a missing clipboard (a page not served over HTTPS) lands in the failure branch too.
   Promise.resolve().then(() => navigator.clipboard.writeText(button.dataset.copy)).then(
-    () => say('Copied', 'Copied'),
+    () => say(T('copy.done', 'Copied'), T('copy.done', 'Copied')),
     () => {
-      say('Could not copy', 'Could not copy. The text is selected in a box after the button: copy it from there.');
+      say(T('copy.failed', 'Could not copy'), T('copy.failedSpoken', 'Could not copy. The text is selected in a box after the button: copy it from there.'));
       showToCopy(button);
     },
   );
@@ -162,7 +166,7 @@ function showToCopy(button) {
     box.type = 'text';
     box.readOnly = true;
     box.className = 'copy-fallback';
-    box.setAttribute('aria-label', 'Text to copy');
+    box.setAttribute('aria-label', T('copy.boxLabel', 'Text to copy'));
     button.after(box);
   }
   box.value = button.dataset.copy;
@@ -310,15 +314,16 @@ for (const line of document.querySelectorAll('[data-setup-status]')) {
 
 // Reach, step 3: the Tailscale check is a small request of its own (the page never waits for Tailscale); Check again asks afresh.
 for (const box of document.querySelectorAll('[data-reach-tailscale]')) {
+  const note = (text) => Object.assign(document.createElement('p'), { className: 'meta', textContent: text });
   const check = async (fresh) => {
-    box.innerHTML = '<p class="meta">Checking Tailscale…</p>';
+    box.replaceChildren(note(T('client.reach.checking', 'Checking Tailscale…')));
     try {
       // An expired login redirects to the login page: say so rather than show that page in the box.
       const r = await fetch(box.dataset.reachTailscale + (fresh ? '?fresh=1' : ''), { headers: { accept: 'text/html' }, credentials: 'same-origin', redirect: 'manual' });
       if (r.ok && !r.redirected) box.innerHTML = await r.text();
-      else if (r.type === 'opaqueredirect') box.innerHTML = '<p class="meta">Your session ended: reload the page.</p>';
-      else box.innerHTML = '<p class="meta">Tailscale can only be checked from the window on the computer BrainAI runs on.</p>';
-    } catch { box.innerHTML = '<p class="meta">BrainAI did not answer. Reload this page to check Tailscale.</p>'; }
+      else if (r.type === 'opaqueredirect') box.replaceChildren(note(T('client.reach.sessionEnded', 'Your session ended: reload the page.')));
+      else box.replaceChildren(note(T('client.reach.localOnly', 'Tailscale can only be checked from the window on the computer BrainAI runs on.')));
+    } catch { box.replaceChildren(note(T('client.reach.noAnswer', 'BrainAI did not answer. Reload this page to check Tailscale.'))); }
   };
   box.addEventListener('click', (e) => {
     if (e.target instanceof Element && e.target.closest('[data-reach-recheck]')) check(true);
@@ -346,7 +351,8 @@ for (const step of document.querySelectorAll('[data-step-added]')) {
 for (const hint of document.querySelectorAll('[data-nothing-yet]')) {
   const started = Date.now();
   setInterval(() => {
-    const waiting = document.querySelector('[data-setup-status] .attention') !== null || document.querySelector('[data-setup-status]')?.textContent.startsWith('Waiting');
+    // The server marks the waiting state itself (data-state="waiting"); the page never reads the words.
+    const waiting = document.querySelector('[data-setup-status] .attention, [data-setup-status] [data-state="waiting"]') !== null;
     hint.hidden = !(waiting && Date.now() - started >= 60_000);
   }, 5000);
 }
@@ -368,9 +374,9 @@ for (const form of document.querySelectorAll('[data-restore-form]')) {
       const r = await fetch('/welcome/restore', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file, credentials: 'same-origin' });
       const answer = await r.json();
       if (answer.next) { location.href = answer.next; return; }
-      err.textContent = answer.error || 'The saved file could not be brought in.';
+      err.textContent = answer.error || T('client.restore.failed', 'The saved file could not be brought in.');
     } catch {
-      err.textContent = 'The saved file could not be sent. Try again.';
+      err.textContent = T('client.restore.notSent', 'The saved file could not be sent. Try again.');
     }
     err.hidden = false;
     busy.hidden = true;
@@ -396,7 +402,7 @@ for (const line of document.querySelectorAll('[data-models-progress]')) {
     if (a.failed) {
       const link = document.createElement('a');
       link.href = '/settings#search';
-      link.textContent = 'Look in Settings › Search';
+      link.textContent = T('client.models.settingsLink', 'Look in Settings › Search');
       text.after(' ', link);
     }
     let bar = line.querySelector('.models-bar');
@@ -405,7 +411,7 @@ for (const line of document.querySelectorAll('[data-models-progress]')) {
         bar = document.createElement('progress');
         bar.className = 'models-bar';
         bar.max = 100;
-        bar.setAttribute('aria-label', 'Search models download progress');
+        bar.setAttribute('aria-label', T('client.models.barLabel', 'Search models download progress'));
         line.append(bar);
       }
       if (a.bar.value === null) bar.removeAttribute('value'); else bar.value = a.bar.value;
@@ -475,7 +481,7 @@ for (const box of document.querySelectorAll('[data-space]:not([data-ready])')) {
       }
     } catch { /* the app may be busy for a moment */ }
     if (tries < 90) setTimeout(tick, 2000);
-    else { const p = box.querySelector('p.meta'); if (p) p.textContent = 'The sizes are not ready yet. Reload this page in a minute.'; }
+    else { const p = box.querySelector('p.meta'); if (p) p.textContent = T('client.space.notReady', 'The sizes are not ready yet. Reload this page in a minute.'); }
   };
   setTimeout(tick, 1500);
 }
@@ -491,7 +497,7 @@ for (const box of document.querySelectorAll('[data-check-updates]')) {
     if (running) { e.preventDefault(); return; }
     running = true;
     link.setAttribute('aria-disabled', 'true');
-    if (status) { status.hidden = false; status.textContent = 'Checking…'; }
+    if (status) { status.hidden = false; status.textContent = T('client.update.checking', 'Checking…'); }
     const started = Date.now();
     const tick = async () => {
       try {
@@ -507,7 +513,7 @@ for (const box of document.querySelectorAll('[data-check-updates]')) {
       if (Date.now() - started > 70_000) {
         running = false;
         link.removeAttribute('aria-disabled');
-        if (status) status.textContent = 'No answer yet. Try again in a minute.';
+        if (status) status.textContent = T('client.update.noAnswer', 'No answer yet. Try again in a minute.');
         return;
       }
       setTimeout(tick, 2000);
@@ -522,7 +528,7 @@ for (const form of document.querySelectorAll('[data-models-form]')) {
   const update = () => {
     let total = 0;
     for (const r of form.querySelectorAll('input[type=radio]:checked')) total += Number(r.dataset.mb || 0);
-    button.textContent = total === 0 ? 'Continue' : `Download ${total} MB and continue`;
+    button.textContent = total === 0 ? T('client.models.continue', 'Continue') : T('client.models.download', 'Download {mb} MB and continue', { mb: total });
   };
   form.addEventListener('change', update);
   update();
@@ -540,7 +546,7 @@ for (const wait of document.querySelectorAll('[data-consent-wait]')) {
         errors = 0;
         const a = await r.json();
         if (a.state === 'done' && typeof a.location === 'string') { location.replace(a.location); return; }
-        if (a.state === 'gone') { if (status) status.textContent = 'This request expired. Start the connection again from the app.'; return; }
+        if (a.state === 'gone') { if (status) status.textContent = T('client.consent.expired', 'This request expired. Start the connection again from the app.'); return; }
       } else errors++;
     } catch { errors++; /* the app may be restarting */ }
     if (errors >= 20) return;
@@ -571,10 +577,10 @@ if (document.body && document.body.dataset && document.body.dataset.consentsWait
           const el = document.createElement('p');
           el.className = 'notice consent-banner';
           el.setAttribute('role', 'status');
-          el.append(document.createTextNode(x.clientName + ' wants access to your memory. '));
+          el.append(document.createTextNode(T('client.consent.wants', '{name} wants access to your memory. ', { name: x.clientName })));
           const a = document.createElement('a');
           a.href = '/consent/' + encodeURIComponent(x.id);
-          a.textContent = 'Review';
+          a.textContent = T('client.consent.review', 'Review');
           el.append(a);
           main.prepend(el);
           shown.set(x.id, el);

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createFakeEmbedder } from '../memory/fakeEmbedder.js';
 import { MemoryService } from '../memory/service.js';
 import { loggedIn, makeService, startTestApp } from '../testing/helpers.js';
+import { decodeEntities } from '../testing/entities.js';
 
 const owner = { type: 'owner' } as const;
 async function start(t: TestContext, opts: Parameters<typeof startTestApp>[0] = {}) {
@@ -138,7 +139,7 @@ test('a secret smuggled into a ticked row is refused, not saved', async (t) => {
 function formPosts(html: string): URLSearchParams {
   const form = html.slice(html.indexOf('<form method="post" action="/import/save"'), html.indexOf('</form>', html.indexOf('action="/import/save"')));
   const out = new URLSearchParams();
-  const attr = (tag: string, k: string) => tag.match(new RegExp(`\\s${k}="([^"]*)"`))?.[1]?.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const attr = (tag: string, k: string) => decodeEntities(tag.match(new RegExp(`\\s${k}="([^"]*)"`))?.[1] ?? '');
   for (const m of form.matchAll(/<select[^>]*name="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)) {
     const sel = m[2]!.match(/<option value="([^"]*)" selected>/)?.[1] ?? m[2]!.match(/<option value="([^"]*)"/)?.[1] ?? '';
     out.append(m[1]!, sel);

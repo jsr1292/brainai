@@ -1,3 +1,5 @@
+Leer en español: [docs/es/REPRODUCE.md](es/REPRODUCE.md)
+
 # Check our claims
 
 BrainAI's docs make claims about what it does: recall finds the right fact, a backup restores everything, the security

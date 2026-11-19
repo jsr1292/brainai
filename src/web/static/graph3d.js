@@ -5,6 +5,8 @@
 const { sin, cos, min, max, hypot, sqrt, round, floor, atan2, abs, exp, PI } = Math;
 const TAU = PI * 2;
 const clock = () => performance.now();
+const T = typeof globalThis.T === 'function' ? globalThis.T : (key, english, params) => { const s = english !== undefined ? english : key; return params ? s.replace(/\{(\w+)\}/g, (m, n) => (Object.prototype.hasOwnProperty.call(params, n) ? String(params[n]) : m)) : s; };
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Each area's colour and orbit: radius, tilt and node (the mockup's ORB, plus Tools & AI and a grey Unsorted ring). */
 export const AREA_STYLE = {
@@ -342,18 +344,20 @@ export function stepIndex(at, dir, n) {
   return (at + (dir === 'next' ? 1 : n - 1)) % n;
 }
 
-const touched = (days) => (days <= 0 ? 'touched today' : days === 1 ? 'touched yesterday' : `touched ${days} days ago`);
+const touched = (days) => (days <= 0 ? T('client.graph.touchedToday', 'touched today') : days === 1 ? T('client.graph.touchedYesterday', 'touched yesterday') : T('client.graph.touchedDays', 'touched {days} days ago', { days }));
+const waitingText = (n) => (n === 1 ? T('client.graph.waitingOne', '{count} waiting', { count: n }) : T('client.graph.waitingMany', '{count} waiting', { count: n }));
+/** A project's state in words (lower case): on the go, idea, parked or open. */
+const stateWord = (p) => (p.onTheGo ? T('client.state.onTheGo', 'on the go') : p.state === 'idea' ? T('client.state.idea', 'idea') : p.state === 'parked' ? T('client.state.parked', 'parked') : T('client.state.open', 'open'));
 
 /**
  * What the live card says: "wildlog, Apps, 1 waiting, late, touched 9 days ago".
  */
 export function announce(p, areaLabel) {
   const parts = [p.name, areaLabel];
-  if (p.onTheGo) parts.push('on the go');
-  else if (p.state === 'idea' || p.state === 'parked') parts.push(p.state);
-  if (p.waiting > 0) parts.push(`${p.waiting} waiting`);
-  if (p.late === 1) parts.push('late');
-  else if (p.late > 1) parts.push(`${p.late} late`);
+  if (p.onTheGo || p.state === 'idea' || p.state === 'parked') parts.push(stateWord(p));
+  if (p.waiting > 0) parts.push(waitingText(p.waiting));
+  if (p.late === 1) parts.push(T('client.graph.lateOne', 'late'));
+  else if (p.late > 1) parts.push(T('client.graph.lateMany', '{count} late', { count: p.late }));
   parts.push(touched(p.days));
   return parts.join(', ');
 }
@@ -394,25 +398,25 @@ export function nameShown(unlabelled, why) {
 /** "12 FACTS · 3 PAGES · 6D AGO", with an empty part left out rather than shown as 0. */
 export function statLine(p) {
   const n = p.pages.length, parts = [];
-  if (p.facts > 0) parts.push(`${p.facts} ${p.facts === 1 ? 'FACT' : 'FACTS'}`);
-  if (n > 0) parts.push(`${n} ${n === 1 ? 'PAGE' : 'PAGES'}`);
-  parts.push(p.days ? `${p.days}D AGO` : 'TODAY');
+  if (p.facts > 0) parts.push(p.facts === 1 ? T('client.graph.factOne', '{count} FACT', { count: p.facts }) : T('client.graph.factMany', '{count} FACTS', { count: p.facts }));
+  if (n > 0) parts.push(n === 1 ? T('client.graph.pageOne', '{count} PAGE', { count: n }) : T('client.graph.pageMany', '{count} PAGES', { count: n }));
+  parts.push(p.days ? T('client.graph.daysAgo', '{days}D AGO', { days: p.days }) : T('client.graph.today', 'TODAY'));
   return parts.join(' · ');
 }
 
 /** A Related entry's text: never the name or words of an unpinned Personal project. */
 export function relatedText(r) {
-  if (r.unlabelled) return 'A Personal project';
+  if (r.unlabelled) return T('client.graph.personal', 'A Personal project');
   return r.words.length > 0 ? `${r.name}: ${r.words.join(', ')}` : r.name;
 }
 
 export function matchLine(n, q) {
-  if (n === 0) return `No project matches “${q}”`;
-  return n === 1 ? `1 project matches “${q}”` : `${n} projects match “${q}”`;
+  if (n === 0) return T('client.graph.matchNone', 'No project matches “{q}”', { q });
+  return n === 1 ? T('client.graph.matchOne', '1 project matches “{q}”', { q }) : T('client.graph.matchMany', '{n} projects match “{q}”', { n, q });
 }
 
 export function placeLine(n, label) {
-  return n === 1 ? `1 project runs on ${label}` : `${n} projects run on ${label}`;
+  return n === 1 ? T('client.graph.placeOne', '1 project runs on {label}', { label }) : T('client.graph.placeMany', '{n} projects run on {label}', { n, label });
 }
 
 /**
@@ -495,7 +499,11 @@ export function textAlpha(a) {
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-const AREA_LABEL = { apps: 'Apps', home: 'Home & infrastructure', tools: 'Tools & AI', work: 'Work', personal: 'Personal', unsorted: 'Unsorted' };
+const AREA_NAME = {
+  apps: () => T('client.area.apps', 'Apps'), home: () => T('client.area.home', 'Home & infrastructure'), tools: () => T('client.area.tools', 'Tools & AI'),
+  work: () => T('client.area.work', 'Work'), personal: () => T('client.area.personal', 'Personal'), unsorted: () => T('client.area.unsorted', 'Unsorted'),
+};
+const areaName = (a) => (AREA_NAME[a] ?? AREA_NAME.unsorted)();
 const FLOOR_Y = 1.28;
 const START = { yaw: 0.5, pitch: -0.58, dist: 3.6, fx: 0, fy: 0, fz: 0 };
 
@@ -786,7 +794,7 @@ function start(root) {
     if (pR > 0.95 && !fl) for (const a of areas) {
       const o = AREA_STYLE[a], pts = [];
       for (let i = 0; i < 48; i++) { const q = P3(orbitPt(o, (i / 48) * TAU)); pts.push({ x: q.x, y: q.y, z: q.z, front: q.z < cam.dist }); }
-      rings.push({ id: a, text: AREA_LABEL[a].replace(' & infrastructure', '').toUpperCase(), col: areaColour(a, dark), pts });
+      rings.push({ id: a, text: (a === 'home' ? T('client.area.homeShort', 'Home') : areaName(a)).toLocaleUpperCase(), col: areaColour(a, dark), pts });
     }
     const extra = focus && focus.scr && expand > 0.2 ? focusRequests(focusAnchors(focus, focus.scr), W, width) : [];
     const shown = sceneLabels({ W, H, small, cx: C.x, taken, marks, you, nodes: named0, places: spots, callouts: callouts.slice(0, 6), rings, extra }, width);
@@ -1035,7 +1043,7 @@ function start(root) {
   const field = ($('#graph-q'));
   const canHover = matchMedia('(hover: hover) and (pointer: fine)').matches;
   const sheetMode = () => small || mobile;
-  const areaLabel = (n) => AREA_LABEL[n.area];
+  const areaLabel = (n) => areaName(n.area);
   let place = null, stepAt = -1, detailCtl = null;
   function pick(e, within) {
     const r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
@@ -1075,38 +1083,38 @@ function start(root) {
     box.replaceChildren(); box.scrollTop = 0;
     card.classList.toggle('graph-peek', !full);
     el(box, 'p', announce(p, areaLabel(n)), 'visually-hidden');
-    const state = p.onTheGo ? 'On the go' : p.state === 'idea' ? 'Idea' : p.state === 'parked' ? 'Parked' : 'Open';
+    const state = cap(stateWord(p));
     const head = el(box, 'div', '', 'graph-card-head');
     head.setAttribute('aria-hidden', 'true');
     el(head, 'p', `${areaLabel(n)} · ${state}`, 'graph-card-meta');
     el(head, 'h2', p.name);
     if (p.oneLiner) el(head, 'p', p.oneLiner);
-    if (p.next) el(head, 'p', `Next: ${p.next}`, 'graph-card-next');
+    if (p.next) el(head, 'p', T('client.graph.next', 'Next: {next}', { next: p.next }), 'graph-card-next');
     const line = el(head, 'p', '', 'graph-card-meta');
-    if (p.waiting > 0) { el(line, 'span', `${p.waiting} waiting`); if (p.late > 0) { el(line, 'span', ' · '); el(line, 'span', `${p.late} late`, 'graph-late'); } el(line, 'span', ' · '); }
-    el(line, 'span', `Touched ${p.days === 0 ? 'today' : p.days === 1 ? 'yesterday' : `${p.days} days ago`}`);
+    if (p.waiting > 0) { el(line, 'span', waitingText(p.waiting)); if (p.late > 0) { el(line, 'span', ' · '); el(line, 'span', T('client.graph.lateMany', '{count} late', { count: p.late }), 'graph-late'); } el(line, 'span', ' · '); }
+    el(line, 'span', cap(touched(p.days)));
     if (full) {
       const label = new Map(data.places.map((x) => [x.id, x.label]));
-      if (p.runsOn.length) el(box, 'p', `Runs on ${p.runsOn.map((r) => label.get(r) ?? r).join(', ')}`, 'graph-card-meta');
+      if (p.runsOn.length) el(box, 'p', T('client.graph.runsOn', 'Runs on {list}', { list: p.runsOn.map((r) => label.get(r) ?? r).join(', ') }), 'graph-card-meta');
       if (detail && detail.name === p.name) {
         if (detail.related.length) {
           // One inline line, as the spec shows it: "Related: brainai: backups, nas · outline: backups".
           const rel0 = el(box, 'p', '', 'graph-related');
-          el(rel0, 'span', 'Related: ');
+          el(rel0, 'span', T('client.graph.related', 'Related: '));
           for (const [k, rel] of detail.related.entries()) {
             if (k > 0) el(rel0, 'span', ' · ');
             const b = el(rel0, 'button', relatedText(rel), 'graph-rel');
             b.type = 'button';
             b.addEventListener('click', () => { const m = nodes.find((x) => x.p.name === rel.name); if (m) select(m); });
           }
-          if (detail.related.every((r) => r.words.length === 0)) el(rel0, 'span', ' (related by meaning)', 'graph-card-meta');
+          if (detail.related.every((r) => r.words.length === 0)) el(rel0, 'span', T('client.graph.byMeaning', ' (related by meaning)'), 'graph-card-meta');
         }
         if (detail.pages.length) {
           const ul = el(box, 'ul', '', 'graph-pages');
           for (const pg of detail.pages) { const a = el(el(ul, 'li'), 'a', pg.title); a.href = `/pages/${encodeURIComponent(pg.id)}?from=` + encodeURIComponent(`/graph?project=${p.name}`); }
         }
       }
-      const open = el(box, 'a', 'Open project', 'graph-open');
+      const open = el(box, 'a', T('client.graph.openProject', 'Open project'), 'graph-open');
       open.href = `/?project=${encodeURIComponent(p.name)}#panel`;
     }
     if (full && sheetMode()) { sheet.hidden = false; card.hidden = true; } else card.hidden = false;

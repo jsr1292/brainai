@@ -1,3 +1,4 @@
+import { SayableError, type Say } from '../i18n/errors.js';
 import { AREA_LABELS, AREAS } from '../projects/types.js';
 
 /** A page without a project sits in one of these; a project's page follows its project's area. */
@@ -51,9 +52,9 @@ export interface PageVersion {
   caughtUpAt: string | null;
 }
 
-export class PageError extends Error {
-  constructor(public code: 'invalid' | 'not_found' | 'conflict' | 'secret', message: string) {
-    super(message);
+export class PageError extends SayableError {
+  constructor(public code: 'invalid' | 'not_found' | 'conflict' | 'secret', message: string, say?: Say) {
+    super(message, say);
     this.name = 'PageError';
   }
 }

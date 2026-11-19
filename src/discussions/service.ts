@@ -1,4 +1,5 @@
 import type { Clock } from '../clock.js';
+import type { Key } from '../i18n/core.js';
 import { localDay } from '../timezone.js';
 import { checkProject, MAX_CONTENT, MemoryError, type MemoryService } from '../memory/service.js';
 import { looksLikeInstruction } from '../memory/instructionLike.js';
@@ -87,12 +88,15 @@ const blankToUndefined = (p: string | undefined): string | undefined => (typeof 
 
 const label = (p: { author: string; model: string }): string => `${p.author} · ${p.model}`;
 
+const LEN_KEY: Record<string, Key> = { title: 'err.disc.len.title', question: 'err.disc.len.question', reply: 'err.disc.len.reply', decision: 'err.disc.len.decision', note: 'err.disc.len.note' };
+const SECRET_KEY: Record<string, Key> = { title: 'err.disc.secret.title', question: 'err.disc.secret.question', reply: 'err.disc.secret.reply', decision: 'err.disc.secret.decision', note: 'err.disc.secret.note' };
+
 function checkText(what: string, text: unknown, max: number): string {
   if (typeof text !== 'string' || text.trim().length < 1 || text.length > max) {
-    throw new MemoryError('invalid', `The ${what} must be 1 to ${max.toLocaleString('en-US')} characters.`);
+    throw new MemoryError('invalid', `The ${what} must be 1 to ${max.toLocaleString('en-US')} characters.`, undefined, { key: LEN_KEY[what]!, params: { max: max } });
   }
   const reason = looksLikeSecret(text);
-  if (reason) throw new MemoryError('secret_detected', `The ${what} looks like it contains a secret (${reason}). Remove it and try again.`);
+  if (reason) throw new MemoryError('secret_detected', `The ${what} looks like it contains a secret (${reason}). Remove it and try again.`, undefined, { key: SECRET_KEY[what]!, params: { reason } });
   return text;
 }
 
@@ -103,15 +107,15 @@ function checkText(what: string, text: unknown, max: number): string {
 function checkTitle(title: unknown): string {
   const t = checkText('title', title, MAX_TITLE);
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f\u2028\u2029]/.test(t)) throw new MemoryError('invalid', 'The title must be a single line of text.');
+  if (/[\u0000-\u001f\u007f\u2028\u2029]/.test(t)) throw new MemoryError('invalid', 'The title must be a single line of text.', undefined, { key: 'err.disc.titleLine' });
   const reason = looksLikeInstruction(t);
-  if (reason) throw new MemoryError('invalid', `The title reads like an instruction to AI assistants (${reason}). Use a plain title.`);
+  if (reason) throw new MemoryError('invalid', `The title reads like an instruction to AI assistants (${reason}). Use a plain title.`, undefined, { key: 'err.disc.titleInstr', params: { reason } });
   return t;
 }
 
 function checkModel(model: unknown): string {
   const m = typeof model === 'string' ? model.trim() : '';
-  if (m.length < 1 || m.length > MAX_MODEL) throw new MemoryError('invalid', 'State your model (for example "GLM-5").');
+  if (m.length < 1 || m.length > MAX_MODEL) throw new MemoryError('invalid', 'State your model (for example "GLM-5").', undefined, { key: 'err.disc.model' });
   return m;
 }
 
@@ -125,31 +129,31 @@ function fileNameAllowed(name: string): boolean {
 function checkFile(f: NewFile): void {
   const name = typeof f?.name === 'string' ? f.name : '';
   if (!fileNameAllowed(name)) {
-    throw new MemoryError('invalid', `File name "${name.slice(0, 40)}" is not allowed: use 1 to ${MAX_FILE_NAME} characters, with no \\ or control characters, not starting with / and with no .. parts.`);
+    throw new MemoryError('invalid', `File name "${name.slice(0, 40)}" is not allowed: use 1 to ${MAX_FILE_NAME} characters, with no \\ or control characters, not starting with / and with no .. parts.`, undefined, { key: 'err.disc.fileName', params: { name: name.slice(0, 40), max: MAX_FILE_NAME } });
   }
   const content = f.content;
   if (typeof content !== 'string' || content.includes('\u0000') || Buffer.from(content, 'utf8').toString('utf8') !== content) {
-    throw new MemoryError('invalid', `File "${name}" is not UTF-8 text (binary files are not accepted).`);
+    throw new MemoryError('invalid', `File "${name}" is not UTF-8 text (binary files are not accepted).`, undefined, { key: 'err.disc.fileNotText', params: { name } });
   }
   if (Buffer.byteLength(content) > MAX_FILE_BYTES) {
-    throw new MemoryError('invalid', `File "${name}" is larger than ${MAX_FILE_BYTES.toLocaleString('en-US')} bytes.`);
+    throw new MemoryError('invalid', `File "${name}" is larger than ${MAX_FILE_BYTES.toLocaleString('en-US')} bytes.`, undefined, { key: 'err.disc.fileTooBig', params: { name, max: MAX_FILE_BYTES } });
   }
   const reason = looksLikeKey(content);
-  if (reason) throw new MemoryError('secret_detected', `File "${name}" looks like it contains a secret (${reason}). Remove it and try again.`);
+  if (reason) throw new MemoryError('secret_detected', `File "${name}" looks like it contains a secret (${reason}). Remove it and try again.`, undefined, { key: 'err.disc.fileSecret', params: { name, reason } });
 }
 
 /** Checks new files against each other and against what the discussion already holds. */
 function checkFiles(files: NewFile[], existing: DiscussionFile[]): void {
   const names = new Set(existing.map((f) => f.name));
   let bytes = existing.reduce((n, f) => n + f.size, 0);
-  if (existing.length + files.length > MAX_FILES) throw new MemoryError('invalid', `A discussion can hold at most ${MAX_FILES} files.`);
+  if (existing.length + files.length > MAX_FILES) throw new MemoryError('invalid', `A discussion can hold at most ${MAX_FILES} files.`, undefined, { key: 'err.disc.maxFiles', params: { max: MAX_FILES } });
   for (const f of files) {
     checkFile(f);
-    if (names.has(f.name)) throw new MemoryError('invalid', `File "${f.name}" is already attached to this discussion.`);
+    if (names.has(f.name)) throw new MemoryError('invalid', `File "${f.name}" is already attached to this discussion.`, undefined, { key: 'err.disc.fileDup', params: { name: f.name } });
     names.add(f.name);
     bytes += Buffer.byteLength(f.content);
   }
-  if (bytes > MAX_FILES_BYTES) throw new MemoryError('invalid', `Files in one discussion can total at most ${MAX_FILES_BYTES.toLocaleString('en-US')} bytes.`);
+  if (bytes > MAX_FILES_BYTES) throw new MemoryError('invalid', `Files in one discussion can total at most ${MAX_FILES_BYTES.toLocaleString('en-US')} bytes.`, undefined, { key: 'err.disc.filesTotal', params: { max: MAX_FILES_BYTES } });
 }
 
 /** The rules of discussions: who may see what, blind first round, rounds, limits. Storage lives in DiscussionStore. */
@@ -170,7 +174,7 @@ export class DiscussionService {
     // Hidden from discussions-only connections means hidden from this opener too: it could never read it again.
     if (!includeLimited && caller.access === 'discussions') {
       throw new MemoryError('invalid', 'A discussion opened here is always shared with discussions-only assistants, this one included. '
-        + 'For a question that touches anything personal, ask the owner to open it from a Full connection instead.');
+        + 'For a question that touches anything personal, ask the owner to open it from a Full connection instead.', undefined, { key: 'err.disc.limitedShared' });
     }
     const files = a.files ?? [];
     checkFiles(files, []);
@@ -194,20 +198,20 @@ export class DiscussionService {
     const out: string[] = [];
     for (const raw of names) {
       const n = typeof raw === 'string' ? raw.trim() : '';
-      if (n.length < 1 || n.length > MAX_ASK_NAME) throw new MemoryError('invalid', `Each name in the ask list must be 1 to ${MAX_ASK_NAME} characters.`);
+      if (n.length < 1 || n.length > MAX_ASK_NAME) throw new MemoryError('invalid', `Each name in the ask list must be 1 to ${MAX_ASK_NAME} characters.`, undefined, { key: 'err.disc.askName', params: { max: MAX_ASK_NAME } });
       if (seen.has(nameKey(n))) continue;
       seen.add(nameKey(n));
       out.push(n);
     }
     if (cap && out.length > MAX_ASK) out.length = MAX_ASK;
-    if (out.length > MAX_ASK) throw new MemoryError('invalid', `The ask list can have at most ${MAX_ASK} names.`);
+    if (out.length > MAX_ASK) throw new MemoryError('invalid', `The ask list can have at most ${MAX_ASK} names.`, undefined, { key: 'err.disc.askMax', params: { max: MAX_ASK } });
     return out;
   }
 
   /** The discussion, or not_found if it is missing or hidden from this caller (same answer for both). */
   private find(caller: Caller, id: string): Discussion {
     const d = this.store.get(id);
-    if (!d || (caller.access === 'discussions' && !d.includeLimited)) throw new MemoryError('not_found', `No discussion with id "${id}".`);
+    if (!d || (caller.access === 'discussions' && !d.includeLimited)) throw new MemoryError('not_found', `No discussion with id "${id}".`, undefined, { key: 'err.disc.notFound', params: { id } });
     return d;
   }
 
@@ -269,27 +273,27 @@ export class DiscussionService {
     const d = this.find(caller, id);
     const visible = this.filesFor(caller, d, this.store.posts(id)).some((f) => f.name === name);
     const content = visible ? this.store.fileContent(id, name) : undefined;
-    if (content === undefined) throw new MemoryError('not_found', `No file "${name}" in this discussion.`);
+    if (content === undefined) throw new MemoryError('not_found', `No file "${name}" in this discussion.`, undefined, { key: 'err.disc.fileNotFound', params: { name } });
     const chars = Array.from(content);
     const parts = Math.max(1, Math.ceil(chars.length / FILE_PART_CHARS));
-    if (!Number.isInteger(part) || part < 1 || part > parts) throw new MemoryError('invalid', `part must be a whole number from 1 to ${parts}.`);
+    if (!Number.isInteger(part) || part < 1 || part > parts) throw new MemoryError('invalid', `part must be a whole number from 1 to ${parts}.`, undefined, { key: 'err.disc.partRange', params: { parts } });
     const text = chars.slice((part - 1) * FILE_PART_CHARS, part * FILE_PART_CHARS).join('');
     return { name, part, parts, text, ...(looksLikeInstruction(text) !== null ? { contains_instructions: true as const } : {}) };
   }
 
   reply(caller: Caller, id: string, a: { text: string; files?: NewFile[] }): { post: Post; round: number; roundEnded: boolean } {
     const d0 = this.find(caller, id);
-    if (d0.closedAt) throw new MemoryError('invalid', 'This discussion is closed.');
+    if (d0.closedAt) throw new MemoryError('invalid', 'This discussion is closed.', undefined, { key: 'err.disc.closed' });
     const model = checkModel(caller.model);
     const text = checkText('reply', a.text, MAX_TEXT);
     const files = a.files ?? [];
     return this.store.transaction(() => {
       const d = this.store.get(id);
-      if (!d || d.closedAt) throw new MemoryError('invalid', 'This discussion is closed.');
+      if (!d || d.closedAt) throw new MemoryError('invalid', 'This discussion is closed.', undefined, { key: 'err.disc.closed' });
       const key = voiceKey(caller.name, model);
       const posts = this.store.posts(id);
       if (posts.some((p) => p.kind === 'reply' && p.round === d.round && voiceKey(p.author, p.model) === key)) {
-        throw new MemoryError('invalid', `You already replied in round ${d.round}; wait for the owner to start the next round.`);
+        throw new MemoryError('invalid', `You already replied in round ${d.round}; wait for the owner to start the next round.`, undefined, { key: 'err.disc.alreadyReplied', params: { round: d.round } });
       }
       checkFiles(files, this.store.files(id));
       const post = this.store.addPost({ discussionId: id, round: d.round, kind: 'reply', author: caller.name, model, text });
@@ -317,8 +321,8 @@ export class DiscussionService {
   /** The discussion for an owner action; refuses closed ones. */
   private openOne(id: string): Discussion {
     const d = this.store.get(id);
-    if (!d) throw new MemoryError('not_found', `No discussion with id "${id}".`);
-    if (d.closedAt) throw new MemoryError('invalid', 'This discussion is closed.');
+    if (!d) throw new MemoryError('not_found', `No discussion with id "${id}".`, undefined, { key: 'err.disc.notFound', params: { id } });
+    if (d.closedAt) throw new MemoryError('invalid', 'This discussion is closed.', undefined, { key: 'err.disc.closed' });
     return d;
   }
 
@@ -332,20 +336,20 @@ export class DiscussionService {
    */
   async close(by: Caller | 'owner', id: string, a: { decision: string; project?: string }): Promise<Closed> {
     const d = by === 'owner' ? this.store.get(id) : this.find(by, id);
-    if (!d) throw new MemoryError('not_found', `No discussion with id "${id}".`);
+    if (!d) throw new MemoryError('not_found', `No discussion with id "${id}".`, undefined, { key: 'err.disc.notFound', params: { id } });
     // The decision becomes a memory, which a discussions-only connection must never write (checked after find, so a
     // hidden discussion still answers not_found).
     if (by !== 'owner' && by.access === 'discussions') {
-      throw new MemoryError('invalid', 'Only the owner can close this discussion: they record the decision on the memory dashboard.');
+      throw new MemoryError('invalid', 'Only the owner can close this discussion: they record the decision on the memory dashboard.', undefined, { key: 'err.disc.ownerOnlyClose' });
     }
     const pending = this.closing.get(id);
     if (pending) {
       if (pending.decision === a.decision) return pending.done;
-      throw new MemoryError('invalid', 'This discussion is already being closed with another decision.');
+      throw new MemoryError('invalid', 'This discussion is already being closed with another decision.', undefined, { key: 'err.disc.closingOther' });
     }
     if (d.closedAt) {
       if (d.decision === a.decision && d.decisionMemoryId) return { memoryId: d.decisionMemoryId, project: this.memory.get(d.decisionMemoryId)?.project ?? d.project };
-      throw new MemoryError('invalid', 'This discussion is already closed.');
+      throw new MemoryError('invalid', 'This discussion is already closed.', undefined, { key: 'err.disc.alreadyClosed' });
     }
     const done = this.closeNow(by, d, a);
     this.closing.set(id, { decision: a.decision, done });
@@ -365,14 +369,14 @@ export class DiscussionService {
     const own = d.project === null ? null : this.memory.projectNamed(d.project);
     if (own !== null && given !== undefined && this.memory.projectNamed(given.trim()) !== own) {
       throw new MemoryError('invalid', `This discussion belongs to project ${own}, so its decision is saved there: leave project out to close it. `
-        + 'To record the decision for another project too, save it there with remember.');
+        + 'To record the decision for another project too, save it there with remember.', undefined, { key: 'err.disc.otherProject', params: { own } });
     }
     const project = d.project ?? checkProject(given);
     // Titles from before the open-time check may read like instructions; the memory then names the discussion by id.
     const name = looksLikeInstruction(d.title) ? `discussion ${d.id}` : `discussion "${d.title}"`;
     const content = `Decision (${name}, ${localDay(this.now())}): ${decision}`;
     if (content.length > MAX_CONTENT) {
-      throw new MemoryError('invalid', `The decision is too long: shorten it to ${Math.max(0, MAX_CONTENT - (content.length - decision.length))} characters.`);
+      throw new MemoryError('invalid', `The decision is too long: shorten it to ${Math.max(0, MAX_CONTENT - (content.length - decision.length))} characters.`, undefined, { key: 'err.disc.decisionLong', params: { n: Math.max(0, MAX_CONTENT - (content.length - decision.length)) } });
     }
     const actor = by === 'owner' ? { type: 'owner' as const } : { type: 'ai' as const, name: by.name };
     // An assistant's instruction-like decision is refused here rather than held as a suggestion: approving a suggestion
@@ -380,16 +384,16 @@ export class DiscussionService {
     const reason = by === 'owner' ? null : looksLikeInstruction(content);
     if (reason) {
       throw new MemoryError('invalid', `The decision reads like an instruction to AI assistants (${reason}), so it was not saved and the discussion stays open: `
-        + 'tell the owner, who can close it with this decision on the memory dashboard.');
+        + 'tell the owner, who can close it with this decision on the memory dashboard.', undefined, { key: 'err.disc.decisionInstr', params: { reason } });
     }
     // The project was chosen when the discussion was opened (or now, by whoever closes it): no new-name check.
     // A decision close to a fact the owner deleted (§17a) is refused for the same reason: a held one would never close it.
     const refuseDeleted = (day: string) => `The decision is close to a fact the owner deleted on ${day}, so it was not saved and the discussion stays open: `
       + 'tell the owner, who can close it with this decision on the memory dashboard.';
     const r = await this.memory.remember({ kind: 'decision', content, project: project ?? undefined, tags: ['discussion'], allowDuplicate: true, newProject: true, refuseDeleted }, actor);
-    if (r.status !== 'saved') throw new MemoryError('invalid', 'The decision could not be saved.');
+    if (r.status !== 'saved') throw new MemoryError('invalid', 'The decision could not be saved.', undefined, { key: 'err.disc.decisionNotSaved' });
     this.store.transaction(() => {
-      if (this.store.get(id)?.closedAt) throw new MemoryError('invalid', 'This discussion is already closed.');
+      if (this.store.get(id)?.closedAt) throw new MemoryError('invalid', 'This discussion is already closed.', undefined, { key: 'err.disc.alreadyClosed' });
       this.store.close(id, decision, r.memory.id);
     });
     return { memoryId: r.memory.id, project: r.memory.project };
@@ -416,19 +420,19 @@ export class DiscussionService {
 
   /** Open or closed: the owner may hide a decided discussion from discussions-only connections too. */
   setIncludeLimited(id: string, include: boolean): void {
-    if (!this.store.get(id)) throw new MemoryError('not_found', `No discussion with id "${id}".`);
+    if (!this.store.get(id)) throw new MemoryError('not_found', `No discussion with id "${id}".`, undefined, { key: 'err.disc.notFound', params: { id } });
     this.store.setIncludeLimited(id, include);
   }
 
   remove(id: string): void {
-    if (!this.store.get(id)) throw new MemoryError('not_found', `No discussion with id "${id}".`);
+    if (!this.store.get(id)) throw new MemoryError('not_found', `No discussion with id "${id}".`, undefined, { key: 'err.disc.notFound', params: { id } });
     this.store.softDelete(id);
   }
 
   /** Everything, no blind filtering: for the owner's dashboard only. */
   ownerView(id: string): OwnerDiscussionView {
     const d = this.store.get(id);
-    if (!d) throw new MemoryError('not_found', `No discussion with id "${id}".`);
+    if (!d) throw new MemoryError('not_found', `No discussion with id "${id}".`, undefined, { key: 'err.disc.notFound', params: { id } });
     const posts = this.store.posts(id);
     const replies = posts.filter((p) => p.kind === 'reply');
     const closed = d.closedAt !== null;
@@ -459,9 +463,9 @@ export class DiscussionService {
 
   /** The text of an attached file, no caller checks: for the owner's dashboard only. */
   ownerFile(id: string, name: string): string {
-    if (!this.store.get(id)) throw new MemoryError('not_found', `No discussion with id "${id}".`);
+    if (!this.store.get(id)) throw new MemoryError('not_found', `No discussion with id "${id}".`, undefined, { key: 'err.disc.notFound', params: { id } });
     const content = this.store.fileContent(id, name);
-    if (content === undefined) throw new MemoryError('not_found', `No file "${name}" in this discussion.`);
+    if (content === undefined) throw new MemoryError('not_found', `No file "${name}" in this discussion.`, undefined, { key: 'err.disc.fileNotFound', params: { name } });
     return content;
   }
 

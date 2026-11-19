@@ -5,6 +5,8 @@
  */
 const START = /<!-- brain setup \d+ -->/;
 const END = '<!-- /brain setup -->';
+/** How a block names the brain in each language ("the brain (host)", "la memoria de BrainAI (host)"). */
+const BRAIN = '(?:the brain|la memoria de BrainAI)';
 
 const eolOf = (text: string) => (text.includes('\r\n') ? '\r\n' : '\n');
 
@@ -14,7 +16,7 @@ const eolOf = (text: string) => (text.includes('\r\n') ? '\r\n' : '\n');
  * null when the brackets hold neither.
  */
 export function hostIn(text: string): string | null {
-  const inside = /the brain \(([^)]*)\)/.exec(text)?.[1];
+  const inside = new RegExp(`${BRAIN} \\(([^)]*)\\)`).exec(text)?.[1];
   if (inside === undefined) return null;
   const local = /localhost:\d+/.exec(inside);
   if (local) return local[0];
@@ -40,7 +42,7 @@ export function findBlock(text: string): { start: number; end: number; host: str
 export function strayBrain(text: string): string | null {
   const b = findBlock(text);
   const rest = b ? text.slice(0, b.start) + text.slice(b.end) : text;
-  if (!/the brain \(/.test(rest)) return null;
+  if (!new RegExp(`${BRAIN} \\(`).test(rest)) return null;
   return hostIn(rest) ?? '';
 }
 

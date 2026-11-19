@@ -9,7 +9,9 @@ import { PROJECT_RE } from '../memory/service.js';
 import type { AppDeps } from './app.js';
 import { projectChoices } from './dashboardViews.js';
 import { rateLimitKey } from './clientIp.js';
-import { thisComputer } from '../desktop/computer.js';
+import { t } from '../i18n/core.js';
+import { tHtml } from '../i18n/tHtml.js';
+import { computerName } from '../desktop/computer.js';
 import { viaDoor } from '../desktop/publicDoor.js';
 import { html, memoryName, page, type SafeHtml } from './html.js';
 import { approvedView, deniedView, waitingView } from './consentViews.js';
@@ -17,9 +19,6 @@ import { approvedView, deniedView, waitingView } from './consentViews.js';
 export const SESSION_COOKIE = 'mem_session';
 /** Marks a browser the owner has logged in from, so the login limit shared by all addresses does not apply to it. */
 const DEVICE_COOKIE = 'mem_device';
-const NOT_CONFIGURED = 'Set up the owner account first with the CLI';
-const WRONG_CREDENTIALS = 'Wrong password or code';
-const EXPIRED = 'This request expired. Start the connection again from the app.';
 
 /** Attributes of the session cookie; clearing it must use the same ones. */
 export function sessionCookieOptions(publicUrl: URL) {
@@ -67,7 +66,6 @@ export function pickedProjects(body: unknown, existing: string[]): string[] | un
   return picked.length > 0 && picked.every((p) => PROJECT_RE.test(p) && existing.includes(p)) ? picked : undefined;
 }
 
-export const PICK_A_PROJECT = 'Tick at least one project for read-only access.';
 
 
 function send(res: Response, status: number, title: string, body: SafeHtml, nav = false): void {
@@ -117,16 +115,16 @@ export function authRoutes(d: AppDeps): Router {
   const optionsFor = (req: Request) => ({ ...cookieOptions, secure: cookieOptions.secure || viaDoor(req) });
 
   const loginForm = (status: number, res: Response, next: string, error?: string) =>
-    send(res, status, 'Log in', html`<h1 class="login-mark"><span class="brand-dot" aria-hidden="true"></span>${memoryName()}</h1>
+    send(res, status, t('auth.login.title'), html`<h1 class="login-mark"><span class="brand-dot" aria-hidden="true"></span>${memoryName()}</h1>
 ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
 <form method="post" action="/login">
-  <label>Password <input type="password" name="password" autocomplete="current-password" required autofocus></label>
-  <label>6-digit code <input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
+  <label>${t('auth.login.password')} <input type="password" name="password" autocomplete="current-password" required autofocus></label>
+  <label>${t('auth.login.code')} <input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
   <input type="hidden" name="next" value="${next}">
-  <button type="submit" class="primary">Log in</button>
+  <button type="submit" class="primary">${t('auth.login.submit')}</button>
 </form>`);
 
-  const notConfigured = (res: Response) => send(res, 503, 'Log in', html`<h1>${memoryName()}</h1><p>${NOT_CONFIGURED}.</p>`);
+  const notConfigured = (res: Response) => send(res, 503, t('auth.login.title'), html`<h1>${memoryName()}</h1><p>${t('auth.login.notConfigured')}</p>`);
 
   /**
    * The desktop app's window opens a session without its key ever being in a URL (browser history is a file on
@@ -183,8 +181,8 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
     // nothing to log in with. Sessions come only from the app's window.
     if (d.localMode && !d.owner.isConfigured()) {
       const win = (d.tools?.platform ?? process.platform) === 'win32';
-      return send(res, 200, "Open BrainAI's window", html`<h1>Open BrainAI's window</h1>
-<p>On ${thisComputer()}, BrainAI opens in its own window. Click its icon in the ${win ? 'tray' : 'menu bar'} and choose Open.</p>`);
+      return send(res, 200, t('auth.window.title'), html`<h1>${t('auth.window.title')}</h1>
+<p>${win ? t('auth.window.tray', { here: computerName() }) : t('auth.window.menuBar', { here: computerName() })}</p>`);
     }
     if (!d.owner.isConfigured()) return notConfigured(res);
     // The login form without a live session: the login ended here, elsewhere, or simply expired (and the browser
@@ -215,10 +213,10 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
     if (outcome.kind === 'blocked') {
       const minutes = Math.max(1, Math.ceil(outcome.retryAfterSec / 60));
       res.set('Retry-After', String(outcome.retryAfterSec));
-      return send(res, 429, 'Too many attempts', html`<h1>Too many attempts</h1>
-<p>Try again in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.</p>`);
+      return send(res, 429, t('auth.tooMany.title'), html`<h1>${t('auth.tooMany.title')}</h1>
+<p>${t('auth.tooMany.text', { count: minutes })}</p>`);
     }
-    if (outcome.kind === 'failed') return loginForm(401, res, next ?? '', WRONG_CREDENTIALS);
+    if (outcome.kind === 'failed') return loginForm(401, res, next ?? '', t('auth.login.wrong'));
 
     const token = d.sessions.create(req.get('user-agent'));
     res.cookie(SESSION_COOKIE, token, { ...optionsFor(req), maxAge: SESSION_DAYS * 86_400_000 });
@@ -237,23 +235,23 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
 
   const owner = requireOwner(d.sessions);
   // The sidebar is the owner's: shown only to a signed-in session.
-  const expired = (res: Response, signedIn = true) => send(res, 404, 'Request expired', html`<h1>Request expired</h1><p>${EXPIRED}</p>`, signedIn);
+  const expired = (res: Response, signedIn = true) => send(res, 404, t('auth.expired.title'), html`<h1>${t('auth.expired.title')}</h1><p>${t('auth.expired.text')}</p>`, signedIn);
 
   const consentPage = (res: Response, status: number, id: string, pending: PendingInfo, name: string, message?: string, access: Access | null = pending.suggestedAccess, picked: string[] = []) => {
     const origin = new URL(pending.redirectUri).origin;
-    send(res, status, 'Allow access?', html`<h1>${pending.clientName} wants access to your shared memory</h1>
-<p>It will send you back to: <strong>${origin}</strong></p>
+    send(res, status, t('auth.consent.title'), html`<h1>${t('auth.consent.wants', { client: pending.clientName })}</h1>
+<p>${tHtml('auth.consent.sendBack', { origin: html`<strong>${origin}</strong>` })}</p>
 ${message ? html`<p class="error" role="alert">${message}</p>` : ''}
 <form method="post" action="/consent/${id}">
   <input type="hidden" name="from" value="window">
-  <p><label>Name <input type="text" name="name" value="${name}" maxlength="100" required></label></p>
-  <p><label class="choice"><input type="radio" name="access" value="full" required${access === 'full' ? ' checked' : ''}> Full access: memory and discussions</label></p>
-  <p><label class="choice"><input type="radio" name="access" value="discussions" required${access === 'discussions' ? ' checked' : ''}> Discussions only: no access to your profile or memories</label></p>
-  <p><label class="choice"><input type="radio" name="access" value="projects" required${access === 'projects' ? ' checked' : ''}> Read only, chosen projects: no profile, no saving, no discussions</label></p>
+  <p><label>${t('auth.consent.name')} <input type="text" name="name" value="${name}" maxlength="100" required></label></p>
+  <p><label class="choice"><input type="radio" name="access" value="full" required${access === 'full' ? ' checked' : ''}> ${t('auth.consent.full')}</label></p>
+  <p><label class="choice"><input type="radio" name="access" value="discussions" required${access === 'discussions' ? ' checked' : ''}> ${t('auth.consent.discussions')}</label></p>
+  <p><label class="choice"><input type="radio" name="access" value="projects" required${access === 'projects' ? ' checked' : ''}> ${t('auth.consent.projects')}</label></p>
   ${projectChoices(d.service.listProjects().map((p) => p.project), picked)}
   <div class="actions">
-    <button type="submit" name="decision" value="approve" class="primary">Approve</button>
-    <button type="submit" name="decision" value="deny" class="secondary" formnovalidate>Deny</button>
+    <button type="submit" name="decision" value="approve" class="primary">${t('auth.consent.approve')}</button>
+    <button type="submit" name="decision" value="deny" class="secondary" formnovalidate>${t('auth.consent.deny')}</button>
   </div>
 </form>`, true);
   };
@@ -310,14 +308,14 @@ ${message ? html`<p class="error" role="alert">${message}</p>` : ''}
       waiting.set(id, d.now().getTime() + PENDING_MS);
     }
     res.set('Cache-Control', 'no-store');
-    send(res, 200, "Open BrainAI's window", waitingView(id, pending.clientName, new URL(pending.redirectUri).origin));
+    send(res, 200, t('auth.window.title'), waitingView(id, pending.clientName, new URL(pending.redirectUri).origin));
   });
 
   router.post('/consent/:id', owner, async (req, res) => {
     const id = req.params.id as string;
     const decision = field(req.body, 'decision');
     if (decision !== 'approve' && decision !== 'deny') {
-      return send(res, 400, 'Bad request', html`<h1>Bad request</h1><p>Choose Approve or Deny.</p>`, true);
+      return send(res, 400, t('common.badRequest'), html`<h1>${t('common.badRequest')}</h1><p>${t('auth.consent.chooseDecision')}</p>`, true);
     }
     const pending = d.provider.getPending(id);
     if (!pending) return expired(res);
@@ -325,19 +323,19 @@ ${message ? html`<p class="error" role="alert">${message}</p>` : ''}
     // Missing fields keep the defaults (current name, full access); a value that is present must be valid.
     // With no suggestion (one app connected at different levels), the owner must choose.
     if (decision === 'approve' && body?.access === undefined && pending.suggestedAccess === null) {
-      return consentPage(res, 400, id, pending, field(body, 'name') || pending.clientName, 'Choose an access level.');
+      return consentPage(res, 400, id, pending, field(body, 'name') || pending.clientName, t('auth.consent.chooseLevel'));
     }
     const access = body?.access === undefined ? 'full' : body.access;
     if (decision === 'approve' && access !== 'full' && access !== 'discussions' && access !== 'projects') {
-      return send(res, 400, 'Bad request', html`<h1>Bad request</h1><p>Choose Full access, Discussions only or Read only.</p>`, true);
+      return send(res, 400, t('common.badRequest'), html`<h1>${t('common.badRequest')}</h1><p>${t('auth.consent.chooseAccess')}</p>`, true);
     }
     if (decision === 'approve' && body?.name !== undefined && typeof body.name !== 'string') {
-      return send(res, 400, 'Bad request', html`<h1>Bad request</h1><p>Enter one name.</p>`, true);
+      return send(res, 400, t('common.badRequest'), html`<h1>${t('common.badRequest')}</h1><p>${t('auth.consent.oneName')}</p>`, true);
     }
     const name = body?.name as string | undefined;
     const projects = access === 'projects' ? pickedProjects(body, d.service.listProjects().map((p) => p.project)) : undefined;
     if (decision === 'approve' && access === 'projects' && !projects) {
-      return consentPage(res, 400, id, pending, name ?? pending.clientName, PICK_A_PROJECT, 'projects', ticked(body, 'projects'));
+      return consentPage(res, 400, id, pending, name ?? pending.clientName, t('auth.consent.pickProject'), 'projects', ticked(body, 'projects'));
     }
     let location: string;
     try {
@@ -345,13 +343,13 @@ ${message ? html`<p class="error" role="alert">${message}</p>` : ''}
     } catch (e) {
       if (e instanceof InvalidNameError) return consentPage(res, 400, id, pending, name ?? pending.clientName, e.message, access as Access, projects);
       if (!(e instanceof InvalidRequestError)) throw e;
-      return send(res, 400, 'Cannot approve', html`<h1>Cannot complete this request</h1><p>${e.message}. ${EXPIRED}</p>`, true);
+      return send(res, 400, t('auth.consent.cannotTitle'), html`<h1>${t('auth.consent.cannot')}</h1><p>${tHtml('auth.consent.cannotText', { reason: e.message, expired: t('auth.expired.text') })}</p>`, true);
     }
     prune();
     if (waiting.delete(id)) {
       // The browser that started this sign-in is waiting: it goes on to the tool, the window stays here.
       decided.set(id, { location, untilMs: d.now().getTime() + PENDING_MS });
-      return send(res, 200, decision === 'approve' ? 'Approved' : 'Denied', decision === 'approve' ? approvedView(pending.clientName) : deniedView(pending.clientName), true);
+      return send(res, 200, decision === 'approve' ? t('auth.consent.approved') : t('auth.consent.denied'), decision === 'approve' ? approvedView(pending.clientName) : deniedView(pending.clientName), true);
     }
     res.redirect(302, location);
   });

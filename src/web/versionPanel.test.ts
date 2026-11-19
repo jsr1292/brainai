@@ -7,13 +7,14 @@ import { appSession, startTestApp, TEST_PASSWORD } from '../testing/helpers.js';
 import { versionPanel, type VersionPanelInput } from './versionViews.js';
 import { checkLatestRelease } from '../desktop/releaseCheck.js';
 import { BRAIN_VERSION } from '../version.js';
+import { decodeEntities } from '../testing/entities.js';
 
 process.env.OWNER_TIMEZONE ??= 'Europe/Berlin';
 
 const NOW = new Date('2026-11-10T12:00:00Z');
 const nowS = Math.floor(NOW.getTime() / 1000);
 const base = { brain: '1.5.2', database: 12, now: NOW };
-const text = (h: unknown) => String(h).replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').replace(/ ([:.])/g, '$1');
+const text = (h: unknown) => decodeEntities(String(h).replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').replace(/ ([:.])/g, '$1');
 const desktop = (d: Partial<NonNullable<VersionPanelInput['desktop']>> = {}): string => versionPanel({ ...base, desktop: { check: null, problem: null, update: null, ...d } }).value;
 const update = { current: '1.5.2', version: '1.6.0', notes: '', state: 'available' as const };
 
@@ -44,7 +45,7 @@ test('app, a good check from a week ago is not enough to say "latest"', () => {
 
 test('app, checks failing: the existing warning shows once, and "latest" is not claimed', () => {
   const h = desktop({ check: { lastOkAt: nowS - 86_400, failingSince: nowS - 4 * 86_400, lastFailAt: nowS - 100 }, problem: { since: '6 Nov', error: 'proxy refused the connection' } });
-  assert.equal((h.match(/hasn&#39;t been able to check|hasn't been able to check/g) ?? []).length, 1);
+  assert.equal((decodeEntities(h).match(/hasn't been able to check/g) ?? []).length, 1);
   assert.match(h, /since 6 Nov\./);
   assert.match(h, /proxy refused the connection/);
   assert.match(h, /may be blocking github\.com/);
@@ -209,7 +210,7 @@ test('app: the state route is owner-only, and a server has none; the link has a 
   const anon = await fetch(app.baseUrl + '/settings/version/state', { redirect: 'manual' });
   assert.ok(anon.status >= 300 && anon.status < 400 || anon.status === 404 || anon.status === 401 || anon.status === 403);
   assert.ok(!(await anon.text()).includes('"at"'));
-  assert.match(await (await f('/app/check-updates')).text(), /BrainAI's own window/);
+  assert.match(decodeEntities(await (await f('/app/check-updates')).text()), /BrainAI's own window/);
   assert.equal((await f('/settings/version/check', { method: 'POST', headers: { Origin: app.baseUrl } })).status, 404, 'the app has no GitHub check of its own');
   const { f: sf } = await serverApp(t);
   assert.equal((await sf('/settings/version/state')).status, 404);

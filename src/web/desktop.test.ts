@@ -22,6 +22,7 @@ import { SwitchableEmbedder, SwitchableReranker } from '../models/switchable.js'
 import { GEMMA_PROFILE } from '../memory/embeddingProfile.js';
 import { createFakeEmbedder } from '../memory/fakeEmbedder.js';
 import type { CatalogueModel } from '../models/catalogue.js';
+import { decodeEntities, withoutClientCatalog } from '../testing/entities.js';
 
 const CLAUDE_CONFIG = 'Library/Application Support/Claude/claude_desktop_config.json';
 
@@ -73,6 +74,26 @@ test('Settings › Tools on this Mac lists the tools and connects and disconnect
   assert.match(after.body, /action="\/settings\/tools\/claude-code\/disconnect"/);
   assert.equal((await post(app.baseUrl, '/settings/tools/claude-code/disconnect', settings.cookie)).status, 303);
   assert.deepEqual(f.servers('claude'), {});
+});
+
+test('Connect writes the rules in Spanish when the owner\'s language is Spanish, and English otherwise; Replace later rewrites them', async (t) => {
+  const { app, f } = await start(t);
+  const { findBlock } = await import('../desktop/rulesBlock.js');
+  const { cookie } = await openPage(app.baseUrl, '/settings');
+  app.deps.store.setSwitch('ui_language', 'es');
+  assert.equal((await post(app.baseUrl, '/settings/tools/claude-code/connect', cookie)).status, 303);
+  const es = f.read('.claude/CLAUDE.md')!;
+  assert.match(es, /Tengo una memoria compartida, la memoria de BrainAI \(localhost:\d+\)/);
+  assert.match(es, /Cuando llames a load_profile, pasa setup: \d+\./);
+  assert.equal(findBlock(es)!.host, new URL(app.baseUrl).host, 'a Spanish block names its host too');
+  const states = await openPage(app.baseUrl, '/settings/tools?tool=claude-code', cookie);
+  assert.match(states.body, /action="\/settings\/tools\/claude-code\/disconnect"/, 'a Spanish block counts as connected');
+  assert.equal((await post(app.baseUrl, '/settings/tools/claude-code/disconnect', cookie)).status, 303);
+  assert.equal(f.read('.claude/CLAUDE.md') ?? '', '');
+  // English: unchanged.
+  app.deps.store.setSwitch('ui_language', 'en');
+  await post(app.baseUrl, '/settings/tools/claude-code/connect', cookie);
+  assert.match(f.read('.claude/CLAUDE.md')!, /I have a shared memory, the brain \(localhost:\d+\)/);
 });
 
 test("Disconnect ends the tool's sign-in: its grants are revoked, other apps' are not", async (t) => {
@@ -177,7 +198,7 @@ test('on Windows the desktop pages say "this computer", never "this Mac"', async
   const cookie = (await openPage(app.baseUrl, '/settings')).cookie;
   for (const path of ['/settings', '/settings/tools', '/settings/move', '/settings/reach', '/welcome']) {
     const page = await openPage(app.baseUrl, path, cookie);
-    assert.doesNotMatch(page.body, /this Mac|on the Mac/i, path);
+    assert.doesNotMatch(withoutClientCatalog(page.body), /this Mac|on the Mac/i, path);
     assert.doesNotMatch(page.body, /\$\{/, `${path}: no template text left in the page`);
   }
   assert.match((await openPage(app.baseUrl, '/settings/tools', cookie)).body, /Tools on this computer/);
@@ -385,7 +406,7 @@ test('the welcome is a desktop setup: its own frame, the four steps with the cur
   assert.match(p.body, /Step 3 of 4/, 'still said, for a narrow window and screen readers');
   assert.match(p.body, /<p class="setup-actions"><a class="button primary" href="\/welcome\?step=4">Next<\/a><\/p>/);
   // The ChatGPT note is one sentence around its link, not a wrapping row of pieces.
-  assert.match(p.body, /<span class="meta note">ChatGPT's app can't reach a brain/);
+  assert.match(decodeEntities(p.body), /<span class="meta note">ChatGPT's app can't reach a brain/);
 });
 
 test('step 2 explains the two models, shows this computer and the recommended pair with size, licence and numbers', async (t) => {
@@ -691,7 +712,7 @@ test('/app/update, when the app did not intercept it, tells how to update', asyn
   const { app } = await startUpdate(t);
   const p = await openPage(app.baseUrl, '/app/update');
   assert.match(p.body, /Update BrainAI/);
-  assert.match(p.body, /use Update and restart in BrainAI&#39;s own window|use Update and restart in BrainAI's own window/);
+  assert.match(decodeEntities(p.body), /use Update and restart in BrainAI's own window/);
   assert.ok(!p.body.includes('reopens by itself') && !p.body.includes('is updating'));
 });
 
@@ -763,7 +784,7 @@ test('the ChatGPT row says what its app can reach, has no Connect button, and di
     const { app } = await startWith(t, { platform });
     const s = await openPage(app.baseUrl, '/settings');
     for (const path of ['/settings/tools', '/welcome?step=3']) {
-      const body = (await openPage(app.baseUrl, path, s.cookie)).body.replace(/&#39;/g, "'").replace(/<[^>]+>/g, '');
+      const body = decodeEntities((await openPage(app.baseUrl, path, s.cookie)).body).replace(/<[^>]+>/g, '');
       assert.match(body, /ChatGPT/, `${platform} ${path}`);
       assert.ok(body.includes(CHATGPT), `${platform} ${path}`);
       assert.ok(body.includes(extra), `${platform} ${path}`);
@@ -781,7 +802,7 @@ test('on a server neither the Claude (desktop app) nor the ChatGPT row exists, a
     const res = await as(path);
     const body = res.status === 200 ? await res.text() : '';
     if (path === '/settings') assert.equal(res.status, 200);
-    assert.doesNotMatch(body, /Claude \(desktop app\)|ChatGPT's app can|ChatGPT's app can&#39;t/, path);
+    assert.doesNotMatch(body, /Claude \(desktop app\)|ChatGPT's app can/, path);
   }
   assert.equal((await as('/settings/tools')).status, 404);
 });
@@ -917,7 +938,7 @@ test('Settings says when update checks have been failing for more than two days'
   const cookie = (await openPage(app.baseUrl, '/')).cookie;
   const since = Math.floor(Date.now() / 1000) - 5 * 86_400;
   writeFileSync(join(statusDir, 'update-check.json'), JSON.stringify({ failingSince: since, lastFailAt: since + 5 * 86_400 - 60, lastError: 'github.com answered HTTP 407 (Proxy Authentication Required)' }));
-  const s = (await openPage(app.baseUrl, '/settings', cookie)).body;
+  const s = decodeEntities((await openPage(app.baseUrl, '/settings', cookie)).body);
   const day = new Date(since * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   assert.ok(s.includes(`BrainAI hasn't been able to check for updates since ${day}.</p>`), s.match(/able to check[^<]*/)?.[0]);
   assert.match(s, /github\.com answered HTTP 407 \(Proxy Authentication Required\)/);

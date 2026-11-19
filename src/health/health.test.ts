@@ -17,6 +17,9 @@ const good = (): HealthInput => ({
   waiting: { approvals: 0, disagreements: 0, overdue: [], discussions: [] },
 });
 
+/** The English text and link of each reason: `say` and `dueDay` are for screens. */
+const plain = (rs: { text: string; href: string }[]) => rs.map(({ text, href }) => ({ text, href }));
+
 test('a brain with everything in order is 100 on all three, with nothing to do', () => {
   const h = brainHealth(good(), now);
   for (const part of [h.upToDate, h.ready, h.waiting]) {
@@ -29,7 +32,7 @@ test('an empty new brain does not divide by zero and asks for something about yo
   const h = brainHealth({ projects: [], outOfDatePages: [], profileFacts: 0, apps: [], backups: null, waiting: { approvals: 0, disagreements: 0, overdue: [], discussions: [] } }, now);
   assert.equal(h.upToDate.score, 100);
   assert.equal(h.ready.score, 0);
-  assert.deepEqual(h.ready.reasons, [{ text: 'Nothing about you yet: add a fact to your profile', href: '/facts?kind=profile' }]);
+  assert.deepEqual(plain(h.ready.reasons), [{ text: 'Nothing about you yet: add a fact to your profile', href: '/facts?kind=profile' }]);
   assert.equal(h.waiting.score, 100);
 });
 
@@ -40,7 +43,7 @@ test('up to date: the share of open projects updated in the last 30 days; pages 
   input.outOfDatePages = [{ id: 'p1', title: 'homelab — the mini PC' }];
   const h = brainHealth(input, now);
   assert.equal(h.upToDate.score, 40); // 2 fresh of 5
-  assert.deepEqual(h.upToDate.reasons, [
+  assert.deepEqual(plain(h.upToDate.reasons), [
     { text: 'never has no status yet', href: '/?project=never#panel' },
     { text: 'old-one was last updated 45 days ago', href: '/?project=old-one#panel' },
     { text: 'Page "homelab — the mini PC" may be out of date', href: '/pages/p1' },
@@ -54,7 +57,7 @@ test('ready: each check is an equal share — profile, each project\'s status an
   input.backups = { ok: false, problems: ['No nightly backup since 3 Nov'] };
   const h = brainHealth(input, now);
   assert.equal(h.ready.score, 50); // profile, homelab, Claude Code pass; wildlog, Codex, backups fail
-  assert.deepEqual(h.ready.reasons, [
+  assert.deepEqual(plain(h.ready.reasons), [
     { text: 'wildlog has no roadmap', href: '/?project=wildlog#panel' },
     { text: 'Codex runs an older setup text', href: '/settings/setup/codex' },
     { text: 'Backups: No nightly backup since 3 Nov', href: '/settings#health' },
@@ -76,7 +79,7 @@ test('waiting on you: 100 less 10 for each thing, never below 0, each with where
   };
   const h = brainHealth(input, now);
   assert.equal(h.waiting.score, 50);
-  assert.deepEqual(h.waiting.reasons, [
+  assert.deepEqual(plain(h.waiting.reasons), [
     { text: '2 changes wait for your approval', href: '/approvals' },
     { text: '1 pair of facts disagrees', href: '/disagreements' },
     { text: 'homelab: "swap the disk" was due 3 Nov', href: '/?project=homelab#panel' },
@@ -89,7 +92,7 @@ test('waiting on you: 100 less 10 for each thing, never below 0, each with where
 test('a part lists at most five reasons, then how many more', () => {
   const input = good();
   input.projects = Array.from({ length: 8 }, (_, i) => ({ name: `p${i}`, lastUpdate: daysAgo(40 + i), hasStatus: true, hasRoadmap: true }));
-  const r = brainHealth(input, now).upToDate.reasons;
+  const r = plain(brainHealth(input, now).upToDate.reasons);
   assert.equal(r.length, MAX_REASONS + 1);
   assert.deepEqual(r.at(-1), { text: 'and 3 more', href: '/' });
   assert.equal(r[0]!.text, 'p7 was last updated 47 days ago');
@@ -107,5 +110,5 @@ test('a part with something to fix never reads 100', () => {
 test("an app that hasn't reported its setup text yet is said so, not called older", () => {
   const input = good();
   input.apps.push({ name: 'Grok', setup: 'unknown', href: '/settings/setup/grok' });
-  assert.deepEqual(brainHealth(input, now).ready.reasons, [{ text: "Grok hasn't reported its setup text yet", href: '/settings/setup/grok' }]);
+  assert.deepEqual(plain(brainHealth(input, now).ready.reasons), [{ text: "Grok hasn't reported its setup text yet", href: '/settings/setup/grok' }]);
 });

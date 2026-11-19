@@ -411,7 +411,7 @@ test('below 900px the Settings section strip is gone: the phone gets the five-ro
 test('on a phone an open project still has a main heading for a screen reader: the list hides, its Projects h1 stays', () => {
   const phone = '@media (max-width: 760px)';
   const view = readFileSync(new URL('./projectsViews.ts', import.meta.url), 'utf8');
-  assert.match(view, /<div class="plist">\s*<h1>Projects(<|\$\{)/, 'the h1 is the list\'s first child');
+  assert.match(view, /<div class="plist">\s*<h1>(Projects(<|\$\{)|\$\{t\('projects\.title'\))/, 'the h1 is the list\'s first child');
   // display: none would take the h1 out of the accessibility tree too.
   assert.notEqual(prop('.phome.has-panel .plist', 'display', phone), 'none');
   assert.equal(prop('.phome.has-panel .plist > :not(h1)', 'display', phone), 'none');

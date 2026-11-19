@@ -5,7 +5,7 @@ import type { HomeSuggestion } from '../projects/service.js';
 import type { Memory, Suggestion } from '../memory/types.js';
 import { forYouCard, forYouRows, type ApprovalSummary } from './forYou.js';
 
-const sug = (p: string) => ({ project: p, kind: 'pin-late', text: `${p} has something late. Put it on the go?` }) as HomeSuggestion;
+const sug = (p: string) => ({ project: p, kind: 'pin-late', text: `${p} has something late: put it on the go?`, state: 'open', weeks: null }) as HomeSuggestion;
 const aSuggestion = (over: Partial<Suggestion> = {}): Suggestion => ({
   id: 's1', action: 'add', memoryId: null, content: 'Prefers short answers in German when on the phone.', tags: [], kind: 'profile', project: null,
   reason: null, suggestedAt: '2026-11-03T09:00:00Z', suggestedBy: 'ChatGPT', status: 'pending', supersedes: [], deletedMatch: null, keys: null, ...over,
@@ -68,7 +68,7 @@ test('an empty card is not rendered; three needs-you rows show with no fold; one
 
 test('a suggestion row names its project in bold and offers a quiet pill and Not now, keeping their POSTs', () => {
   const h = forYouCard(forYouRows({ approvals: { count: 0, first: null }, discussions: [], weekLine: null, suggestions: [sug('quillbox')] })).value;
-  assert.match(h, /<b>quillbox<\/b> has something late\. Put it on the go\?/);
+  assert.match(h, /<b>quillbox<\/b> has something late: put it on the go\?/);
   assert.match(h, /<form method="post" action="\/projects\/quillbox\/pin"><button type="submit" class="sm">On the go<\/button><\/form>/);
   assert.match(h, /<form method="post" action="\/projects\/quillbox\/snooze"><button type="submit" class="ghost sm">Not now<\/button><\/form>/);
   const two = forYouCard(forYouRows({ approvals: { count: 2, first: null }, discussions: [], weekLine: null, suggestions: [] })).value;

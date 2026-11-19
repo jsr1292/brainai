@@ -1,3 +1,5 @@
+Leer en español: [docs/es/BENCHMARK.md](es/BENCHMARK.md)
+
 # How well recall finds things
 
 BrainAI's search is measured on LoCoMo, a public test of memory over long conversations

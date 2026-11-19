@@ -159,3 +159,15 @@ test('reopenRejected is refused when a newer proposal of the same name from the 
   svc.reopenRejected(first.id);
   assert.equal(svc.proposal(first.id)!.status, 'pending');
 });
+
+test('a SkillError shows in Spanish through errorText while its message stays English', async () => {
+  const { runWithLocale } = await import('../i18n/core.js');
+  const { errorText } = await import('../web/errorText.js');
+  const svc = make();
+  let err: unknown;
+  try { svc.create({ ...base, name: 'Bad Name' }, 'owner'); } catch (e) { err = e; }
+  assert.ok(err instanceof SkillError);
+  assert.match(err.message, /^A skill's name is lowercase letters/);
+  assert.match(runWithLocale('es', () => errorText(err)), /^El nombre de una habilidad/);
+  assert.equal(runWithLocale('en', () => errorText(err)), err.message);
+});

@@ -1,3 +1,5 @@
+Leer en español: [docs/es/SECURITY.md](es/SECURITY.md)
+
 # BrainAI security model and review notes
 
 > **This is the author's own review (2026-11-18), not an independent audit.** It is written so that an independent

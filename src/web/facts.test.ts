@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
 import { groupFacts } from './dashboardViews.js';
 import type { Memory } from '../memory/types.js';
+import { decodeEntities } from '../testing/entities.js';
 
 const owner = { type: 'owner' } as const;
 const claude = { type: 'ai', name: 'Claude' } as const;
@@ -366,7 +367,7 @@ test('All facts shows Current by default and offers Replaced and Everything', as
   assert.ok(!def.includes(`/memories/${a}?from=`) && def.includes(`/memories/${c}?from=`));
   const rep = await (await f('/facts?show=replaced')).text();
   assert.equal((rep.match(/<li class="card rep">/g) ?? []).length, 7);
-  assert.match(rep, /7 replaced facts, newest replacement first\. You and your assistants don't find them in search\. Deleted ones are not listed\./);
+  assert.match(decodeEntities(rep), /7 replaced facts, newest replacement first\. You and your assistants don't find them in search\. Deleted ones are not listed\./);
   assert.match(rep, new RegExp(`<p class="by">→ replaced by <a href="/memories/${b}\\?from=%2Ffacts%3Fshow%3Dreplaced">Drinking windows come from the Cellarium import\\.</a> <span class="badge">also replaced</span></p>`));
   assert.match(rep, /replaced by <span class="writer w-code">Claude Code<\/span> 30 Oct/);
   const every = await (await f('/facts?show=everything&project=wildlog')).text();

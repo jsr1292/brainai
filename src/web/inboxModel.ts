@@ -6,6 +6,7 @@ import { writerName, excerpt } from './dashboardViews.js';
 import type { TidyItems } from './dashboardViews.js';
 import type { AppDeps } from './app.js';
 import { html, type SafeHtml } from './html.js';
+import { t, tKey } from '../i18n/core.js';
 import { makeTidyItems } from './tidyItems.js';
 import { timeAgo } from './when.js';
 import type { Memory, Suggestion } from '../memory/types.js';
@@ -28,24 +29,24 @@ export interface InboxModel { groups: InboxGroup[]; items: InboxItem[]; total: n
 
 type Deps = Pick<AppDeps, 'service' | 'discussions' | 'store' | 'now' | 'sameProjectFloor'> & Partial<Pick<AppDeps, 'skills' | 'tidy'>>;
 
-const projectOf = (m: Memory): string => m.project ?? 'No project';
+const projectOf = (m: Memory): string => m.project ?? t('inbox.noProject');
 const q = encodeURIComponent;
 
 /** The tidy-ups as rows: one per pair, per pair of project names, per project with several statuses, per lost replacement; the stale facts as one. */
 export function tidyRows(v: TidyItems): InboxItem[] {
   const rows: InboxItem[] = [];
   const row = (id: string, title: string, sub: string): void => { rows.push({ key: `tidy:${id}`, kind: 'tidy', id, href: `/facts/tidy?item=${q(id)}`, title, sub }); };
-  for (const o of v.overlaps) row(`names:${o.smaller.project}|${o.larger.project}`, `${o.smaller.project} and ${o.larger.project} look alike`, 'Project names');
-  for (const s of v.statuses) row(`statuses:${s.project}`, `${s.project} has ${s.statuses.length} statuses`, 'Several statuses');
-  for (const p of v.duplicates) row(`pair:${p.a.id}:${p.b.id}`, `2 facts look like duplicates: ${excerpt(p.a.content)}`, projectOf(p.a));
-  for (const g of v.gone ?? []) row(`gone:${g.row.id}`, `A replaced fact lost its replacement: ${excerpt(g.old.content)}`, projectOf(g.old));
+  for (const o of v.overlaps) row(`names:${o.smaller.project}|${o.larger.project}`, t('inbox.row.names', { a: o.smaller.project, b: o.larger.project }), t('inbox.row.namesSub'));
+  for (const s of v.statuses) row(`statuses:${s.project}`, t('inbox.row.statuses', { project: s.project, count: s.statuses.length }), t('inbox.row.statusesSub'));
+  for (const p of v.duplicates) row(`pair:${p.a.id}:${p.b.id}`, t('inbox.row.duplicates', { text: excerpt(p.a.content) }), projectOf(p.a));
+  for (const g of v.gone ?? []) row(`gone:${g.row.id}`, t('inbox.row.gone', { text: excerpt(g.old.content) }), projectOf(g.old));
   // A1: facts past their date, one row per project (the fact itself when it is the only one there).
   const past = new Map<string, Memory[]>();
   for (const m of v.pastDate ?? []) past.set(m.project ?? '', [...(past.get(m.project ?? '') ?? []), m]);
   for (const [project, ms] of past) {
-    row(`past:${project}`, ms.length === 1 ? `Past its date: ${excerpt(ms[0]!.content)}` : `${ms.length} facts are past their date${project === '' ? '' : ` in ${project}`}`, project === '' ? 'No project' : project);
+    row(`past:${project}`, ms.length === 1 ? t('inbox.row.pastOne', { text: excerpt(ms[0]!.content) }) : project === '' ? t('inbox.row.pastMany', { count: ms.length }) : t('inbox.row.pastManyIn', { count: ms.length, project }), project === '' ? t('inbox.noProject') : project);
   }
-  if (v.stale.length > 0) row('stale', v.stale.length === 1 ? "1 fact hasn't been touched in six months" : `${v.stale.length} facts haven't been touched in six months`, 'Still true?');
+  if (v.stale.length > 0) row('stale', t('inbox.row.stale', { count: v.stale.length }), t('inbox.row.staleSub'));
   return rows;
 }
 
@@ -74,12 +75,12 @@ export function harvestGroups(pending: Suggestion[], now: Date): InboxGroup[] {
   for (const s of pending) if (s.harvest) batches.set(s.harvest.batch, [...(batches.get(s.harvest.batch) ?? []), s]);
   return [...batches].map(([batch, list]) => ({
     kind: 'harvest' as const,
-    title: `Harvested from ${writerName(list[0]!.suggestedBy)} · ${list[0]!.harvest!.label}`,
+    title: t('inbox.row.harvest', { who: writerName(list[0]!.suggestedBy), label: list[0]!.harvest!.label }),
     href: `/approvals?batch=${q(batch)}`,
     items: list.map((s): InboxItem => ({
       key: `suggestion:${s.id}`, kind: 'suggestion', id: s.id, href: `/approvals?id=${q(s.id)}`,
-      title: `${s.kind === 'profile' ? 'Profile' : s.kind === 'summary' ? 'Status' : 'Decision'}: ${excerpt(s.content ?? '')}`,
-      sub: html`${s.project ?? 'About you'} · ${timeAgo(s.suggestedAt, now)}`,
+      title: t(s.kind === 'profile' ? 'inbox.row.sg.profile' : s.kind === 'summary' ? 'inbox.row.sg.summary' : 'inbox.row.sg.decision', { text: excerpt(s.content ?? '') }),
+      sub: html`${s.project ?? t('inbox.disagree.aboutYou')} · ${timeAgo(s.suggestedAt, now)}`,
     })),
   }));
 }
@@ -88,32 +89,32 @@ export function inboxModel(d: Deps): InboxModel {
   const now = d.now();
   const suggestions: InboxItem[] = d.service.pendingSuggestions().filter((s) => !s.harvest).map((s) => ({
     key: `suggestion:${s.id}`, kind: 'suggestion', id: s.id, href: `/approvals?id=${q(s.id)}`,
-    title: `${{ add: 'Add to', update: 'Change', delete: 'Remove from' }[s.action]} your ${s.kind === 'profile' ? 'profile' : 'memory'}`,
+    title: tKey(`inbox.row.${s.action}.${s.kind === 'profile' ? 'profile' : 'memory'}`),
     sub: html`${writerName(s.suggestedBy)} · ${timeAgo(s.suggestedAt, now)}`,
   }));
   const proposals: InboxItem[] = (d.skills?.pendingProposals() ?? []).map((p) => ({
     key: `proposal:${p.id}`, kind: 'proposal', id: p.id, href: `/approvals?proposal=${q(p.id)}`,
-    title: p.skillId ? `Change to skill: ${p.name}` : `New skill: ${p.name}`,
+    title: p.skillId ? t('inbox.row.skillChange', { name: p.name }) : t('inbox.row.skillNew', { name: p.name }),
     sub: html`${writerName(p.proposedBy)} · ${timeAgo(p.proposedAt, now)}`,
   }));
   // B2: tidy proposals from an assistant the owner started: explicit requests, so they count like approvals.
   const tidyProposals: InboxItem[] = tidyProposalRows(d.tidy, now);
   const disagree: InboxItem[] = d.service.openDisagreements().map((x) => ({
     key: `disagree:${x.id}`, kind: 'disagree', id: x.id, href: `/disagreements?id=${q(x.id)}`,
-    title: excerpt(x.why), sub: d.service.projectNamed(x.factA.project ?? x.factB.project ?? '') || 'About you',
+    title: excerpt(x.why), sub: d.service.projectNamed(x.factA.project ?? x.factB.project ?? '') || t('inbox.disagree.aboutYou'),
   }));
   const tidy = tidyRows(makeTidyItems(d)());
   const discussions: InboxItem[] = d.discussions.waitingOnOwner().map((w) => ({
-    key: `discussion:${w.id}`, kind: 'discussion', id: w.id, href: `/discussions/${w.id}`, title: w.title, sub: 'Waiting for your reply',
+    key: `discussion:${w.id}`, kind: 'discussion', id: w.id, href: `/discussions/${w.id}`, title: w.title, sub: t('inbox.row.waitingReply'),
   }));
   // Tidy-ups come last, under their own quiet heading: they do not need the owner, so they are not counted in `total`.
   const groups: InboxGroup[] = [
-    { kind: 'approvals', title: 'Approvals', href: '/approvals', items: [...suggestions, ...proposals] },
+    { kind: 'approvals', title: t('inbox.group.approvals'), href: '/approvals', items: [...suggestions, ...proposals] },
     ...harvestGroups(d.service.pendingSuggestions(), now),
-    { kind: 'tidyProposals', title: 'Tidy proposals', href: '/approvals', items: tidyProposals },
-    { kind: 'disagree', title: 'Facts that disagree', href: '/disagreements', items: disagree },
-    { kind: 'discussions', title: 'Discussions waiting', href: '/discussions', items: discussions },
-    { kind: 'tidy', title: 'Tidy-ups', href: '/facts/tidy', items: tidy },
+    { kind: 'tidyProposals', title: t('inbox.group.tidyProposals'), href: '/approvals', items: tidyProposals },
+    { kind: 'disagree', title: t('inbox.group.disagree'), href: '/disagreements', items: disagree },
+    { kind: 'discussions', title: t('inbox.group.discussions'), href: '/discussions', items: discussions },
+    { kind: 'tidy', title: t('inbox.group.tidy'), href: '/facts/tidy', items: tidy },
   ].filter((g) => g.items.length > 0) as InboxGroup[];
   const items = groups.flatMap((g) => g.items);
   return { groups, items, total: items.length - tidy.length, tidyCount: tidy.length };

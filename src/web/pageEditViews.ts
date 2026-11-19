@@ -1,12 +1,13 @@
 import type { DiffLine } from '../pages/diff.js';
-import { PAGE_AREA_LABELS, PAGE_AREAS, type PageVersion } from '../pages/types.js';
+import { PAGE_AREAS, type PageVersion } from '../pages/types.js';
+import { t } from '../i18n/index.js';
 import { errorBlock } from './dashboardViews.js';
 import { asset, html, type SafeHtml } from './html.js';
 import { metaLine } from './metaLine.js';
 import { timeAgo } from './when.js';
-import { deletePageFold, layout, pagesNav, type NavEntry } from './pageViews.js';
+import { deletePageFold, layout, pageAreaLabel, pagesNav, type NavEntry } from './pageViews.js';
 
-const who = (by: string) => (by === 'owner' ? 'you' : by);
+const who = (by: string) => (by === 'owner' ? t('projects.youLower') : by);
 const day = (iso: string): SafeHtml => timeAgo(iso);
 const wrap = (nav: NavEntry[], current: string | undefined, main: SafeHtml) => layout(pagesNav(nav, current), html`<div class="wide-narrow">${main}</div>`);
 /** The editor's own column: no pages tree, just the reading column's width (UI round, task 2). */
@@ -30,15 +31,15 @@ export interface EditForm {
 
 function fields(v: EditForm): SafeHtml {
   if (v.mode === 'section') return html``;
-  const placeholder = v.project ? `${v.project} — short description` : 'Title';
+  const placeholder = v.project ? t('pages.ed.titlePlaceholder', { project: v.project }) : t('pages.ed.titleLabel');
   // The title input is the editor's heading: it reads like the page's own h1. Project and Area are Details, folded away
   // once the page has them (only a new page opens them). Area exists only for a page without a project: it is not
   // rendered for a project page, and Task 3's script hides it (data-area-for-no-project) when a project is chosen.
   const open = v.mode === 'new' ? html` open` : '';
-  return html`<input name="title" class="ptitle-input" aria-label="Title" maxlength="140" required value="${v.title}" placeholder="${placeholder}">
-<details class="pdetails"${open}><summary>Details<span class="chev"></span></summary><div class="pdetails-body">
-<label>Project <select name="project"><option value=""${v.project === '' ? html` selected` : ''}>No project</option>${v.projects.map((p) => html`<option value="${p}"${p === v.project ? html` selected` : ''}>${p}</option>`)}</select></label>
-${v.project === '' ? html`<label>Area <select name="area" data-area-for-no-project>${PAGE_AREAS.map((a) => html`<option value="${a}"${a === v.area ? html` selected` : ''}>${PAGE_AREA_LABELS[a]}</option>`)}</select></label>` : ''}
+  return html`<input name="title" class="ptitle-input" aria-label="${t('pages.ed.titleLabel')}" maxlength="140" required value="${v.title}" placeholder="${placeholder}">
+<details class="pdetails"${open}><summary>${t('pages.ed.details')}<span class="chev"></span></summary><div class="pdetails-body">
+<label>${t('pages.ed.project')} <select name="project"><option value=""${v.project === '' ? html` selected` : ''}>${t('pages.ed.noProject')}</option>${v.projects.map((p) => html`<option value="${p}"${p === v.project ? html` selected` : ''}>${p}</option>`)}</select></label>
+${v.project === '' ? html`<label>${t('pages.ed.area')} <select name="area" data-area-for-no-project>${PAGE_AREAS.map((a) => html`<option value="${a}"${a === v.area ? html` selected` : ''}>${pageAreaLabel(a)}</option>`)}</select></label>` : ''}
 </div></details>`;
 }
 
@@ -49,18 +50,18 @@ function editor(v: EditForm): SafeHtml {
   // Adding pictures needs editor-pics.js (an upload without script would lose the unsaved text), so its button and
   // status line stay hidden until that script shows them.
   return html`<form method="post" action="${action}" class="peditor" data-pics="${asset('editor-pics.js')}" data-cm="${asset('editor-cm.js')}">
-<button type="submit" name="intent" value="save" class="visually-hidden" tabindex="-1" aria-hidden="true">Save</button>
+<button type="submit" name="intent" value="save" class="visually-hidden" tabindex="-1" aria-hidden="true">${t('pages.ed.save')}</button>
 ${v.base !== undefined ? html`<input type="hidden" name="base" value="${v.base}">` : ''}
 ${v.section ? html`<input type="hidden" name="section" value="${v.section.anchor}">` : ''}
 ${fields(v)}
 <section class="panel ed">
-<div class="ptools"><button type="submit" name="intent" value="write" class="ptool${v.preview ? '' : ' on'}" aria-pressed="${v.preview ? 'false' : 'true'}" formnovalidate>Write</button><button type="submit" name="intent" value="preview" class="ptool${v.preview ? ' on' : ''}" aria-pressed="${v.preview ? 'true' : 'false'}" formnovalidate>Preview</button><button type="button" class="ptool add-pic" hidden>＋ Add picture</button><input type="file" class="pic-input" accept="image/*" multiple hidden>
-<span class="phint">[[ links a page or fact</span></div>
+<div class="ptools"><button type="submit" name="intent" value="write" class="ptool${v.preview ? '' : ' on'}" aria-pressed="${v.preview ? 'false' : 'true'}" formnovalidate>${t('pages.ed.write')}</button><button type="submit" name="intent" value="preview" class="ptool${v.preview ? ' on' : ''}" aria-pressed="${v.preview ? 'true' : 'false'}" formnovalidate>${t('pages.ed.preview')}</button><button type="button" class="ptool add-pic" hidden>${t('pages.ed.addPicture')}</button><input type="file" class="pic-input" accept="image/*" multiple hidden>
+<span class="phint">${t('pages.ed.linkHint')}</span></div>
 <p class="pic-strip" role="status" hidden></p>
 ${v.preview ? html`<div class="preview art"${/class="(pic|diagram)"/.test(v.preview.value) ? html` data-viewer="${asset('viewer.js')}"` : ''}${v.preview.value.includes('class="diagram"') ? html` data-diagrams="${asset('diagrams.js')}" data-renderer="${asset('diagram-frame.js')}"` : ''}>${v.preview}</div>` : ''}
-<textarea name="body" rows="${v.mode === 'section' ? 14 : 24}" aria-label="${v.mode === 'section' && v.section ? `Text of the ${v.section.heading || 'Introduction'} section (Markdown)` : 'Page text (Markdown)'}" spellcheck="true" data-editor${v.preview ? html` class="under-preview"` : ''}>${v.body}</textarea>
+<textarea name="body" rows="${v.mode === 'section' ? 14 : 24}" aria-label="${v.mode === 'section' && v.section ? t('pages.ed.sectionText', { heading: v.section.heading || t('pages.ed.introduction') }) : t('pages.ed.pageText')}" spellcheck="true" data-editor${v.preview ? html` class="under-preview"` : ''}>${v.body}</textarea>
 </section>
-<div class="psavebar"><button type="submit" name="intent" value="save" class="primary">${v.mode === 'section' ? 'Save section' : v.mode === 'new' ? 'Create page' : 'Save page'}<kbd><span class="k-mac">⌘S</span><span class="k-pc">Ctrl S</span></kbd></button><a class="quiet-btn" href="${cancel}">Cancel</a><span class="psave-note">${v.mode === 'new' ? 'Saving makes version 1.' : `Saving makes version ${(v.base ?? 0) + 1}.`}</span></div>
+<div class="psavebar"><button type="submit" name="intent" value="save" class="primary">${v.mode === 'section' ? t('pages.ed.saveSection') : v.mode === 'new' ? t('pages.ed.create') : t('pages.ed.savePage')}<kbd><span class="k-mac">⌘S</span><span class="k-pc">Ctrl S</span></kbd></button><a class="quiet-btn" href="${cancel}">${t('pages.ed.cancel')}</a><span class="psave-note">${v.mode === 'new' ? t('pages.ed.makesFirst') : t('pages.ed.makes', { version: (v.base ?? 0) + 1 })}</span></div>
 </form>
 ${v.mode === 'page' && v.pageId ? deletePageFold(v.pageId) : ''}`;
 }
@@ -68,8 +69,8 @@ ${v.mode === 'page' && v.pageId ? deletePageFold(v.pageId) : ''}`;
 /** The editor (mockup pages-edit.html): a new page, the whole page or one section. */
 export function editView(nav: NavEntry[], v: EditForm): SafeHtml {
   void nav; // the editor has no pages tree; the column is its own (UI round, task 2)
-  const heading = v.mode === 'section' ? html`<h1>Editing “${v.section!.heading || 'Introduction'}”</h1>` : html``;
-  const sub = v.mode === 'section' ? metaLine([v.pageTitle, `version ${v.base}`, html`<a href="/pages/${v.pageId}/edit">Edit the whole page instead</a>`]) : '';
+  const heading = v.mode === 'section' ? html`<h1>${t('pages.ed.editing', { heading: v.section!.heading || t('pages.ed.introduction') })}</h1>` : html``;
+  const sub = v.mode === 'section' ? metaLine([v.pageTitle, t('pages.ed.versionN', { version: v.base ?? '' }), html`<a href="/pages/${v.pageId}/edit">${t('pages.ed.wholeInstead')}</a>`]) : '';
   return editWrap(html`${heading}${sub}${errorBlock(v.error)}${editor(v)}`);
 }
 
@@ -77,7 +78,7 @@ export interface PageFields { title: string; project: string; area: string }
 
 const sameFields = (a: PageFields, b: PageFields) => a.title === b.title && a.project === b.project && (a.project !== '' || a.area === b.area);
 const fieldsLine = (x: PageFields): SafeHtml =>
-  metaLine([`Title: ${x.title}`, `Project: ${x.project || 'No project'}`, x.project ? null : `Area: ${PAGE_AREA_LABELS[x.area as keyof typeof PAGE_AREA_LABELS] ?? x.area}`]);
+  metaLine([t('pages.ed.fieldTitle', { title: x.title }), t('pages.ed.fieldProject', { project: x.project || t('pages.ed.noProject') }), x.project ? null : t('pages.ed.fieldArea', { area: (PAGE_AREAS as readonly string[]).includes(x.area) ? pageAreaLabel(x.area as (typeof PAGE_AREAS)[number]) : x.area })]);
 
 /**
  * Someone else saved first: both texts side by side, then the editor again on the current version.
@@ -87,14 +88,14 @@ export function conflictView(nav: NavEntry[], v: EditForm & { savedBy: string; v
   void nav; // like the editor it replaces: its own column, no pages tree
   const fieldsChanged = v.mode === 'page' && v.current !== undefined && !sameFields(v.current, v);
   return editWrap(html`
-<h1>Someone else saved first</h1>
+<h1>${t('pages.ed.conflictTitle')}</h1>
 <section class="panel conflict">
-<p class="warn">${v.savedBy === 'owner' ? 'You saved this page in another tab or on another device' : `${v.savedBy} saved this page`} while you were editing (version ${v.version}). Nothing of yours is lost: your text is below. Copy what you need into the current version, then save.</p>
-<div class="two"><div><h2>Current · version ${v.version} · ${who(v.savedBy)}</h2>${fieldsChanged ? fieldsLine(v.current!) : ''}<pre class="theirs">${v.theirs}</pre></div>
-<div><h2>Yours · based on version ${v.base}</h2>${fieldsChanged ? fieldsLine(v) : ''}<pre class="mine">${v.mine}</pre></div></div>
-<div class="actions"><a class="button secondary" href="/pages/${v.pageId}">Discard mine</a></div>
+<p class="warn">${v.savedBy === 'owner' ? t('pages.ed.conflictOwner', { version: v.version }) : t('pages.ed.conflictOther', { who: v.savedBy, version: v.version })}</p>
+<div class="two"><div><h2>${t('pages.ed.current', { version: v.version, who: who(v.savedBy) })}</h2>${fieldsChanged ? fieldsLine(v.current!) : ''}<pre class="theirs">${v.theirs}</pre></div>
+<div><h2>${t('pages.ed.yours', { version: v.base ?? '' })}</h2>${fieldsChanged ? fieldsLine(v) : ''}<pre class="mine">${v.mine}</pre></div></div>
+<div class="actions"><a class="button secondary" href="/pages/${v.pageId}">${t('pages.ed.discard')}</a></div>
 </section>
-<h2 class="state">Edit the current version</h2>
+<h2 class="state">${t('pages.ed.editCurrent')}</h2>
 ${editor({ ...v, base: v.version, body: v.theirs })}`);
 }
 
@@ -104,21 +105,21 @@ export function historyView(nav: NavEntry[], v: {
 }): SafeHtml {
   const s = v.selected;
   const line = (d: DiffLine) => d.kind === 'skipped'
-    ? html`<div class="dl s"><i></i><span>… ${d.count} unchanged lines</span></div>`
+    ? html`<div class="dl s"><i></i><span>${t('pages.hist.skipped', { count: d.count })}</span></div>`
     : html`<div class="dl ${d.kind === 'added' ? 'a' : d.kind === 'removed' ? 'd' : 'c'}"><i>${d.kind === 'added' ? '+' : d.kind === 'removed' ? '−' : ''}</i><span>${d.text}</span></div>`;
   // Each version opens at #diff: on a phone the diff and Restore sit below the whole version list.
   return wrap(nav, v.pageId, html`
-<h1>History</h1>
-${metaLine([v.pageTitle, 'every saved version, newest first'])}
+<h1>${t('pages.hist.title')}</h1>
+${metaLine([v.pageTitle, t('pages.hist.every')])}
 ${errorBlock(v.error)}
 <div class="hist">
-<ol class="vers">${v.versions.map((x) => html`<li${x.version === s.version ? html` class="on" aria-current="true"` : ''}><a href="/pages/${v.pageId}/history?v=${x.version}#diff"><b>Version ${x.version}</b><span>${who(x.savedBy)} · ${day(x.savedAt)}</span><span class="what">${x.summary}</span></a></li>`)}</ol>
+<ol class="vers">${v.versions.map((x) => html`<li${x.version === s.version ? html` class="on" aria-current="true"` : ''}><a href="/pages/${v.pageId}/history?v=${x.version}#diff"><b>${t('pages.hist.version', { version: x.version })}</b><span>${who(x.savedBy)} · ${day(x.savedAt)}</span><span class="what">${x.summary}</span></a></li>`)}</ol>
 <section class="panel diff" id="diff">
-<div class="panel-head"><h2>${v.previous ? `Version ${s.version} compared with version ${v.previous.version}` : `Version ${s.version}, created`}</h2>
-${v.previous ? html`<form method="post" action="/pages/${v.pageId}/restore"><input type="hidden" name="version" value="${v.previous.version}"><button type="submit" class="secondary">Restore version ${v.previous.version}</button></form>` : ''}</div>
-${v.previous && v.previous.title !== s.title ? html`<p class="meta">Title: ${v.previous.title} → ${s.title}</p>` : ''}
+<div class="panel-head"><h2>${v.previous ? t('pages.hist.compared', { version: s.version, previous: v.previous.version }) : t('pages.hist.created', { version: s.version })}</h2>
+${v.previous ? html`<form method="post" action="/pages/${v.pageId}/restore"><input type="hidden" name="version" value="${v.previous.version}"><button type="submit" class="secondary">${t('pages.hist.restore', { version: v.previous.version })}</button></form>` : ''}</div>
+${v.previous && v.previous.title !== s.title ? html`<p class="meta">${t('pages.hist.titleChange', { from: v.previous.title, to: s.title })}</p>` : ''}
 <div class="dlist">${v.diff.map(line)}</div>
-<p class="meta">Restoring saves the old text as a new version, so nothing is ever lost.</p>
+<p class="meta">${t('pages.hist.help')}</p>
 </section>
 </div>`);
 }

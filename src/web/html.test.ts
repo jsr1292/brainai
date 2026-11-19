@@ -23,7 +23,10 @@ test('page escapes the title, links the stylesheet and has no inline script', ()
   assert.match(out, /<title>&lt;T&gt;<\/title>/);
   assert.match(out, /<link rel="stylesheet" href="\/static\/style.css\?v=[0-9a-f]{10}">/);
   assert.match(out, /<main>hi<\/main>/);
-  assert.doesNotMatch(out, /<script(?![^>]*\ssrc="\/static\/)/); // only external /static scripts, none inline
+  // Only external /static scripts and the one JSON data block (no browser runs it), none inline.
+  const scripts = [...out.matchAll(/<script\b[^>]*>/g)].map((m) => m[0]);
+  for (const s of scripts) assert.match(s, /^<script (?:src="\/static\/[^"]+"(?: defer)?|type="application\/json" id="i18n")>$/, `an inline or foreign script: ${s}`);
+  assert.equal(scripts.filter((s) => s.includes('application/json')).length, 1, 'exactly one data block');
   assert.doesNotMatch(out, /action="\/logout"/);
 });
 
@@ -43,7 +46,8 @@ test('the header is brain, four places, search and Settings', () => {
   assert.deepEqual(lit({ tab: 'facts' }), ['Pages']);
   assert.deepEqual(lit({ tab: 'inbox' }), ['Inbox']);
   assert.deepEqual(lit({ tab: 'projects', sideTab: 'inbox' }), ['Inbox']);
-  assert.deepEqual(lit({ tab: 'facts' }, 'Tidy up'), ['Inbox']);
+  assert.deepEqual(lit({ tab: 'facts', sideTab: 'inbox' }, 'Tidy up'), ['Inbox']);
+  assert.deepEqual(lit({ tab: 'facts' }, 'Tidy up'), ['Pages'], 'a title decides nothing');
   assert.deepEqual(lit({ tab: 'week' }), ['Week']);
   assert.deepEqual(lit({ tab: 'settings' }), []);
   assert.match(page('Settings', html``, { nav: true, tab: 'settings' }), /<a class="settings-link" href="\/settings" aria-current="page"/);

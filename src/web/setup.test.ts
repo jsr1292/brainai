@@ -35,7 +35,7 @@ test("the check line waits, then says up to date once the app reports the newest
   const { app, f } = await start(t);
   assert.match(await (await f('/settings/setup/chatgpt/status')).text(), /No ChatGPT connection yet/);
   await connectClient(app.baseUrl, f, 'ChatGPT');
-  assert.match(await (await f('/settings/setup/chatgpt/status')).text(), /Waiting: ChatGPT hasn(’|&#39;|')t reported a setup text yet/);
+  assert.match(decodeEntities(await (await f('/settings/setup/chatgpt/status')).text()), /Waiting: ChatGPT hasn(’|')t reported a setup text yet/);
   (app.deps.provider as any).db.prepare("UPDATE oauth_grants SET setup_version = ?, setup_seen_at = ? WHERE name = 'ChatGPT'").run(SETUP_VERSION, new Date().toISOString());
   assert.match(await (await f('/settings/setup/chatgpt/status')).text(), new RegExp(`ChatGPT reports setup text ${SETUP_VERSION} · up to date ✓`));
 });
@@ -113,6 +113,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appSession } from '../testing/helpers.js';
 import { setupApps } from '../setup/texts.js';
+import { decodeEntities } from '../testing/entities.js';
 
 async function local(t: TestContext, o: { noPassword?: boolean } = {}) {
   const app = await startTestApp({ localMode: true, noPassword: o.noPassword, statusDir: mkdtempSync(join(tmpdir(), 'brainai-setup-')) });
@@ -130,7 +131,7 @@ test('local mode with Reach off: a cloud app page sends the owner to Reach, with
   const { get } = await local(t, { noPassword: true });
   for (const slug of ['claude', 'chatgpt', 'grok']) {
     const body = await get(`/settings/setup/${slug}`);
-    assert.match(body, /can(’|&#39;|')t see this (Mac|computer) yet\. Turn on Reach first, then come back here\./, slug);
+    assert.match(decodeEntities(body), /can(’|')t see this (Mac|computer) yet\. Turn on Reach first, then come back here\./, slug);
     assert.match(body, /<a [^>]*class="[^"]*primary[^"]*"[^>]*href="\/settings\/reach"[^>]*>Turn on Reach<\/a>|<a [^>]*href="\/settings\/reach"[^>]*class="[^"]*primary[^"]*"[^>]*>Turn on Reach<\/a>/, slug);
     assert.doesNotMatch(body, /localhost/, slug);
     assert.doesNotMatch(body, /data-copy=/, slug);

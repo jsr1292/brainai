@@ -5,6 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::Url;
+use crate::lang::{tr, tr_with};
 
 /// How often the app asks GitHub for a newer signed release.
 pub const CHECK_EVERY: Duration = Duration::from_secs(24 * 3600);
@@ -28,19 +29,15 @@ pub fn manual_check_allowed(last_manual_unix: Option<u64>, now_unix: u64) -> boo
     }
 }
 
-/// Said on the card when the app runs from a disk image or from the temporary copy macOS makes of a quarantined app.
-pub const MOVE_FIRST: &str = "BrainAI can't update itself while it runs from a disk image or a temporary copy. Move BrainAI to Applications and open it from there, or download the new version.";
-/// Said on the card when the app cannot replace its own files where it is installed.
-pub const NOT_WRITABLE: &str = "BrainAI can't replace its own files where it is installed, so download it again and install it over this one.";
-
 /// Whether this copy of the app can replace itself: a real install (the same rule as the login item) in a folder it
-/// can write to. Err is the sentence for the `blocked` card.
-pub fn can_self_update(exe: &str, bundle_dir_writable: bool) -> Result<(), &'static str> {
+/// can write to. Err is the sentence for the `blocked` card: the disk-image one ("Move BrainAI to Applications…") or
+/// the folder one ("…download it again…"), in the shell's language.
+pub fn can_self_update(exe: &str, bundle_dir_writable: bool) -> Result<(), String> {
     if !crate::nav::install_location_ok(exe) {
-        return Err(MOVE_FIRST);
+        return Err(crate::lang::tr("update.move_first"));
     }
     if !bundle_dir_writable {
-        return Err(NOT_WRITABLE);
+        return Err(crate::lang::tr("update.not_writable"));
     }
     Ok(())
 }
@@ -60,14 +57,15 @@ pub enum Stage {
 pub fn problem_text(stage: Stage, current: &str) -> String {
     let _ = current;
     match stage {
-        Stage::Download => "The new version could not be downloaded. Check the internet connection and try again.".into(),
-        Stage::Signature => "The download did not pass its signature check, so nothing was installed.".into(),
-        Stage::Install => "The new version could not be installed.".into(),
+        Stage::Download => tr("update.download"),
+        Stage::Signature => tr("update.signature"),
+        Stage::Install => tr("update.install"),
         Stage::Backup(said) => {
             // The server cleans its folders out of the sentence; anything that still looks like a path is not shown.
             let said = said.trim();
-            let said = if said.is_empty() || said.contains('/') || said.contains('\\') { "The backup did not finish." } else { said };
-            format!("A backup could not be made, so nothing was changed: {said}")
+            let unfinished = tr("update.backup_unfinished");
+            let said = if said.is_empty() || said.contains('/') || said.contains('\\') { unfinished.as_str() } else { said };
+            tr_with("update.backup", &[("said", said)])
         }
     }
 }
@@ -356,7 +354,7 @@ fn bundle_dir_writable(exe: &str) -> bool {
     }
 }
 
-fn self_update_check() -> Result<(), &'static str> {
+fn self_update_check() -> Result<(), String> {
     let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
     can_self_update(&exe, bundle_dir_writable(&exe))
 }
@@ -678,7 +676,7 @@ mod tests {
     fn the_app_updates_itself_only_from_a_real_install_it_can_write_to() {
         assert_eq!(can_self_update("/Applications/BrainAI.app/Contents/MacOS/brainai", true), Ok(()));
         let translocated = can_self_update("/private/var/folders/x/AppTranslocation/1234/d/BrainAI.app/Contents/MacOS/brainai", true);
-        assert!(translocated.unwrap_err().contains("Move BrainAI to Applications"));
+        assert!(translocated.as_ref().unwrap_err().contains("Move BrainAI to Applications"));
         assert_eq!(can_self_update("/Volumes/BrainAI/BrainAI.app/Contents/MacOS/brainai", true), translocated, "a disk image: the same");
         assert!(can_self_update("/Applications/BrainAI.app/Contents/MacOS/brainai", false).unwrap_err().contains("download it again"));
         assert_eq!(can_self_update(r"C:\Users\Ana\AppData\Local\BrainAI\brainai.exe", true), Ok(()), "Windows, under %LOCALAPPDATA%");

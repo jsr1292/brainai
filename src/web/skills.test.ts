@@ -188,6 +188,7 @@ test('the switch sits at the left, its own width', () => {
 
 // ---- The Mac skills sync (S4) ----
 import { contentHash } from '../skills/sync.js';
+import { decodeEntities } from '../testing/entities.js';
 
 const macFiles = (name: string, body = 'Do it.') => [{ path: 'SKILL.md', text: `---\nname: ${name}\ndescription: Use when ${name}.\n---\n\n${body}\n` }];
 const report = (app: Awaited<ReturnType<typeof startTestApp>>, deviceId: string, list: { name: string; files?: ReturnType<typeof macFiles>; shareable?: string | null }[]) =>
@@ -233,7 +234,7 @@ test('the skill page says how each device stands, with the owner\'s choice when 
   upload(app, device.id, 'codex-delegation', edited);
   const page = await (await f(`/skills/${s.id}`)).text();
   assert.match(page, /On Mac: changed/);
-  assert.match(page, />Take the Mac(’|&#39;|')s version<\/button>/);
+  assert.match(decodeEntities(page), />Take the Mac(’|')s version<\/button>/);
   assert.match(page, />Keep this one<\/button>/);
   await f(`/skills/${s.id}/take-device`, post([['device', device.id]]));
   assert.equal(skills.get(s.id)!.body, 'Mac edit.');

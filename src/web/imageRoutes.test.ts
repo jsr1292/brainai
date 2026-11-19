@@ -7,6 +7,8 @@ import type { DB } from '../db.js';
 import { ImageStore } from '../images/store.js';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
 import * as fx from '../testing/imageFixtures.js';
+import { runWithLocale, tKey, type Key } from '../i18n/core.js';
+import { clientKeys } from '../i18n/client.js';
 
 async function app(t: TestContext) {
   const a = await startTestApp();
@@ -88,5 +90,21 @@ test('pictures are served when the data folder sits under a dot-folder or is giv
     const r = await f(`/images/${img.id}.jpg`);
     assert.equal(r.status, 200, dir);
     assert.equal(r.headers.get('content-type'), 'image/jpeg');
+  }
+});
+
+test('a refused upload answers in English (machine path) with a code, and the editor script words every code in the page language', async (t) => {
+  const { upload } = await app(t);
+  const es = { 'Accept-Language': 'es-ES,es;q=0.9' };
+  const svg = await upload(fx.svg(), '', es);
+  const j = await svg.json() as { error: string; code: string };
+  assert.deepEqual(j, { error: "SVG pictures can't be added: they can carry script.", code: 'svg' });
+  assert.equal(((await (await upload(Buffer.alloc(10 * 1024 * 1024 + 1), '', es)).json()) as { code: string }).code, 'too_large');
+  // Every ImageErrorCode has a script entry and a key in both client catalogs.
+  const src = readFileSync(new URL('./static/editor-pics.js', import.meta.url), 'utf8');
+  for (const code of ['svg', 'unsupported', 'unknown', 'broken', 'too_big', 'too_large']) {
+    assert.match(src, new RegExp(`client\\.pics\\.err\\.${code}'`), code);
+    assert.ok((clientKeys() as string[]).includes(`client.pics.err.${code}`), code);
+    assert.notEqual(runWithLocale('es', () => tKey(`client.pics.err.${code}` as Key)), runWithLocale('en', () => tKey(`client.pics.err.${code}` as Key)));
   }
 });

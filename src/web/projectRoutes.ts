@@ -3,6 +3,8 @@ import { CHECK_AREAS, CHECK_STATUSES, type CheckArea, type CheckStatus } from '.
 import { Router, type Request, type Response } from 'express';
 import { backupHealth, readBackupStatus } from '../backupStatus.js';
 import { folderKey } from '../folders/report.js';
+import { backupProblems, errorText } from './errorText.js';
+import { t } from '../i18n/index.js';
 import { LIST_CHANGED, MemoryError } from '../memory/service.js';
 import type { Memory } from '../memory/types.js';
 import { AREAS, ProjectError, type Area, type ProjectStateName } from '../projects/types.js';
@@ -22,7 +24,7 @@ import { viaDoor } from '../desktop/publicDoor.js';
 import { BRAIN_VERSION } from '../version.js';
 import { firstSteps, firstStepsDue, firstStepsHidden, firstStepsView, hideFirstSteps } from './firstSteps.js';
 import { projectList, projectsHomeView, type HomeViewInput, type WeekLine } from './projectsViews.js';
-import { weekRange } from '../review/sentence.js';
+import { lineSentenceOf, weekRange } from './reviewViews.js';
 import { deskSideView, projectLately } from './deskSide.js';
 
 const STATE_CHOICES: readonly ProjectStateName[] = ['open', 'parked', 'done', 'archived'];
@@ -58,7 +60,7 @@ export function projectRoutes(d: AppDeps): Router {
       const view = d.reviews.present(stored, 'last', { kind: 'owner' });
       if (view.empty) return none;
       return {
-        line: { monday, dates: weekRange(monday), text: view.lineSentence },
+        line: { monday, dates: weekRange(monday), text: lineSentenceOf(view) },
         holdBackPark: new Set([...view.quiet.shown, ...view.quiet.folded].map((q) => q.project)),
       };
     } catch (e) {
@@ -90,7 +92,7 @@ export function projectRoutes(d: AppDeps): Router {
   /** Everything the Projects screen is drawn from: the home, its list, and the open project when one is asked for. */
   const homeData = (asked: string | undefined, error?: string, req?: Request): HomeViewInput => {
     const backups = d.statusDir === undefined ? undefined : backupHealth(readBackupStatus(d.statusDir), d.now(), { offsite: !d.localMode, jobs: !d.localMode });
-    const backupProblem = backups && !backups.ok ? backups.problems[0] ?? null : null;
+    const backupProblem = backups && !backups.ok ? backupProblems(backups)[0] ?? null : null;
     const week = weekLine(backupProblem);
     return {
       home: d.projects.home(d.now(), { holdBackPark: week.holdBackPark }),
@@ -140,10 +142,10 @@ export function projectRoutes(d: AppDeps): Router {
   };
   const home = (req: Request, res: Response, status = 200, error?: string, select?: string) => {
     const asked = select ?? queryName(req);
-    res.status(status).type('html').send(page('Projects', html`${takeStatusLine(d.service, d.now().getTime()) ?? ''}${projectsHomeView(homeData(asked, error, req))}`,
-      { nav: true, tab: 'projects', back: asked ? { href: '/', label: 'Projects' } : undefined, crumb: false }));
+    res.status(status).type('html').send(page(t('projects.title'), html`${takeStatusLine(d.service, d.now().getTime()) ?? ''}${projectsHomeView(homeData(asked, error, req))}`,
+      { nav: true, tab: 'projects', back: asked ? { href: '/', labelKey: 'shell.nav.projects' } : undefined, crumb: false }));
   };
-  const notFound = (res: Response) => res.status(404).type('html').send(page('Not found', html`<h1>Not found</h1>`, { nav: true, tab: null }));
+  const notFound = (res: Response) => res.status(404).type('html').send(page(t('common.notFound'), html`<h1>${t('common.notFound')}</h1>`, { nav: true, tab: null }));
 
   /**
    * Runs an owner action on a project: 303 back to its panel, 404 for an unknown project, 400 with the message
@@ -159,7 +161,7 @@ export function projectRoutes(d: AppDeps): Router {
       if (!(e instanceof ProjectError || e instanceof MemoryError || e instanceof LearningError)) throw e;
       if (back) return res.redirect(303, withBackError(back, e.code === 'not_found' || e.message === LIST_CHANGED ? 'changed' : 'failed'));
       if (e.code === 'not_found') return notFound(res);
-      return home(req, res, 400, e.message, name);
+      return home(req, res, 400, errorText(e), name);
     }
     res.redirect(303, back ?? (anchor ? panelHref(name).replace(/#panel$/, anchor) : panelHref(name)));
   };
@@ -199,7 +201,7 @@ export function projectRoutes(d: AppDeps): Router {
       const p = d.folders.add(str(req, 'name'));
       res.redirect(303, panelHref(p.name));
     } catch (e) {
-      home(req, res, 400, e instanceof Error ? e.message : 'Could not add the folder');
+      home(req, res, 400, e instanceof Error ? errorText(e) : t('projects.err.addFolder'));
     }
   });
   router.post('/folders/ignore', owner, (req: Request, res) => {
@@ -207,7 +209,7 @@ export function projectRoutes(d: AppDeps): Router {
       d.folders.ignore(str(req, 'name'));
       res.redirect(303, '/#notyet');
     } catch (e) {
-      home(req, res, 400, e instanceof Error ? e.message : 'Could not ignore the folder');
+      home(req, res, 400, e instanceof Error ? errorText(e) : t('projects.err.ignoreFolder'));
     }
   });
   // Undo lists an ignored folder under "Not in the brain yet" again; the old Settings path stays for one release.
@@ -225,13 +227,13 @@ export function projectRoutes(d: AppDeps): Router {
       res.redirect(303, panelHref(p.name));
     } catch (e) {
       if (!(e instanceof ProjectError)) throw e;
-      home(req, res, 400, e.message);
+      home(req, res, 400, errorText(e));
     }
   });
 
   router.post('/projects/:name/state', owner, (req: Request, res) => {
     const state = str(req, 'state') as ProjectStateName;
-    if (!STATE_CHOICES.includes(state)) return home(req, res, 400, 'Choose open, parked, done or archived');
+    if (!STATE_CHOICES.includes(state)) return home(req, res, 400, t('projects.err.chooseState'));
     return act(req, res, (name) => d.projects.setState(name, state));
   });
   router.post('/projects/:name/pin', owner, (req: Request, res) => act(req, res, (name) => d.projects.pin(name)));
@@ -240,7 +242,7 @@ export function projectRoutes(d: AppDeps): Router {
 
   router.post('/projects/:name/info', owner, (req: Request, res) => {
     const area = str(req, 'area');
-    if (area !== '' && !(AREAS as readonly string[]).includes(area)) return home(req, res, 400, `area must be one of: ${AREAS.join(', ')}`);
+    if (area !== '' && !(AREAS as readonly string[]).includes(area)) return home(req, res, 400, t('projects.err.areaOneOf', { list: AREAS.join(', ') }));
     const orNull = (v: string) => (v.trim() === '' ? null : v);
     return act(req, res, (name) => d.registry.setInfo(name, {
       oneLiner: orNull(str(req, 'oneLiner')), area: area === '' ? null : (area as Area), folder: orNull(str(req, 'folder')), url: orNull(str(req, 'url')),
@@ -252,14 +254,14 @@ export function projectRoutes(d: AppDeps): Router {
   router.post('/projects/:name/areas/:area', owner, (req: Request, res) => {
     const area = req.params.area as string;
     const status = str(req, 'status');
-    if (!(CHECK_AREAS as readonly string[]).includes(area)) return home(req, res, 400, `area must be one of: ${CHECK_AREAS.join(', ')}`);
-    if (!(CHECK_STATUSES as readonly string[]).includes(status)) return home(req, res, 400, `status must be one of: ${CHECK_STATUSES.join(', ')}`);
+    if (!(CHECK_AREAS as readonly string[]).includes(area)) return home(req, res, 400, t('projects.err.areaOneOf', { list: CHECK_AREAS.join(', ') }));
+    if (!(CHECK_STATUSES as readonly string[]).includes(status)) return home(req, res, 400, t('projects.err.statusOneOf', { list: CHECK_STATUSES.join(', ') }));
     return act(req, res, (name) => d.learning.set(name, area as CheckArea, { status: status as CheckStatus, note: str(req, 'note') }, 'owner'), '#p-areas');
   });
 
   router.post('/projects/:name/waiting/:index/done', owner, (req: Request, res) => {
     const i = index(req);
-    if (i === undefined) return home(req, res, 400, 'Bad item number');
+    if (i === undefined) return home(req, res, 400, t('projects.err.badItem'));
     return act(req, res, (name) => d.projects.completeWaiting(name, i, str(req, 'text'), d.now()));
   });
   // B1: every open disagreement, by project; settling one (owner only) comes back to where it was settled.
@@ -268,24 +270,24 @@ export function projectRoutes(d: AppDeps): Router {
   router.get('/disagreements', owner, (req, res) => disagreementsPage(req, res));
   router.post('/disagreements/:id/settle', owner, (req: Request, res) => {
     const how = str(req, 'how');
-    if (how !== 'a' && how !== 'b' && how !== 'both') return disagreementsPage(req, res, 400, 'Choose which fact is right, or both.');
+    if (how !== 'a' && how !== 'b' && how !== 'both') return disagreementsPage(req, res, 400, t('projects.err.chooseRight'));
     try {
       d.service.settleDisagreement(req.params.id as string, how, { type: 'owner' });
     } catch (e) {
       if (!(e instanceof MemoryError)) throw e;
-      return disagreementsPage(req, res, e.code === 'not_found' ? 404 : 400, e.message);
+      return disagreementsPage(req, res, e.code === 'not_found' ? 404 : 400, errorText(e));
     }
     // Only back to the list or a project's panel (a name as encodeURIComponent writes it): never anywhere else.
     const back = req.body?.back;
     const ok = back === '/disagreements' || back === '/approvals' || (typeof back === 'string' && /^\/\?project=[A-Za-z0-9%._~!*'()-]+#panel$/.test(back));
-    noteDecision(d.service, { id: req.params.id as string, at: d.now().getTime(), message: 'Done.' });
+    noteDecision(d.service, { id: req.params.id as string, at: d.now().getTime(), message: t('inbox.said.done') });
     const next = back === '/approvals' ? nextHref(req.body?.next) : null;
     res.redirect(303, next ?? (ok ? back : '/disagreements'));
   });
 
   router.post('/projects/:name/done/:index/undo', owner, (req: Request, res) => {
     const i = index(req);
-    if (i === undefined) return home(req, res, 400, 'Bad item number');
+    if (i === undefined) return home(req, res, 400, t('projects.err.badItem'));
     return act(req, res, (name) => d.projects.undoDone(name, i, str(req, 'text'), d.now()));
   });
 

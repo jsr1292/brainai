@@ -4,6 +4,7 @@ import { requireOwner } from './authRoutes.js';
 import { page } from './html.js';
 import { searchView } from './searchViews.js';
 import { normalWords } from '../graph/words.js';
+import { t } from '../i18n/index.js';
 
 export const MAX_QUERY = 200;
 const PROJECT_RESULTS = 10;
@@ -32,7 +33,7 @@ export function searchRoutes(d: AppDeps): Router {
     const hits = vector === undefined ? [] : d.pages.search(q, vector, PAGE_RESULTS, d.service.recallFloor());
     const flagged = d.pages.flaggedIds([...new Map(hits.map((r) => [r.page.id, r.page])).values()]);
     const pages = hits.map((r) => ({ ...r, stale: flagged.has(r.page.id) }));
-    res.status(200).type('html').send(page('Search', searchView({ q, projects, facts, pages, alsoReplaced }), { nav: true, query: q, tab: null }));
+    res.status(200).type('html').send(page(t('search.title'), searchView({ q, projects, facts, pages, alsoReplaced }), { nav: true, query: q, tab: null }));
   });
   return router;
 }

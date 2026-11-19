@@ -1,3 +1,5 @@
+Leer en español: [docs/es/LIFECYCLE-EVAL.md](es/LIFECYCLE-EVAL.md)
+
 # Does the memory loop work with real assistants?
 
 [BENCHMARK.md](BENCHMARK.md) measures recall on facts that are already stored. That says how well BrainAI finds

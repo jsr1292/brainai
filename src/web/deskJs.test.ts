@@ -453,7 +453,7 @@ test('paletteOrder: In the graph first, only on Graph', () => {
 });
 
 test("Delete…'s question says assistants will ask before saving the fact again", () => {
-  assert.ok(deskSrc.includes("text: 'It leaves search for you and your assistants. Assistants that try to save it again will ask you first. You can bring it back from its History.'"));
+  assert.ok(deskSrc.includes("T('client.desk.deleteBody', 'It leaves search for you and your assistants. Assistants that try to save it again will ask you first. You can bring it back from its History.')"));
 });
 
 test('opening a project in the sheet stays at its top: #panel and #notyet only name the sheet, a section hash scrolls', () => {

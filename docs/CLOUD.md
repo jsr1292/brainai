@@ -1,3 +1,5 @@
+Leer en español: [docs/es/CLOUD.md](es/CLOUD.md)
+
 # BrainAI on a cloud server
 
 The same BrainAI as on a home server (`docs/RUNBOOK.md`), on a small rented Linux machine instead of one at home.

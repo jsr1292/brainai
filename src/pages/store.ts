@@ -39,7 +39,7 @@ const toVersion = (r: VersionRow): PageVersion => ({
   caughtUpAt: r.caught_up_at,
 });
 
-const taken = (title: string) => new PageError('invalid', `A page called “${title.trim()}” already exists`);
+const taken = (title: string) => new PageError('invalid', `A page called “${title.trim()}” already exists`, { key: 'err.page.exists', params: { title: title.trim() } });
 
 /** Pages, their versions, sections and links (migration 15). Checks live in PageService; this reads and writes. */
 export class PageStore {
@@ -84,7 +84,7 @@ export class PageStore {
 
   private must(id: string): Page {
     const p = this.get(id);
-    if (!p) throw new PageError('not_found', `No page with id ${id}`);
+    if (!p) throw new PageError('not_found', `No page with id ${id}`, { key: 'err.page.notFound', params: { id } });
     return p;
   }
 
@@ -144,8 +144,8 @@ export class PageStore {
     const undelete = opts.undelete === true;
     this.unique(f.title, () => this.db.transaction(() => {
       const current = this.must(id);
-      if (!undelete && current.deletedAt !== null) throw new PageError('not_found', `No page with id ${id}`);
-      if (current.version !== base || (undelete && current.deletedAt === null)) throw new PageError('conflict', `This page changed since you opened it (now version ${current.version})`);
+      if (!undelete && current.deletedAt !== null) throw new PageError('not_found', `No page with id ${id}`, { key: 'err.page.notFound', params: { id } });
+      if (current.version !== base || (undelete && current.deletedAt === null)) throw new PageError('conflict', `This page changed since you opened it (now version ${current.version})`, { key: 'err.page.conflict', params: { version: current.version } });
       const version = current.version + 1;
       this.db.prepare('UPDATE pages SET title = ?, title_key = ?, project = ?, area = ?, body = ?, version = ?, updated_at = ?, updated_by = ?, deleted_at = NULL WHERE id = ?')
         .run(f.title, PageStore.titleKey(f.title), f.project, f.area, f.body, version, t, f.by, id);

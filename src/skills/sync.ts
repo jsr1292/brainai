@@ -82,7 +82,7 @@ export class SkillSync {
   /** A device's report: store what it holds, ask for changed content, and say what to write or remove there. */
   report(deviceId: string, items: ReportItem[]): { want: string[]; actions: SyncAction[] } {
     for (const it of items) {
-      if (it.name.length > MAX_SKILL_NAME || !SKILL_NAME_RE.test(it.name) || !HASH_RE.test(it.hash)) throw new SkillError('invalid', `Not a skill report: ${String(it.name).slice(0, 64)}`);
+      if (it.name.length > MAX_SKILL_NAME || !SKILL_NAME_RE.test(it.name) || !HASH_RE.test(it.hash)) throw new SkillError('invalid', `Not a skill report: ${String(it.name).slice(0, 64)}`, { key: 'err.skill.notReport', params: { name: String(it.name).slice(0, 64) } });
     }
     return this.db.transaction(() => {
       const t = this.ts();
@@ -154,14 +154,14 @@ export class SkillSync {
     this.db.transaction(() => {
       for (const it of items) {
         const r = this.row(deviceId, it.name);
-        if (!r || r.hash !== it.hash) throw new SkillError('invalid', `${String(it.name).slice(0, 64)} was not reported with that hash.`);
-        if (contentHash(it.files) !== it.hash) throw new SkillError('invalid', `The content of ${it.name} does not match its hash.`);
-        if (r.shareable !== null) throw new SkillError('invalid', `${it.name} can't be shared: ${r.shareable}.`);
+        if (!r || r.hash !== it.hash) throw new SkillError('invalid', `${String(it.name).slice(0, 64)} was not reported with that hash.`, { key: 'err.skill.notReported', params: { name: String(it.name).slice(0, 64) } });
+        if (contentHash(it.files) !== it.hash) throw new SkillError('invalid', `The content of ${it.name} does not match its hash.`, { key: 'err.skill.hashMismatch', params: { name: it.name } });
+        if (r.shareable !== null) throw new SkillError('invalid', `${it.name} can't be shared: ${r.shareable}.`, { key: 'err.skill.cantShare', params: { name: it.name, reason: r.shareable } });
         // The same limits as a skill in the brain (SKILL.md and up to 20 files), checked before anything is kept.
         const own = it.files.filter((f) => f.path !== 'SKILL.md');
         const total = it.files.reduce((n, f) => n + Buffer.byteLength(f.text, 'utf8'), 0);
-        if (own.length > MAX_SKILL_FILES) throw new SkillError('invalid', `${it.name} has too many files.`);
-        if (it.files.some((f) => Buffer.byteLength(f.text, 'utf8') > MAX_SKILL_FILE_BYTES) || total > MAX_SKILL_BYTES + MAX_SKILL_FILE_BYTES) throw new SkillError('invalid', `${it.name} is too big.`);
+        if (own.length > MAX_SKILL_FILES) throw new SkillError('invalid', `${it.name} has too many files.`, { key: 'err.skill.syncTooManyFiles', params: { name: it.name } });
+        if (it.files.some((f) => Buffer.byteLength(f.text, 'utf8') > MAX_SKILL_FILE_BYTES) || total > MAX_SKILL_BYTES + MAX_SKILL_FILE_BYTES) throw new SkillError('invalid', `${it.name} is too big.`, { key: 'err.skill.syncTooBig', params: { name: it.name } });
         // A file that looks like it holds a key is never kept: the skill shows as not shareable, with the reason.
         const secret = it.files.map((f) => ({ f, found: findSecret(f.text) })).find((x) => x.found);
         if (secret) {
@@ -176,9 +176,9 @@ export class SkillSync {
 
   private contentOf(deviceId: string, name: string): { row: DeviceSkillRow; files: SkillFile[] } {
     const row = this.row(deviceId, name);
-    if (!row) throw new SkillError('not_found', `${name} is not on that device.`);
-    if (row.shareable !== null) throw new SkillError('invalid', `${name} can't be shared: ${row.shareable}.`);
-    if (row.content === null) throw new SkillError('invalid', 'Not yet: the Mac sends it with its next report (within 15 minutes).');
+    if (!row) throw new SkillError('not_found', `${name} is not on that device.`, { key: 'err.skill.notOnDevice', params: { name } });
+    if (row.shareable !== null) throw new SkillError('invalid', `${name} can't be shared: ${row.shareable}.`, { key: 'err.skill.cantShare', params: { name, reason: row.shareable } });
+    if (row.content === null) throw new SkillError('invalid', 'Not yet: the Mac sends it with its next report (within 15 minutes).', { key: 'err.skill.notYet' });
     return { row, files: JSON.parse(row.content) as SkillFile[] };
   }
   private parsed(name: string, files: SkillFile[]) {
@@ -202,9 +202,9 @@ export class SkillSync {
     return this.db.transaction(() => {
       const l = this.link(skillId, deviceId);
       const s = this.skills.get(skillId);
-      if (!l || !s) throw new SkillError('not_found', 'That skill is not linked to that device.');
+      if (!l || !s) throw new SkillError('not_found', 'That skill is not linked to that device.', { key: 'err.skill.notLinked' });
       const { row, files } = this.contentOf(deviceId, l.mac_name);
-      if (row.hash === l.mac_hash) throw new SkillError('invalid', 'The copy on that device has not changed: there is nothing to take.');
+      if (row.hash === l.mac_hash) throw new SkillError('invalid', 'The copy on that device has not changed: there is nothing to take.', { key: 'err.skill.copyUnchanged' });
       const p = this.parsed(s.name, files);
       const next = this.skills.update(s.id, { base: s.version, description: p.description, body: p.body, files: p.files }, 'owner');
       this.setLink({ ...l, mac_hash: row.hash, brain_hash: this.brainHash(next), force_write: 0 });
@@ -215,7 +215,7 @@ export class SkillSync {
   /** The owner keeps the brain's version: the next report writes it over the device's. */
   keepBrain(skillId: string, deviceId: string): void {
     const l = this.link(skillId, deviceId);
-    if (!l) throw new SkillError('not_found', 'That skill is not linked to that device.');
+    if (!l) throw new SkillError('not_found', 'That skill is not linked to that device.', { key: 'err.skill.notLinked' });
     this.setLink({ ...l, force_write: 1 });
   }
 

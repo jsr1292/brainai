@@ -80,7 +80,8 @@ test('Markdown pages: javascript:, data:, vbscript:, entity-encoded and whitespa
     assert.doesNotMatch(body, /<(object|embed)\b/i);
     for (const f of body.matchAll(/<iframe\b[^>]*>/gi)) assert.doesNotMatch(f[0], /javascript:|srcdoc|evil/i, `a frame from page content: ${f[0]}`);
     const scripts = [...body.matchAll(/<script\b[^>]*>/gi)].map((m) => m[0]);
-    for (const s of scripts) assert.match(s, /src="\/static\//, `an inline or foreign script: ${s}`);
+    // The one data block (the page's own texts for its scripts) is JSON, which no browser runs.
+    for (const s of scripts) assert.match(s, /src="\/static\/|^<script type="application\/json" id="i18n">$/, `an inline or foreign script: ${s}`);
     assert.match(body, /<pre class="diagram-src"><code>[^<]*&lt;img src=x onerror=alert\(1\)&gt;/, 'a diagram is its escaped text until the sandboxed frame draws it');
   } finally { await app.close(); }
 });

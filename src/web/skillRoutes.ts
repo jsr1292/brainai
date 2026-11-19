@@ -5,7 +5,9 @@ import { SkillError } from '../skills/service.js';
 import type { SkillFile } from '../skills/types.js';
 import type { AppDeps } from './app.js';
 import { requireOwner } from './authRoutes.js';
-import { nextHref } from './back.js';
+import { nextHref, type BackTarget } from './back.js';
+import { errorText } from './errorText.js';
+import { t } from '../i18n/index.js';
 import { noteDecision } from './inboxUndo.js';
 import { invalidateSideStatus } from './sideStatus.js';
 import { html, page, type SafeHtml } from './html.js';
@@ -26,9 +28,9 @@ function postedFiles(body: Record<string, unknown>): SkillFile[] {
 export function skillRoutes(d: AppDeps): Router {
   const router = Router();
   const owner = requireOwner(d.sessions);
-  const send = (res: Response, status: number, title: string, body: SafeHtml, back?: { href: string; label: string }) =>
+  const send = (res: Response, status: number, title: string, body: SafeHtml, back?: BackTarget) =>
     res.status(status).type('html').send(page(title, body, { nav: true, tab: 'pages', section: 'skills', back }));
-  const missing = (res: Response) => send(res, 404, 'Not found', html`<h1>Not found</h1><p>No such skill.</p>`);
+  const missing = (res: Response) => send(res, 404, t('common.notFound'), html`<h1>${t('common.notFound')}</h1><p>${t('skills.noSuch')}</p>`);
   const skill = (req: Request) => d.skills.get(req.params.id as string);
   const status = (e: SkillError) => (e.code === 'changed' ? 409 : e.code === 'not_found' ? 404 : 400);
   const form = (req: Request, id?: string): SkillForm => ({
@@ -37,16 +39,16 @@ export function skillRoutes(d: AppDeps): Router {
   });
 
   const liveDevices = () => d.devices.list().filter((x) => x.revokedAt === null);
-  const deviceName = (id: string) => d.devices.list().find((x) => x.id === id)?.name ?? 'a device';
+  const deviceName = (id: string) => d.devices.list().find((x) => x.id === id)?.name ?? t('skills.aDevice');
   const folds = () => liveDevices().map((x) => ({ deviceId: x.id, deviceName: x.name, items: d.skillSync.fromDevice(x.id) })).filter((x) => x.items.length > 0);
-  router.get('/skills', owner, (_req, res) => send(res, 200, 'Skills', skillsListView(d.skills.list(), folds())));
+  router.get('/skills', owner, (_req, res) => send(res, 200, t('skills.title'), skillsListView(d.skills.list(), folds())));
   router.post('/skills/share', owner, (req, res) => {
     try {
       const s = d.skillSync.share(str(req.body.device), str(req.body.name));
       res.redirect(303, `/skills/${s.id}`);
     } catch (e) {
       if (!(e instanceof SkillError)) throw e;
-      send(res, status(e), 'Skills', skillsListView(d.skills.list(), folds(), e.message));
+      send(res, status(e), t('skills.title'), skillsListView(d.skills.list(), folds(), errorText(e)));
     }
   });
   const choice = (fn: (id: string, device: string) => unknown) => (req: Request, res: Response) => {
@@ -57,12 +59,12 @@ export function skillRoutes(d: AppDeps): Router {
       res.redirect(303, `/skills/${s.id}`);
     } catch (e) {
       if (!(e instanceof SkillError)) throw e;
-      send(res, status(e), s.name, html`<p class="error" role="alert">${e.message}</p><p><a href="/skills/${s.id}">Back to ${s.name}</a></p>`, { href: '/skills', label: 'Skills' });
+      send(res, status(e), s.name, html`<p class="error" role="alert">${errorText(e)}</p><p><a href="/skills/${s.id}">${t('skills.backTo', { name: s.name })}</a></p>`, { href: '/skills', labelKey: 'shell.nav.skills' });
     }
   };
   router.post('/skills/:id/take-device', owner, choice((id, device) => d.skillSync.takeMac(id, device)));
   router.post('/skills/:id/keep', owner, choice((id, device) => d.skillSync.keepBrain(id, device)));
-  router.get('/skills/new', owner, (_req, res) => send(res, 200, 'New skill', skillEditView({ name: '', description: '', body: '', files: [] }), { href: '/skills', label: 'Skills' }));
+  router.get('/skills/new', owner, (_req, res) => send(res, 200, t('skills.new'), skillEditView({ name: '', description: '', body: '', files: [] }), { href: '/skills', labelKey: 'shell.nav.skills' }));
   router.post('/skills', owner, (req, res) => {
     const v = form(req);
     try {
@@ -70,7 +72,7 @@ export function skillRoutes(d: AppDeps): Router {
       res.redirect(303, `/skills/${s.id}`);
     } catch (e) {
       if (!(e instanceof SkillError)) throw e;
-      send(res, status(e), 'New skill', skillEditView({ ...v, error: e.message }), { href: '/skills', label: 'Skills' });
+      send(res, status(e), t('skills.new'), skillEditView({ ...v, error: errorText(e) }), { href: '/skills', labelKey: 'shell.nav.skills' });
     }
   });
 
@@ -78,7 +80,7 @@ export function skillRoutes(d: AppDeps): Router {
     const s = skill(req);
     if (!s) return missing(res);
     const lines = d.skillSync.stateFor(s.id).filter((x) => liveDevices().some((v) => v.id === x.deviceId)).map((x) => ({ ...x, deviceName: deviceName(x.deviceId) }));
-    send(res, 200, s.name, skillView(s, renderMarkdown(s.body, d.pages.resolver()), d.skills.versions(s.id).length, lines), { href: '/skills', label: 'Skills' });
+    send(res, 200, s.name, skillView(s, renderMarkdown(s.body, d.pages.resolver()), d.skills.versions(s.id).length, lines), { href: '/skills', labelKey: 'shell.nav.skills' });
   });
   router.post('/skills/:id/enabled', owner, (req, res) => {
     const s = skill(req);
@@ -89,7 +91,7 @@ export function skillRoutes(d: AppDeps): Router {
   router.get('/skills/:id/edit', owner, (req, res) => {
     const s = skill(req);
     if (!s) return missing(res);
-    send(res, 200, `Edit ${s.name}`, skillEditView({ id: s.id, base: s.version, name: s.name, description: s.description, body: s.body, files: s.files }), { href: `/skills/${s.id}`, label: s.name });
+    send(res, 200, t('skills.editName', { name: s.name }), skillEditView({ id: s.id, base: s.version, name: s.name, description: s.description, body: s.body, files: s.files }), { href: `/skills/${s.id}`, label: s.name });
   });
   router.post('/skills/:id', owner, (req, res) => {
     const s = skill(req);
@@ -102,14 +104,14 @@ export function skillRoutes(d: AppDeps): Router {
       if (!(e instanceof SkillError)) throw e;
       // Changed meanwhile: the draft stays, on the version there now, so saving again keeps the owner's text.
       const base = e.code === 'changed' ? d.skills.get(s.id)!.version : v.base;
-      const message = e.code === 'changed' ? `${e.message} Your text is below: save again to keep it, or open the skill to see the other change.` : e.message;
-      send(res, status(e), `Edit ${s.name}`, skillEditView({ ...v, base, error: message }), { href: `/skills/${s.id}`, label: s.name });
+      const message = e.code === 'changed' ? t('skills.changedDraft', { message: errorText(e) }) : errorText(e);
+      send(res, status(e), t('skills.editName', { name: s.name }), skillEditView({ ...v, base, error: message }), { href: `/skills/${s.id}`, label: s.name });
     }
   });
   router.get('/skills/:id/history', owner, (req, res) => {
     const s = skill(req);
     if (!s) return missing(res);
-    send(res, 200, `History · ${s.name}`, skillHistoryView(s, d.skills.versions(s.id)), { href: `/skills/${s.id}`, label: s.name });
+    send(res, 200, t('skills.historyTitle', { name: s.name }), skillHistoryView(s, d.skills.versions(s.id)), { href: `/skills/${s.id}`, label: s.name });
   });
   router.post('/skills/:id/restore', owner, (req, res) => {
     const s = skill(req);
@@ -119,7 +121,7 @@ export function skillRoutes(d: AppDeps): Router {
       res.redirect(303, `/skills/${s.id}`);
     } catch (e) {
       if (!(e instanceof SkillError)) throw e;
-      send(res, status(e), `History · ${s.name}`, html`<p class="error" role="alert">${e.message}</p>${skillHistoryView(s, d.skills.versions(s.id))}`, { href: `/skills/${s.id}`, label: s.name });
+      send(res, status(e), t('skills.historyTitle', { name: s.name }), html`<p class="error" role="alert">${errorText(e)}</p>${skillHistoryView(s, d.skills.versions(s.id))}`, { href: `/skills/${s.id}`, label: s.name });
     }
   });
   router.post('/skills/:id/delete', owner, (req, res) => {
@@ -137,7 +139,7 @@ export function skillRoutes(d: AppDeps): Router {
 
   // ---- Proposals (Approvals) ----
   const answered = (res: Response, e: SkillError) =>
-    send(res, status(e), 'Inbox', html`<h1>Inbox</h1><p class="error" role="alert">${e.message}</p><p><a href="/approvals">Back to the Inbox</a></p>`, { href: '/approvals', label: 'Inbox' });
+    send(res, status(e), t('shell.nav.inbox'), html`<h1>${t('shell.nav.inbox')}</h1><p class="error" role="alert">${errorText(e)}</p><p><a href="/approvals">${t('skills.backToInbox')}</a></p>`, { href: '/approvals', labelKey: 'shell.nav.inbox' });
   router.post('/skill-proposals/:id/add', owner, (req, res) => {
     try {
       const s = d.skills.addProposal(req.params.id as string, req.body.on === '1');
@@ -156,13 +158,13 @@ export function skillRoutes(d: AppDeps): Router {
       const p = d.skills.proposal(req.params.id as string);
       if (e.code !== 'changed' || !p || !p.skillId) return answered(res, e);
       // The skill moved on since: the same card again, saying so, with Apply it confirming.
-      send(res, 409, 'Inbox', html`<div class="narrow approvals"><h1>Inbox</h1>${proposalCard(p, d.skills.get(p.skillId), { changed: e.message })}</div>`, { href: '/approvals', label: 'Inbox' });
+      send(res, 409, t('shell.nav.inbox'), html`<div class="narrow approvals"><h1>${t('shell.nav.inbox')}</h1>${proposalCard(p, d.skills.get(p.skillId), { changed: errorText(e) })}</div>`, { href: '/approvals', labelKey: 'shell.nav.inbox' });
     }
   });
   router.post('/skill-proposals/:id/reject', owner, (req, res) => {
     try {
       d.skills.rejectProposal(req.params.id as string);
-      noteDecision(d.service, { id: req.params.id as string, at: d.now().getTime(), message: 'Rejected.', undo: { kind: 'reject-proposal' } });
+      noteDecision(d.service, { id: req.params.id as string, at: d.now().getTime(), message: t('inbox.said.rejected'), undo: { kind: 'reject-proposal' } });
       invalidateSideStatus();
       res.redirect(303, nextHref(req.body?.next) ?? '/approvals');
     } catch (e) {

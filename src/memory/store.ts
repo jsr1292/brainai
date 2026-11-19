@@ -5,7 +5,7 @@ import { isDay } from './timeRange.js';
 import { isSource, MAX_SOURCE_BY, MAX_SOURCE_NOTE, metaOf } from './factMeta.js';
 import { SupersessionStore } from './supersessions.js';
 import { DisagreementStore } from './disagreements.js';
-import { activityWhyNot } from './activityWhy.js';
+import { activityWhyCode, activityWhyNot, type ActivityWhy } from './activityWhy.js';
 import { activityAssistants, assistantActivity, deleteUndoable, replacementUndoable, savedUndoable, updateUndoable } from './assistantActivity.js';
 import { OWNER_LABEL, type FactMeta, type HistoryEntry, type Kind, type Memory, type Source, type Suggestion } from './types.js';
 import { words } from './words.js';
@@ -167,6 +167,9 @@ export class MemoryStore {
   }
 
   /** Why Undo is not offered on an Activity row: "Already undone", "Changed since", "Deleted since" or "Stands in for replaced facts". */
+  activityWhyCode(kind: 'saved' | 'updated' | 'deleted' | 'replaced', memoryId: string | null, ref: string | number): ActivityWhy | null {
+    return activityWhyCode(this.db, kind, memoryId, ref);
+  }
   activityWhyNot(kind: 'saved' | 'updated' | 'deleted' | 'replaced', memoryId: string | null, ref: string | number): string | null {
     return activityWhyNot(this.db, kind, memoryId, ref);
   }

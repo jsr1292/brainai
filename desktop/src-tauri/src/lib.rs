@@ -1,5 +1,6 @@
 //! The BrainAI Mac app (D2): runs the bundled server in local mode, checks it is its own, opens the window signed in
 //! with a one-time ticket, and lives in the menu bar. See docs/DESKTOP.md.
+pub mod lang;
 pub mod nav;
 pub mod port;
 pub mod proof;
@@ -14,6 +15,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use lang::{tr, tr_with};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry};
@@ -61,8 +63,13 @@ struct Running {
 /// The tray's menu and its "BrainAI <v> is ready…" item, shown only while an update is known.
 struct Tray {
     menu: Menu<Wry>,
+    open_item: MenuItem<Wry>,
+    login_item: CheckMenuItem<Wry>,
+    quit_item: MenuItem<Wry>,
     update_item: MenuItem<Wry>,
     shown: AtomicBool,
+    /// The version the update item names while it is shown, kept to write it again when the language changes.
+    version: Mutex<Option<String>>,
 }
 
 const TRAY_ID: &str = "brainai";
@@ -75,18 +82,44 @@ fn show_update_dot(app: &AppHandle, version: Option<&str>) {
     match version {
         Some(v) => {
             let _ = icon.set_icon(tauri::image::Image::from_bytes(TRAY_UPDATE_ICON).ok());
-            let _ = tray.update_item.set_text(format!("BrainAI {v} is ready…"));
+            *tray.version.lock().unwrap() = Some(v.to_string());
+            let _ = tray.update_item.set_text(tr_with("tray.update_version", &[("version", v)]));
             if !tray.shown.swap(true, Ordering::SeqCst) {
                 let _ = tray.menu.insert(&tray.update_item, 0);
             }
         }
         None => {
+            *tray.version.lock().unwrap() = None;
             let _ = icon.set_icon(app.default_window_icon().cloned());
             if tray.shown.swap(false, Ordering::SeqCst) {
                 let _ = tray.menu.remove(&tray.update_item);
             }
         }
     }
+}
+
+/// Writes the tray menu's texts again in the language now in use (it can change in the dashboard's Settings).
+fn retitle_tray(app: &AppHandle) {
+    let Some(tray) = app.try_state::<Tray>() else { return };
+    let _ = tray.open_item.set_text(tr("tray.open"));
+    let _ = tray.login_item.set_text(tr("tray.login"));
+    let _ = tray.quit_item.set_text(tr("tray.quit"));
+    let text = match tray.version.lock().unwrap().as_deref() {
+        Some(v) => tr_with("tray.update_version", &[("version", v)]),
+        None => tr("tray.update"),
+    };
+    let _ = tray.update_item.set_text(text);
+}
+
+/// Watches ui-language.json: when the owner changes the language in Settings, the menu follows within a few seconds.
+/// (Dialogs read the file again each time they open.)
+fn watch_language(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(4));
+        if lang::refresh() {
+            retitle_tray(&app);
+        }
+    });
 }
 
 /// ~/Library/Application Support/<id> on the Mac; %LOCALAPPDATA%\<id> on Windows (not the roaming folder, which
@@ -125,6 +158,7 @@ fn start_server(app: &AppHandle, port: u16, secret: &str) -> std::io::Result<Chi
     std::fs::create_dir_all(data.join("logs"))?;
     let log = OpenOptions::new().create(true).append(true).open(log_path(app))?;
     let tmpdir = std::env::var("TMPDIR").ok();
+    let locale = lang::system_locale();
     let system = if cfg!(windows) { server::windows_system_env(|k| std::env::var(k).ok()) } else { Vec::new() };
     let mut cmd = Command::new(node_path());
     #[cfg(windows)]
@@ -137,7 +171,7 @@ fn start_server(app: &AppHandle, port: u16, secret: &str) -> std::io::Result<Chi
         // Only what the server needs: nothing else from the owner's environment reaches it.
         .env_clear()
         .env("HOME", std::env::var("HOME").unwrap_or_default())
-        .envs(server::env(&data, port, secret, server::local_timezone().as_deref(), tmpdir.as_deref(), tool_path(), &system, &server::system_proxy()))
+        .envs(server::env(&data, port, secret, server::local_timezone().as_deref(), locale.as_deref(), tmpdir.as_deref(), tool_path(), &system, &server::system_proxy()))
         // The server watches this pipe (APP_PARENT=stdin): when the app is gone, it closes and the server stops.
         .stdin(Stdio::piped())
         .stdout(Stdio::from(log.try_clone()?))
@@ -256,12 +290,13 @@ fn delete_data(data: &std::path::Path) -> std::io::Result<()> {
 /// /app/removed, so first its own server must confirm, with the app's key, that a removal finished with a saved
 /// folder, and then the owner must say yes; otherwise nothing is touched.
 fn finish_removal(app: &AppHandle) {
+    lang::refresh();
     let state = app.state::<Running>();
     let port = state.port.load(Ordering::SeqCst);
     let secret = state.secret.lock().unwrap().clone();
     let ours = port != 0 && !secret.is_empty() && matches!(server::check_once(port, &secret), Ok(true));
     let Some(folder) = (if ours { server::removal_ready(port, &secret) } else { None }) else {
-        tell(app, MessageDialogKind::Error, nav::NOT_SAVED.into());
+        tell(app, MessageDialogKind::Error, nav::not_saved_text());
         return;
     };
     let remove = app
@@ -269,7 +304,7 @@ fn finish_removal(app: &AppHandle) {
         .message(nav::remove_confirm_text(cfg!(windows), &folder))
         .title("BrainAI")
         .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancelCustom("Remove BrainAI".into(), "Cancel".into()))
+        .buttons(MessageDialogButtons::OkCancelCustom(tr("remove.button"), tr("common.cancel")))
         .blocking_show();
     if !remove {
         return;
@@ -282,7 +317,7 @@ fn finish_removal(app: &AppHandle) {
     let data = app_data(app);
     let mut problems = Vec::new();
     if let Err(e) = delete_data(&data) {
-        problems.push(format!("BrainAI could not delete its data folder {} ({e}); delete it yourself.", data.display()));
+        problems.push(tr_with("remove.data_failed", &[("path", &data.display().to_string()), ("error", &e.to_string())]));
     }
     #[cfg(target_os = "macos")]
     match installed_bundle() {
@@ -292,10 +327,10 @@ fn finish_removal(app: &AppHandle) {
             let mut ctx = trash::TrashContext::default();
             ctx.set_delete_method(trash::macos::DeleteMethod::NsFileManager);
             if ctx.delete(&bundle).is_err() {
-                problems.push(format!("BrainAI could not move itself to the Trash: drag {} there yourself.", bundle.display()));
+                problems.push(tr_with("remove.trash_failed", &[("path", &bundle.display().to_string())]));
             }
         }
-        None => problems.push("Drag BrainAI to the Trash to finish.".into()),
+        None => problems.push(tr("remove.drag_trash")),
     }
     let mut text = nav::removed_text(cfg!(windows));
     for p in problems {
@@ -306,7 +341,7 @@ fn finish_removal(app: &AppHandle) {
     // After the message, so the uninstaller's two-second wait starts when the app is about to be gone.
     #[cfg(windows)]
     if spawn_uninstaller(&data).is_err() {
-        tell(app, MessageDialogKind::Info, "Uninstall BrainAI from Settings › Apps to finish.".into());
+        tell(app, MessageDialogKind::Info, tr("remove.uninstall_manual"));
     }
     app.exit(0);
 }
@@ -357,6 +392,7 @@ fn show_window(app: &AppHandle, home: bool) {
 /// /app/choose-folder, which the window's navigation handler turns into this (the same way as Update and restart). The
 /// window then goes to Settings with the path in the address, which only fills the box: nothing is saved or run.
 fn choose_folder(app: &AppHandle) {
+    lang::refresh();
     // One picker at a time: a second click (or a second navigation) while it is open does nothing.
     static PICKING: AtomicBool = AtomicBool::new(false);
     if PICKING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
@@ -371,7 +407,7 @@ fn choose_folder(app: &AppHandle) {
     let _release = Release;
     let Some(w) = app.get_webview_window(MAIN) else { return };
     // Parented to the BrainAI window, so the picker opens in front of it and is modal to it.
-    let Some(picked) = app.dialog().file().set_title("Choose a folder for the second copy").set_parent(&w).blocking_pick_folder() else { return };
+    let Some(picked) = app.dialog().file().set_title(tr("folder.pick_title")).set_parent(&w).blocking_pick_folder() else { return };
     let Ok(path) = picked.into_path() else { return };
     let state = app.state::<Running>();
     let port = state.port.load(Ordering::SeqCst);
@@ -394,20 +430,21 @@ fn reveal_backups(app: &AppHandle) {
 /// After a move to a server (D5): the server has disconnected the tools and shows its goodbye page; the app asks,
 /// then stops starting at login and quits. The data folder stays where it is.
 fn goodbye(app: &AppHandle) {
+    lang::refresh();
     let data = app_data(app);
     let stop = app
         .dialog()
-        .message(format!("BrainAI is moving out of this Mac. Stop it now and stop starting it at login?\n\nYour data folder stays at {}.", data.display()))
+        .message(tr_with("goodbye.confirm", &[("path", &data.display().to_string())]))
         .title("BrainAI")
         .kind(MessageDialogKind::Info)
-        .buttons(MessageDialogButtons::OkCancelCustom("Stop BrainAI".into(), "Not now".into()))
+        .buttons(MessageDialogButtons::OkCancelCustom(tr("goodbye.stop"), tr("goodbye.not_now")))
         .blocking_show();
     if !stop {
         return;
     }
     let _ = app.autolaunch().disable();
     remember_login_choice(app, false);
-    tell(app, MessageDialogKind::Info, nav::goodbye_text(cfg!(windows)).into());
+    tell(app, MessageDialogKind::Info, nav::goodbye_text(cfg!(windows)));
     quit(app);
 }
 
@@ -421,7 +458,7 @@ fn give_up(app: &AppHandle, why: &str) {
         return;
     }
     stop_server(app);
-    tell(app, MessageDialogKind::Error, format!("{why}\n\nThe server's log is at {}.", log_path(app).display()));
+    tell(app, MessageDialogKind::Error, tr_with("err.log_at", &[("why", why), ("log", &log_path(app).display().to_string())]));
     app.exit(1);
 }
 
@@ -436,7 +473,7 @@ fn launch_to(app: AppHandle, page: &'static str) {
         let result = catch_unwind(AssertUnwindSafe(|| start_and_open(&app, page)));
         app.state::<Running>().restarting.store(false, Ordering::SeqCst);
         if result.is_err() {
-            give_up(&app, "BrainAI stopped unexpectedly while starting.");
+            give_up(&app, &tr("err.crashed_start"));
         }
     });
 }
@@ -444,6 +481,7 @@ fn launch_to(app: AppHandle, page: &'static str) {
 /// Starts the server, waits until it proves it is ours, and opens the dashboard in the window with a fresh ticket.
 /// The key is never sent to anything that has not proved it is ours. A new port is saved only once it worked.
 fn start_and_open(app: &AppHandle, page: &str) {
+    lang::refresh();
     // Windows: the search engine and the password hashing need Microsoft's Visual C++ runtime, which Windows itself
     // does not include. The app ships its own copy in the folder of each native module that loads it (B8); should one
     // be gone and the PC lack the runtime too, say so plainly rather than "the server did not start".
@@ -452,29 +490,26 @@ fn start_and_open(app: &AppHandle, page: &str) {
         let dirs = server::runtime_dirs(&resources_dir(app).join("server"));
         let missing = server::missing_runtime(|f| server::runtime_found(f, &dirs, &system32, |p| p.exists()));
         if !missing.is_empty() {
-            return give_up(app, &format!(
-                "BrainAI needs Microsoft's Visual C++ Redistributable (x64), which this computer does not have yet (missing: {}).\n\nInstall it from https://aka.ms/vs/17/release/vc_redist.x64.exe (it asks for an administrator), then open BrainAI again.",
-                missing.join(", ")
-            ));
+            return give_up(app, &tr_with("err.vcredist", &[("missing", &missing.join(", "))]));
         }
     }
     let data = app_data(app);
     let saved = port::load(&data);
     let Some(mut port) = port::settle(saved, port::is_free, 20, || std::thread::sleep(Duration::from_millis(500))) else {
-        return give_up(app, "Every port BrainAI can use (3100 to 3199) is taken.");
+        return give_up(app, &tr("err.ports_all"));
     };
     let mut tried = Vec::new();
     for _attempt in 0..3 {
         let secret = proof::random_hex();
         match start_server(app, port, &secret) {
             Ok(child) => *app.state::<Running>().child.lock().unwrap() = Some(child),
-            Err(e) => return give_up(app, &format!("BrainAI could not start its server: {e}.")),
+            Err(e) => return give_up(app, &tr_with("err.start", &[("error", &e.to_string())])),
         }
         match server::wait_until_ours(port, &secret, START_TIMEOUT, || alive(app)) {
             Ok(()) => {
                 let ticket = match server::ticket(port, &secret) {
                     Ok(t) => t,
-                    Err(e) => return give_up(app, &format!("BrainAI could not open its window: {e}.")),
+                    Err(e) => return give_up(app, &tr_with("err.window", &[("error", &e.to_string())])),
                 };
                 app.state::<Running>().port.store(port, Ordering::SeqCst);
                 *app.state::<Running>().secret.lock().unwrap() = secret.clone();
@@ -484,8 +519,7 @@ fn start_and_open(app: &AppHandle, page: &str) {
                 if saved != Some(port) {
                     let _ = port::save(&data, port);
                     if let Some(old) = saved {
-                        tell(app, MessageDialogKind::Info, format!(
-                            "Another program is using port {old}, so BrainAI now uses port {port}.\n\nApps you connected to http://localhost:{old} need connecting again: Settings › Set up an app."));
+                        tell(app, MessageDialogKind::Info, tr_with("err.port_changed", &[("old", &old.to_string()), ("port", &port.to_string())]));
                     }
                 }
                 watch_server(app.clone());
@@ -496,13 +530,13 @@ fn start_and_open(app: &AppHandle, page: &str) {
                 tried.push(port);
                 match (port::FIRST..=port::LAST).find(|q| !tried.contains(q) && port::is_free(*q)) {
                     Some(next) => port = next,
-                    None => return give_up(app, "Every port BrainAI can use is taken."),
+                    None => return give_up(app, &tr("err.ports_all_short")),
                 }
             }
-            Err(StartError::Timeout) => return give_up(app, "BrainAI's server did not start."),
+            Err(StartError::Timeout) => return give_up(app, &tr("err.timeout")),
         }
     }
-    give_up(app, "Another program keeps answering on BrainAI's port.");
+    give_up(app, &tr("err.squatter"));
 }
 
 /// After a good start: if the server stops by itself, say so and start it again (a few times), so the window never
@@ -524,13 +558,12 @@ fn watch_server(app: AppHandle) {
             }
             let n = app.state::<Running>().restarts.fetch_add(1, Ordering::SeqCst) + 1;
             if n > MAX_RESTARTS {
-                return give_up(&app, "BrainAI's server keeps stopping.");
+                return give_up(&app, &tr("err.keeps_stopping"));
             }
             app.state::<Running>().child.lock().unwrap().take();
             // Start it again first; the message must not keep BrainAI down until it is read.
             launch(app.clone());
-            tell(&app, MessageDialogKind::Warning, format!(
-                "BrainAI's server stopped unexpectedly, so BrainAI started it again.\n\nThe log is at {}.", log_path(&app).display()));
+            tell(&app, MessageDialogKind::Warning, tr_with("err.restarted", &[("log", &log_path(&app).display().to_string())]));
             return;
         }
     });
@@ -633,12 +666,13 @@ pub fn run() {
 
             set_up_login_item(app);
 
-            let open = MenuItem::with_id(app, "open", "Open BrainAI", true, None::<&str>)?;
-            let login = CheckMenuItem::with_id(app, "login", "Start at login", true, app.autolaunch().is_enabled().unwrap_or(false), None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit BrainAI", true, None::<&str>)?;
+            lang::init(app_data(app.handle()).join("data"));
+            let open = MenuItem::with_id(app, "open", tr("tray.open"), true, None::<&str>)?;
+            let login = CheckMenuItem::with_id(app, "login", tr("tray.login"), true, app.autolaunch().is_enabled().unwrap_or(false), None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", tr("tray.quit"), true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &login, &PredefinedMenuItem::separator(app)?, &quit_item])?;
-            let update_item = MenuItem::with_id(app, "update", "BrainAI is ready…", true, None::<&str>)?;
-            app.manage(Tray { menu: menu.clone(), update_item, shown: AtomicBool::new(false) });
+            let update_item = MenuItem::with_id(app, "update", tr("tray.update"), true, None::<&str>)?;
+            app.manage(Tray { menu: menu.clone(), open_item: open.clone(), login_item: login.clone(), quit_item: quit_item.clone(), update_item, shown: AtomicBool::new(false), version: Mutex::new(None) });
             let login_item = login.clone();
             TrayIconBuilder::with_id(TRAY_ID)
                 .icon(app.default_window_icon().expect("the app icon").clone())
@@ -666,6 +700,7 @@ pub fn run() {
                     let _ = w.set_focus();
                 }
             }
+            watch_language(handle.clone());
             launch(handle.clone());
             update::start_checker(handle);
             Ok(())

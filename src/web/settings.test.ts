@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connectClient, loggedIn, startTestApp } from '../testing/helpers.js';
+import { decodeEntities } from '../testing/entities.js';
 
 // These tests are about the owner's calendar in Berlin; the app's own default zone is UTC.
 process.env.OWNER_TIMEZONE ??= 'Europe/Berlin';
@@ -49,21 +50,22 @@ test("A server's Settings holds four things, in order", async (t) => {
   assert.match(body, /<title>Settings<\/title>/);
   assert.match(body, /<a class="settings-link" href="\/settings" aria-current="page"/);
   const ids = [...body.matchAll(/<section id="([a-z-]+)"/g)].map((m) => m[1]!);
-  assert.deepEqual(ids, ['connections', 'health', 'version', 'devices', 'login', 'this-device']);
+  assert.deepEqual(ids, ['connections', 'health', 'version', 'devices', 'login', 'language', 'this-device']);
   for (const gone of ['approvals', 'activity', 'growth', 'tidy', 'moved', 'facts']) assert.ok(!ids.includes(gone), gone);
   assert.doesNotMatch(body, /href="\/discussions"/, 'the Discussions link left with the moved sections');
   // The phone's index: one row per section, each with a one-line status.
   const rows = [...body.matchAll(/<a class="row" href="#([a-z-]+)"><span class="txt">([^<]+)<\/span><span class="st">([\s\S]*?)<\/span><span class="chev"><\/span><\/a>/g)]
     .map((m) => [m[1]!, m[2]!, m[3]!.replace(/<[^>]+>/g, '').trim()] as const);
-  assert.deepEqual(rows.map((r) => r[0]), ['connections', 'health', 'version', 'devices', 'login', 'this-device']);
-  assert.deepEqual(rows.map((r) => r[1]), ['Assistants', 'Backups and copies', 'Version', 'Other computers', 'Your login', 'This browser']);
+  assert.deepEqual(rows.map((r) => r[0]), ['connections', 'health', 'version', 'devices', 'login', 'language', 'this-device']);
+  assert.deepEqual(rows.map((r) => r[1]), ['Assistants', 'Backups and copies', 'Version', 'Other computers', 'Your login', 'Language', 'This browser']);
   assert.equal(rows[0]![2], '1 assistant');
   assert.equal(rows[1]![2], '● Backups: all fine · 03:10');
   assert.match(rows[2]![2], /^BrainAI \d+\.\d+\.\d+$/);
   assert.equal(rows[3]![2], 'None yet');
   assert.equal(rows[4]![2], '1 browser signed in');
   // A server keeps a minimal "This browser" for desk.js's two switches: no version line, no iPhone/Mac naming.
-  assert.equal(rows[5]![2], '');
+  assert.equal(rows[5]![2], 'Automatic');
+  assert.equal(rows[6]![2], '');
   const mine = body.slice(body.indexOf('<section id="this-device"'), body.indexOf('</section>', body.indexOf('<section id="this-device"')));
   assert.match(mine, /<h2>This browser<\/h2>/);
   assert.doesNotMatch(mine, /BrainAI \d|database \d/);
@@ -235,7 +237,7 @@ test('Settings says how many pictures there are, where they are kept, whether la
   app.deps.images.add(await fx.pngWithText(), { alt: 'Loose', by: 'owner' });
   await app.deps.pages.create({ title: 'Shots', area: 'apps', body: `![s](/images/${shown.id}.jpg)` }, 'owner');
   const health = async () => { const b = await (await f('/settings')).text(); return b.slice(b.indexOf('<section id="health"'), b.indexOf('</section>', b.indexOf('<section id="health"'))); };
-  const h = await health();
+  const h = decodeEntities(await health());
   assert.match(h, /Pictures: 2 · \d+ KB\. Kept next to the database, in the nightly backups and in the weekly off-site copy\. The git export links to them but doesn't hold them\. Last checked <time[^>]*>[^<]+<\/time>: all 2 present\./);
   assert.match(h, /1 picture no current page shows <a href="\/settings\/pictures">Review<\/a>/);
   status(1);

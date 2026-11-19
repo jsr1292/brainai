@@ -2,6 +2,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { connectClient, loggedIn, startTestApp } from '../testing/helpers.js';
+import { decodeEntities } from '../testing/entities.js';
 
 const owner = { type: 'owner' } as const;
 const DAY = 86_400_000;
@@ -679,7 +680,7 @@ test('Possible duplicates offers Newer replaces older only for the same kind in 
   const newer = await saveAt(app, 'The heating is controlled by the Ecobee thermostat through Home Assistant', 'homeassistant');
   let body = await (await f('/facts/tidy')).text();
   assert.match(body, new RegExp(`<form method="post" action="/tidy/duplicates/supersede"><input type="hidden" name="older" value="${older}"><input type="hidden" name="newer" value="${newer}"><button type="submit" class="primary">Newer replaces older</button></form>`), 'the one black button on the screen');
-  assert.match(body, /“Keep this one” deletes the other\. “Newer replaces older” keeps the older one readable, out of search\.|"Keep this one" deletes the other\. "Newer replaces older" keeps the older one readable, out of search\./);
+  assert.match(decodeEntities(body), /“Keep this one” deletes the other\. “Newer replaces older” keeps the older one readable, out of search\.|"Keep this one" deletes the other\. "Newer replaces older" keeps the older one readable, out of search\./);
   const replaced = await f('/tidy/duplicates/supersede', form({ older, newer }));
   assert.equal(replaced.status, 303);
   assert.equal(replaced.headers.get('location'), '/facts/tidy');
@@ -744,7 +745,7 @@ test('Replaced by a fact that\'s gone lists a replaced fact whose replacement wa
   assert.doesNotMatch(body, /Replaced by a fact that’s gone|Replaced by a fact that's gone/);
   const one = await mk();
   body = await (await f('/facts/tidy')).text();
-  assert.match(body, /<h2>Replaced by a fact that(’|&#39;|')s gone <span class="n">1<\/span><\/h2>/, 'the count sits grey beside the heading, as in every Tidy up section');
+  assert.match(decodeEntities(body), /<h2>Replaced by a fact that(’|')s gone <span class="n">1<\/span><\/h2>/, 'the count sits grey beside the heading, as in every Tidy up section');
   assert.match(body, /The newer fact was deleted, so nothing in search says this any more\. Nothing changes until you choose\./);
   assert.match(body, /its replacement was deleted [^<]* by <span class="writer w-code">Claude Code<\/span>/);
   assert.match(body, new RegExp(`<form method="post" action="/supersessions/${one.row.id}/undo"><input type="hidden" name="back" value="tidy"><button type="submit">Bring it back</button></form>`));

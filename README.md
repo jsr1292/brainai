@@ -1,3 +1,5 @@
+Leer en español: [README.es.md](README.es.md)
+
 # BrainAI
 
 A shared brain for all your AI assistants, on your own server.
@@ -136,7 +138,7 @@ the address it tried shows there with an Allow button. `docs/CLIENTS.md` has the
 cd ~/memory && git pull && docker compose up -d --build
 ```
 
-Before any change to the database, BrainAI copies it to `data/pre-migrate/`. Settings › Backups and health shows
+Before any change to the database, BrainAI copies it to `data/pre-migrate/`. Settings › Backups and copies shows
 the version you run, and `CHANGELOG.md` says what changed and whether anything is needed from you. If an app's setup
 text changed, Settings tells you which apps to update.
 

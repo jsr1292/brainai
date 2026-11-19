@@ -72,9 +72,13 @@ import { rateLimitKey, TRUST_CF_SETTING } from './clientIp.js';
 import { html, page, setConsentPoller, setGoTo, setMovedBanner, setPausedBanner, setServerMode } from './html.js';
 import { createSideStatus, invalidateSideStatus, setSideStatus } from './sideStatus.js';
 import { setViewClock } from './when.js';
+import { storedChoice, UI_LANGUAGE_SWITCH, writeUiLanguageFile } from '../i18n/uiLanguage.js';
+import { t } from '../i18n/core.js';
+import { CLIENT_ENDPOINTS, localeMiddleware } from './locale.js';
+import { fmt } from '../i18n/fmt.js';
 import type { GraphService } from '../graph/data.js';
 import { graphRoutes } from './graphRoutes.js';
-import { setComputer, thisComputer } from '../desktop/computer.js';
+import { computerName, setComputer } from '../desktop/computer.js';
 import type { ModelManager } from '../models/manager.js';
 import type { Hardware } from '../models/hardware.js';
 
@@ -178,7 +182,6 @@ const CSP = "default-src 'self'; frame-ancestors 'none'; form-action 'self' http
 const SCOPES = ['memory'];
 /** Called by OAuth/MCP clients without browser cookies, so they carry no Origin to check. /app/hello, /app/bridge-hello, /app/ticket and
  * /app/removed/ready: the desktop app's own check, the Claude bridge's proof, ticket and removal check, called by the app itself, never by a page (D2). */
-const CLIENT_ENDPOINTS = ['/mcp', '/authorize', '/token', '/register', '/revoke', '/app/hello', '/app/bridge-hello', '/app/ticket', '/app/removed/ready', '/app/backup-now', '/api/folder-report', '/api/image-upload', '/api/skills/report', '/api/skills/upload'];
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const STATIC_DIR = join(dirname(fileURLToPath(import.meta.url)), 'static');
 
@@ -215,7 +218,7 @@ function sameOrigin(expected: (req: express.Request) => URL): RequestHandler {
     // Each address takes forms only from its own pages; a missing Origin is never a match.
     const origin = req.get('origin');
     if (origin !== undefined && origin === expected(req).origin) return next();
-    res.status(403).type('html').send(page('Forbidden', html`<h1>Forbidden</h1><p>This form was not sent from this site.</p>`, { tab: null }));
+    res.status(403).type('html').send(page(t('common.forbidden'), html`<h1>${t('common.forbidden')}</h1><p>${t('common.forbiddenBody')}</p>`, { tab: null }));
   };
 }
 
@@ -231,7 +234,7 @@ const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
     res.status(status).json({ jsonrpc: '2.0', error: { code: status === 500 ? -32603 : -32700, message: status === 500 ? 'Internal error' : 'Bad request' }, id: null });
     return;
   }
-  const title = status === 500 ? 'Something went wrong' : 'Bad request';
+  const title = status === 500 ? t('common.serverError') : t('common.badRequest');
   res.status(status).type('html').send(page(title, html`<h1>${title}</h1>`, { tab: null }));
 };
 
@@ -246,8 +249,8 @@ const SKILL_FORM_LIMIT = (MAX_BODY + MAX_SKILL_BYTES + MAX_SKILL_DESCRIPTION) * 
 /** Past even that, the text is over MAX_BODY for sure: say so plainly instead of the bare "Bad request". */
 const pageFormTooLarge: ErrorRequestHandler = (err, _req, res, next) => {
   if (err?.type !== 'entity.too.large' || res.headersSent) return next(err);
-  res.status(413).type('html').send(page('Too long to save', html`<h1>Too long to save</h1>
-<p>This text is longer than a page can be (100,000 characters). Nothing was saved. Go back to get your text, then shorten it or split it into two pages.</p>`, { nav: true, tab: null }));
+  res.status(413).type('html').send(page(t('common.tooLong'), html`<h1>${t('common.tooLong')}</h1>
+<p>${t('common.tooLongBody', { max: fmt.number(MAX_BODY) })}</p>`, { nav: true, tab: null }));
 };
 
 const MAX_LOG_CHARS = 2000;
@@ -332,22 +335,29 @@ export function createApp(d: AppDeps): express.Express {
   {
     const app = d.localMode === true;
     const files = !!d.db && !!d.statusDir;
-    setGoTo([
-      { label: 'Skills', href: '/skills' }, { label: 'Import', href: '/import', alias: 'Bring in memory' }, { label: 'Five areas', href: '/map', alias: 'Map' }, { label: 'Discussions', href: '/discussions' },
-      { label: 'Facts that disagree', href: '/disagreements', alias: 'disagreements' }, { label: 'Tidy up', href: '/facts/tidy' },
-      ...(app && d.tools ? [{ label: `Settings › Tools on ${thisComputer()}`, href: '/settings/tools' }] : []),
-      ...(app ? [{ label: 'Settings › Reach from phone and web', href: '/settings/reach', alias: 'Reach' }] : []),
-      ...(app && d.models ? [{ label: 'Settings › Search', href: '/settings#search' }] : []),
-      { label: 'Settings › Backups', href: '/settings#health' },
-      { label: 'Settings › Version and updates', href: '/settings#version', alias: 'Check for updates' },
-      ...(files ? [{ label: 'Settings › Save a copy', href: '/settings/save' }] : []),
-      ...(app && files ? [{ label: 'Settings › Move', href: '/settings/move' }, { label: 'Settings › Remove', href: '/settings/remove' }] : []),
+    // A function, so each row's label is worked out in the request's language when the page renders (keys, never text).
+    setGoTo(() => [
+      { key: 'shell.goto.skills', href: '/skills' }, { key: 'shell.goto.import', href: '/import', alias: 'Bring in memory' }, { key: 'shell.goto.map', href: '/map', alias: 'Map' }, { key: 'shell.goto.discussions', href: '/discussions' },
+      { key: 'shell.goto.disagree', href: '/disagreements', alias: 'disagreements' }, { key: 'shell.goto.tidy', href: '/facts/tidy' },
+      ...(app && d.tools ? [{ key: 'shell.goto.tools' as const, params: { computer: computerName() }, href: '/settings/tools' }] : []),
+      ...(app ? [{ key: 'shell.goto.reach' as const, href: '/settings/reach', alias: 'Reach' }] : []),
+      ...(app && d.models ? [{ key: 'shell.goto.search' as const, href: '/settings#search' }] : []),
+      { key: 'lang.goto', href: '/settings#language', alias: 'Language Idioma' },
+      { key: 'shell.goto.backups', href: '/settings#health' },
+      { key: 'shell.goto.version', href: '/settings#version', alias: 'Check for updates' },
+      ...(files ? [{ key: 'shell.goto.save' as const, href: '/settings/save' }] : []),
+      ...(app && files ? [{ key: 'shell.goto.move' as const, href: '/settings/move' }, { key: 'shell.goto.remove' as const, href: '/settings/remove' }] : []),
     ]);
   }
   const mcpUrl = new URL('/mcp', d.publicUrl);
 
   // 1. Security headers.
   app.use(securityHeaders);
+  app.use(localeMiddleware((name) => d.store.switchValue(name), { localMode: d.localMode === true, systemLocale: () => process.env.BRAINAI_SYSTEM_LOCALE }));
+  // Local mode: the desktop shell reads the choice at start, so write it once now (a change in Settings rewrites it).
+  if (d.localMode && d.statusDir) {
+    try { writeUiLanguageFile(d.statusDir, storedChoice(d.store.switchValue(UI_LANGUAGE_SWITCH)), d.now()); } catch (e) { console.error('writing ui-language.json failed:', e); }
+  }
   app.use(markUnrepeatable);
 
   // 2. Our authorization server metadata (adds CIMD support); registered first so it wins over the SDK's.
@@ -518,7 +528,7 @@ export function createApp(d: AppDeps): express.Express {
   app.use(discussionRoutes(d));
 
   app.use((_req, res) => {
-    res.status(404).type('html').send(page('Not found', html`<h1>Not found</h1>`, { tab: null }));
+    res.status(404).type('html').send(page(t('common.notFound'), html`<h1>${t('common.notFound')}</h1>`, { tab: null }));
   });
   app.use(errorHandler);
   return app;

@@ -339,7 +339,7 @@ test('a discussion lights Projects and goes back to its project or Discussions',
   const header = one.split('</header>')[0]!;
   assert.match(header, /<a[^>]*aria-current="page"[^>]*>Projects<\/a>/);
   const two = await (await f(`/discussions/${noProject.id}`)).text();
-  assert.match(two, /<p class="crumb back"><a href="\/discussions">‹ Discussions<\/a><\/p>/);
+  assert.match(two, /<p class="crumb back"><a href="\/discussions" data-back="discussions">‹ Discussions<\/a><\/p>/);
 });
 
 test('the project panel lists its discussions as a plain list, title first, and one waiting on an assistant is not marked as needing you', async (t) => {

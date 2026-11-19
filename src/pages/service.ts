@@ -1,4 +1,5 @@
 import type { Clock } from '../clock.js';
+import type { Say } from '../i18n/errors.js';
 import { cosine, isZeroVector, type Embedder } from '../memory/embedder.js';
 import { INSTRUCTION_CHECK_VERSION, looksLikeInstruction } from '../memory/instructionLike.js';
 import { byMeaning, toFtsQuery } from '../memory/search.js';
@@ -23,7 +24,7 @@ const PROJECT_FACTS = 5;
 const NEAREST_FACTS = 3;
 const FACT_LABEL = 60;
 
-const invalid = (message: string) => new PageError('invalid', message);
+const invalid = (message: string, say?: Say) => new PageError('invalid', message, say);
 /** Browsers send typed text with CRLF line endings; pages store plain newlines. */
 const lf = (s: string) => s.replace(/\r\n?/g, '\n');
 const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -90,7 +91,7 @@ export class PageService {
 
   private checkTitle(title: string): string {
     const t = title.trim();
-    if (t === '' || t.length > MAX_TITLE || /[\r\n]/.test(t)) throw invalid(`The title must be one line of 1 to ${MAX_TITLE} characters`);
+    if (t === '' || t.length > MAX_TITLE || /[\r\n]/.test(t)) throw invalid(`The title must be one line of 1 to ${MAX_TITLE} characters`, { key: 'err.page.title', params: { max: MAX_TITLE } });
     return t;
   }
 
@@ -103,26 +104,26 @@ export class PageService {
     const raw = name?.trim();
     if (!raw) return null;
     const real = this.memories.projectNamed(raw);
-    if (!this.projectExists(real)) throw invalid(`No project named ${raw}`);
+    if (!this.projectExists(real)) throw invalid(`No project named ${raw}`, { key: 'err.page.noProject', params: { name: raw } });
     return real;
   }
 
   private area(project: string | null, area: string | null | undefined): PageArea | null {
     if (project !== null) return null;
-    if (!area || !(PAGE_AREAS as readonly string[]).includes(area)) throw invalid('A page without a project needs an area');
+    if (!area || !(PAGE_AREAS as readonly string[]).includes(area)) throw invalid('A page without a project needs an area', { key: 'err.page.needsArea' });
     return area as PageArea;
   }
 
   private check(id: string | null, f: { title: string; body: string }): void {
-    if (f.body.length > MAX_BODY) throw invalid(`The page is ${f.body.length} characters; the limit is ${MAX_BODY}`);
+    if (f.body.length > MAX_BODY) throw invalid(`The page is ${f.body.length} characters; the limit is ${MAX_BODY}`, { key: 'err.page.tooLong', params: { length: f.body.length, max: MAX_BODY } });
     const other = this.store.byTitle(f.title);
-    if (other && other.id !== id) throw invalid(`A page called “${f.title}” already exists`);
+    if (other && other.id !== id) throw invalid(`A page called “${f.title}” already exists`, { key: 'err.page.exists', params: { title: f.title } });
     // Where it matched, so the writer of a long page knows which line to reword.
     const inTitle = findSecret(f.title);
     const found = inTitle ?? findSecret(f.body);
     if (found) {
       const where = inTitle ? ' in the title' : f.body.includes('\n') ? ` on line ${found.line}, at “${found.excerpt}”` : '';
-      throw new PageError('secret', `The page looks like it contains a secret (${found.reason})${where}. Secrets are never stored.`);
+      throw new PageError('secret', `The page looks like it contains a secret (${found.reason})${where}. Secrets are never stored.`, inTitle ? { key: 'err.page.secretTitle', params: { reason: found.reason } } : f.body.includes('\n') ? { key: 'err.page.secretLine', params: { reason: found.reason, line: found.line, excerpt: found.excerpt } } : { key: 'err.page.secret', params: { reason: found.reason } });
     }
   }
 
@@ -191,7 +192,7 @@ export class PageService {
 
   private mustLive(id: string): Page {
     const p = this.store.get(id);
-    if (!p || p.deletedAt !== null) throw new PageError('not_found', `No page with id ${id}`);
+    if (!p || p.deletedAt !== null) throw new PageError('not_found', `No page with id ${id}`, { key: 'err.page.notFound', params: { id } });
     return p;
   }
 
@@ -247,7 +248,7 @@ export class PageService {
   private async commit(current: Page | null, raw: SaveInput, by: string, reason: WriteReason, importedAt?: string): Promise<Page> {
     const id = current?.id ?? null;
     const input = { ...raw, body: lf(raw.body) };
-    if (current && current.version !== input.base) throw new PageError('conflict', `This page changed since you opened it (now version ${current.version})`);
+    if (current && current.version !== input.base) throw new PageError('conflict', `This page changed since you opened it (now version ${current.version})`, { key: 'err.page.conflict', params: { version: current.version } });
     const title = this.checkTitle(input.title ?? current?.title ?? '');
     const project = input.project === undefined ? (current?.project == null ? null : this.memories.projectNamed(current.project)) : this.project(input.project);
     const area = this.area(project, input.area === undefined ? (current?.area ?? null) : input.area);
@@ -275,10 +276,10 @@ export class PageService {
 
   async saveSection(id: string, input: { base: number; anchor: string; text: string }, by: string): Promise<Page> {
     const current = this.mustLive(id);
-    if (current.version !== input.base) throw new PageError('conflict', `This page changed since you opened it (now version ${current.version})`);
+    if (current.version !== input.base) throw new PageError('conflict', `This page changed since you opened it (now version ${current.version})`, { key: 'err.page.conflict', params: { version: current.version } });
     const text = lf(input.text);
     const body = replaceSection(current.body, input.anchor, text);
-    if (body === undefined) throw new PageError('not_found', `No section ${input.anchor} on this page`);
+    if (body === undefined) throw new PageError('not_found', `No section ${input.anchor} on this page`, { key: 'err.page.noSection', params: { anchor: input.anchor } });
     return this.commit(current, { base: input.base, body }, by, { section: input.anchor, text });
   }
 
@@ -286,7 +287,7 @@ export class PageService {
   async restore(id: string, version: number, by: string): Promise<Page> {
     const current = this.mustLive(id);
     const old = this.store.version(id, version);
-    if (!old) throw new PageError('not_found', `No version ${version} of this page`);
+    if (!old) throw new PageError('not_found', `No version ${version} of this page`, { key: 'err.page.noVersion', params: { version } });
     return this.commit(current, { base: current.version, title: old.title, project: old.project, area: old.area, body: old.body }, by, { restored: version });
   }
 
@@ -304,7 +305,7 @@ export class PageService {
   /** Undoes the newest "Still true", only while nothing else has brought the page up to date since. */
   undoStillTrue(id: string): Page {
     this.mustLive(id);
-    if (!this.store.undoStillTrue(id)) throw new PageError('conflict', 'Something else brought this page up to date since, so Undo is no longer available.');
+    if (!this.store.undoStillTrue(id)) throw new PageError('conflict', 'Something else brought this page up to date since, so Undo is no longer available.', { key: 'err.page.undoGone' });
     return this.mustLive(id);
   }
 
@@ -316,7 +317,7 @@ export class PageService {
   /** Brings a deleted page back, recorded as a new version. */
   async undelete(id: string, by: string): Promise<Page> {
     const p = this.store.get(id);
-    if (!p) throw new PageError('not_found', `No page with id ${id}`);
+    if (!p) throw new PageError('not_found', `No page with id ${id}`, { key: 'err.page.notFound', params: { id } });
     if (p.deletedAt === null) return p;
     return this.commit(p, { base: p.version, body: p.body }, by, 'undeleted');
   }

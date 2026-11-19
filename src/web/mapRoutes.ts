@@ -5,6 +5,7 @@ import { weekOf } from '../memory/digest.js';
 import type { AppDeps } from './app.js';
 import { requireOwner } from './authRoutes.js';
 import { page } from './html.js';
+import { t } from '../i18n/index.js';
 import { mapView, type MapRow, type MapView } from './mapViews.js';
 
 /** Weeks of history the Map shows. */
@@ -33,7 +34,7 @@ export function mapRoutes(d: AppDeps): Router {
       .filter((x): x is { project: string; area: CheckArea } => x.area !== null);
     for (const area of CHECK_AREAS) { const hit = nexts.find((x) => x.area === area); if (hit) { learnNext = hit; break; } }
     const view: MapView = { sections, total: sections.reduce((n, s) => n + s.rows.length, 0), learnNext, history: d.learning.history(MAP_WEEKS), now };
-    res.type('html').send(page('Five areas', mapView(view), { nav: true, tab: 'projects', back: { href: '/', label: 'Projects' } }));
+    res.type('html').send(page(t('map.title'), mapView(view), { nav: true, tab: 'projects', back: { href: '/', labelKey: 'shell.nav.projects' } }));
   });
   return router;
 }

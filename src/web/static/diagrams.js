@@ -5,6 +5,8 @@
 // style attribute), positioning is removed, and the result lives in a shadow root inside a paint-contained host.
 // app.js imports this module only for a page or preview with data-diagrams.
 
+const T = typeof globalThis.T === 'function' ? globalThis.T : (key, english, params) => { const s = english !== undefined ? english : key; return params ? s.replace(/\{(\w+)\}/g, (m, n) => (Object.prototype.hasOwnProperty.call(params, n) ? String(params[n]) : m)) : s; };
+
 export const MERMAID_VERSION = '12.3.0';
 const PURIFY = '/static/vendor/dompurify-3.4.17/purify.es.mjs';
 const TOO_SMALL = 0.62;
@@ -34,27 +36,36 @@ export function fitScale(naturalWidth, hostWidth) {
 /** Shrunk this far, Mermaid's 16 px words are under about 10 px: shown as an overview with Open full size. */
 export const tooSmall = (scale) => scale < TOO_SMALL;
 
-/** One plain sentence for what went wrong, from Mermaid's message (a small table of the common cases). */
-export function reword(raw, kind) {
+/** English as written, with {name} filled in: what reword says when no translator is given (it is stored and sent on). */
+const plain = (_key, english, params) => (params ? english.replace(/\{(\w+)\}/g, (m, n) => (Object.prototype.hasOwnProperty.call(params, n) ? String(params[n]) : m)) : english);
+
+/**
+ * One plain sentence for what went wrong, from Mermaid's message (a small table of the common cases). English unless a
+ * translator (T) is given: the sentence that is reported to the page's record and handed to an assistant stays English,
+ * the one drawn for the person is translated.
+ */
+export function reword(raw, kind, say = plain) {
   const text = String(raw || '');
   const m = /line (\d+)/i.exec(text);
   const line = m ? Number(m[1]) : null;
   let reason = null;
   let withLine = true;
-  if (text.startsWith('This diagram turns on HTML labels')) { reason = text; withLine = false; }
-  else if (/Maximum text size/i.test(text)) { reason = 'it is too long to draw (at most 20,000 characters).'; withLine = false; }
-  else if (/Edge limit/i.test(text)) { reason = 'it has too many lines between boxes (at most 300).'; withLine = false; }
-  else if (/No diagram type detected/i.test(text)) { reason = 'the first word must name a kind of diagram, such as `flowchart` or `sequenceDiagram`.'; withLine = false; }
-  else if (/got 'EOF'|Unclosed/i.test(text)) reason = "a bracket opened here isn't closed.";
-  else if (kind === 'sequenceDiagram' && /ARROW/.test(text)) reason = 'a message needs an arrow such as `->>` between the two names.';
-  else if (/Expecting[\s\S]*('LINK'|ARROW)/.test(text)) reason = 'a line between two boxes needs an arrow such as `-->`.';
-  const tail = ' The rest of the page is fine.';
+  if (text.startsWith('This diagram turns on HTML labels')) { reason = say('client.diagram.fail.htmlLabels', text); withLine = false; }
+  else if (/Maximum text size/i.test(text)) { reason = say('client.diagram.fail.tooLong', 'it is too long to draw (at most 20,000 characters).'); withLine = false; }
+  else if (/Edge limit/i.test(text)) { reason = say('client.diagram.fail.tooManyEdges', 'it has too many lines between boxes (at most 300).'); withLine = false; }
+  else if (/No diagram type detected/i.test(text)) { reason = say('client.diagram.fail.noType', 'the first word must name a kind of diagram, such as `flowchart` or `sequenceDiagram`.'); withLine = false; }
+  else if (/got 'EOF'|Unclosed/i.test(text)) reason = say('client.diagram.fail.bracket', "a bracket opened here isn't closed.");
+  else if (kind === 'sequenceDiagram' && /ARROW/.test(text)) reason = say('client.diagram.fail.sequenceArrow', 'a message needs an arrow such as `->>` between the two names.');
+  else if (/Expecting[\s\S]*('LINK'|ARROW)/.test(text)) reason = say('client.diagram.fail.linkArrow', 'a line between two boxes needs an arrow such as `-->`.');
+  const tail = say('client.diagram.fail.tail', ' The rest of the page is fine.');
   if (reason === null) {
     return line !== null
-      ? `This diagram couldn't be drawn. Line ${line} has something the diagram drawer doesn't understand.${tail}`
-      : `This diagram couldn't be drawn: it has something the diagram drawer doesn't understand.${tail}`;
+      ? say('client.diagram.fail.lineGeneric', "This diagram couldn't be drawn. Line {line} has something the diagram drawer doesn't understand.{tail}", { line, tail })
+      : say('client.diagram.fail.generic', "This diagram couldn't be drawn: it has something the diagram drawer doesn't understand.{tail}", { tail });
   }
-  return withLine && line !== null ? `This diagram couldn't be drawn. Line ${line}: ${reason}${tail}` : `This diagram couldn't be drawn: ${reason}${tail}`;
+  return withLine && line !== null
+    ? say('client.diagram.fail.withLine', "This diagram couldn't be drawn. Line {line}: {reason}{tail}", { line, reason, tail })
+    : say('client.diagram.fail.noLine', "This diagram couldn't be drawn: {reason}{tail}", { reason, tail });
 }
 
 /** The diagram's text as lines, the bad one (1-based) marked. */
@@ -165,7 +176,7 @@ function renderer() {
   frame.className = 'diagram-frame';
   frame.setAttribute('aria-hidden', 'true');
   frame.setAttribute('tabindex', '-1');
-  frame.title = 'Diagram drawer';
+  frame.title = T('client.diagram.drawer', 'Diagram drawer');
   frameReady = new Promise((resolve) => {
     window.addEventListener('message', (e) => {
       if (e.origin !== location.origin || !frame || e.source !== frame.contentWindow || !e.data) return;
@@ -267,20 +278,20 @@ async function show(block, drawing) {
   foot.className = 'diagram-foot';
   const note = document.createElement('span');
   note.className = 'diagram-note';
-  note.textContent = 'Diagram · drawn from text in this page';
+  note.textContent = T('client.diagram.note', 'Diagram · drawn from text in this page');
   const small = document.createElement('span');
   small.className = 'diagram-toosmall';
-  small.textContent = 'Too small to read here';
+  small.textContent = T('client.diagram.tooSmall', 'Too small to read here');
   // Full size is viewer.js, the same viewer as pictures (its URL, fingerprinted, is on the article).
   const full = () => import(block.closest('[data-diagrams]').dataset.viewer)
     .then((m) => m.openViewerNode({ node: svg.cloneNode(true), width: drawing.width, height: drawing.height, sheet }));
-  const open = button('Open full size', full);
+  const open = button(T('client.diagram.openFull', 'Open full size'), full);
   open.classList.add('diagram-open');
-  const toggle = button('Show the text', () => {
+  const toggle = button(T('client.diagram.showText', 'Show the text'), () => {
     pre.hidden = !pre.hidden;
-    toggle.textContent = pre.hidden ? 'Show the text' : 'Hide the text';
+    toggle.textContent = pre.hidden ? T('client.diagram.showText', 'Show the text') : T('client.diagram.hideText', 'Hide the text');
   });
-  foot.append(note, small, open, toggle, button('Full size', full));
+  foot.append(note, small, open, toggle, button(T('client.viewer.fullSize', 'Full size'), full));
   block.insertBefore(foot, pre);
   pre.hidden = true;
   block.classList.add('diagram-drawn');
@@ -301,13 +312,14 @@ function sectionOf(block) {
 function problem(block, error, text) {
   const kind = kindOf(text);
   const sentence = reword(error, kind);
+  const shown = reword(error, kind, T);
   const m = /line (\d+)/i.exec(String(error || ''));
   const box = document.createElement('div');
   box.className = 'diagram-problem';
   box.setAttribute('role', 'note');
   const p = document.createElement('p');
   // `code` in the sentence (an arrow such as `->>`) shows as code, built from text nodes only.
-  sentence.split('`').forEach((part, i) => {
+  shown.split('`').forEach((part, i) => {
     if (i % 2 === 1) { const c = document.createElement('code'); c.textContent = part; p.append(c); } else if (part) p.append(document.createTextNode(part));
   });
   const code = document.createElement('pre');
@@ -321,7 +333,7 @@ function problem(block, error, text) {
   box.append(p, code);
   const form = document.querySelector('details.asknote:not(.ask-line) form');
   if (form) {
-    box.append(button('Ask an AI to fix it', () => {
+    box.append(button(T('client.diagram.askFix', 'Ask an AI to fix it'), () => {
       const details = form.closest('details');
       const select = form.querySelector('select[name="section"]');
       const area = form.querySelector('textarea[name="text"]');
@@ -360,7 +372,7 @@ async function render(block, hooks, version) {
       if (!block.querySelector('.diagram-unavailable')) {
         const note = document.createElement('p');
         note.className = 'diagram-unavailable';
-        note.textContent = "The diagram drawer couldn't load here, so its text is shown. It draws next time.";
+        note.textContent = T('client.diagram.unavailable', "The diagram drawer couldn't load here, so its text is shown. It draws next time.");
         block.append(note);
       }
       return;

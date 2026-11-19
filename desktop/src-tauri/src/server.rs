@@ -30,7 +30,7 @@ pub fn plain_path(p: &str) -> String {
 /// watches so it stops when the app is gone, and the system proxy (for those downloads).
 /// On Windows `system` carries the system variables Node and the tools need (empty on the Mac).
 #[allow(clippy::too_many_arguments)]
-pub fn env(app_data: &Path, port: u16, secret: &str, timezone: Option<&str>, tmpdir: Option<&str>, tool_path: &str, system: &[(String, String)], proxy: &Proxy) -> Vec<(String, String)> {
+pub fn env(app_data: &Path, port: u16, secret: &str, timezone: Option<&str>, locale: Option<&str>, tmpdir: Option<&str>, tool_path: &str, system: &[(String, String)], proxy: &Proxy) -> Vec<(String, String)> {
     let path = |p: &Path| p.to_string_lossy().into_owned();
     let mut env = vec![
         ("LOCAL_MODE".into(), "true".into()),
@@ -51,6 +51,11 @@ pub fn env(app_data: &Path, port: u16, secret: &str, timezone: Option<&str>, tmp
     // Days and weeks follow the owner's clock (UTC when it isn't set).
     if let Some(tz) = timezone {
         env.push(("OWNER_TIMEZONE".into(), tz.into()));
+    }
+    // The operating system's language (`es-ES`), for a server whose language choice is `auto`: the desktop WebView
+    // sends Accept-Language en-US even on a Spanish Mac (docs/I18N.md).
+    if let Some(l) = locale.filter(|l| !l.trim().is_empty()) {
+        env.push(("BRAINAI_SYSTEM_LOCALE".into(), l.trim().into()));
     }
     // The owner's private temporary folder: the backup's working copy (with sign-in data) must not go to /tmp.
     if let Some(t) = tmpdir {
@@ -520,7 +525,7 @@ mod tests {
         let system = windows_system_env(parent);
         let names: Vec<&str> = system.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(names, vec!["USERPROFILE", "LOCALAPPDATA", "TEMP", "SystemRoot"], "the list, in its order, missing ones skipped");
-        let env = env(&PathBuf::from("C:\\d"), 3100, "k", None, None, "C:\\npm", &system, &Proxy::default());
+        let env = env(&PathBuf::from("C:\\d"), 3100, "k", None, None, None, "C:\\npm", &system, &Proxy::default());
         let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
         assert_eq!(get("USERPROFILE"), Some("C:\\Users\\Ana"));
         assert_eq!(get("PATH"), Some("C:\\Windows\\System32;C:\\Windows"), "for tar and explorer");
@@ -544,7 +549,7 @@ mod tests {
 
     #[test]
     fn the_server_runs_in_local_mode_with_its_data_in_the_app_data_folder() {
-        let env = env(&PathBuf::from("/data/app"), 3107, "k", None, None, "/opt/homebrew/bin:/usr/bin", &[], &Proxy::default());
+        let env = env(&PathBuf::from("/data/app"), 3107, "k", None, None, None, "/opt/homebrew/bin:/usr/bin", &[], &Proxy::default());
         let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
         assert_eq!(get("LOCAL_MODE"), Some("true"));
         assert_eq!(get("HOST"), Some("127.0.0.1"));
@@ -561,13 +566,19 @@ mod tests {
         assert_eq!(get("TOOL_PATH"), Some("/opt/homebrew/bin:/usr/bin"), "where Connect finds the coding tools");
         assert_eq!(env.len(), 13);
         assert_eq!(get("OWNER_TIMEZONE"), None);
+        assert_eq!(get("BRAINAI_SYSTEM_LOCALE"), None, "no locale, none passed");
+        let with = super::env(&PathBuf::from("/data/app"), 3107, "k", None, Some(" es-ES "), None, "/usr/bin", &[], &Proxy::default());
+        assert_eq!(with.len(), 14);
+        assert!(with.contains(&("BRAINAI_SYSTEM_LOCALE".into(), "es-ES".into())));
+        assert_eq!(super::env(&PathBuf::from("/d"), 3100, "k", None, Some(""), None, "/usr/bin", &[], &Proxy::default()).len(), 13, "an empty locale is not passed");
     }
 
     #[test]
     fn weeks_and_days_follow_the_macs_own_time_zone() {
-        let env = env(&PathBuf::from("/d"), 3100, "k", Some("Europe/Berlin"), Some("/var/folders/ab/T/"), "/usr/bin", &[], &Proxy::default());
+        let env = env(&PathBuf::from("/d"), 3100, "k", Some("Europe/Berlin"), Some("es-ES"), Some("/var/folders/ab/T/"), "/usr/bin", &[], &Proxy::default());
         assert!(env.contains(&("TMPDIR".into(), "/var/folders/ab/T/".into())), "the owner's private temporary folder, not /tmp");
         assert!(env.contains(&("OWNER_TIMEZONE".into(), "Europe/Berlin".into())));
+        assert!(env.contains(&("BRAINAI_SYSTEM_LOCALE".into(), "es-ES".into())), "the system language, for the server's auto");
         assert_eq!(timezone_from_link("/var/db/timezone/zoneinfo/Europe/Berlin"), Some("Europe/Berlin".into()));
         assert_eq!(timezone_from_link("/usr/share/zoneinfo/America/Argentina/Buenos_Aires"), Some("America/Argentina/Buenos_Aires".into()));
         assert_eq!(timezone_from_link("/etc/localtime"), None);
@@ -677,7 +688,7 @@ mod tests {
             https: Some("http://secure-proxy.example.test:3128".into()),
             no_proxy: vec![".local".into(), "intranet.example.test".into()],
         };
-        let env = env(&PathBuf::from("/data/app"), 3107, "k", None, None, "/usr/bin", &[], &proxy);
+        let env = env(&PathBuf::from("/data/app"), 3107, "k", None, None, None, "/usr/bin", &[], &proxy);
         let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
         assert_eq!(get("MODEL_DIR"), Some("/data/app/models"));
         assert_eq!(get("HTTPS_PROXY"), Some("http://secure-proxy.example.test:3128"));

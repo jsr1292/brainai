@@ -18,6 +18,7 @@ import type { AppDeps } from './app.js';
 import { appKeyCheck, requireOwner } from './authRoutes.js';
 import { toolEnv } from './desktopRoutes.js';
 import { html, page } from './html.js';
+import { t } from '../i18n/core.js';
 import { revealCommand } from './moveRoutes.js';
 import { cloudflaredEnv, reachOff } from './reachRoutes.js';
 import { removeDone, removePage, type ToolOutcome } from './removeViews.js';
@@ -36,12 +37,12 @@ export function removeRoutes(d: AppDeps): Router {
   const here: RequestHandler = (req, _res, next) => (viaDoor(req) ? next('router') : next());
   const platform = d.tools?.platform ?? process.platform;
   const revealIn = platform === 'win32' ? 'Explorer' as const : 'Finder' as const;
-  const chrome = { nav: true, tab: null, back: { href: '/settings', label: 'Settings' } } as const;
+  const chrome = { nav: true, tab: null, back: { href: '/settings', labelKey: 'shell.nav.settings' } } as const;
   let result: Result | null = null;
 
   const ask = (res: Parameters<RequestHandler>[1], status: number, said: string | null) => {
     const docs = documentsOf(d);
-    res.status(status).type('html').send(page('Remove BrainAI', removePage({ documents: docs.path, synced: docs.synced, home: homeOf(d), said, mac: platform === 'darwin' }), chrome));
+    res.status(status).type('html').send(page(t('data.remove.pageTitle'), removePage({ documents: docs.path, synced: docs.synced, home: homeOf(d), said, mac: platform === 'darwin' }), chrome));
   };
 
   router.get('/settings/remove', here, owner, (_req, res) => ask(res, 200, null));
@@ -55,7 +56,7 @@ export function removeRoutes(d: AppDeps): Router {
       saved = await makeSavedCopy(saveDeps(d), parentFor(where, d), now, savedChecklist(d, 'app'));
     } catch (e) {
       console.error('saving the copy before removing failed:', e);
-      return `Nothing was removed: ${e instanceof Error ? e.message : String(e)}`;
+      return t('data.remove.failed', { reason: e instanceof Error ? e.message : String(e) });
     }
     const env = toolEnv(d);
     const kept: string[] = [];
@@ -150,7 +151,7 @@ export function removeRoutes(d: AppDeps): Router {
 
   router.get('/settings/remove/done', here, owner, (_req, res) => {
     if (!result) return res.redirect(303, '/settings/remove');
-    res.type('html').send(page('BrainAI is ready to be removed', removeDone({ ...result, revealIn }), chrome));
+    res.type('html').send(page(t('data.removed.title'), removeDone({ ...result, revealIn }), chrome));
   });
 
   router.post('/settings/remove/show', here, owner, (_req, res) => {
@@ -176,7 +177,7 @@ export function removeRoutes(d: AppDeps): Router {
 
   // The address the app intercepts to stop and quit; a browser that reaches it anyway sees this.
   router.get('/app/removed', here, (_req, res) => {
-    res.type('html').send(page('BrainAI is finishing', html`<div class="narrow"><h1>BrainAI is finishing…</h1><p>BrainAI is finishing: it is stopping, deleting its data folder and removing itself. Your saved copy is where the last page said.</p></div>`, { tab: null }));
+    res.type('html').send(page(t('data.finishing.title'), html`<div class="narrow"><h1>${t('data.finishing.head')}</h1><p>${t('data.finishing.text')}</p></div>`, { tab: null }));
   });
   return router;
 }

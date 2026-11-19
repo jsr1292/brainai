@@ -10,6 +10,7 @@ import { savedHooks } from './savedRoutes.js';
 import { savedDone } from './savedViews.js';
 import { removeDone } from './removeViews.js';
 import { loggedIn, startTestApp, TEST_PASSWORD } from '../testing/helpers.js';
+import { decodeEntities } from '../testing/entities.js';
 
 const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
 const PUBLIC = 'https://brainai-mac.tail1234.ts.net';
@@ -82,7 +83,7 @@ test('server: asks for the authenticator code, refuses a wrong one, and streams 
   assert.match(await (await f('/settings/save')).text(), /authenticator/i);
   const bad = await f('/settings/save', { method: 'POST', headers: FORM, body: 'code=000000' });
   assert.equal(bad.status, 200);
-  assert.match(await bad.text(), /That code didn&#39;t work\.|That code didn't work\./);
+  assert.match(decodeEntities(await bad.text()), /That code didn't work\./);
   const none = await f('/settings/save', { method: 'POST', headers: FORM, body: '' });
   assert.doesNotMatch(none.headers.get('content-type') ?? '', /gzip/);
   const ok = await f('/settings/save', { method: 'POST', headers: FORM, body: `code=${app.nextTotp()}` });

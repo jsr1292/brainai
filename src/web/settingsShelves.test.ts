@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appSession, loggedIn, startTestApp } from '../testing/helpers.js';
+import { decodeEntities } from '../testing/entities.js';
 
 process.env.OWNER_TIMEZONE ??= 'Europe/Berlin';
 
@@ -26,11 +27,12 @@ test("the app's Settings: This computer, Assistants, Search, Backups and copies,
   const { f } = await local(t, { nightly: true });
   const body = await (await f('/settings')).text();
   // Search needs the model manager, which this app does not have: the shelf is left out (settingsSearch.test covers it).
-  assert.deepEqual(ids(body), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'remove']);
+  assert.deepEqual(ids(body), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'language', 'remove']);
   const rows = index(body);
-  assert.deepEqual(rows.map((r) => r[0]), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'remove']);
+  assert.deepEqual(rows.map((r) => r[0]), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'language', 'remove']);
   assert.deepEqual(rows.slice(1, 6).map((r) => r[1]), ['Assistants', 'Backups and copies', 'Version', 'Other computers', 'Your login']);
-  assert.match(rows[6]![1]!, /^Remove BrainAI from this /);
+  assert.equal(rows[6]![1], 'Language');
+  assert.match(rows[7]![1]!, /^Remove BrainAI from this /);
   assert.equal(rows[2]![2], '● Backups: all fine · 14:30');
   assert.equal(rows[5]![2], '1 browser signed in');
   assert.match(body, /<section id="remove" class="panel danger-zone">[\s\S]*href="\/settings\/remove"/);
@@ -96,7 +98,7 @@ test("the folder the window's picker chose fills the box, absolute paths only, a
   assert.match(picked, /id="backup-copy-folder" name="folder" value="\/Volumes\/Backup Drive\/&quot;x&quot;&lt;b&gt;"/);
   assert.doesNotMatch(await (await f('/settings?folder=relative/path')).text(), /value="relative/);
   assert.equal(existsSync(join(dir, 'backup-copy.json')), false);
-  assert.match(await (await f('/app/choose-folder')).text(), /BrainAI's own window/);
+  assert.match(decodeEntities((await (await f('/app/choose-folder')).text())), /BrainAI's own window/);
 });
 
 test('a server keeps its off-site, git and Markdown rows and offers no Back up now', async (t) => {

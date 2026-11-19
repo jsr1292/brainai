@@ -1,3 +1,4 @@
+import type { Say } from '../i18n/errors.js';
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
 import { looksLikeInstruction } from '../memory/instructionLike.js';
@@ -26,19 +27,24 @@ const MAX_REMOTES = 5;
 export const MAX_NICKNAMES = 8;
 const NICKNAME_CHARS = [2, 40] as const;
 
-const invalid = (message: string) => new ProjectError('invalid', message);
+const invalid = (message: string, say?: Say) => new ProjectError('invalid', message, say);
 
-function checkNoSecret(field: string, s: string): void {
+const SECRET_KEYS = {
+  'one-liner': 'err.project.secret.oneLiner', folder: 'err.project.secret.folder', URL: 'err.project.secret.url',
+  place: 'err.project.secret.place', nickname: 'err.project.secret.nickname',
+} as const;
+
+function checkNoSecret(field: keyof typeof SECRET_KEYS, s: string): void {
   const reason = looksLikeSecret(s);
-  if (reason) throw invalid(`The ${field} looks like it contains a secret (${reason}). Secrets are never stored.`);
+  if (reason) throw invalid(`The ${field} looks like it contains a secret (${reason}). Secrets are never stored.`, { key: SECRET_KEYS[field], params: { reason } });
 }
 
 function checkOneLiner(v: string | null): string | null {
   if (v === null) return null;
   const s = v.trim();
   if (s === '') return null;
-  if (/[\r\n]/.test(s)) throw invalid('The one-liner must be a single line');
-  if (s.length > MAX_ONE_LINER) throw invalid(`The one-liner is ${s.length} characters; the limit is ${MAX_ONE_LINER}`);
+  if (/[\r\n]/.test(s)) throw invalid('The one-liner must be a single line', { key: 'err.project.oneLinerLines' });
+  if (s.length > MAX_ONE_LINER) throw invalid(`The one-liner is ${s.length} characters; the limit is ${MAX_ONE_LINER}`, { key: 'err.project.oneLinerLong', params: { length: s.length, max: MAX_ONE_LINER } });
   checkNoSecret('one-liner', s);
   return s;
 }
@@ -59,7 +65,7 @@ function checkFolder(v: string | null): string | null {
   if (v === null || v.trim() === '') return null;
   const s = v.trim();
   if (s.length > MAX_FOLDER || !FOLDER_RE.test(s) || s.includes('..')) {
-    throw invalid(`The folder is a folder name inside ~/Projects: letters, digits, spaces, dots, hyphens and underscores, at most ${MAX_FOLDER} characters`);
+    throw invalid(`The folder is a folder name inside ~/Projects: letters, digits, spaces, dots, hyphens and underscores, at most ${MAX_FOLDER} characters`, { key: 'err.project.folderShape', params: { max: MAX_FOLDER } });
   }
   checkNoSecret('folder', s);
   return s;
@@ -68,7 +74,7 @@ function checkFolder(v: string | null): string | null {
 function checkUrl(v: string | null): string | null {
   if (v === null || v.trim() === '') return null;
   const s = v.trim();
-  if (s.length > MAX_URL || !/^https?:\/\/[^\s]+$/i.test(s)) throw invalid('The URL must start with https:// or http://');
+  if (s.length > MAX_URL || !/^https?:\/\/[^\s]+$/i.test(s)) throw invalid('The URL must start with https:// or http://', { key: 'err.project.urlShape' });
   checkNoSecret('URL', s);
   return s;
 }
@@ -81,7 +87,7 @@ function checkPlaces(v: string | readonly string[]): string[] {
 
 function checkRemotes(v: string[]): string[] {
   if (v.length > MAX_REMOTES || v.some((r) => typeof r !== 'string' || r.length === 0 || r.length > MAX_URL || /\s/.test(r))) {
-    throw invalid(`At most ${MAX_REMOTES} git remotes, each without spaces`);
+    throw invalid(`At most ${MAX_REMOTES} git remotes, each without spaces`, { key: 'err.project.remotesMax', params: { max: MAX_REMOTES } });
   }
   return [...new Set(v)];
 }
@@ -101,7 +107,7 @@ export class ProjectStore {
 
   private mustGet(name: string): Project {
     const p = this.get(name);
-    if (!p) throw new ProjectError('not_found', `No project ${name}`);
+    if (!p) throw new ProjectError('not_found', `No project ${name}`, { key: 'err.project.notFound', params: { name } });
     return p;
   }
 
@@ -110,10 +116,10 @@ export class ProjectStore {
   }
 
   create(name: string, init: { state: ProjectStateName; oneLiner?: string | null; area?: Area | null }, by: string): Project {
-    if (this.get(name)) throw invalid(`A project named ${name} already exists`);
-    if (!STATES.includes(init.state)) throw invalid(`state must be one of: ${STATES.join(', ')}`);
+    if (this.get(name)) throw invalid(`A project named ${name} already exists`, { key: 'err.project.exists', params: { name } });
+    if (!STATES.includes(init.state)) throw invalid(`state must be one of: ${STATES.join(', ')}`, { key: 'err.project.stateOneOf', params: { states: STATES.join(', ') } });
     const area = init.area ?? null;
-    if (area !== null && !AREAS.includes(area)) throw invalid(`area must be one of: ${AREAS.join(', ')}`);
+    if (area !== null && !AREAS.includes(area)) throw invalid(`area must be one of: ${AREAS.join(', ')}`, { key: 'err.project.areaOneOf', params: { areas: AREAS.join(', ') } });
     const t = this.ts();
     this.db.prepare(`INSERT INTO projects(name, one_liner, area, state, state_changed_at, created_at, created_by, updated_at, updated_by)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(name, checkOneLiner(init.oneLiner ?? null), area, init.state, t, t, by, t, by);
@@ -123,7 +129,7 @@ export class ProjectStore {
   /** Fields left out stay as they are; null clears one. */
   setInfo(name: string, info: { oneLiner?: string | null; area?: Area | null; folder?: string | null; remotes?: string[]; url?: string | null; runsOn?: string | readonly string[]; nicknames?: string | readonly string[] }, by: string): Project {
     const p = this.mustGet(name);
-    if (info.area !== undefined && info.area !== null && !AREAS.includes(info.area)) throw invalid(`area must be one of: ${AREAS.join(', ')}`);
+    if (info.area !== undefined && info.area !== null && !AREAS.includes(info.area)) throw invalid(`area must be one of: ${AREAS.join(', ')}`, { key: 'err.project.areaOneOf', params: { areas: AREAS.join(', ') } });
     const next = {
       oneLiner: info.oneLiner === undefined ? p.oneLiner : checkOneLiner(info.oneLiner),
       area: info.area === undefined ? p.area : info.area,
@@ -152,21 +158,21 @@ export class ProjectStore {
     for (const entry of raw) {
       const n = String(entry).trim().replace(/\s+/g, ' ');
       if (n === '' || out.some((o) => words(o) === words(n))) continue;
-      if (n.length < NICKNAME_CHARS[0] || n.length > NICKNAME_CHARS[1] || words(n).trim() === '') throw invalid(`Each nickname is ${NICKNAME_CHARS[0]} to ${NICKNAME_CHARS[1]} characters`);
-      if (n.includes(',')) throw invalid(`A nickname holds no comma: ${JSON.stringify(n)}`);
+      if (n.length < NICKNAME_CHARS[0] || n.length > NICKNAME_CHARS[1] || words(n).trim() === '') throw invalid(`Each nickname is ${NICKNAME_CHARS[0]} to ${NICKNAME_CHARS[1]} characters`, { key: 'err.project.nickLength', params: { min: NICKNAME_CHARS[0], max: NICKNAME_CHARS[1] } });
+      if (n.includes(',')) throw invalid(`A nickname holds no comma: ${JSON.stringify(n)}`, { key: 'err.project.nickComma', params: { nickname: JSON.stringify(n) } });
       const kept = words(n).replace(/ /g, '');
       if (kept.length !== n.normalize('NFD').replace(/\p{M}/gu, '').replace(/[^\p{L}\p{N}]/gu, '').length) {
-        throw invalid(`A nickname has only letters and digits (accents allowed) besides spaces and punctuation: ${JSON.stringify(n)}`);
+        throw invalid(`A nickname has only letters and digits (accents allowed) besides spaces and punctuation: ${JSON.stringify(n)}`, { key: 'err.project.nickChars', params: { nickname: JSON.stringify(n) } });
       }
       if (words(n).trim().split(' ').filter((w) => !STOPWORDS.has(w)).join('').length < 4) {
-        throw invalid(`The nickname ${JSON.stringify(n)} is too generic: it would match questions about anything. Use a name only this project goes by.`);
+        throw invalid(`The nickname ${JSON.stringify(n)} is too generic: it would match questions about anything. Use a name only this project goes by.`, { key: 'err.project.nickGeneric', params: { nickname: JSON.stringify(n) } });
       }
       const reason = looksLikeInstruction(n);
-      if (reason) throw invalid(`The nickname ${JSON.stringify(n)} reads like an instruction to AI assistants (${reason}). Use the name people call the project.`);
+      if (reason) throw invalid(`The nickname ${JSON.stringify(n)} reads like an instruction to AI assistants (${reason}). Use the name people call the project.`, { key: 'err.project.nickInstruction', params: { nickname: JSON.stringify(n), reason } });
       checkNoSecret('nickname', n);
       out.push(n);
     }
-    if (out.length > MAX_NICKNAMES) throw invalid(`At most ${MAX_NICKNAMES} nicknames`);
+    if (out.length > MAX_NICKNAMES) throw invalid(`At most ${MAX_NICKNAMES} nicknames`, { key: 'err.project.nickMax', params: { max: MAX_NICKNAMES } });
     const taken = new Map<string, string>();
     for (const p of this.list()) {
       if (p.name === project) continue;
@@ -178,7 +184,7 @@ export class ProjectStore {
     }
     for (const n of out) {
       const other = taken.get(words(n));
-      if (other !== undefined) throw invalid(`The nickname ${JSON.stringify(n)} is already ${other}'s name or nickname: each nickname names one project.`);
+      if (other !== undefined) throw invalid(`The nickname ${JSON.stringify(n)} is already ${other}'s name or nickname: each nickname names one project.`, { key: 'err.project.nickTaken', params: { nickname: JSON.stringify(n), other } });
     }
     return out;
   }
@@ -191,7 +197,7 @@ export class ProjectStore {
   /** Leaving open also takes the project off On the go. */
   setState(name: string, state: ProjectStateName, by: string): Project {
     const p = this.mustGet(name);
-    if (!STATES.includes(state)) throw invalid(`state must be one of: ${STATES.join(', ')}`);
+    if (!STATES.includes(state)) throw invalid(`state must be one of: ${STATES.join(', ')}`, { key: 'err.project.stateOneOf', params: { states: STATES.join(', ') } });
     const t = this.ts();
     this.db.prepare('UPDATE projects SET state = ?, state_changed_at = ?, pinned_at = ?, updated_at = ?, updated_by = ? WHERE name = ?')
       .run(state, state === p.state ? p.stateChangedAt : t, state === 'open' ? p.pinnedAt : null, t, by, name);
@@ -202,9 +208,9 @@ export class ProjectStore {
     return this.db.transaction(() => {
       const p = this.mustGet(name);
       if (p.pinnedAt !== null) return p;
-      if (p.state !== 'open') throw invalid('Only an open project can be on the go: reopen it first');
+      if (p.state !== 'open') throw invalid('Only an open project can be on the go: reopen it first', { key: 'err.project.onGoOpen' });
       const pinned = (this.db.prepare('SELECT count(*) AS n FROM projects WHERE pinned_at IS NOT NULL').get() as { n: number }).n;
-      if (pinned >= MAX_PINNED) throw new ProjectError('pin_limit', `On the go holds ${MAX_PINNED} projects: unpin one first`);
+      if (pinned >= MAX_PINNED) throw new ProjectError('pin_limit', `On the go holds ${MAX_PINNED} projects: unpin one first`, { key: 'err.project.pinLimit', params: { max: MAX_PINNED } });
       const t = this.ts();
       this.db.prepare('UPDATE projects SET pinned_at = ?, updated_at = ?, updated_by = ? WHERE name = ?').run(t, t, by, name);
       return this.mustGet(name);

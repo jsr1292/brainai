@@ -15,6 +15,7 @@ import { makeSavedCopy, type SaveDeps } from '../saved/savedCopy.js';
 import type { AppDeps } from './app.js';
 import { codeLock, requireOwner } from './authRoutes.js';
 import { page } from './html.js';
+import { t } from '../i18n/core.js';
 import { rateLimitKey } from './clientIp.js';
 import { revealCommand } from './moveRoutes.js';
 import { savedCodePage, savedDone, savedPage } from './savedViews.js';
@@ -69,11 +70,11 @@ function appRoutes(d: AppDeps, router: Router, owner: RequestHandler): Router {
   const here: RequestHandler = (req, _res, next) => (viaDoor(req) ? next('router') : next());
   const revealIn = platformOf(d) === 'win32' ? 'Explorer' as const : 'Finder' as const;
   let last: string | null = null;
-  const chrome = { nav: true, tab: null, back: { href: '/settings', label: 'Settings' } } as const;
+  const chrome = { nav: true, tab: null, back: { href: '/settings', labelKey: 'shell.nav.settings' } } as const;
 
   router.get('/settings/save', here, owner, (_req, res) => {
     const docs = documentsOf(d);
-    res.type('html').send(page('Save a copy of everything', savedPage({ documents: docs.path, synced: docs.synced, home: homeOf(d), said: null }), chrome));
+    res.type('html').send(page(t('data.saved.title'), savedPage({ documents: docs.path, synced: docs.synced, home: homeOf(d), said: null }), chrome));
   });
 
   router.post('/settings/save', here, owner, async (req, res) => {
@@ -81,11 +82,11 @@ function appRoutes(d: AppDeps, router: Router, owner: RequestHandler): Router {
     try {
       const r = await makeSavedCopy(saveDeps(d), parentFor(where, d), d.now(), savedChecklist(d, 'app'));
       last = r.folder;
-      res.type('html').send(page('Saved', savedDone({ folder: r.folder, facts: r.facts, pages: r.pages, revealIn }), chrome));
+      res.type('html').send(page(t('data.done.title'), savedDone({ folder: r.folder, facts: r.facts, pages: r.pages, revealIn }), chrome));
     } catch (e) {
       console.error('saving a copy failed:', e);
       const docs = documentsOf(d);
-      res.status(500).type('html').send(page('Save a copy of everything', savedPage({ documents: docs.path, synced: docs.synced, home: homeOf(d), said: `The copy could not be saved: ${e instanceof Error ? e.message : String(e)}` }), chrome));
+      res.status(500).type('html').send(page(t('data.saved.title'), savedPage({ documents: docs.path, synced: docs.synced, home: homeOf(d), said: t('data.saved.failed', { reason: e instanceof Error ? e.message : String(e) }) }), chrome));
     }
   });
 
@@ -100,9 +101,9 @@ function appRoutes(d: AppDeps, router: Router, owner: RequestHandler): Router {
 }
 
 function serverRoutes(d: AppDeps, router: Router, owner: RequestHandler): Router {
-  const chrome = { nav: true, tab: null, back: { href: '/settings', label: 'Settings' } } as const;
+  const chrome = { nav: true, tab: null, back: { href: '/settings', labelKey: 'shell.nav.settings' } } as const;
   const ask = (res: Parameters<RequestHandler>[1], status: number, error: string | null) =>
-    res.status(status).type('html').send(page('Save a copy of everything', savedCodePage({ error }), chrome));
+    res.status(status).type('html').send(page(t('data.saved.title'), savedCodePage({ error }), chrome));
 
   router.get('/settings/save', owner, (_req, res) => ask(res, 200, null));
 
@@ -119,9 +120,9 @@ function serverRoutes(d: AppDeps, router: Router, owner: RequestHandler): Router
     });
     if (outcome.kind === 'blocked') {
       res.set('Retry-After', String(outcome.retryAfterSec));
-      return ask(res, 429, `Too many attempts. Try again in ${Math.max(1, Math.ceil(outcome.retryAfterSec / 60))} minutes.`);
+      return ask(res, 429, t('data.saved.tooMany', { count: Math.max(1, Math.ceil(outcome.retryAfterSec / 60)) }));
     }
-    if (outcome.kind === 'failed') return ask(res, 200, "That code didn't work.");
+    if (outcome.kind === 'failed') return ask(res, 200, t('data.saved.badCode'));
     // Outside the data folder (makeSavedCopy refuses a folder inside it); the folder is private to this process.
     const tmp = mkdtempSync(join(tmpdir(), 'brainai-saved-tmp-'));
     const cleanup = () => rmSync(tmp, { recursive: true, force: true });
@@ -146,7 +147,7 @@ function serverRoutes(d: AppDeps, router: Router, owner: RequestHandler): Router
     } catch (e) {
       cleanup();
       console.error('saving a copy failed:', e);
-      if (!res.destroyed) ask(res, 500, `The copy could not be saved: ${e instanceof Error ? e.message : String(e)}`);
+      if (!res.destroyed) ask(res, 500, t('data.saved.failed', { reason: e instanceof Error ? e.message : String(e) }));
     }
   });
   return router;

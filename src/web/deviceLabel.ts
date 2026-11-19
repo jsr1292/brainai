@@ -1,9 +1,11 @@
+import { t } from '../i18n/core.js';
+
 const MAX_RAW = 60;
 
 /** A short, human label for a user agent ("iPhone · Safari"); the raw agent cut to 60 characters when nothing is recognised. */
 export function deviceLabel(userAgent: string | null): string {
   const ua = (userAgent ?? '').trim();
-  if (ua === '') return 'Unknown device';
+  if (ua === '') return t('settings.unknownDevice');
   const os =
     /iPhone/.test(ua) ? 'iPhone'
     : /iPad/.test(ua) ? 'iPad'

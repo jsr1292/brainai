@@ -1,6 +1,8 @@
 /** Settings › Move to a server (D5). */
 import { html, type SafeHtml } from './html.js';
-import { ThisComputer, thisComputer } from '../desktop/computer.js';
+import { t } from '../i18n/core.js';
+import { tHtml } from '../i18n/tHtml.js';
+import { ComputerName, computerName } from '../desktop/computer.js';
 
 export interface MoveView {
   said: string | null;
@@ -16,34 +18,34 @@ export interface MoveView {
 
 export function movePage(v: MoveView): SafeHtml {
   const file = v.file
-    ? html`<p><span class="ok">Ready ✓</span> <code>${v.file.name}</code> (${v.file.mb} MB, made ${v.file.made})</p>
-<p>It holds every memory, page and picture as they were when it was made, without your password or any app's sign-in. Copy it only to your server, then delete it here.</p>
+    ? html`<p><span class="ok">${t('data.move.ready')}</span> <code>${v.file.name}</code> (${tHtml('data.move.fileInfo', { mb: v.file.mb, made: v.file.made })})</p>
+<p>${t('data.move.holds')}</p>
 <div class="row-actions">
-<form method="post" action="/settings/move/show"><button type="submit" class="secondary">Show in ${v.revealIn}</button></form>
-<form method="post" action="/settings/move/file"><button type="submit" class="secondary">Make it again</button></form>
-<form method="post" action="/settings/move/file/delete"><button type="submit" class="secondary">Delete the moving file</button></form>
+<form method="post" action="/settings/move/show"><button type="submit" class="secondary">${t('data.show', { app: v.revealIn })}</button></form>
+<form method="post" action="/settings/move/file"><button type="submit" class="secondary">${t('data.move.again')}</button></form>
+<form method="post" action="/settings/move/file/delete"><button type="submit" class="secondary">${t('data.move.delete')}</button></form>
 </div>`
-    : html`<p>One file with every memory, page and picture, and none of your sign-in details. It stays in BrainAI's data folder on this computer until you copy it.</p>
-<form method="post" action="/settings/move/file"><button type="submit" class="primary">Make the moving file</button></form>`;
+    : html`<p>${t('data.move.oneFile')}</p>
+<form method="post" action="/settings/move/file"><button type="submit" class="primary">${t('data.move.make')}</button></form>`;
   return html`<div class="narrow">
-<h1>Move to a server</h1>
-<p class="lede">Keep BrainAI running all the time, on a home server or a rented one, with every memory you have here.</p>
+<h1>${t('data.move.title')}</h1>
+<p class="lede">${t('data.move.lede')}</p>
 ${v.said ? html`<p class="notice" role="status">${v.said}</p>` : ''}
-${v.missingPictures > 0 ? html`<p class="notice">${v.missingPictures === 1 ? '1 picture is' : `${v.missingPictures} pictures are`} missing on ${thisComputer()} and cannot come along.</p>` : ''}
+${v.missingPictures > 0 ? html`<p class="notice">${t('data.move.missing', { count: v.missingPictures, computer: computerName() })}</p>` : ''}
 <ol class="setup-steps">
-<li><h2>Make the moving file</h2>${file}</li>
-<li><h2>Set up the server</h2><p>Follow "Moving from the app" in <a href="https://github.com/jsr1292/brainai/blob/main/docs/RUNBOOK.md#4-moving-from-the-app" target="_blank" rel="noopener">the runbook</a> (<code>docs/RUNBOOK.md</code> in BrainAI's repository): set the server up, unpack the file there, set a password and an authenticator, and start it. Then connect each app from the server's own Settings pages.</p></li>
-<li><h2>It's moved</h2>${v.movedTo
-    ? html`<p><span class="ok">Moved ✓</span> This brain now lives at <a href="${v.movedTo.origin}">${v.movedTo.origin}</a>. Apps that still use ${thisComputer()} are told to connect there.</p>
+<li><h2>${t('data.move.step1')}</h2>${file}</li>
+<li><h2>${t('data.move.step2')}</h2><p>${tHtml('data.move.runbook', { link: html`<a href="https://github.com/jsr1292/brainai/blob/main/docs/RUNBOOK.md#4-moving-from-the-app" target="_blank" rel="noopener">${t('data.move.runbookLink')}</a>`, path: html`<code>docs/RUNBOOK.md</code>` })}</p></li>
+<li><h2>${t('data.move.step3')}</h2>${v.movedTo
+    ? html`<p><span class="ok">${t('data.move.moved')}</span> ${tHtml('data.move.livesAt', { link: html`<a href="${v.movedTo.origin}">${v.movedTo.origin}</a>`, computer: computerName() })}</p>
 <div class="row-actions">
-<form method="post" action="/settings/move/remove"><button type="submit" class="primary">Remove BrainAI from ${thisComputer()}</button></form>
-<form method="post" action="/settings/move/undo"><button type="submit" class="secondary">Not moved after all</button></form>
+<form method="post" action="/settings/move/remove"><button type="submit" class="primary">${t('data.move.removeFrom', { computer: computerName() })}</button></form>
+<form method="post" action="/settings/move/undo"><button type="submit" class="secondary">${t('data.move.undo')}</button></form>
 </div>
-<p class="meta">Remove BrainAI from ${thisComputer()} saves a copy of everything first, then disconnects your tools and removes the app and its data.</p>`
-    : html`<p>Once the server runs with your memories, give its address. ${ThisComputer()} then stops answering its apps and tells them where the brain lives, and Reach from phone and web is turned off.</p>
+<p class="meta">${t('data.move.removeNote', { computer: computerName() })}</p>`
+    : html`<p>${t('data.move.giveAddress', { Computer: ComputerName() })}</p>
 <form method="post" action="/settings/move/done" class="stack">
-  <label for="address">The server's address</label><input id="address" name="address" type="url" placeholder="https://brain.example.com" required>
-  <p><button type="submit" class="primary"${v.file ? '' : ' disabled'}>It's moved</button></p>${v.file ? '' : html`\n  <p class="meta">Make the moving file first.</p>`}
+  <label for="address">${t('data.move.address')}</label><input id="address" name="address" type="url" placeholder="https://brain.example.com" required>
+  <p><button type="submit" class="primary"${v.file ? '' : ' disabled'}>${t('data.move.itsMoved')}</button></p>${v.file ? '' : html`\n  <p class="meta">${t('data.move.makeFirst')}</p>`}
 </form>`}</li>
 </ol>
 </div>`;

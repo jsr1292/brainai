@@ -8,7 +8,9 @@ import { execFile, spawn } from 'node:child_process';
 import { accessSync, chmodSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { findBlock, putBlock, removeBlock, strayBrain } from './rulesBlock.js';
-import { thisComputer } from './computer.js';
+import { computerName } from './computer.js';
+import { t, tKey } from '../i18n/core.js';
+import type { Say } from '../i18n/errors.js';
 import { BRIDGE_KEY_FILE } from './claudeBridge.js';
 import { hasHooks, hooksState, installHooks, removeToolHooks } from './hooksInstall.js';
 
@@ -47,6 +49,8 @@ export interface ToolState {
   state: 'not-connected' | 'connected' | 'other-brainai';
   /** For other-brainai: what it points at now. */
   detail?: string;
+  /** `detail` as a catalog key (English `detail` is stored and sent to assistants' logs; a screen shows `detailText(state)`). */
+  detailSay?: Say;
   /** The one step after Connect: how the tool signs in. */
   signIn: string;
   /** For a connected tool: it has signed in (an OAuth grant exists). false: added, one step left. Filled in by the web layer. */
@@ -544,19 +548,30 @@ async function look(tool: Tool, env: ToolEnv): Promise<Look> {
   return { server: s, block, stray };
 }
 
-function stateFrom(tool: Tool, env: ToolEnv, l: Look): Pick<ToolState, 'state' | 'detail'> {
+function stateFrom(tool: Tool, env: ToolEnv, l: Look): Pick<ToolState, 'state' | 'detail' | 'detailSay'> {
   const ours = hostOf(env.mcpUrl);
   if (l.server === OWN_STALE) return { state: 'not-connected', detail: NEEDS_AGAIN };
   if (l.server !== null && l.server !== env.mcpUrl) {
     if (tool.otherDetail && l.server !== NO_ADDRESS) return { state: 'other-brainai', detail: tool.otherDetail(l.server) };
-    return { state: 'other-brainai', detail: l.server === NO_ADDRESS ? `it has a brainai entry that is not this one (${NO_ADDRESS})` : `its brainai server points at ${hostOf(l.server)}` };
+    if (l.server === NO_ADDRESS) return { state: 'other-brainai', detail: `it has a brainai entry that is not this one (${NO_ADDRESS})`, detailSay: { key: 'tools.detail.noAddress' } };
+    return { state: 'other-brainai', detail: `its brainai server points at ${hostOf(l.server)}`, detailSay: { key: 'tools.detail.points', params: { host: hostOf(l.server) } } };
   }
   // A block that does not name this BrainAI exactly (another host, or wording BrainAI cannot read) belongs to another brain.
-  if (l.block && l.block.host !== ours) return { state: 'other-brainai', detail: `its rules are for ${l.block.host ? `the BrainAI at ${l.block.host}` : 'another brain'}` };
-  if (l.stray !== null) return { state: 'other-brainai', detail: `its instructions describe another brain${l.stray ? ` (${l.stray})` : ''}` };
+  if (l.block && l.block.host !== ours) {
+    return { state: 'other-brainai', detail: `its rules are for ${l.block.host ? `the BrainAI at ${l.block.host}` : 'another brain'}`, detailSay: l.block.host ? { key: 'tools.detail.rulesHost', params: { host: l.block.host } } : { key: 'tools.detail.rulesOther' } };
+  }
+  if (l.stray !== null) {
+    return { state: 'other-brainai', detail: `its instructions describe another brain${l.stray ? ` (${l.stray})` : ''}`, detailSay: l.stray ? { key: 'tools.detail.describesWith', params: { what: l.stray } } : { key: 'tools.detail.describes' } };
+  }
   const rulesOk = tool.rulesFile(env) === null || l.block?.host === ours;
   return { state: l.server === env.mcpUrl && rulesOk ? 'connected' : 'not-connected' };
 }
+
+/** What an "other BrainAI" tool points at, in the screen's language (a detail without a key shows as stored). */
+export const detailText = (s: Pick<ToolState, 'detail' | 'detailSay'>): string => (s.detailSay ? tKey(s.detailSay.key, s.detailSay.params) : s.detail ?? '');
+
+/** A tool's name on a screen: the desktop app's own name is translated, the others are product names. Stored and assistant-bound text keeps `tool.name`. */
+export const toolName = (tool: { id: string; name: string }): string => (tool.id === 'claude-desktop' ? t('tools.name.claude-desktop') : tool.name);
 
 /** Each look starts a CLI (slow on Windows), so the tools are looked at together; the list keeps the order of TOOLS. `tools` is a seam for tests. */
 export async function toolStates(env: ToolEnv, tools: Tool[] = TOOLS): Promise<ToolState[]> {
@@ -585,11 +600,11 @@ export function brainPluginInstalled(env: ToolEnv): boolean {
 
 export async function connect(id: ToolId, env: ToolEnv, opts: { replace?: boolean }): Promise<Outcome> {
   const tool = TOOLS.find((t) => t.id === id);
-  if (!tool || !tool.installed(env)) return { ok: false, reason: `${tool?.name ?? id} is not installed on ${thisComputer()}.` };
+  if (!tool || !tool.installed(env)) return { ok: false, reason: t('tools.notInstalled', { name: tool ? toolName(tool) : id, computer: computerName() }) };
   const blocked = tool.blocked?.(env);
   if (blocked) return { ok: false, reason: blocked };
   if (id === 'claude-code' && brainPluginInstalled(env)) {
-    return { ok: true, signIn: 'The BrainAI plugin is already installed in Claude Code, so nothing was added here: the plugin brings its own connection, save reminders and instructions. In Claude Code, type /mcp, choose brainai and Authenticate. To connect from here instead, uninstall the plugin first.' };
+    return { ok: true, signIn: t('tools.signIn.plugin') };
   }
   const l = await look(tool, env);
   if (l.refuse) return { ok: false, reason: l.refuse };
@@ -597,10 +612,10 @@ export async function connect(id: ToolId, env: ToolEnv, opts: { replace?: boolea
   const file = tool.rulesFile(env);
   // Brain wording outside the markers cannot be replaced safely: nobody can tell where it ends.
   if (l.stray !== null) {
-    return { ok: false, reason: `${tool.name} already uses another brain: ${s.detail}. BrainAI will not change wording it did not write: edit ${file} yourself (remove the other brain's lines), then press Connect.` };
+    return { ok: false, reason: t('tools.anotherBrain', { name: toolName(tool), detail: detailText(s), file: file ?? '' }) };
   }
   if (s.state === 'other-brainai' && !opts.replace) {
-    return { ok: false, reason: `${tool.name} already uses another BrainAI (${s.detail}). Press Replace to use this one instead.` };
+    return { ok: false, reason: t('tools.anotherBrainai', { name: toolName(tool), detail: detailText(s) }) };
   }
   let added = false;
   if (l.server !== env.mcpUrl) {
@@ -618,22 +633,22 @@ export async function connect(id: ToolId, env: ToolEnv, opts: { replace?: boolea
       writeWithBackup(file, putBlock(read(file) ?? '', env.rules(tool.slug)));
     } catch (e) {
       if (added) await tool.remove(env);
-      return { ok: false, reason: `BrainAI could not write ${file}: ${(e as Error).message}` };
+      return { ok: false, reason: t('tools.couldNotWrite', { file: file ?? '', error: (e as Error).message }) };
     }
   }
   tool.after?.(env);
   const hooksNote = installHooks(tool.id, env);
-  return { ok: true, signIn: tool.signIn, ...(hooksNote ? { hooksNote } : {}) };
+  return { ok: true, signIn: t(`tools.signIn.${tool.id}`), ...(hooksNote ? { hooksNote } : {}) };
 }
 
 export async function disconnect(id: ToolId, env: ToolEnv): Promise<Outcome> {
   const tool = TOOLS.find((t) => t.id === id);
-  if (!tool || !tool.installed(env)) return { ok: false, reason: `${tool?.name ?? id} is not installed on ${thisComputer()}.` };
+  if (!tool || !tool.installed(env)) return { ok: false, reason: t('tools.notInstalled', { name: tool ? toolName(tool) : id, computer: computerName() }) };
   const l = await look(tool, env);
   if (l.refuse) return { ok: false, reason: l.refuse };
   if (stateFrom(tool, env, l).state === 'other-brainai') {
     tool.cleanup?.(env); // our own key is ours whatever the entry says; the entry itself is left alone
-    return { ok: false, reason: `${tool.name} uses another BrainAI: BrainAI leaves it as it is.` };
+    return { ok: false, reason: t('tools.usesAnother', { name: toolName(tool) }) };
   }
   if (l.server === env.mcpUrl || l.server === OWN_STALE) {
     const removed = await tool.remove(env);
@@ -645,7 +660,7 @@ export async function disconnect(id: ToolId, env: ToolEnv): Promise<Outcome> {
   try {
     if (file && text !== null && findBlock(text)?.host === hostOf(env.mcpUrl)) writeWithBackup(file, removeBlock(text));
   } catch (e) {
-    return { ok: false, reason: `BrainAI could not write ${file}: ${(e as Error).message}` };
+    return { ok: false, reason: t('tools.couldNotWrite', { file: file ?? '', error: (e as Error).message }) };
   }
   // The desktop app's key is a grant that cleanup already revoked; every other tool signed in with OAuth.
   const ended = tool.id === 'claude-desktop' ? 0 : (env.endSignIns?.(tool.name) ?? 0);
@@ -743,9 +758,9 @@ export function dropLeftoverKey(id: ToolId, env: ToolEnv): void {
 /** Adds the save reminders to a tool that is already connected (the Tools page's "Add save reminders"). */
 export async function addReminders(id: ToolId, env: ToolEnv): Promise<Outcome> {
   const tool = TOOLS.find((t) => t.id === id);
-  if (!tool || !tool.installed(env)) return { ok: false, reason: `${tool?.name ?? id} is not installed on ${thisComputer()}.` };
-  if (!hasHooks(id)) return { ok: false, reason: `${tool.name} has no hooks BrainAI can use.` };
-  if (!env.hooksDir) return { ok: false, reason: 'This BrainAI has no hook scripts to install.' };
+  if (!tool || !tool.installed(env)) return { ok: false, reason: t('tools.notInstalled', { name: tool ? toolName(tool) : id, computer: computerName() }) };
+  if (!hasHooks(id)) return { ok: false, reason: t('tools.noHooks', { name: toolName(tool) }) };
+  if (!env.hooksDir) return { ok: false, reason: t('tools.noHookScripts') };
   const note = installHooks(id, env);
   return note && !/trust the new hooks/.test(note) ? { ok: false, reason: note } : { ok: true, signIn: '', ...(note ? { hooksNote: note } : {}) };
 }

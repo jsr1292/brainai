@@ -1,8 +1,9 @@
-import { CHECK_LABELS, CHECK_STATUSES, MAX_NOTE, STATUS_LABELS, type CheckStatus, type ShownStatus } from '../learning/types.js';
+import { CHECK_STATUSES, MAX_NOTE, type CheckArea, type CheckStatus, type ShownStatus } from '../learning/types.js';
+import { t, tHtml, tKey } from '../i18n/index.js';
 import type { Health } from '../health/health.js';
-import type { AreaSection, Home, HomeSuggestion, ProjectCard, ProjectDetail } from '../projects/service.js';
-import { localDay, longDate } from '../timezone.js';
-import { AREAS, AREA_LABELS, type Project } from '../projects/types.js';
+import type { AreaSection, Home, HomeSuggestion, PanelDiscussion, ProjectCard, ProjectDetail } from '../projects/service.js';
+import { localDay, longDate, shortDay } from '../timezone.js';
+import { AREAS, type Area, type Project } from '../projects/types.js';
 import { withFrom } from './back.js';
 import { errorBlock, plural, writer } from './dashboardViews.js';
 import { replacedFold } from './factViews.js';
@@ -33,21 +34,27 @@ function waitChip(c: ProjectCard, now: Date): SafeHtml {
   const today = day(now);
   if (c.late > 0 && c.soonestDue) return dueChip(c.soonestDue, today);
   if (c.soonestDue && c.soonestDue >= today && daysBetween(today, c.soonestDue) <= 7) return dueChip(c.soonestDue, today);
-  return c.waiting > 0 ? html`<span class="chip you">${c.waiting} for you</span>` : html``;
+  return c.waiting > 0 ? html`<span class="chip you">${t('projects.forCount', { count: c.waiting })}</span>` : html``;
 }
 
 /** An area's hollow ring (writers get a filled dot). Unsorted is a grey ring. */
 export const areaRing = (area: string | null): SafeHtml => html`<span class="ring a-${area ?? 'unsorted'}" aria-hidden="true"></span>`;
 const areaDot = (p: Project): SafeHtml => areaRing(p.area);
-const areaName = (p: Project): string => (p.area ? AREA_LABELS[p.area] : 'Unsorted');
+export const placeName = (area: Area | null): string => (area ? tKey(`projects.place.${area}`) : t('projects.place.unsorted'));
+const areaName = (p: Project): string => placeName(p.area);
+/** The five areas' words (name, developer term, why) and the status words, in the owner's language. */
+export const checkName = (a: CheckArea): string => tKey(`projects.area.${a}.name`);
+export const checkTerm = (a: CheckArea): string => tKey(`projects.area.${a}.term`);
+export const checkWhy = (a: CheckArea): string => tKey(`projects.area.${a}.why`);
+export const statusWord = (s: ShownStatus): string => tKey(`projects.status.${s}`);
 
 /** The state dot: green while it is being worked on, amber when something waits on the owner, grey when quiet. */
-const DOT_LABEL: Record<ProjectCard['dot'], string> = { on: 'being worked on', wait: 'waiting on you', quiet: 'quiet' };
-const stateDot = (c: ProjectCard): SafeHtml => html`<span class="pdot d-${c.dot}" role="img" aria-label="${DOT_LABEL[c.dot]}" title="${DOT_LABEL[c.dot]}"></span>`;
+const dotLabel = (dot: ProjectCard['dot']): string => tKey(`projects.dot.${dot}`);
+const stateDot = (c: ProjectCard): SafeHtml => html`<span class="pdot d-${c.dot}" role="img" aria-label="${dotLabel(c.dot)}" title="${dotLabel(c.dot)}"></span>`;
 /** The one learning mark on the home page: work that exists only on the Mac (spec 2026-11-11). */
 const safeMark = (c: ProjectCard): SafeHtml => {
   if (!c.safeWarning) return html``;
-  const why = c.notPushed ? 'Work not safe: not pushed' : 'Work not safe: not in git';
+  const why = c.notPushed ? t('projects.notSafe.notPushed') : t('projects.notSafe.notGit');
   return html`<span class="pwarn" role="img" aria-label="${why}" title="${why}">!</span>`;
 };
 
@@ -67,20 +74,19 @@ function tile(c: ProjectCard, now: Date, selected: string | undefined): SafeHtml
  */
 function row(c: ProjectCard, now: Date, selected: string | undefined, one = false): SafeHtml {
   const p = c.project;
-  const note = c.newActivity ? html`<span class="row-note">new activity</span>`
-    : c.quietDays !== null ? html`<span class="row-note">quiet · ${c.quietDays < 21 ? `${c.quietDays} days` : `${Math.floor(c.quietDays / 7)} weeks`}</span>` : html``;
+  const note = c.newActivity ? html`<span class="row-note">${t('projects.newActivity')}</span>`
+    : c.quietDays !== null ? html`<span class="row-note">${c.quietDays < 21 ? t('projects.quietDays', { count: c.quietDays }) : t('projects.quietWeeks', { count: Math.floor(c.quietDays / 7) })}</span>` : html``;
   const wait = waitChip(c, now);
   // The waiting chip and the work-not-safe mark side by side: the mark is the one signal never dropped.
   const chip = html`${wait}${safeMark(c)}`;
-  return html`<li><a class="row prow${selected === p.name ? ' is-selected' : ''}" href="${panelHref(p.name)}"${selected === p.name ? html` aria-current="true"` : ''}>${stateDot(c)}<span class="prow-name">${p.name}</span>${one ? html`<span class="prow-one" hidden>${p.oneLiner ?? ''}</span>` : ''}<span class="prow-next">${c.next ?? p.oneLiner ?? (c.roadmap ? '' : html`<span class="quiet">no roadmap yet</span>`)}${note}</span><span class="prow-chip">${chip}</span><span class="prow-when">${pastLabel(c.lastTouched, now)}</span></a></li>`;
+  return html`<li><a class="row prow${selected === p.name ? ' is-selected' : ''}" href="${panelHref(p.name)}"${selected === p.name ? html` aria-current="true"` : ''}>${stateDot(c)}<span class="prow-name">${p.name}</span>${one ? html`<span class="prow-one" hidden>${p.oneLiner ?? ''}</span>` : ''}<span class="prow-next">${c.next ?? p.oneLiner ?? (c.roadmap ? '' : html`<span class="quiet">${t('projects.noRoadmap')}</span>`)}${note}</span><span class="prow-chip">${chip}</span><span class="prow-when">${pastLabel(c.lastTouched, now)}</span></a></li>`;
 }
 
 /** A shelf's last line (desktop, 1920 px and up; hidden below): "N more" past the three names it shows, else "Open". */
 const shelfMore = (href: string, count: number): SafeHtml =>
-  html`<a class="shelf-more" href="${href}" hidden>${count > 3 ? `${count - 3} more` : 'Open'}<span class="chev"></span></a>`;
+  html`<a class="shelf-more" href="${href}" hidden>${count > 3 ? t('projects.shelf.more', { count: count - 3 }) : t('projects.shelf.open')}<span class="chev"></span></a>`;
 
 const AREA_KEY = (area: string | null): string => area ?? 'unsorted';
-const plainCount = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
 /**
  * The fold line under an area: "+3 quiet · 1 idea · 2 parked · 1 done" (only what there is), opening in place to their
@@ -89,23 +95,23 @@ const plainCount = (n: number, one: string, many = `${one}s`): string => `${n} $
 function areaFolds(sec: AreaSection, now: Date, selected: string | undefined): SafeHtml {
   const rest = [...sec.quiet, ...sec.ideas, ...sec.parked, ...sec.done];
   const parts = [
-    sec.quiet.length > 0 ? `+${sec.quiet.length} quiet` : null,
-    sec.ideas.length > 0 ? plainCount(sec.ideas.length, 'idea') : null,
-    sec.parked.length > 0 ? `${sec.parked.length} parked` : null,
-    sec.done.length > 0 ? `${sec.done.length} done` : null,
+    sec.quiet.length > 0 ? t('projects.fold.quiet', { count: sec.quiet.length }) : null,
+    sec.ideas.length > 0 ? t('projects.fold.ideas', { count: sec.ideas.length }) : null,
+    sec.parked.length > 0 ? t('projects.fold.parked', { count: sec.parked.length }) : null,
+    sec.done.length > 0 ? t('projects.fold.done', { count: sec.done.length }) : null,
   ].filter((x): x is string => x !== null);
   const fold = (label: string, cards: ProjectCard[]) => {
     const open = cards.some((c) => c.project.name === selected);
     return html`<li><details class="fold"${open ? html` open` : ''}><summary class="row nolead">${label}<span class="chev"></span></summary><ul class="fold-list">${cards.map((c) => row(c, now, selected))}</ul></details></li>`;
   };
   if (rest.length === 0 && sec.lifeAreas.length === 0) return html``;
-  return html`<ul class="group pfolds">${rest.length > 0 ? fold(parts.join(' · '), rest) : ''}${sec.lifeAreas.length > 0 ? fold(`Areas of life: ${sec.lifeAreas.map((c) => c.project.name).join(', ')}`, sec.lifeAreas) : ''}</ul>`;
+  return html`<ul class="group pfolds">${rest.length > 0 ? fold(parts.join(' · '), rest) : ''}${sec.lifeAreas.length > 0 ? fold(t('projects.fold.life', { names: sec.lifeAreas.map((c) => c.project.name).join(', ') }), sec.lifeAreas) : ''}</ul>`;
 }
 
 /** One area of the Projects page: its live projects as tiles (compact rows beside an open project), the rest folded. */
 function areaSection(sec: AreaSection, now: Date, selected: string | undefined, mode: ListMode): SafeHtml {
   const key = AREA_KEY(sec.area);
-  const label = sec.area ? AREA_LABELS[sec.area] : 'Unsorted';
+  const label = placeName(sec.area);
   const live = sec.live.length === 0 ? html``
     : mode === 'home' ? html`<ul class="pcards ptiles">${sec.live.map((c) => tile(c, now, selected))}</ul>`
     : html`<ul class="group prows">${sec.live.map((c) => row(c, now, selected))}</ul>`;
@@ -119,21 +125,21 @@ function areaSection(sec: AreaSection, now: Date, selected: string | undefined, 
  */
 function allDiscussions(items: { id: string; title: string }[], mode: ListMode): SafeHtml {
   const plain = mode === 'home';
-  return html`<li><a class="row nolead" href="/discussions"><span class="txt"><b>All discussions</b>${items.length > 0 ? html`<span class="n" hidden>${items.length}</span>` : ''}</span><span class="chev"></span></a>${plain && items.length > 0 ? html`<ul class="shelf-names" hidden>${items.slice(0, 3).map((d) => html`<li><a href="/discussions/${d.id}">${d.title}</a></li>`)}</ul>` : ''}${plain ? shelfMore('/discussions', items.length) : ''}</li>`;
+  return html`<li><a class="row nolead" href="/discussions"><span class="txt"><b>${t('projects.allDiscussions')}</b>${items.length > 0 ? html`<span class="n" hidden>${items.length}</span>` : ''}</span><span class="chev"></span></a>${plain && items.length > 0 ? html`<ul class="shelf-names" hidden>${items.slice(0, 3).map((d) => html`<li><a href="/discussions/${d.id}">${d.title}</a></li>`)}</ul>` : ''}${plain ? shelfMore('/discussions', items.length) : ''}</li>`;
 }
 
 function stateButtons(p: Project): SafeHtml {
   const to = (state: string, label: string) =>
     html`<form method="post" action="${action(p.name, 'state')}"><input type="hidden" name="state" value="${state}"><button type="submit" class="${state === 'archived' ? 'danger' : 'sm'}">${label}</button></form>`;
   const pin = p.state === 'open'
-    ? html`<form method="post" action="${action(p.name, p.pinnedAt ? 'unpin' : 'pin')}"><button type="submit" class="sm">${p.pinnedAt ? 'Unpin' : 'Pin to the top'}</button></form>`
+    ? html`<form method="post" action="${action(p.name, p.pinnedAt ? 'unpin' : 'pin')}"><button type="submit" class="sm">${p.pinnedAt ? t('projects.act.unpin') : t('projects.act.pin')}</button></form>`
     : html``;
   const byState: Record<Project['state'], SafeHtml> = {
-    idea: html`${to('open', 'Start it')}${to('archived', 'Archive')}`,
-    open: html`${pin}${to('parked', 'Park')}${to('done', 'Mark done')}${to('archived', 'Archive')}`,
-    parked: html`${to('open', 'Reopen')}${to('done', 'Mark done')}${to('archived', 'Archive')}`,
-    done: html`${to('open', 'Reopen')}${to('archived', 'Archive')}`,
-    archived: to('open', 'Reopen'),
+    idea: html`${to('open', t('projects.act.start'))}${to('archived', t('projects.act.archive'))}`,
+    open: html`${pin}${to('parked', t('projects.act.park'))}${to('done', t('projects.act.markDone'))}${to('archived', t('projects.act.archive'))}`,
+    parked: html`${to('open', t('projects.act.reopen'))}${to('done', t('projects.act.markDone'))}${to('archived', t('projects.act.archive'))}`,
+    done: html`${to('open', t('projects.act.reopen'))}${to('archived', t('projects.act.archive'))}`,
+    archived: to('open', t('projects.act.reopen')),
   };
   return html`<div class="panel-actions">${byState[p.state]}</div>`;
 }
@@ -144,7 +150,7 @@ function leftOff(text: string): SafeHtml {
   if (text.length <= LEFT_OFF_SHOWN + 40) return html`<p class="leftoff">${text}</p>`;
   const cut = text.slice(0, LEFT_OFF_SHOWN);
   const short = `${cut.slice(0, Math.max(cut.lastIndexOf(' '), LEFT_OFF_SHOWN - 40))}…`;
-  return html`<details class="leftoff-more"><summary><span class="leftoff">${short}</span><span class="read-all">Read all</span></summary><p class="leftoff">${text}</p></details>`;
+  return html`<details class="leftoff-more"><summary><span class="leftoff">${short}</span><span class="read-all">${t('projects.readAll')}</span></summary><p class="leftoff">${text}</p></details>`;
 }
 
 /** A status as the owner reads it: a dot (or a dash for not needed) and its words. */
@@ -152,10 +158,10 @@ const areaStatus = (s: ShownStatus): SafeHtml =>
   s === 'not_needed' ? html`<span class="adash" aria-hidden="true">–</span>` : html`<span class="pdot a-st-${s}" aria-hidden="true"></span>`;
 
 /** The key to the area marks, drawn with the marks themselves (the panel's and the Five areas page's). */
-export const areaKey = (): SafeHtml => html`<p class="key area-key" aria-label="Key to the marks"><span><span class="pdot a-st-done" aria-hidden="true"></span> done</span><span><span class="pdot a-st-look" aria-hidden="true"></span> worth a look</span><span><span class="pdot a-st-todo" aria-hidden="true"></span> not started</span><span><span class="pdot a-st-unknown" aria-hidden="true"></span> unknown</span><span><span class="adash" aria-hidden="true">–</span> not needed</span></p>`;
+export const areaKey = (): SafeHtml => html`<p class="key area-key" aria-label="${t('projects.areaKeyLabel')}"><span><span class="pdot a-st-done" aria-hidden="true"></span> ${t('projects.status.done')}</span><span><span class="pdot a-st-look" aria-hidden="true"></span> ${t('projects.status.look')}</span><span><span class="pdot a-st-todo" aria-hidden="true"></span> ${t('projects.status.todo')}</span><span><span class="pdot a-st-unknown" aria-hidden="true"></span> ${t('projects.status.unknown')}</span><span><span class="adash" aria-hidden="true">–</span> ${t('projects.status.not_needed')}</span></p>`;
 
 /** The key to the state dots on the project cards: the words are the ones the dots carry as their labels. */
-const dotKey = (): SafeHtml => html`<p class="key dot-key" aria-label="Key to the dots"><span><span class="pdot d-wait" aria-hidden="true"></span> ${DOT_LABEL.wait}</span><span><span class="pdot d-on" aria-hidden="true"></span> ${DOT_LABEL.on}</span><span><span class="pdot d-quiet" aria-hidden="true"></span> ${DOT_LABEL.quiet}</span></p>`;
+const dotKey = (): SafeHtml => html`<p class="key dot-key" aria-label="${t('projects.dotKeyLabel')}"><span><span class="pdot d-wait" aria-hidden="true"></span> ${dotLabel('wait')}</span><span><span class="pdot d-on" aria-hidden="true"></span> ${dotLabel('on')}</span><span><span class="pdot d-quiet" aria-hidden="true"></span> ${dotLabel('quiet')}</span></p>`;
 
 /**
  * The project's five areas (spec 2026-11-11): each with its status, the developer term, the note and when, the why one tap
@@ -164,99 +170,105 @@ const dotKey = (): SafeHtml => html`<p class="key dot-key" aria-label="Key to th
 function fiveAreas(name: string, d: ProjectDetail, now: Date): SafeHtml {
   if (d.areas === null) return html``;
   // No status is preselected: one Save without choosing must never mark an area done.
-  const option = (v: CheckStatus) => html`<option value="${v}">${STATUS_LABELS[v]}</option>`;
-  return html`<h3 id="p-areas">Five areas</h3>
-  <p class="area-intro">Five things that make a project safe to leave alone. Your assistants fill these in as you work together.</p>
+  const option = (v: CheckStatus) => html`<option value="${v}">${statusWord(v)}</option>`;
+  return html`<h3 id="p-areas">${t('projects.areas.title')}</h3>
+  <p class="area-intro">${t('projects.areas.intro')}</p>
   ${areaKey()}
   <ul class="areas plain-list">${d.areas.map((a) => html`<li class="area-row">
-    <div class="area-head">${areaStatus(a.status)}<b>${CHECK_LABELS[a.area].name}</b><span class="area-term">${CHECK_LABELS[a.area].term}</span><span class="area-st">${STATUS_LABELS[a.status]}${a.snoozedUntil ? html` · not now until ${longDate(new Date(a.snoozedUntil))}` : ''}</span></div>
-    ${a.note ? html`<p class="area-note">${a.note}${a.setAt ? html` <span class="quiet">· ${a.setBy === 'owner' ? 'you' : a.setBy}, ${timeAgo(a.setAt, now)}</span>` : ''}</p>` : ''}
-    <details class="area-why"><summary>Why<span class="chev"></span></summary><p>${CHECK_LABELS[a.area].why}</p>
+    <div class="area-head">${areaStatus(a.status)}<b>${checkName(a.area)}</b><span class="area-term">${checkTerm(a.area)}</span><span class="area-st">${statusWord(a.status)}${a.snoozedUntil ? html` · ${t('projects.areas.notNow', { date: longDate(new Date(a.snoozedUntil)) })}` : ''}</span></div>
+    ${a.note ? html`<p class="area-note">${a.note}${a.setAt ? html` <span class="quiet">· ${a.setBy === 'owner' ? t('projects.youLower') : a.setBy}, ${timeAgo(a.setAt, now)}</span>` : ''}</p>` : ''}
+    <details class="area-why"><summary>${t('projects.areas.why')}<span class="chev"></span></summary><p>${checkWhy(a.area)}</p>
       <form method="post" action="${action(name, `areas/${a.area}`)}" class="area-set">
-        <label>Status <select name="status" required><option value="" disabled selected>Choose…</option>${CHECK_STATUSES.map((v) => option(v))}</select></label>
-        <label>Note <input name="note" maxlength="${MAX_NOTE}" value="${a.source === 'hand' ? a.note ?? '' : ''}" placeholder="What was done, or why it isn't needed"></label>
-        <button type="submit" class="sm">Save</button>
+        <label>${t('projects.areas.status')} <select name="status" required><option value="" disabled selected>${t('projects.areas.choose')}</option>${CHECK_STATUSES.map((v) => option(v))}</select></label>
+        <label>${t('projects.areas.note')} <input name="note" maxlength="${MAX_NOTE}" value="${a.source === 'hand' ? a.note ?? '' : ''}" placeholder="${t('projects.areas.notePlaceholder')}"></label>
+        <button type="submit" class="sm">${t('projects.save')}</button>
       </form>
     </details>
   </li>`)}</ul>
-  ${d.handbook.length > 0 ? html`<h3 id="p-handbook">What you learned here</h3><ul class="plain-list handbook">${d.handbook.map((t) => html`<li>${t.pageId ? html`<a href="/pages/${t.pageId}">${t.title}</a>` : t.title} <span class="quiet">· ${{ seen: 'seen', helped: 'done with help', alone: 'done alone' }[t.level]}</span></li>`)}</ul>` : ''}`;
+  ${d.handbook.length > 0 ? html`<h3 id="p-handbook">${t('projects.learned')}</h3><ul class="plain-list handbook">${d.handbook.map((topic) => html`<li>${topic.pageId ? html`<a href="/pages/${topic.pageId}">${topic.title}</a>` : topic.title} <span class="quiet">· ${tKey(`projects.level.${topic.level}`)}</span></li>`)}</ul>` : ''}`;
 }
 
 /** The roadmap's Now line above what waits on the owner: "NOW · step · step 3 of 4", with the week review's small bar. */
 function nowLine(r: { now: string | null; progress: { done: number; total: number } | null } | null | undefined): SafeHtml {
   if (!r?.now) return html``;
   const p = r.progress;
-  return html`<p class="pnow"><span class="eyebrow">Now</span> · <span class="pnow-step">${r.now}</span>${p ? html` · <span class="progress"><progress value="${p.done}" max="${p.total}">${p.done} of ${p.total}</progress>step ${p.done} of ${p.total}</span>` : ''}</p>`;
+  return html`<p class="pnow"><span class="eyebrow">${t('projects.now')}</span> · <span class="pnow-step">${r.now}</span>${p ? html` · <span class="progress"><progress value="${p.done}" max="${p.total}">${t('projects.progress', { done: p.done, total: p.total })}</progress>${t('projects.step', { done: p.done, total: p.total })}</span>` : ''}</p>`;
+}
+
+/** A discussion's label in the panel, worded from the service's structured fields (`round`, `waitingFor`, `closedAt`). */
+function discLabel(x: PanelDiscussion, now: Date): string {
+  if (!x.open) return x.closedAt ? t('projects.disc.decided', { day: shortDay(x.closedAt, now) }) : t('projects.disc.decidedBare');
+  return x.waitingFor.length > 0 ? t('projects.disc.waiting', { round: x.round, who: x.waitingFor.join(', ') }) : t('projects.disc.ready', { round: x.round });
 }
 
 function panel(d: ProjectDetail, now: Date, error?: string): SafeHtml {
   const p = d.card.project;
   /** The panel's own address, so the facts and pages it links come back here. */
   const self = `/?project=${encodeURIComponent(p.name)}`;
-  const state = p.pinnedAt ? 'Pinned' : { idea: 'Idea', open: 'Open', parked: 'Parked', done: 'Done', archived: 'Archived' }[p.state];
+  const state = p.pinnedAt ? t('projects.state.pinned') : tKey(`projects.state.${p.state}`);
   // The jump row: one chip per part that has something; a 0 drops its chip, and nothing at all drops the row.
-  const chips: [string, number][] = [['Waiting', d.waiting.length], ['Disagree', d.disagreements.length], ['Pages', d.pages.length], ['Discussions', d.discussionsTotal], ['Facts', d.facts.total]];
-  const jump = chips.every(([, n]) => n === 0) ? html`` : html`<nav class="jump" aria-label="In this project">${chips
+  const chips: ['waiting' | 'disagree' | 'pages' | 'discussions' | 'facts', number][] = [['waiting', d.waiting.length], ['disagree', d.disagreements.length], ['pages', d.pages.length], ['discussions', d.discussionsTotal], ['facts', d.facts.total]];
+  const jump = chips.every(([, n]) => n === 0) ? html`` : html`<nav class="jump" aria-label="${t('projects.jump.label')}">${chips
     .filter(([, n]) => n > 0)
-    .map(([word, n]) => html`<a href="#p-${word.toLowerCase()}">${word} ${n}</a>`)}</nav>`;
+    .map(([id, n]) => html`<a href="#p-${id}">${tKey(`projects.jump.${id}`)} ${n}</a>`)}</nav>`;
   // Nothing waiting: the section is left out (an empty state only where the section is the screen's purpose).
   const waiting = d.waiting.length === 0 ? html``
-    : html`<h3 id="p-waiting">Waiting on you</h3><ul class="checks">${d.waiting.map((w) => html`<li><form method="post" action="${action(p.name, `waiting/${w.index}/done`)}">
+    : html`<h3 id="p-waiting">${t('projects.waitingOnYou')}</h3><ul class="checks">${d.waiting.map((w) => html`<li><form method="post" action="${action(p.name, `waiting/${w.index}/done`)}">
       <input type="hidden" name="text" value="${w.text}">
-      <button type="submit" class="check" aria-label="Mark done: ${w.text}"></button></form>
+      <button type="submit" class="check" aria-label="${t('projects.markDone', { text: w.text })}"></button></form>
       <span class="check-text">${w.text}</span>${w.due ? dueChip(w.due, day(now)) : ''}</li>`)}</ul>`;
-  const doneToday = d.doneToday.length === 0 ? html`` : html`<h3>Done today</h3><ul class="checks done">${d.doneToday.map((x) => html`<li>
+  const doneToday = d.doneToday.length === 0 ? html`` : html`<h3>${t('projects.doneToday')}</h3><ul class="checks done">${d.doneToday.map((x) => html`<li>
       <span class="check is-done" aria-hidden="true"></span><span class="check-text">${x.text}</span>
-      <form method="post" action="${action(p.name, `done/${x.index}/undo`)}"><input type="hidden" name="text" value="${x.text}"><button type="submit" class="ghost small" aria-label="Undo done: ${x.text}">Undo</button></form></li>`)}</ul>`;
+      <form method="post" action="${action(p.name, `done/${x.index}/undo`)}"><input type="hidden" name="text" value="${x.text}"><button type="submit" class="ghost small" aria-label="${t('projects.undoDone', { text: x.text })}">${t('projects.undo')}</button></form></li>`)}</ul>`;
   const g = d.folder;
-  const gitline = g === null ? null : html`<li class="gitline">Folder <code>~/Projects/${g.name}</code> · ${g.git
-    ? html`${g.branch ?? 'no branch'} · ${g.uncommitted === null || g.unpushed === null ? 'git state unknown (git did not answer on the Mac)' : html`${g.uncommitted} uncommitted · ${g.unpushed} not pushed`}${g.lastCommit ? html` · last commit ${timeAgo(g.lastCommit, now)}` : ' · no commits yet'}`
-    : 'not a git repo'}${g.reportedAt && now.getTime() - Date.parse(g.reportedAt) > DAY_MS ? html` · <strong class="late-text">last report from the Mac ${pastLabel(g.reportedAt, now)}</strong>` : ''}</li>`;
-  const lives = [gitline ?? (p.folder ? html`<li>Folder <code class="path">~/Projects/${p.folder}</code></li>` : html``),
-    ...p.remotes.map((r) => html`<li>Remote <code>${r}</code></li>`),
+  const gitline = g === null ? null : html`<li class="gitline">${tHtml('projects.git.folder', { path: html`<code>~/Projects/${g.name}</code>` })} · ${g.git
+    ? html`${g.branch ?? t('projects.git.noBranch')} · ${g.uncommitted === null || g.unpushed === null ? t('projects.git.unknown') : t('projects.git.counts', { uncommitted: g.uncommitted, unpushed: g.unpushed })}${g.lastCommit ? html` · ${tHtml('projects.git.lastCommit', { when: timeAgo(g.lastCommit, now) })}` : html` · ${t('projects.git.noCommits')}`}`
+    : t('projects.git.notRepo')}${g.reportedAt && now.getTime() - Date.parse(g.reportedAt) > DAY_MS ? html` · <strong class="late-text">${t('projects.git.lateReport', { when: pastLabel(g.reportedAt, now) })}</strong>` : ''}</li>`;
+  const lives = [gitline ?? (p.folder ? html`<li>${tHtml('projects.git.folder', { path: html`<code class="path">~/Projects/${p.folder}</code>` })}</li>` : html``),
+    ...p.remotes.map((r) => html`<li>${tHtml('projects.remote', { remote: html`<code>${r}</code>` })}</li>`),
     p.url ? html`<li><a href="${p.url}" rel="noreferrer">${p.url}</a></li>` : html``];
   const rowLink = (href: string, text: string) => html`<a class="row nolead" href="${href}"><span class="txt">${text}</span><span class="chev"></span></a>`;
   return html`<section id="panel" class="ppanel" aria-labelledby="panel-title">
-  <a class="ppanel-back" href="/">‹ All projects</a>
+  <a class="ppanel-back" href="/">${t('projects.allProjects')}</a>
   <h2 id="panel-title">${p.name}</h2>
   ${errorBlock(error)}
-  ${metaLine([p.oneLiner ?? 'No one-liner yet', html`${areaDot(p)} ${areaName(p)}`, state, d.card.notPushed ? html`<span class="chip plain">not pushed</span>` : null], { big: true })}
+  ${metaLine([p.oneLiner ?? t('projects.noOneLiner'), html`${areaDot(p)} ${areaName(p)}`, state, d.card.notPushed ? html`<span class="chip plain">${t('projects.notPushed')}</span>` : null], { big: true })}
   ${jump}
-  <h3>Where you left off${d.leftOff ? html` <span class="quiet">· ${pastLabel(d.leftOff.updatedAt, now)}</span>` : ''}</h3>
-  ${d.leftOff ? leftOff(d.leftOff.content) : d.card.roadmap?.now ? html`<p class="leftoff">${d.card.roadmap.now}</p>` : html`<p class="quiet">No status saved yet.</p>`}
+  <h3>${t('projects.leftOff')}${d.leftOff ? html` <span class="quiet">· ${pastLabel(d.leftOff.updatedAt, now)}</span>` : ''}</h3>
+  ${d.leftOff ? leftOff(d.leftOff.content) : d.card.roadmap?.now ? html`<p class="leftoff">${d.card.roadmap.now}</p>` : html`<p class="quiet">${t('projects.noStatus')}</p>`}
   ${d.leftOff ? nowLine(d.card.roadmap) : ''}
   ${waiting}
   ${disagreeGroup(p.name, d.disagreements, now)}
   ${doneToday}
-  ${d.nextSteps.length > 0 ? html`<h3>Then</h3><ol class="then">${d.nextSteps.map((s) => html`<li>${s}</li>`)}</ol>` : ''}
+  ${d.nextSteps.length > 0 ? html`<h3>${t('projects.then')}</h3><ol class="then">${d.nextSteps.map((s) => html`<li>${s}</li>`)}</ol>` : ''}
   ${fiveAreas(p.name, d, now)}
-  ${d.pages.length > 0 ? html`<h3 id="p-pages">Pages</h3>
+  ${d.pages.length > 0 ? html`<h3 id="p-pages">${t('projects.pages')}</h3>
   <ul class="ppages plain-list">${d.pages.map((x) => html`<li><a href="${withFrom(`/pages/${x.id}`, self)}">${x.title}</a>${x.mayBeOutOfDate ? html` ${staleChip()}` : ''}</li>`)}</ul>` : ''}
-  ${d.discussions.length > 0 ? html`<h3 id="p-discussions">Discussions</h3>
-  <ul class="pdiscs plain-list">${d.discussions.map((x) => html`<li${x.needsYou ? html` class="you"` : ''}><a href="/discussions/${x.id}">${x.title}</a><span class="pdisc-label">${x.label}</span></li>`)}</ul>` : ''}
-  ${d.facts.total > 0 ? html`<h3 id="p-facts">Facts <span class="n">${d.facts.total}</span></h3>
-  <ul class="pfacts plain-list">${d.facts.newest.map((m) => html`<li><a href="${withFrom(`/memories/${m.id}`, self)}">${stripProjectPrefix(m.content, p.name)}${d.facts.replaces[m.id] ? html`<span class="tag-replaces">replaces ${d.facts.replaces[m.id]}</span>` : ''}</a>${metaLine([writer(m.updatedBy), timeAgo(m.updatedAt, now)])}</li>`)}</ul>` : ''}
+  ${d.discussions.length > 0 ? html`<h3 id="p-discussions">${t('projects.discussions')}</h3>
+  <ul class="pdiscs plain-list">${d.discussions.map((x) => html`<li${x.needsYou ? html` class="you"` : ''}><a href="/discussions/${x.id}">${x.title}</a><span class="pdisc-label">${discLabel(x, now)}</span></li>`)}</ul>` : ''}
+  ${d.facts.total > 0 ? html`<h3 id="p-facts">${t('projects.facts')} <span class="n">${d.facts.total}</span></h3>
+  <ul class="pfacts plain-list">${d.facts.newest.map((m) => html`<li><a href="${withFrom(`/memories/${m.id}`, self)}">${stripProjectPrefix(m.content, p.name)}${d.facts.replaces[m.id] ? html`<span class="tag-replaces">${t('projects.replacesTag', { count: d.facts.replaces[m.id]! })}</span>` : ''}</a>${metaLine([writer(m.updatedBy), timeAgo(m.updatedAt, now)])}</li>`)}</ul>` : ''}
   ${replacedFold(p.name, d.replaced, now, self)}
-  ${d.facts.total > 0 ? rowLink(`/facts?project=${encodeURIComponent(p.name)}`, `All ${d.facts.total} ${p.name} facts`) : ''}
-  ${rowLink(`/graph?project=${encodeURIComponent(p.name)}`, `See ${p.name} in the graph`)}
-  <details class="fold manage"><summary class="row nolead">Manage<span class="chev"></span></summary>
+  ${d.facts.total > 0 ? rowLink(`/facts?project=${encodeURIComponent(p.name)}`, t('projects.allFacts', { count: d.facts.total, name: p.name })) : ''}
+  ${rowLink(`/graph?project=${encodeURIComponent(p.name)}`, t('projects.seeGraph', { name: p.name }))}
+  <details class="fold manage"><summary class="row nolead">${t('projects.manage')}<span class="chev"></span></summary>
   ${stateButtons(p)}
-  <h3>Where it lives</h3>
+  <h3>${t('projects.whereLives')}</h3>
   <ul class="lives">${lives}</ul>
-  <details class="pinfo"><summary>Edit details<span class="chev"></span></summary>
+  <details class="pinfo"><summary>${t('projects.editDetails')}<span class="chev"></span></summary>
     <form method="post" action="${action(p.name, 'info')}" class="stack">
-      <label>One-liner <input name="oneLiner" maxlength="140" value="${p.oneLiner ?? ''}"></label>
-      <label>Area <select name="area"><option value="">Unsorted</option>${AREAS.map((a) => html`<option value="${a}"${p.area === a ? html` selected` : ''}>${AREA_LABELS[a]}</option>`)}</select></label>
-      <label>Folder in ~/Projects <input name="folder" maxlength="120" value="${p.folder ?? ''}"></label>
-      <label>URL <input name="url" type="url" maxlength="300" value="${p.url ?? ''}"></label>
-      <label>Runs on <input name="runsOn" maxlength="120" placeholder="minipc, pi" value="${p.runsOn.join(', ')}"></label>
-      <label>Nicknames <input name="nicknames" maxlength="340" placeholder="comma-separated" value="${p.nicknames.join(', ')}"></label>
-      <button type="submit">Save</button>
+      <label>${t('projects.f.oneLiner')} <input name="oneLiner" maxlength="140" value="${p.oneLiner ?? ''}"></label>
+      <label>${t('projects.f.area')} <select name="area"><option value="">${t('projects.place.unsorted')}</option>${AREAS.map((a) => html`<option value="${a}"${p.area === a ? html` selected` : ''}>${placeName(a)}</option>`)}</select></label>
+      <label>${t('projects.f.folder')} <input name="folder" maxlength="120" value="${p.folder ?? ''}"></label>
+      <label>${t('projects.f.url')} <input name="url" type="url" maxlength="300" value="${p.url ?? ''}"></label>
+      <label>${t('projects.f.runsOn')} <input name="runsOn" maxlength="120" placeholder="${t('projects.f.runsOnExample')}" value="${p.runsOn.join(', ')}"></label>
+      <label>${t('projects.f.nicknames')} <input name="nicknames" maxlength="340" placeholder="${t('projects.f.commaSeparated')}" value="${p.nicknames.join(', ')}"></label>
+      <button type="submit">${t('projects.save')}</button>
     </form>
   </details>
-  ${rowLink(`/pages/new?project=${encodeURIComponent(p.name)}`, 'New page')}
-  ${rowLink(`/memories/new?project=${encodeURIComponent(p.name)}`, 'Add a fact')}
-  <button type="button" class="continue secondary" data-copy="${d.continueCommand}">Continue in Claude Code<code>${d.continueCommand}</code></button>
+  ${rowLink(`/pages/new?project=${encodeURIComponent(p.name)}`, t('projects.newPage'))}
+  ${rowLink(`/memories/new?project=${encodeURIComponent(p.name)}`, t('projects.addFact'))}
+  <button type="button" class="continue secondary" data-copy="${d.continueCommand}">${t('projects.continue')}<code>${d.continueCommand}</code></button>
   </details>
 </section>`;
 }
@@ -265,15 +277,15 @@ function panel(d: ProjectDetail, now: Date, error?: string): SafeHtml {
 function notInBrain(v: Home['folders'], ignored: { key: string; name: string }[], plain: boolean): SafeHtml {
   if (v.unmatched.length === 0 && ignored.length === 0) return html``;
   // On the plain home the summary also carries, hidden, the 1920 px shelf's peek: three folders and "Ignored N".
-  const peek = plain ? html`<span class="nib-peek" hidden>${v.unmatched.slice(0, 3).map((f) => html`<span>${f.name}</span>`)}${ignored.length > 0 ? html`<span class="nib-peek-more">Ignored ${ignored.length}<span class="chev"></span></span>` : ''}</span>` : '';
-  return html`<li><details class="fold notinbrain" id="notyet"><summary class="row nolead">Not in the brain yet${v.unmatched.length > 0 ? html`<span class="n">${v.unmatched.length}</span>` : ''}${peek}<span class="chev"></span></summary>
-<p class="nib-intro">Folders in ~/Projects that no project matches. Last report from ${v.device ?? 'the Mac'}${v.receivedAt ? html` ${timeAgo(v.receivedAt)}` : ''}.</p>
-${v.unmatched.length > 0 ? html`<ul class="rows nib">${v.unmatched.map((f) => html`<li><span class="nib-name">${f.name}</span><span class="quiet">${f.git ? 'git' : 'not a git repo'}</span>
-<form method="post" action="/folders/add"><input type="hidden" name="name" value="${f.name}"><button type="submit" class="sm" aria-label="Add as project: ${f.name}">Add as project</button></form>
-<form method="post" action="/folders/ignore"><input type="hidden" name="name" value="${f.name}"><button type="submit" class="ghost sm" aria-label="Ignore ${f.name}">Ignore</button></form></li>`)}</ul>` : ''}
-${ignored.length > 0 ? html`<h3 class="nib-ignored">Ignored <span class="n">${ignored.length}</span></h3>
+  const peek = plain ? html`<span class="nib-peek" hidden>${v.unmatched.slice(0, 3).map((f) => html`<span>${f.name}</span>`)}${ignored.length > 0 ? html`<span class="nib-peek-more">${t('projects.nib.ignoredPeek', { count: ignored.length })}<span class="chev"></span></span>` : ''}</span>` : '';
+  return html`<li><details class="fold notinbrain" id="notyet"><summary class="row nolead">${t('projects.nib.title')}${v.unmatched.length > 0 ? html`<span class="n">${v.unmatched.length}</span>` : ''}${peek}<span class="chev"></span></summary>
+<p class="nib-intro">${tHtml('projects.nib.intro', { device: v.device ?? t('projects.nib.theMac'), when: v.receivedAt ? html` ${timeAgo(v.receivedAt)}` : '' })}</p>
+${v.unmatched.length > 0 ? html`<ul class="rows nib">${v.unmatched.map((f) => html`<li><span class="nib-name">${f.name}</span><span class="quiet">${f.git ? 'git' : t('projects.nib.notGit')}</span>
+<form method="post" action="/folders/add"><input type="hidden" name="name" value="${f.name}"><button type="submit" class="sm" aria-label="${t('projects.nib.addLabel', { name: f.name })}">${t('projects.nib.add')}</button></form>
+<form method="post" action="/folders/ignore"><input type="hidden" name="name" value="${f.name}"><button type="submit" class="ghost sm" aria-label="${t('projects.nib.ignoreLabel', { name: f.name })}">${t('projects.nib.ignore')}</button></form></li>`)}</ul>` : ''}
+${ignored.length > 0 ? html`<h3 class="nib-ignored">${t('projects.nib.ignored')} <span class="n">${ignored.length}</span></h3>
 <ul class="rows nib">${ignored.map((x) => html`<li><span class="nib-name">${x.name}</span>
-<form method="post" action="/folders/unignore"><input type="hidden" name="name" value="${x.key}"><button type="submit" class="ghost sm" aria-label="Undo ignoring ${x.name}">Undo</button></form></li>`)}</ul>` : ''}
+<form method="post" action="/folders/unignore"><input type="hidden" name="name" value="${x.key}"><button type="submit" class="ghost sm" aria-label="${t('projects.nib.undoLabel', { name: x.name })}">${t('projects.undo')}</button></form></li>`)}</ul>` : ''}
 </details></li>`;
 }
 
@@ -322,7 +334,7 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   const { home, now } = v;
   const sel = v.selected?.card.project.name;
   // System problems only, one at most: the backup warning. Approvals and discussions are For-you rows.
-  const banner = v.backupProblem ? html`<div class="banner warn"><span class="dot attention" aria-hidden="true"></span><span class="txt">${v.backupProblem}</span><a class="button sm" href="/settings#health">Look</a></div>` : '';
+  const banner = v.backupProblem ? html`<div class="banner warn"><span class="dot attention" aria-hidden="true"></span><span class="txt">${v.backupProblem}</span><a class="button sm" href="/settings#health">${t('projects.look')}</a></div>` : '';
   const forYou = forYouCard(forYouRows({ approvals: v.approvals, disagreements: v.disagreements ?? 0, health: v.health, discussions: v.discussionsWaiting ?? [], weekLine: v.weekLine ?? null, suggestions: home.suggestions }));
   const empty = home.sections.length === 0;
   const plain = mode === 'home';
@@ -331,16 +343,16 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   const notIn = notInBrain(home.folders, v.ignored ?? [], plain);
   const pextra = plain
     ? (notIn.value.trim() === '' ? html`` : html`<ul class="group pfolds pextra">${notIn}</ul>`)
-    : html`<ul class="group pfolds pextra"><li><a class="row nolead map-link" href="/map"><span class="txt"><b>Five areas</b> · every project against the five areas</span><span class="chev"></span></a></li>${notIn}${allDiscussions(v.discussions ?? [], mode)}</ul>`;
+    : html`<ul class="group pfolds pextra"><li><a class="row nolead map-link" href="/map"><span class="txt">${tHtml('projects.mapRow', { areas: html`<b>${t('projects.areas.title')}</b>` })}</span><span class="chev"></span></a></li>${notIn}${allDiscussions(v.discussions ?? [], mode)}</ul>`;
   return html`<div class="plist">
-  <h1>Projects${plain ? html`<span class="phome-date" hidden>${longDate(now)}</span>` : ''}</h1>
+  <h1>${t('projects.title')}${plain ? html`<span class="phome-date" hidden>${longDate(now)}</span>` : ''}</h1>
   ${errorBlock(v.error)}
   ${banner}${v.updateCard ?? ''}${plain && v.firstSteps ? v.firstSteps : v.offsiteCard ?? ''}${v.modelsLine ?? ''}
-  <form method="post" action="/projects/ideas" class="idea"><label class="visually-hidden" for="idea-text">A new idea</label><input id="idea-text" name="text" maxlength="140" placeholder="An idea…" autocomplete="off"><button type="submit" class="primary">Add idea</button></form>
-  ${forYou.value === '' ? '' : html`<h2 class="fy-h" id="foryou" hidden>For you</h2>`}${forYou}
-  ${!empty ? '' : html`<p class="quiet empty">No projects yet. They appear here as soon as an assistant saves something about one.</p>`}
+  <form method="post" action="/projects/ideas" class="idea"><label class="visually-hidden" for="idea-text">${t('projects.idea.label')}</label><input id="idea-text" name="text" maxlength="140" placeholder="${t('projects.idea.placeholder')}" autocomplete="off"><button type="submit" class="primary">${t('projects.idea.add')}</button></form>
+  ${forYou.value === '' ? '' : html`<h2 class="fy-h" id="foryou" hidden>${t('projects.forYou')}</h2>`}${forYou}
+  ${!empty ? '' : html`<p class="quiet empty">${t('projects.empty')}</p>`}
   ${home.sections.length > 0 ? html`<div class="pareas">${dotKey()}${home.sections.map((sec) => areaSection(sec, now, sel, mode))}</div>` : ''}
   ${pextra}
-  <p class="home-links">${empty ? '' : html`<a href="/map">Five areas</a>`}<a href="/graph">Graph</a><a href="/discussions">Discussions</a></p>
+  <p class="home-links">${empty ? '' : html`<a href="/map">${t('projects.areas.title')}</a>`}<a href="/graph">${t('projects.link.graph')}</a><a href="/discussions">${t('projects.link.discussions')}</a></p>
 </div>`;
 }

@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { renderMarkdown } from '../pages/markdown.js';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
 import * as fx from '../testing/imageFixtures.js';
+import { decodeEntities } from '../testing/entities.js';
 
 async function world(t: TestContext) {
   const a = await startTestApp();
@@ -36,7 +37,7 @@ test('Review lists a picture no current page shows, with the version that remove
 
 test('the confirmation says exactly what happens; Delete for good removes the row\'s file and old versions say so', async (t) => {
   const { a, f, img, line, post } = await world(t);
-  const confirm = await (await f(`/settings/pictures/${img.id}/delete`)).text();
+  const confirm = decodeEntities(await (await f(`/settings/pictures/${img.id}/delete`)).text());
   const today = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(a.deps.now());
   for (const sentence of [
     "It disappears from the brain now, and from any phone's offline copy at its next update.",

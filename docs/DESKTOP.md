@@ -1,3 +1,5 @@
+Leer en español: [docs/es/DESKTOP.md](es/DESKTOP.md)
+
 # The BrainAI desktop app
 
 The BrainAI app runs BrainAI on your own computer, with no server, no domain and no terminal: on a Mac with Apple silicon,
@@ -27,6 +29,8 @@ says what is new.
   first screen leads to connecting your first assistant.
 - A brain icon sits in the menu bar: **Open BrainAI**, **Start at login** (on after the first start), **Quit BrainAI**.
   Closing the window leaves BrainAI running; Quit stops it.
+  The menu, the dialogs and the installer speak English or Spanish (Spain): the choice in Settings › Language, else the
+  system language (see docs/I18N.md).
 - Only apps on this Mac can reach it, and there is no password, until you turn on Reach from phone and web (below).
   On this computer BrainAI is used from its own window. With no password set, a browser is not signed in: it shows
   "Open BrainAI's window". Only the window (through its one-time ticket) or the password gives a session.
@@ -267,7 +271,7 @@ brain, a saved copy, a backup or a page. If the service is slow or down, that se
 | The server's log | `…/io.github.jsr1292.brainai/logs/server.log` |
 | Its port | `…/io.github.jsr1292.brainai/brainai.json` (3100 unless something else had it) |
 
-**A second backup folder:** Settings › Backups › "Also keep the daily backups in" copies each daily backup to a folder
+**A second backup folder:** Settings › Backups and copies › "Also keep the daily backups in" copies each daily backup to a folder
 you choose (an external drive, a synced folder). It keeps the newest 14 (BACKUP_KEEP) `memory-….db` files there and removes older
 ones; nothing else in the folder is touched. The copies are readable by you only on the Mac's own disk, and on drives where "Ignore ownership on this volume" is off (check it in the drive's Get Info). macOS usually turns that on for external drives, so there other accounts on this Mac can read the copies. On Windows and on network drives they are not owner-only either, so choose a folder only you can open. The app deletes only the copies it made, plus, once, the ones an earlier version left there. If that folder syncs to iCloud Drive or OneDrive the app warns you,
 because the backups hold every memory in clear text.

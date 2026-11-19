@@ -1,3 +1,5 @@
+Leer en español: [SECURITY.es.md](SECURITY.es.md)
+
 # Security
 
 ## Reporting a problem

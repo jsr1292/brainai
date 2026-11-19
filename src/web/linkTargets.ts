@@ -3,7 +3,7 @@
  * facts whose names match what has been typed, and puts back the text that makes the link.
  */
 import { Router } from 'express';
-import { PAGE_AREA_LABELS } from '../pages/types.js';
+import { pageAreaLabel } from './pageViews.js';
 import type { AppDeps } from './app.js';
 import { requireOwner } from './authRoutes.js';
 
@@ -46,7 +46,7 @@ export function linkRoutes(d: AppDeps): Router {
       if (!insert) continue; // a title with ]] or [[ in it cannot be written as a link
       const page = d.pages.get(hit.id);
       const detail = page
-        ? page.project ? d.service.projectNamed(page.project) : page.area ? PAGE_AREA_LABELS[page.area] : ''
+        ? page.project ? d.service.projectNamed(page.project) : page.area ? pageAreaLabel(page.area) : ''
         : '';
       targets.push({ kind: 'page', label: hit.title, detail, insert });
     }

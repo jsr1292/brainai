@@ -1,7 +1,8 @@
 /**
  * The owner's pictures (round 2 section 12): POST /images stores one (raw bytes, at most 10 MB; the Origin check in
  * app.ts covers it) and answers its Markdown line; GET /images/<id>.<ext> serves it with its exact type, a sandbox
- * policy and nosniff, so a picture can never run as a page. Both are behind the owner's session.
+ * policy and nosniff, so a picture can never run as a page. Both are behind the owner's session. POST /images is a
+ * machine path (an API for the editor's script, always English); an error carries a `code` the script words in the page's language.
  */
 import express, { Router, type ErrorRequestHandler, type RequestHandler } from 'express';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
@@ -13,6 +14,7 @@ import type { AppDeps } from './app.js';
 import { requireOwner } from './authRoutes.js';
 
 const MAX_ALT = 300;
+/** The description a picture gets when none is given. It is stored Markdown (the page's text), so it stays English, like the rest of what is stored. */
 const PLACEHOLDER_ALT = 'Describe the picture';
 const TOO_LARGE = new ImageError('too_large').message;
 
@@ -31,7 +33,7 @@ export function imageRoutes(d: AppDeps): Router {
       res.status(201).json({ id: img.id, markdown: `![${alt}](/images/${img.id}.${img.ext})`, width: img.width, height: img.height, bytes: img.bytes, type: img.type });
     } catch (e) {
       if (!(e instanceof ImageError)) throw e;
-      res.status(e.code === 'too_large' ? 413 : 400).json({ error: e.message });
+      res.status(e.code === 'too_large' ? 413 : 400).json({ error: e.message, code: e.code });
     }
   });
 
@@ -99,14 +101,14 @@ export function imageRoutes(d: AppDeps): Router {
       // The link goes back: the assistant can send a proper file within its ten minutes.
       d.uploadLinks.release(link.tokenHash);
       if (!(e instanceof ImageError)) throw e;
-      res.status(e.code === 'too_large' ? 413 : 400).json({ error: e.message });
+      res.status(e.code === 'too_large' ? 413 : 400).json({ error: e.message, code: e.code });
     }
   });
 
   // The raw parser's own refusal of a body over 10 MB, in the route's JSON.
   const tooLarge: ErrorRequestHandler = (err, req, res, next) => {
     if (err?.type !== 'entity.too.large' || !(req.path === '/images' || req.path.startsWith('/api/image-upload/')) || res.headersSent) return next(err);
-    res.status(413).json({ error: TOO_LARGE });
+    res.status(413).json({ error: TOO_LARGE, code: 'too_large' });
   };
   router.use(tooLarge);
   return router;

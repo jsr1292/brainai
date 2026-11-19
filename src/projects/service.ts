@@ -54,7 +54,11 @@ export const SECTION_ORDER: (Area | null)[] = ['apps', 'tools', 'home', 'work', 
 export interface WaitingRow { index: number; text: string; due: string | null; late: boolean; soon: boolean }
 export interface DoneRow { index: number; text: string; date: string | null }
 /** `needsYou`: an open round every assistant has answered, so it waits on the owner. */
-export interface PanelDiscussion { id: string; title: string; open: boolean; needsYou: boolean; label: string }
+/**
+ * A discussion in the project panel. `label` is the English words; a screen builds its own from the data beside it
+ * (`round`, `waitingFor`, `closedAt`) so it can speak the owner's language.
+ */
+export interface PanelDiscussion { id: string; title: string; open: boolean; needsYou: boolean; label: string; round: number; waitingFor: string[]; closedAt: string | null }
 export interface ProjectDetail {
   card: ProjectCard; leftOff: Memory | null; waiting: WaitingRow[]; doneToday: DoneRow[]; nextSteps: string[]; continueCommand: string;
   /**
@@ -89,7 +93,8 @@ export const PANEL_REPLACED = 10;
 /** One replaced fact in the project panel's fold: what replaced it, and the current fact at the end of its chain. */
 export interface ReplacedRow { row: Supersession; old: Memory; end: Memory | null; endId: string; endDeletedAt: string | null; steps: number }
 export const PANEL_DISCUSSIONS = 3;
-export interface HomeSuggestion { project: string; kind: 'pin-late' | 'park-quiet' | 'reopen-active'; text: string }
+/** `text` is the English sentence; a screen words it from `kind`, `state` (the project's state) and `weeks` (quiet weeks, for park-quiet). */
+export interface HomeSuggestion { project: string; kind: 'pin-late' | 'park-quiet' | 'reopen-active'; text: string; state: ProjectStateName; weeks: number | null }
 /** What the home screen needs from the Mac's folder report. */
 export interface FolderSource { match(): FolderMatch }
 export interface Home {
@@ -248,13 +253,13 @@ export class ProjectsService {
   private suggestions(cards: ProjectCard[], now: Date, pinned: number, holdBackPark: ReadonlySet<string> = new Set()): HomeSuggestion[] {
     const awake = cards.filter((c) => c.project.snoozedUntil === null || c.project.snoozedUntil <= now.toISOString());
     const reopen = awake.filter((c) => c.newActivity).sort(newestFirst)
-      .map((c): HomeSuggestion => ({ project: c.project.name, kind: 'reopen-active', text: `${c.project.name} is ${c.project.state} but has new activity: back to open?` }));
+      .map((c): HomeSuggestion => ({ project: c.project.name, kind: 'reopen-active', text: `${c.project.name} is ${c.project.state} but has new activity: back to open?`, state: c.project.state, weeks: null }));
     // "Put it on the go?" only while there is room: with On the go full its button could only fail.
     const pin = awake.filter((c) => pinned < MAX_PINNED && c.project.state === 'open' && c.project.pinnedAt === null && c.late > 0).sort(newestFirst)
-      .map((c): HomeSuggestion => ({ project: c.project.name, kind: 'pin-late', text: `${c.project.name} has something late: put it on the go?` }));
+      .map((c): HomeSuggestion => ({ project: c.project.name, kind: 'pin-late', text: `${c.project.name} has something late: put it on the go?`, state: c.project.state, weeks: null }));
     const park = awake.filter((c) => c.project.state === 'open' && c.quietDays !== null && c.quietDays >= PARK_SUGGESTION_DAYS && !holdBackPark.has(c.project.name))
       .sort((a, b) => a.lastTouched.localeCompare(b.lastTouched))
-      .map((c): HomeSuggestion => ({ project: c.project.name, kind: 'park-quiet', text: `${c.project.name} has been quiet for ${Math.floor(c.quietDays! / 7)} weeks: park it?` }));
+      .map((c): HomeSuggestion => ({ project: c.project.name, kind: 'park-quiet', text: `${c.project.name} has been quiet for ${Math.floor(c.quietDays! / 7)} weeks: park it?`, state: c.project.state, weeks: Math.floor(c.quietDays! / 7) }));
     return [...reopen, ...pin, ...park].slice(0, MAX_SUGGESTIONS);
   }
 
@@ -337,7 +342,7 @@ export class ProjectsService {
     return this.discussionsOf(name)
       .slice(0, PANEL_DISCUSSIONS)
       .map((d) => ({
-        id: d.id, title: d.title, open: !d.closed, needsYou: !d.closed && d.waitingFor.length === 0,
+        id: d.id, title: d.title, open: !d.closed, needsYou: !d.closed && d.waitingFor.length === 0, round: d.round, waitingFor: d.waitingFor, closedAt: d.closed ? d.closedAt ?? null : null,
         label: d.closed ? `Decided ${d.closedAt ? shortDay(d.closedAt, now) : ''}`.trim()
           : d.waitingFor.length > 0 ? `Round ${d.round} · waiting for ${d.waitingFor.join(', ')}` : `Round ${d.round} · ready for you`,
       }));
@@ -346,8 +351,8 @@ export class ProjectsService {
   /** The roadmap to change. One not in the usual five-line shape is refused: rewriting it would drop what didn't parse. */
   private mustRoadmap(name: string): { id: string; content: string; parsed: Roadmap } {
     const m = this.memories.roadmapOf(this.memories.projectNamed(name));
-    if (!m) throw new ProjectError('not_found', `Project ${name} has no roadmap`);
-    if (checkRoadmap(m.content) !== null) throw new ProjectError('invalid', "This roadmap isn't in the usual shape: fix it on its memory page first");
+    if (!m) throw new ProjectError('not_found', `Project ${name} has no roadmap`, { key: 'err.project.noRoadmap', params: { name } });
+    if (checkRoadmap(m.content) !== null) throw new ProjectError('invalid', "This roadmap isn't in the usual shape: fix it on its memory page first", { key: 'err.project.roadmapShape' });
     return { id: m.id, content: m.content, parsed: parseRoadmap(m.content) };
   }
 
@@ -365,7 +370,7 @@ export class ProjectsService {
       content = formatRoadmap(r);
     }
     if (content.length > MAX_ROADMAP) {
-      throw new ProjectError('invalid', 'This roadmap is full: ask an assistant to shorten it, or edit it on its memory page');
+      throw new ProjectError('invalid', 'This roadmap is full: ask an assistant to shorten it, or edit it on its memory page', { key: 'err.project.roadmapFull' });
     }
     await this.memories.update(id, { content }, OWNER, { expectContent: before });
   }
@@ -374,7 +379,7 @@ export class ProjectsService {
   async completeWaiting(name: string, index: number, text: string, now: Date): Promise<void> {
     const { id, content, parsed } = this.mustRoadmap(name);
     const item = parsed.waiting[index];
-    if (!item || item.text !== text) throw new ProjectError('invalid', LIST_CHANGED);
+    if (!item || item.text !== text) throw new ProjectError('invalid', LIST_CHANGED, { key: 'err.listChanged' });
     parsed.waiting.splice(index, 1);
     const doneText = item.due ? `${item.text} (by ${item.due})` : item.text;
     parsed.done.push({ text: doneText, date: day(now) });
@@ -385,7 +390,7 @@ export class ProjectsService {
   async undoDone(name: string, index: number, text: string, now: Date): Promise<void> {
     const { id, content, parsed } = this.mustRoadmap(name);
     const done = parsed.done[index];
-    if (!done || done.text !== text || done.date !== day(now)) throw new ProjectError('invalid', LIST_CHANGED);
+    if (!done || done.text !== text || done.date !== day(now)) throw new ProjectError('invalid', LIST_CHANGED, { key: 'err.listChanged' });
     parsed.done.splice(index, 1);
     const due = DUE_IN_TEXT.exec(done.text);
     parsed.waiting.push(due ? { text: done.text.slice(0, due.index).trim(), due: due[1]! } : { text: done.text, due: null });
@@ -401,7 +406,7 @@ export class ProjectsService {
 
   createIdea(text: string, _now: Date): Project {
     const base = ideaName(text);
-    if (base === '' || !/^[a-z0-9]/.test(base)) throw new ProjectError('invalid', 'Write a few words (letters or digits) for the idea');
+    if (base === '' || !/^[a-z0-9]/.test(base)) throw new ProjectError('invalid', 'Write a few words (letters or digits) for the idea', { key: 'err.project.ideaWords' });
     const taken = (n: string) => this.registry.get(n) !== undefined || this.store.aliasTarget(n) !== undefined;
     let name = base;
     for (let i = 2; taken(name); i++) name = `${base.slice(0, MAX_IDEA_NAME - String(i).length - 1).replace(/-+$/, '')}-${i}`;

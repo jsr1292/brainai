@@ -1,3 +1,5 @@
+Leer en español: [docs/es/IMPORT.md](es/IMPORT.md)
+
 # Importing existing knowledge into the shared memory
 
 The dashboard's **Import** page (Settings › Backups and copies › Import, the Home first steps, or Ctrl K › Import) guides the owner through each source. Everything runs on the owner's own hardware: the server never fetches anything, and no AI model reads the text on the server. Nothing is saved without the owner's choice, and secrets are never imported.

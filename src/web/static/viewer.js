@@ -3,6 +3,8 @@
 // image with no way back. app.js imports this module the first time a picture is tapped; without script the
 // picture's link opens its file. Batch I3 opens diagrams here too.
 
+const T = typeof globalThis.T === 'function' ? globalThis.T : (key, english, params) => { const s = english !== undefined ? english : key; return params ? s.replace(/\{(\w+)\}/g, (m, n) => (Object.prototype.hasOwnProperty.call(params, n) ? String(params[n]) : m)) : s; };
+
 const STEP = 1.25;
 const MAX_SCALE = 4;
 
@@ -44,7 +46,7 @@ function apply() {
 function build() {
   dialog = document.createElement('dialog');
   dialog.className = 'viewer';
-  dialog.setAttribute('aria-label', 'Full size');
+  dialog.setAttribute('aria-label', T('client.viewer.fullSize', 'Full size'));
   box = document.createElement('div');
   box.className = 'viewer-box';
   shown = document.createElement('img');
@@ -53,10 +55,10 @@ function build() {
   const bar = document.createElement('div');
   bar.className = 'viewer-bar';
   bar.append(
-    button('Smaller', '−', () => { step = Math.max(0, step - 1); apply(); }),
-    button('Fit to the screen', 'Fit', () => { step = 0; apply(); }),
-    button('Larger', '＋', () => { step = Math.min(step + 1, 12); apply(); }),
-    button('Done', 'Done', () => dialog.close(), 'viewer-done'),
+    button(T('client.viewer.smaller', 'Smaller'), '−', () => { step = Math.max(0, step - 1); apply(); }),
+    button(T('client.viewer.fitLabel', 'Fit to the screen'), T('client.viewer.fit', 'Fit'), () => { step = 0; apply(); }),
+    button(T('client.viewer.larger', 'Larger'), '＋', () => { step = Math.min(step + 1, 12); apply(); }),
+    button(T('client.viewer.done', 'Done'), T('client.viewer.done', 'Done'), () => dialog.close(), 'viewer-done'),
   );
   dialog.append(box, bar);
   // Esc closes the viewer only: kept from desk.js, whose Esc would also close the page beside the list.

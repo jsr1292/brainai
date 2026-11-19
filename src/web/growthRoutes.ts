@@ -4,6 +4,7 @@ import type { AppDeps } from './app.js';
 import { requireOwner } from './authRoutes.js';
 import { safeBack } from './back.js';
 import { growthView } from './growthViews.js';
+import { t } from '../i18n/index.js';
 import { html, page } from './html.js';
 
 /** Week › Growth: the owner's list of what assistants noticed, and their reactions to it. */
@@ -12,7 +13,7 @@ export function growthRoutes(d: AppDeps): Router {
   const owner = requireOwner(d.sessions);
 
   router.get('/growth', owner, (_req, res) => {
-    res.status(200).type('html').send(page('Growth', growthView(d.growth.list()), { nav: true, tab: 'week', section: 'growth' }));
+    res.status(200).type('html').send(page(t('shell.nav.growth'), growthView(d.growth.list()), { nav: true, tab: 'week', section: 'growth' }));
   });
 
   router.get('/settings/growth', owner, (_req, res) => {
@@ -23,14 +24,14 @@ export function growthRoutes(d: AppDeps): Router {
     const id = req.params.id as string;
     const raw = typeof req.body?.reaction === 'string' ? req.body.reaction : '';
     if (raw !== 'clear' && !(REACTIONS as readonly string[]).includes(raw)) {
-      res.status(400).type('html').send(page('Bad request', html`<h1>Bad request</h1>`, { nav: true, tab: null }));
+      res.status(400).type('html').send(page(t('common.badRequest'), html`<h1>${t('common.badRequest')}</h1>`, { nav: true, tab: null }));
       return;
     }
     try {
       d.growth.react(id, raw === 'clear' ? null : (raw as Reaction));
     } catch (e) {
       if (e instanceof GrowthError && e.code === 'not_found') {
-        res.status(404).type('html').send(page('Not found', html`<h1>Not found</h1>`, { nav: true, tab: null }));
+        res.status(404).type('html').send(page(t('common.notFound'), html`<h1>${t('common.notFound')}</h1>`, { nav: true, tab: null }));
         return;
       }
       throw e;

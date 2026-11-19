@@ -15,13 +15,14 @@ import { viaDoor } from '../desktop/publicDoor.js';
 import { isEmptyBrain, stageRestore } from '../saved/restore.js';
 import { kindOfFile } from '../saved/backupFile.js';
 import { addedToolsLine } from './dashboardViews.js';
-import { firstLine, modelsLine, modelsProgress, toolsPage, welcomePage } from './desktopViews.js';
+import { firstLine, modelLabelPlain, modelsLine, modelsProgress, toolsPage, welcomePage } from './desktopViews.js';
 import { readHardware, suggest } from '../models/hardware.js';
 import type { ModelChoice } from '../models/choice.js';
 import { CATALOGUE, ONLINE_MODELS } from '../models/catalogue.js';
 import { deleteKey, isKeyShaped, readKey, writeKey } from '../models/onlineKey.js';
 import { saySearch } from './searchSaid.js';
-import { thisComputer } from '../desktop/computer.js';
+import { currentLanguage, t } from '../i18n/core.js';
+import { computerName } from '../desktop/computer.js';
 import { readUpdate, setLater, setOffsiteLater, updateLine } from '../desktop/updateState.js';
 import { runBackup } from '../backup.js';
 import { BRAIN_VERSION } from '../version.js';
@@ -32,7 +33,7 @@ const DONE_FILE = 'welcome-done';
 const MAX_UPLOAD = 4 * 1024 ** 3;
 const UPLOAD_FILE = 'restore-upload.tar.gz';
 const UPLOAD_TYPES = ['application/gzip', 'application/octet-stream', 'application/vnd.sqlite3', 'application/x-sqlite3'];
-const NOT_A_SAVED_FILE = 'That is not a saved BrainAI file or backup (a .tar.gz or a memory-….db).';
+const notASavedFile = () => t('setup.err.notSaved');
 let doneInMemory = false;
 
 function welcomeDone(d: AppDeps): boolean {
@@ -69,7 +70,8 @@ export function toolEnv(d: AppDeps): ToolEnv | null {
   if (!d.localMode || !d.tools) return null;
   const mcpUrl = new URL('/mcp', d.publicUrl).href;
   const { bridgeCli, ...tools } = d.tools;
-  const env: ToolEnv = { hooksDir: fileURLToPath(new URL('../hooks/', import.meta.url)), ...tools, mcpUrl, rules: (slug) => setupText(slug, mcpUrl, d.setupOverlay) };
+  const env: ToolEnv = { hooksDir: fileURLToPath(new URL('../hooks/', import.meta.url)), ...tools, mcpUrl, // Connect writes the rules in the language the owner has when they press it (their Language setting, else the system's; English outside a request). A tool connected in English keeps English rules until it is reconnected.
+    rules: (slug) => setupText(slug, mcpUrl, d.setupOverlay, currentLanguage()) };
   // Disconnect ends a tool's sign-in too, through the same revoke as Settings › Connections (the rows stay, marked revoked).
   env.endSignIns = (toolName) => {
     const live = d.provider.listGrants().filter((g) => !g.revokedAt && g.clientName.toLowerCase().startsWith(toolName.toLowerCase()));
@@ -137,8 +139,8 @@ export function desktopRoutes(d: AppDeps): Router {
 
   router.get('/settings/tools', owner, async (req, res) => {
     const said = resultFor(req.query.tool);
-    res.type('html').send(page(`Tools on ${thisComputer()}`, toolsPage({ tools: withSignIn(await cachedToolStates(d, env), d.provider.listGrants()), windows: windows(env), said, cursorRules: env.rules('claude-code') }),
-      { nav: true, tab: null, back: { href: '/settings#connections', label: 'Settings' } }));
+    res.type('html').send(page(t('setup.toolsOn', { computer: computerName() }), toolsPage({ tools: withSignIn(await cachedToolStates(d, env), d.provider.listGrants()), windows: windows(env), said, cursorRules: env.rules('claude-code') }),
+      { nav: true, tab: null, back: { href: '/settings#connections', labelKey: 'shell.nav.settings' } }));
   });
 
   for (const what of ['connect', 'disconnect'] as const) {
@@ -150,7 +152,7 @@ export function desktopRoutes(d: AppDeps): Router {
       forgetToolStates(d);
       if (r.ok) await d.refreshAskCommands?.().catch(() => {});
       const hooks = r.ok && r.hooksNote ? ` ${r.hooksNote}` : '';
-      const said = r.ok ? ((what === 'connect' ? `Added. One step left: ${r.signIn}` : (id === 'claude-desktop' ? 'Disconnected. Its key was revoked.' : r.ended ? 'Disconnected. Its sign-in was ended too.' : 'Disconnected. If it is still listed in Settings › Connections, revoke it there.')) + hooks) : r.reason;
+      const said = r.ok ? ((what === 'connect' ? t('setup.said.added', { signIn: r.signIn }) : (id === 'claude-desktop' ? t('setup.said.disKey') : r.ended ? t('setup.said.disEnded') : t('setup.said.disRevoke'))) + hooks) : r.reason;
       results.set(id, { text: said, at: Date.now() });
       const back = (req.body as Record<string, unknown> | undefined)?.back === 'welcome' ? '/welcome?step=3&tool=' : '/settings/tools?tool=';
       res.redirect(303, back + id);
@@ -161,7 +163,7 @@ export function desktopRoutes(d: AppDeps): Router {
     if (!isId(id)) return next();
     const r = await addReminders(id, env);
     forgetToolStates(d);
-    results.set(id, { text: r.ok ? `Save reminders added.${r.hooksNote ? ` ${r.hooksNote}` : ''}` : r.reason, at: Date.now() });
+    results.set(id, { text: r.ok ? `${t('setup.said.reminders')}${r.hooksNote ? ` ${r.hooksNote}` : ''}` : r.reason, at: Date.now() });
     res.redirect(303, `/settings/tools?tool=${id}`);
   });
   // The restore pages exist only on this computer, never through the public door.
@@ -189,7 +191,7 @@ export function desktopRoutes(d: AppDeps): Router {
     const said = resultFor(req.query.tool);
     const restore = step === 1 && canRestore() ? (req.query.restore === '1' ? 'choose' as const : 'offer' as const) : null;
     const restored = step === 3 ? takeRestored() : null;
-    res.type('html').send(page('Welcome to BrainAI', welcomePage({
+    res.type('html').send(page(t('setup.welcome.title'), welcomePage({
       step, tools: step >= 3 ? withSignIn(await cachedToolStates(d, env), d.provider.listGrants()) : [], windows: windows(env), said, cursorRules: env.rules('claude-code'), restore, restored,
       models: step === 2 && d.models ? { hardware: await (d.hardware ?? (() => readHardware(dataDir ?? process.cwd())))(), installed: await d.models.installedIds() } : undefined,
       modelsLine: step >= 3 && d.models ? modelsLine(d.models.status(), { dataDir }) : undefined,
@@ -204,21 +206,22 @@ export function desktopRoutes(d: AppDeps): Router {
   router.post('/welcome/restore', here, owner, async (req, res) => {
     if (!dataDir) return res.status(404).end();
     const type = (req.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
-    if (!UPLOAD_TYPES.includes(type)) return res.status(415).json({ error: NOT_A_SAVED_FILE });
-    if (!emptyBrain()) return res.status(409).json({ error: 'This brain already has memories, so a saved copy cannot be brought in.' });
-    if (appConnected()) return res.status(409).json({ error: 'An app is already connected to this brain, so a saved copy cannot be brought in: it would lose its connection.' });
+    if (!UPLOAD_TYPES.includes(type)) return res.status(415).json({ error: notASavedFile() });
+    if (!emptyBrain()) return res.status(409).json({ error: t('setup.err.notEmpty') });
+    if (appConnected()) return res.status(409).json({ error: t('setup.err.connected') });
     const file = join(dataDir, UPLOAD_FILE);
     let bytes = 0;
+    const tooBig = t('setup.err.tooBig');
     const limit = new Transform({
       transform(chunk: Buffer, _enc, cb) {
         bytes += chunk.length;
-        cb(bytes > MAX_UPLOAD ? new Error('That file is too big to be a saved BrainAI folder.') : null, chunk);
+        cb(bytes > MAX_UPLOAD ? new Error(tooBig) : null, chunk);
       },
     });
     try {
       await pipeline(req, limit, createWriteStream(file));
       // The bytes decide, not the name or the type: an archive starts with gzip's mark, a backup with SQLite's.
-      if (!kindOfFile(file)) return res.status(415).json({ error: NOT_A_SAVED_FILE });
+      if (!kindOfFile(file)) return res.status(415).json({ error: notASavedFile() });
       await stageRestore(file, dataDir);
       res.json({ next: '/app/restart' });
     } catch (e) {
@@ -230,8 +233,8 @@ export function desktopRoutes(d: AppDeps): Router {
 
   /** Shown if the desktop app did not intercept the navigation (it normally restarts the server and moves on). */
   router.get('/app/restart', here, (_req, res) => {
-    res.type('html').send(page('BrainAI is restarting', html`<div class="narrow"><h1>BrainAI is restarting…</h1>
-<p>Your saved brain is being brought back. This window opens again by itself in a moment.</p></div>`, { tab: null }));
+    res.type('html').send(page(t('setup.restart.title'), html`<div class="narrow"><h1>${t('setup.restart.head')}</h1>
+<p>${t('setup.restart.text')}</p></div>`, { tab: null }));
   });
 
   router.post('/welcome/name', owner, async (req, res) => {
@@ -246,7 +249,7 @@ export function desktopRoutes(d: AppDeps): Router {
     if (!d.models) return res.status(404).end();
     const s = d.models.status();
     const line = modelsProgress(s, dataDir);
-    const clean = (t: string) => (dataDir ? t.replaceAll(dataDir, 'the data folder') : t);
+    const clean = (text: string) => (dataDir ? text.replaceAll(dataDir, t('setup.dataFolder')) : text);
     res.set('Cache-Control', 'no-store').json({
       choice: s.choice === null ? null : { search: s.choice.search, rerank: s.choice.rerank },
       progress: s.progress.map((p) => ({ model: p.model, doneBytes: p.doneBytes, totalBytes: p.totalBytes, state: p.state, ...(p.error !== undefined ? { error: clean(p.error) } : {}) })),
@@ -271,8 +274,8 @@ export function desktopRoutes(d: AppDeps): Router {
 
   /** Shown if the desktop app did not intercept the navigation (for example in a normal browser tab). */
   router.get('/app/update', here, (_req, res) => {
-    res.type('html').send(page('Update BrainAI', html`<div class="narrow"><h1>Update BrainAI</h1>
-<p>To update, use Update and restart in BrainAI's own window (open it from the menu bar or the tray).</p></div>`, { tab: null }));
+    res.type('html').send(page(t('setup.update.title'), html`<div class="narrow"><h1>${t('setup.update.title')}</h1>
+<p>${t('setup.update.text')}</p></div>`, { tab: null }));
   });
 
   router.post('/app/update/later', here, owner, (_req, res) => {
@@ -303,7 +306,7 @@ export function desktopRoutes(d: AppDeps): Router {
     } else if (body.mode === 'custom') {
       choice = customChoice(body, { online: false });
     }
-    if (!choice) return res.status(400).type('html').send(page('Welcome to BrainAI', html`<div class="narrow"><h1>Choose again</h1><p>That choice is not one BrainAI offers here. <a href="/welcome?step=2">Back to the search step</a></p></div>`, { nav: false, tab: null }));
+    if (!choice) return res.status(400).type('html').send(page(t('setup.welcome.title'), html`<div class="narrow"><h1>${t('setup.again.title')}</h1><p>${t('setup.again.text')} <a href="/welcome?step=2">${t('setup.again.back')}</a></p></div>`, { nav: false, tab: null }));
     // Downloads run in the background while the welcome goes on; a failure shows in the progress line.
     d.models?.choose(choice).catch(() => {});
     res.redirect(303, '/welcome?step=3');
@@ -312,15 +315,15 @@ export function desktopRoutes(d: AppDeps): Router {
   // ---- Settings › Search (the section itself is drawn with Settings) ----
   const back = (res: import('express').Response) => res.redirect(303, '/settings#search');
   const refuseSearch = (res: import('express').Response, why: string) =>
-    res.status(400).type('html').send(page('Settings › Search', html`<div class="narrow"><h1>Not changed</h1><p>${why}</p><p><a href="/settings#search">Back to Settings › Search</a></p></div>`, { nav: true, tab: null, back: { href: '/settings#search', label: 'Settings' } }));
-  const labelOf = (id: string) => CATALOGUE.find((m) => m.id === id)?.label ?? id;
+    res.status(400).type('html').send(page(t('setup.search.pageTitle'), html`<div class="narrow"><h1>${t('setup.search.notChanged')}</h1><p>${why}</p><p><a href="/settings#search">${t('setup.search.backTo')}</a></p></div>`, { nav: true, tab: null, back: { href: '/settings#search', labelKey: 'shell.nav.settings' } }));
+  const labelOf = (id: string) => { const m = CATALOGUE.find((x) => x.id === id); return m ? modelLabelPlain(m) : id; };
   const modelId = (v: unknown) => (typeof v === 'string' ? CATALOGUE.find((m) => m.id === v)?.id : undefined);
   const keySaved = () => !!dataDir && readKey(dataDir) !== null;
 
   router.post('/settings/search/models', here, owner, (req, res) => {
     if (!d.models) return res.status(404).end();
     const choice = customChoice((req.body ?? {}) as Record<string, unknown>, { online: true, keySaved: keySaved() });
-    if (!choice) return refuseSearch(res, 'That choice is not one BrainAI offers. Online needs an OpenRouter key: save it first.');
+    if (!choice) return refuseSearch(res, t('setup.err.choice'));
     // Downloads and a re-read run in the background; the section shows how far they are.
     d.models.choose(choice).catch(() => {});
     back(res);
@@ -329,12 +332,12 @@ export function desktopRoutes(d: AppDeps): Router {
   router.post('/settings/search/key', here, owner, (req, res) => {
     if (!d.models) return res.status(404).end();
     const key = (req.body as Record<string, unknown> | undefined)?.key;
-    if (!dataDir || typeof key !== 'string' || !isKeyShaped(key.trim())) return refuseSearch(res, 'That does not look like an OpenRouter key: it is one word, without spaces.');
+    if (!dataDir || typeof key !== 'string' || !isKeyShaped(key.trim())) return refuseSearch(res, t('setup.err.keyShape'));
     try {
       writeKey(dataDir, key);
-      saySearch('The key is saved.');
+      saySearch(t('setup.said.keySaved'));
     } catch (e) {
-      return refuseSearch(res, e instanceof Error ? e.message : 'The key could not be saved.');
+      return refuseSearch(res, e instanceof Error ? e.message : t('setup.err.keyNotSaved'));
     }
     back(res);
   });
@@ -346,19 +349,19 @@ export function desktopRoutes(d: AppDeps): Router {
     if (c?.rerank === 'online') {
       const standard = (await d.models.installedIds()).includes('mminilm');
       d.models.choose({ search: c.search, rerank: standard ? 'mminilm' : null }).catch(() => {});
-      saySearch(`The key is removed, so Online reranking is off: ${standard ? 'Standard is used' : 'no reranker is used'}.`);
-    } else saySearch('The key is removed.');
+      saySearch(standard ? t('setup.said.keyRemovedStandard') : t('setup.said.keyRemovedNone'));
+    } else saySearch(t('setup.said.keyRemoved'));
     back(res);
   });
 
   router.post('/settings/search/remove', here, owner, (req, res) => {
     const id = modelId((req.body as Record<string, unknown> | undefined)?.model);
-    if (!d.models || !id) return refuseSearch(res, 'That is not a model BrainAI has.');
+    if (!d.models || !id) return refuseSearch(res, t('setup.err.notModel'));
     try {
       d.models.remove(id);
-      saySearch(`${labelOf(id)} is removed.`);
+      saySearch(t('setup.said.modelRemoved', { label: labelOf(id) }));
     } catch (e) {
-      saySearch(/in use/.test(e instanceof Error ? e.message : '') ? `${labelOf(id)} is in use: choose another first.` : `${labelOf(id)} could not be removed.`);
+      saySearch(/in use/.test(e instanceof Error ? e.message : '') ? t('setup.said.modelInUse', { label: labelOf(id) }) : t('setup.said.modelNotRemoved', { label: labelOf(id) }));
     }
     back(res);
   });
@@ -366,13 +369,13 @@ export function desktopRoutes(d: AppDeps): Router {
   router.post('/settings/search/load', here, owner, async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const id = modelId(body.model);
-    if (!d.models || !id || typeof body.folder !== 'string') return refuseSearch(res, 'Choose a model and the folder that holds its files.');
+    if (!d.models || !id || typeof body.folder !== 'string') return refuseSearch(res, t('setup.err.chooseFolder'));
     try {
       await d.models.loadFromFolder(id, body.folder.trim());
-      saySearch(`${labelOf(id)} is ready: its files were checked and copied.`);
+      saySearch(t('setup.said.modelReady', { label: labelOf(id) }));
     } catch (e) {
-      const why = e instanceof Error ? e.message.replaceAll(dataDir ?? '\0', 'the data folder') : 'the files could not be loaded';
-      saySearch(`${labelOf(id)} was not loaded: ${why}.`.replace(/\.\.$/, '.'));
+      const why = e instanceof Error ? e.message.replaceAll(dataDir ?? '\0', t('setup.dataFolder')) : t('setup.err.filesFailed');
+      saySearch(t('setup.said.modelNotLoaded', { label: labelOf(id), why }).replace(/\.\.$/, '.'));
     }
     back(res);
   });

@@ -21,6 +21,7 @@ import { ModelManager } from '../models/manager.js';
 import { SwitchableEmbedder, SwitchableReranker } from '../models/switchable.js';
 import { modelDirOf, type CatalogueModel, type ModelId } from '../models/catalogue.js';
 import { readKey } from '../models/onlineKey.js';
+import { decodeEntities } from '../testing/entities.js';
 
 const KEY = 'sk-or-made-up-key-7731';
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
@@ -114,7 +115,7 @@ test('the section shows the pair in use, the same list as step 2, Online with it
   assert.match(sec, /name="rerank" value="mminilm"[^>]*checked/);
   assert.match(sec, /name="rerank" value="online:voyageai\/rerank-2\.5"/);
   assert.match(sec, /voyageai\/rerank-2\.5/);
-  assert.match(sec, /doesn(&#39;|')t train on what you send, but may keep it/);
+  assert.match(decodeEntities(sec), /doesn't train on what you send, but may keep it/);
   assert.match(sec, /qwen\/qwen3-reranker-8b/);
   assert.match(sec, /keeps nothing \(zero retention\); a little slower/);
   const removes = [...sec.matchAll(/action="\/settings\/search\/remove"[\s\S]*?name="model" value="([a-z0-9-]+)"/g)].map((m) => m[1]);

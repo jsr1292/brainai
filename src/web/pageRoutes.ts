@@ -1,12 +1,15 @@
 import { Router, type Request, type Response } from 'express';
-import { changedSections, diffBodies } from '../pages/diff.js';
+import { diffBodies } from '../pages/diff.js';
+import { changeLine } from './pageEditSummary.js';
 import { renderMarkdown, splitSections } from '../pages/markdown.js';
 import { FileImports } from '../pages/fileImports.js';
+import { errorText } from './errorText.js';
 import { NoteError } from '../pages/notes.js';
 import { PageError, type Page } from '../pages/types.js';
 import type { AppDeps } from './app.js';
 import { requireOwner } from './authRoutes.js';
-import { backError, backFrom, type Back } from './back.js';
+import { backError, backFrom, type Back, type BackTarget } from './back.js';
+import { t } from '../i18n/index.js';
 import { backLookups } from './backLookups.js';
 import { html, page, type SafeHtml } from './html.js';
 import { conflictView, editView, historyView, type EditForm } from './pageEditViews.js';
@@ -24,12 +27,14 @@ export function pageRoutes(d: AppDeps): Router {
     const v = req.query.from;
     return typeof v === 'string' && v !== '' ? backFrom(v, look) : undefined;
   };
-  const send = (res: Response, status: number, title: string, body: SafeHtml, back?: Back | { href: string; label: string }, crumb?: boolean) =>
-    res.status(status).type('html').send(page(title, body, { nav: true, tab: back !== undefined && 'tab' in back ? back.tab : status === 404 ? null : 'pages', back: back ?? (title === 'New page' ? { href: '/pages', label: 'Pages' } : undefined), crumb }));
+  /** `kind` says what the screen is (never its translated title): the new-page form has a fixed back link to Pages. */
+  const send = (res: Response, status: number, kind: 'newPage' | 'page', title: string, body: SafeHtml, back?: Back | BackTarget, crumb?: boolean) =>
+    res.status(status).type('html').send(page(title, body, { nav: true, tab: back !== undefined && 'tab' in back ? back.tab : status === 404 ? null : 'pages', back: back ?? (kind === 'newPage' ? { href: '/pages', labelKey: 'shell.nav.pages' } : undefined), crumb }));
+  const notFound = (res: Response) => send(res, 404, 'page', t('common.notFound'), html`<h1>${t('common.notFound')}</h1>`);
   const nav = (): NavEntry[] => d.pages.headers().map((p) => ({ id: p.id, title: p.title, area: d.pages.areaOf(p) }));
   const summary = (p: Page): string => {
     const before = p.version > 1 ? d.pages.version(p.id, p.version - 1)?.body ?? '' : '';
-    return changedSections(before, p.body);
+    return changeLine(before, p.body);
   };
 
   router.get('/pages', owner, (_req, res) => {
@@ -39,7 +44,7 @@ export function pageRoutes(d: AppDeps): Router {
     const flags = d.pages.freshness.forPages(all);
     const flagged = all.filter((p) => flags.get(p.id));
     const asked = d.notes.openOn(flagged.map((p) => p.id));
-    send(res, 200, 'Pages', pagesHomeView({
+    send(res, 200, 'page', t('projects.pages'), pagesHomeView({
       nav: nav(),
       recent: all.slice(0, RECENT).map((p) => ({ page: p, area: d.pages.areaOf(p), summary: summary(p), stale: Boolean(flags.get(p.id)) })),
       stale: flagged.map((p) => ({ page: p, flag: flags.get(p.id)!, noteOpen: asked.has(p.id) })),
@@ -71,19 +76,19 @@ export function pageRoutes(d: AppDeps): Router {
   router.get('/pages/new', owner, (req, res) => {
     const wanted = typeof req.query.project === 'string' ? d.service.projectNamed(req.query.project) : '';
     const project = d.registry.get(wanted) ? wanted : '';
-    send(res, 200, 'New page', editView(nav(), { mode: 'new', title: '', project, area: 'start', body: '', projects: projectNames() }));
+    send(res, 200, 'newPage', t('pages.newPage'), editView(nav(), { mode: 'new', title: '', project, area: 'start', body: '', projects: projectNames() }));
   });
 
   router.post('/pages', owner, async (req, res) => {
     const v: EditForm = { mode: 'new', title: field(req, 'title'), project: field(req, 'project'), area: field(req, 'area'), body: field(req, 'body'), projects: projectNames() };
     const intent = field(req, 'intent');
-    if (intent !== 'save') return send(res, 200, 'New page', editView(nav(), { ...v, preview: intent === 'preview' ? preview(v.body) : undefined }));
+    if (intent !== 'save') return send(res, 200, 'newPage', t('pages.newPage'), editView(nav(), { ...v, preview: intent === 'preview' ? preview(v.body) : undefined }));
     try {
       const p = await d.pages.create({ title: v.title, project: v.project || undefined, area: v.area, body: v.body }, 'owner');
       res.redirect(303, `/pages/${p.id}`);
     } catch (e) {
       if (!(e instanceof PageError)) throw e;
-      send(res, 400, 'New page', editView(nav(), { ...v, error: e.message }));
+      send(res, 400, 'newPage', t('pages.newPage'), editView(nav(), { ...v, error: errorText(e) }));
     }
   });
 
@@ -94,7 +99,7 @@ export function pageRoutes(d: AppDeps): Router {
       const detail = d.projects.detail(p.project, d.now());
       if (detail?.card.roadmap) live = { project: detail.card.project.name, now: detail.card.roadmap.now, next: detail.nextSteps, waiting: detail.waiting };
     }
-    send(res, status, p.title, pageView({
+    send(res, status, 'page', p.title, pageView({
       page: p, nav: nav(), area: d.pages.areaOf(p), versions: p.version, sections: d.pages.sections(p.id), resolve: d.pages.resolver(),
       project: p.project === null ? null : d.service.projectNamed(p.project), notes: p.deletedAt === null ? d.notes.forPage(p.id) : [], error, noteDraft,
       live, related: p.deletedAt === null ? d.pages.relatedFacts(p, d.relatedSimilarity) : [], linkedFrom: p.deletedAt === null ? d.pages.linkedFrom(p) : [],
@@ -102,12 +107,12 @@ export function pageRoutes(d: AppDeps): Router {
       pictures: d.pages.pictures(p.body),
       fileImport: d.db ? new FileImports(d.db, d.now).get(p.id) : undefined,
       diagramProblems: p.deletedAt === null ? d.diagramChecks.problems(p).map((x) => x.block) : [],
-    }), back ?? { href: '/pages', label: 'Pages' }, false);
+    }), back ?? { href: '/pages', labelKey: 'shell.nav.pages' }, false);
   };
 
   router.get('/pages/:id', owner, (req, res) => {
     const p = d.pages.get(req.params.id as string);
-    if (!p) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
+    if (!p) return notFound(res);
     // A stale tick in the live box comes back with ?error=changed: only a fixed line is shown.
     reading(res, p, 200, backError(req.query.error), undefined, openedFrom(req));
   });
@@ -116,21 +121,21 @@ export function pageRoutes(d: AppDeps): Router {
 
   router.post('/pages/:id/notes', owner, (req, res) => {
     const p = d.pages.get(req.params.id as string);
-    if (!p || p.deletedAt !== null) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
+    if (!p || p.deletedAt !== null) return notFound(res);
     try {
       d.notes.add(p.id, { text: field(req, 'text'), anchor: field(req, 'section') || undefined });
     } catch (e) {
       if (!(e instanceof NoteError)) throw e;
-      if (e.code === 'not_found') return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
+      if (e.code === 'not_found') return notFound(res);
       // The reason shows once, beside the kept form (not again in the page's error block).
-      return reading(res, p, 400, undefined, { text: field(req, 'text'), section: field(req, 'section'), error: e.message });
+      return reading(res, p, 400, undefined, { text: field(req, 'text'), section: field(req, 'section'), error: errorText(e) });
     }
     res.redirect(303, `/pages/${p.id}#${NOTES_ID}`);
   });
 
   router.post('/pages/:id/notes/:noteId/withdraw', owner, (req, res) => {
     const n = d.notes.get(req.params.noteId as string);
-    if (!n || n.pageId !== req.params.id) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
+    if (!n || n.pageId !== req.params.id) return notFound(res);
     try {
       d.notes.withdraw(n.id);
     } catch (e) {
@@ -143,20 +148,20 @@ export function pageRoutes(d: AppDeps): Router {
 
   router.post('/pages/:id/still-true', owner, (req, res) => {
     const p = live(req.params.id as string);
-    if (!p) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
+    if (!p) return notFound(res);
     d.pages.stillTrue(p.id);
     res.redirect(303, `/pages/${p.id}`);
   });
 
   router.post('/pages/:id/still-true/undo', owner, (req, res) => {
     const p = live(req.params.id as string);
-    if (!p) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
+    if (!p) return notFound(res);
     try {
       d.pages.undoStillTrue(p.id);
     } catch (e) {
       if (!(e instanceof PageError)) throw e;
-      if (e.code === 'not_found') return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
-      return reading(res, d.pages.get(p.id)!, 409, e.message);
+      if (e.code === 'not_found') return notFound(res);
+      return reading(res, d.pages.get(p.id)!, 409, errorText(e));
     }
     res.redirect(303, `/pages/${p.id}`);
   });
@@ -165,28 +170,28 @@ export function pageRoutes(d: AppDeps): Router {
     const p = live(req.params.id as string);
     const section = typeof req.query.section === 'string' ? req.query.section : undefined;
     const form = p ? formFor(p, section) : undefined;
-    if (!p || !form) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
-    send(res, 200, `Editing ${p.title}`, editView(nav(), form), { href: `/pages/${p.id}`, label: p.title });
+    if (!p || !form) return notFound(res);
+    send(res, 200, 'page', t('pages.ed.editingTitle', { title: p.title }), editView(nav(), form), { href: `/pages/${p.id}`, label: p.title });
   });
 
   router.post('/pages/:id', owner, async (req, res) => {
     const p = live(req.params.id as string);
-    if (!p) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
+    if (!p) return notFound(res);
     const anchor = field(req, 'section') || undefined;
     const base = Number(field(req, 'base'));
-    if (!Number.isInteger(base)) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
+    if (!Number.isInteger(base)) return notFound(res);
     const shown = formFor(p, anchor);
     if (!shown) {
       // The section was renamed or removed since the editor opened: a conflict, never a lost edit.
-      if (anchor === undefined || base === p.version) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
+      if (anchor === undefined || base === p.version) return notFound(res);
       const whole = formFor(p, undefined)!;
-      return send(res, 409, `Editing ${p.title}`, conflictView(nav(), { ...whole, base, savedBy: p.updatedBy, version: p.version, theirs: p.body, mine: field(req, 'body') }), { href: `/pages/${p.id}`, label: p.title });
+      return send(res, 409, 'page', t('pages.ed.editingTitle', { title: p.title }), conflictView(nav(), { ...whole, base, savedBy: p.updatedBy, version: p.version, theirs: p.body, mine: field(req, 'body') }), { href: `/pages/${p.id}`, label: p.title });
     }
     const v: EditForm = anchor === undefined
       ? { ...shown, base, title: field(req, 'title'), project: field(req, 'project'), area: field(req, 'area'), body: field(req, 'body') }
       : { ...shown, base, body: field(req, 'body') };
     const intent = field(req, 'intent');
-    if (intent !== 'save') return send(res, 200, `Editing ${v.title}`, editView(nav(), { ...v, preview: intent === 'preview' ? preview(v.body) : undefined }), { href: `/pages/${p.id}`, label: p.title });
+    if (intent !== 'save') return send(res, 200, 'page', t('pages.ed.editingTitle', { title: v.title }), editView(nav(), { ...v, preview: intent === 'preview' ? preview(v.body) : undefined }), { href: `/pages/${p.id}`, label: p.title });
     try {
       const before = splitSections(p.body).findIndex((s) => s.anchor === anchor);
       const saved = anchor === undefined
@@ -202,9 +207,9 @@ export function pageRoutes(d: AppDeps): Router {
         const now = d.pages.get(p.id)!;
         const theirs = anchor === undefined ? now.body : sectionText(now.body, anchor) ?? now.body;
         const saved = formFor(now, undefined)!;
-        return send(res, 409, `Editing ${p.title}`, conflictView(nav(), { ...v, mode: anchor !== undefined && sectionText(now.body, anchor) !== undefined ? 'section' : 'page', savedBy: now.updatedBy, version: now.version, theirs, mine: v.body, current: anchor === undefined ? { title: saved.title, project: saved.project, area: saved.area } : undefined }), { href: `/pages/${p.id}`, label: p.title });
+        return send(res, 409, 'page', t('pages.ed.editingTitle', { title: p.title }), conflictView(nav(), { ...v, mode: anchor !== undefined && sectionText(now.body, anchor) !== undefined ? 'section' : 'page', savedBy: now.updatedBy, version: now.version, theirs, mine: v.body, current: anchor === undefined ? { title: saved.title, project: saved.project, area: saved.area } : undefined }), { href: `/pages/${p.id}`, label: p.title });
       }
-      send(res, 400, `Editing ${v.title}`, editView(nav(), { ...v, error: e.message }), { href: `/pages/${p.id}`, label: p.title });
+      send(res, 400, 'page', t('pages.ed.editingTitle', { title: v.title }), editView(nav(), { ...v, error: errorText(e) }), { href: `/pages/${p.id}`, label: p.title });
     }
   });
 
@@ -212,28 +217,28 @@ export function pageRoutes(d: AppDeps): Router {
 
   router.get('/pages/:id/history', owner, (req, res) => {
     const p = d.pages.get(req.params.id as string);
-    if (!p) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
+    if (!p) return notFound(res);
     const all = d.pages.versions(p.id);
     const wanted = typeof req.query.v === 'string' ? Number(req.query.v) : p.version;
     const selected = all.find((x) => x.version === wanted);
-    if (!selected) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
+    if (!selected) return notFound(res);
     const before = (n: number) => all.find((x) => x.version === n - 1);
     const previous = before(selected.version);
-    send(res, 200, 'History', historyView(nav(), {
+    send(res, 200, 'page', t('pages.hist.title'), historyView(nav(), {
       pageId: p.id, pageTitle: p.title, selected, previous, diff: diffBodies(previous?.body ?? '', selected.body),
-      versions: all.map((x) => ({ ...x, summary: changedSections(before(x.version)?.body ?? '', x.body) })),
+      versions: all.map((x) => ({ ...x, summary: changeLine(before(x.version)?.body ?? '', x.body) })),
     }), { href: `/pages/${p.id}`, label: p.title });
   });
 
   const act = async (req: Request, res: Response, run: (p: Page) => Promise<unknown> | unknown, to: (p: Page) => string) => {
     const p = d.pages.get(req.params.id as string);
-    if (!p) return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
+    if (!p) return notFound(res);
     try {
       await run(p);
     } catch (e) {
       if (!(e instanceof PageError)) throw e;
-      if (e.code === 'not_found') return send(res, 404, 'Not found', html`<h1>Not found</h1>`);
-      return send(res, 400, 'Could not do that', html`<h1>Could not do that</h1><p>${e.message}</p><p><a href="/pages/${p.id}">← Back to the page</a></p>`);
+      if (e.code === 'not_found') return notFound(res);
+      return send(res, 400, 'page', t('pages.couldNot'), html`<h1>${t('pages.couldNot')}</h1><p>${errorText(e)}</p><p><a href="/pages/${p.id}">${t('pages.backToPage')}</a></p>`);
     }
     res.redirect(303, to(p));
   };

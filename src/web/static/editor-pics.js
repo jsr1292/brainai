@@ -2,11 +2,22 @@
 // they leave it, so only pixels go up (location, camera details and iPhone HDR extras stay behind); the server then
 // cleans every upload again. app.js imports this module for an editor form with data-pics and calls setUpEditor.
 
+const T = typeof globalThis.T === 'function' ? globalThis.T : (key, english, params) => { const s = english !== undefined ? english : key; return params ? s.replace(/\{(\w+)\}/g, (m, n) => (Object.prototype.hasOwnProperty.call(params, n) ? String(params[n]) : m)) : s; };
+
 const MAX_SIDE = 2560;
 const QUALITY = 0.85;
 const PNG_KEEP_BYTES = 4 * 1024 * 1024;
-const HEIC = "This browser can't read HEIC pictures. Save it as JPEG first.";
-const UNREADABLE = "This browser can't read this picture. Save it as JPEG first.";
+/** The codes POST /images answers with (ImageErrorCode in src/images/clean.ts), worded in the page's language. */
+const PICTURE_ERRORS = {
+  svg: () => T('client.pics.err.svg', "SVG pictures can't be added: they can carry script."),
+  unsupported: () => T('client.pics.err.unsupported', "This kind of picture isn't supported. Save it as JPEG first; the editor does this for you."),
+  unknown: () => T('client.pics.err.unknown', "This file isn't a picture the brain can show (JPEG, PNG, WebP or GIF)."),
+  broken: () => T('client.pics.err.broken', "This picture's file is damaged."),
+  too_big: () => T('client.pics.err.too_big', 'This picture is too large (at most 10,000 px on a side, 40 megapixels and 100 frames).'),
+  too_large: () => T('client.pics.err.too_large', 'This picture is over 10 MB.'),
+};
+const HEIC = () => T('client.pics.heic', "This browser can't read HEIC pictures. Save it as JPEG first.");
+const UNREADABLE = () => T('client.pics.unreadable', "This browser can't read this picture. Save it as JPEG first.");
 
 /** The size that fits within `max` on its longest side, the same shape, never larger, never a zero side. */
 export function fitWithin(w, h, max) {
@@ -23,7 +34,7 @@ export function fitWithin(w, h, max) {
 export function redrawPlan({ type, name, width, height, bytes }) {
   const t = (type || '').toLowerCase();
   if (width == null || height == null) {
-    return { action: 'refuse', message: /hei[cf]/.test(t) || /\.hei[cf]$/i.test(name || '') ? HEIC : UNREADABLE };
+    return { action: 'refuse', message: /hei[cf]/.test(t) || /\.hei[cf]$/i.test(name || '') ? HEIC() : UNREADABLE() };
   }
   if (t === 'image/gif') return { action: 'keep' };
   if (t === 'image/png') {
@@ -33,16 +44,17 @@ export function redrawPlan({ type, name, width, height, bytes }) {
   return { action: 'redraw', format: 'image/jpeg', ...fitWithin(width, height, MAX_SIDE) };
 }
 
-const size = (bytes) => (bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`);
+// Whole KB under 1 MB, else MB with one decimal; the decimal comma in Spanish.
+const size = (bytes) => (bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1).replace('.', T.lang === 'es' ? ',' : '.')} MB`);
 
 /** The status line for one picture: what the device did to it, and whether it was added. */
 export function stripText({ name, before, after, redrawn, fromPhoto, error }) {
   if (error) return `${name} · ${error}`;
   const parts = [name];
-  if (redrawn) parts.push(after < before ? `made smaller on this device, ${size(before)} → ${size(after)}` : 'redrawn on this device');
+  if (redrawn) parts.push(after < before ? T('client.pics.smaller', 'made smaller on this device, {before} → {after}', { before: size(before), after: size(after) }) : T('client.pics.redrawn', 'redrawn on this device'));
   else parts.push(size(after));
-  if (redrawn && fromPhoto) parts.push('location and camera details removed');
-  parts.push('Added ✓');
+  if (redrawn && fromPhoto) parts.push(T('client.pics.stripped', 'location and camera details removed'));
+  parts.push(T('client.pics.added', 'Added ✓'));
   return parts.join(' · ');
 }
 
@@ -139,7 +151,7 @@ async function prepareAndSend(file) {
       body = await redraw(bitmap, plan);
     } catch {
       bitmap?.close?.();
-      return { line: null, text: stripText({ name: file.name, error: "This picture couldn't be made smaller on this device. Try a smaller picture." }) };
+      return { line: null, text: stripText({ name: file.name, error: T('client.pics.cantShrink', "This picture couldn't be made smaller on this device. Try a smaller picture.") }) };
     }
   }
   bitmap?.close?.();
@@ -147,11 +159,13 @@ async function prepareAndSend(file) {
   try {
     res = await fetch('/images?alt=', { method: 'POST', body, headers: { 'Content-Type': 'application/octet-stream' }, credentials: 'same-origin' });
   } catch {
-    return { line: null, text: stripText({ name: file.name, error: "The picture couldn't be sent. Check the connection and try again." }) };
+    return { line: null, text: stripText({ name: file.name, error: T('client.pics.cantSend', "The picture couldn't be sent. Check the connection and try again.") }) };
   }
   const json = await res.json().catch(() => null);
   if (!res.ok || !json || typeof json.markdown !== 'string') {
-    const error = json && typeof json.error === 'string' ? json.error : "The picture couldn't be added.";
+    // The server's text is English (machine path); its `code` is worded in the page's language.
+    const worded = json && typeof json.code === 'string' && Object.hasOwn(PICTURE_ERRORS, json.code) ? PICTURE_ERRORS[json.code] : null;
+    const error = worded ? worded() : json && typeof json.error === 'string' ? json.error : T('client.pics.cantAdd', "The picture couldn't be added.");
     return { line: null, text: stripText({ name: file.name, error }) };
   }
   const redrawn = plan.action === 'redraw';
@@ -178,7 +192,7 @@ export function setUpEditor(form) {
     // One at a time, so the lines go in the order the pictures were given.
     busy = busy.then(async () => {
       strip.hidden = false;
-      strip.textContent = list.length === 1 ? `${list[0].name} · adding…` : `Adding ${list.length} pictures…`;
+      strip.textContent = list.length === 1 ? T('client.pics.adding', '{name} · adding…', { name: list[0].name }) : T('client.pics.addingMany', 'Adding {count} pictures…', { count: list.length });
       const lines = [];
       cursor = { start: area.selectionStart, end: area.selectionEnd };
       expected = area.value;
@@ -228,7 +242,7 @@ export function setUpEditor(form) {
     if (action === 'pictures') add(files);
     else {
       strip.hidden = false;
-      strip.textContent = `${files[0].name} · Only pictures can be added here (JPEG, PNG, WebP or GIF).`;
+      strip.textContent = T('client.pics.onlyPictures', '{name} · Only pictures can be added here (JPEG, PNG, WebP or GIF).', { name: files[0].name });
     }
   };
   area.addEventListener('paste', onPaste);

@@ -7,11 +7,44 @@ import { join } from 'node:path';
 import { looksLikeSecret } from '../memory/secrets.js';
 import { appOfGrant, currentSetupVersion, loadSetupOverlay, SETUP_HASH, SETUP_VERSION, setupApps, setupText } from './texts.js';
 
-const all = () => setupApps().map((a) => ({ app: a, text: setupText(a.slug, 'https://HOST/mcp') }));
+const all = (lang: 'en' | 'es' = 'en') => setupApps().map((a) => ({ app: a, text: setupText(a.slug, 'https://HOST/mcp', undefined, lang) }));
+const hashOf = (rows: { app: { slug: string }; text: string }[]) => createHash('sha256').update(JSON.stringify(rows.map((x) => [x.app.slug, x.text]))).digest('hex');
 
-test("the texts' hash is pinned to the version", () => {
-  const hash = createHash('sha256').update(JSON.stringify(all().map((x) => [x.app.slug, x.text]))).digest('hex');
+test("the texts' hash (English then Spanish) is pinned to the version", () => {
+  const hash = hashOf([...all('en'), ...all('es')]);
   assert.equal(hash, SETUP_HASH, `A setup text changed: raise SETUP_VERSION and set SETUP_HASH to ${hash}`);
+});
+
+test('the English texts are byte for byte what version 2 had (only the number moved)', () => {
+  const v2 = setupApps().map((a) => ({ app: a, text: setupText(a.slug, 'https://HOST/mcp', { version: 2, extra: {} }) }));
+  assert.equal(hashOf(v2), '00f4311ac905e1625bdee2035015c3b8d62e664c9a09505f7d4a10eb2319bd1c');
+});
+
+test('every app has a Spanish text, with the same address, tool names, setup number and shape as the English one', () => {
+  const en = all('en'), es = all('es');
+  const tools = (s: string) => [...new Set(s.match(/\b(?:load_profile|project_brief|recall|read_page|write_page|edit_page_section|remember)\b/g) ?? [])].sort();
+  for (const [i, { app, text }] of es.entries()) {
+    const e = en[i]!.text;
+    assert.notEqual(text, e, app.slug);
+    assert.match(text, /\(host\)/, app.slug);
+    assert.deepEqual(tools(text), tools(e), app.slug);
+    assert.equal(text.includes('How this brain is organised'), e.includes('How this brain is organised'), app.slug);
+    assert.equal(/^<!-- brain setup \d+ -->\n[\s\S]*\n<!-- \/brain setup -->$/.test(text), app.file, app.slug);
+    assert.equal(text.split('\n').length, e.split('\n').length, app.slug);
+    assert.equal(looksLikeSecret(text), null, app.slug);
+    assert.doesNotMatch(text, /Acme|owner|\bthe brain\b/, app.slug);
+    if (app.reports === false) assert.doesNotMatch(text, /load_profile/, app.slug);
+    else assert.ok(text.replace(/\n<!-- \/brain setup -->$/, '').trimEnd().endsWith(`Cuando llames a load_profile, pasa setup: ${SETUP_VERSION}.`), app.slug);
+  }
+  for (const slug of ['claude', 'chatgpt', 'grok']) assert.ok(setupText(slug, 'https://memory.example.com/mcp', undefined, 'es').length <= 1500, slug);
+});
+
+test('an overlay lines and number apply in Spanish too; an unknown language is English', () => {
+  const o = { version: 7, extra: { codex: ['- Mi línea.'] } };
+  const es = setupText('codex', 'https://HOST/mcp', o, 'es');
+  assert.match(es, /^<!-- brain setup 7 -->\n/);
+  assert.match(es, /- Mi línea\.\n\nCuando llames a load_profile, pasa setup: 7\./);
+  assert.equal(setupText('codex', 'https://HOST/mcp', o, 'xx' as never), setupText('codex', 'https://HOST/mcp', o));
 });
 
 test('every text ends by asking for its setup number, and file texts are wrapped', () => {

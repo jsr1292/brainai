@@ -52,6 +52,10 @@ export interface ReviewView {
   sentence: string;
   /** The sentence without its lead, for the Monday line. */
   lineSentence: string;
+  /** What the two sentences are made of, so a screen can word them in the owner's language (`sentence` and `lineSentence` stay English). */
+  sentenceFacts: SentenceFacts;
+  /** True for "this week so far". */
+  soFar: boolean;
   empty: boolean;
   /** Projects with steps, pages or commits only on the Mac; at most CAPS.moved. */
   moved: MovedCard[];
@@ -59,7 +63,8 @@ export interface ReviewView {
   /** Every chip of the week, in project order (never capped: a project has at most two). */
   chips: { project: string; chip: Chip }[];
   waiting: { late: Capped<WaitRow>; after: Capped<WaitRow>; undated: number };
-  quiet: Capped<{ project: string; area: Area | null; lastTouched: string; next: string | null; open: boolean; stateText: string | null }>;
+  /** `state` and `stateAt` (the day it changed) are set when the project left the open list; `stateText` is their English words. */
+  quiet: Capped<{ project: string; area: Area | null; lastTouched: string; next: string | null; open: boolean; stateText: string | null; state: string | null; stateAt: string | null }>;
   back: Capped<{ project: string; quietDays: number }>;
   /** `replaced`: replaced since (section 16), on the day of its replacement; `currentId` null when the chain ends in a deleted fact or a project the reader can't read. */
   decided: Capped<{ id: string; date: string; project: string | null; excerpt: string; by: string; voices: string[] | undefined; replaced: { on: string; currentId: string | null } | null }>;
@@ -188,7 +193,7 @@ export function presentReview(r: { monday: string; body: ReviewBody; builtAt: st
     .map((p) => {
       const row = ctx.registry.get(p.project);
       const open = row === undefined || row.state === 'open';
-      return { project: p.project, area: row?.area ?? null, lastTouched: p.quiet!.lastTouched, next: p.quiet!.next, open, stateText: open ? null : `${row!.state} since ${shortDay(row!.stateChangedAt, ctx.now)}` };
+      return { project: p.project, area: row?.area ?? null, lastTouched: p.quiet!.lastTouched, next: p.quiet!.next, open, stateText: open ? null : `${row!.state} since ${shortDay(row!.stateChangedAt, ctx.now)}`, state: open ? null : row!.state, stateAt: open ? null : row!.stateChangedAt };
     });
   const back = rows.filter((p) => p.back !== null && !life.get(p.project) && !emptied(p.project))
     .sort((a, b) => b.back!.quietDays - a.back!.quietDays || a.project.localeCompare(b.project))
@@ -220,6 +225,8 @@ export function presentReview(r: { monday: string; body: ReviewBody; builtAt: st
     kind,
     sentence,
     lineSentence: weekSentence(facts, { lead: false, soFar }),
+    sentenceFacts: facts,
+    soFar,
     empty,
     moved: shownCards.slice(0, CAPS.moved).map((c) => ({ ...c, done: c.done.slice(0, CAPS.steps), moreSteps: Math.max(0, c.done.length - CAPS.steps) })),
     movedMore: shownCards.slice(CAPS.moved).map((c) => c.project),

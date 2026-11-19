@@ -25,10 +25,10 @@ export function normalizePlaces(input: string | readonly string[]): string[] {
   for (const entry of raw) {
     const s = String(entry).trim().toLowerCase().replace(/\s+/g, '-');
     if (s === '' || out.includes(s)) continue;
-    if (s.length > MAX_PLACE_CHARS) throw new ProjectError('invalid', `Each place is at most ${MAX_PLACE_CHARS} characters`);
-    if (!PLACE_RE.test(s)) throw new ProjectError('invalid', 'A place name has only letters, digits, dots, hyphens and underscores, such as minipc or pi');
+    if (s.length > MAX_PLACE_CHARS) throw new ProjectError('invalid', `Each place is at most ${MAX_PLACE_CHARS} characters`, { key: 'err.project.placeMax', params: { max: MAX_PLACE_CHARS } });
+    if (!PLACE_RE.test(s)) throw new ProjectError('invalid', 'A place name has only letters, digits, dots, hyphens and underscores, such as minipc or pi', { key: 'err.project.placeChars' });
     out.push(s);
   }
-  if (out.length > MAX_PLACES) throw new ProjectError('invalid', `At most ${MAX_PLACES} places`);
+  if (out.length > MAX_PLACES) throw new ProjectError('invalid', `At most ${MAX_PLACES} places`, { key: 'err.project.placesMax', params: { max: MAX_PLACES } });
   return out;
 }

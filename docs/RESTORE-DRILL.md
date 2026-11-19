@@ -1,3 +1,5 @@
+Leer en español: [docs/es/RESTORE-DRILL.md](es/RESTORE-DRILL.md)
+
 # Restore drill
 
 A backup you have never restored is a hope. This drill restores every kind of saved copy onto a clean machine and

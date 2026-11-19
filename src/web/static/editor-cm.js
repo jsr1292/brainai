@@ -11,6 +11,8 @@
  * app.js imports this module for an editor form with data-cm and calls setUpEditor.
  */
 
+const T = typeof globalThis.T === 'function' ? globalThis.T : (key, english, params) => { const s = english !== undefined ? english : key; return params ? s.replace(/\{(\w+)\}/g, (m, n) => (Object.prototype.hasOwnProperty.call(params, n) ? String(params[n]) : m)) : s; };
+
 const CM = '/static/vendor/codemirror-6.43.15/editor.mjs';
 
 /** Two texts are the same when they read the same, whatever the line endings. */
@@ -217,7 +219,7 @@ export async function mountEditor(textarea) {
         // The save bar is sticky at the bottom of the window: keep the line being typed above it.
         cm.EditorView.scrollMargins.of(() => ({ bottom: 96, top: 72 })),
         // The box it replaces had the label; screen readers need it on the editor now.
-        cm.EditorView.contentAttributes.of({ 'aria-label': textarea.getAttribute('aria-label') || 'Page text' }),
+        cm.EditorView.contentAttributes.of({ 'aria-label': textarea.getAttribute('aria-label') || T('client.editor.pageText', 'Page text') }),
         cm.history(),
         cm.drawSelection(),
         cm.closeBrackets(),
@@ -330,7 +332,7 @@ export async function setUpEditor(form) {
   if (cancel) {
     cancel.addEventListener('click', (e) => {
       if (!dirty()) return;
-      if (!window.confirm('This page has changes that are not saved. Leave without saving?')) e.preventDefault();
+      if (!window.confirm(T('client.editor.leave', 'This page has changes that are not saved. Leave without saving?'))) e.preventDefault();
     });
   }
 

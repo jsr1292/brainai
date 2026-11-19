@@ -14,6 +14,7 @@ import { fakeHome } from '../testing/fakeTools.js';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
 import { toolEnv } from './desktopRoutes.js';
 import { removeSeams } from './removeRoutes.js';
+import { decodeEntities, withoutClientCatalog } from '../testing/entities.js';
 
 const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
 const PUBLIC = 'https://brainai-mac.tail1234.ts.net';
@@ -32,7 +33,7 @@ async function desktop(t: TestContext, o: { platform?: NodeJS.Platform; extraPat
 }
 const savedFolders = (home: string) => readdirSync(join(home, 'Documents')).filter((n) => n.startsWith('BrainAI saved '));
 /** The done page as text, with HTML's escaped apostrophes put back. */
-const doneText = async (f: Awaited<ReturnType<typeof loggedIn>>) => (await (await f('/settings/remove/done')).text()).replaceAll('&#39;', "'");
+const doneText = async (f: Awaited<ReturnType<typeof loggedIn>>) => decodeEntities((await (await f('/settings/remove/done')).text()));
 const post = (f: Awaited<ReturnType<typeof loggedIn>>, body = 'where=documents') => f('/settings/remove', { method: 'POST', headers: FORM, body });
 
 test('the page says what will happen and offers the same where-choice as Save a copy', async (t) => {
@@ -52,7 +53,7 @@ test('the page says what will happen and offers the same where-choice as Save a 
 
 test('the page says the data folder and the app go, and only the saved copy is kept', async (t) => {
   const { f } = await desktop(t, { platform: 'darwin' });
-  const page = (await (await f('/settings/remove')).text()).replaceAll('&#39;', "'");
+  const page = decodeEntities((await (await f('/settings/remove')).text()));
   const kept = page.slice(page.indexOf('<h2>What is kept</h2>'));
   assert.match(kept, /Only the saved copy/);
   assert.match(page, /deletes its data folder \(memories, backups, logs and settings\) and removes the app/);
@@ -64,7 +65,7 @@ test('on Windows the page never says Mac', async (t) => {
   const { f } = await desktop(t, { platform: 'win32' });
   const page = await (await f('/settings/remove')).text();
   assert.match(page, /Remove BrainAI from this computer/);
-  assert.doesNotMatch(page, /Mac|Applications|Trash|folder report/);
+  assert.doesNotMatch(withoutClientCatalog(page), /Mac|Applications|Trash|folder report/);
 });
 
 test('remove saves first and stops if saving fails', async (t) => {

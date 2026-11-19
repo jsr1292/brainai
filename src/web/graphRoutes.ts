@@ -3,6 +3,7 @@ import type { AppDeps } from './app.js';
 import { readCookie, requireOwner } from './authRoutes.js';
 import { graphListPage, graphPage } from './graphViews.js';
 import { page } from './html.js';
+import { t } from '../i18n/index.js';
 
 /** Remembers whether the Graph tab opens as the 3D window or the list, in this browser. */
 export const GRAPH_VIEW_COOKIE = 'graph-view';
@@ -12,7 +13,7 @@ const YEAR_MS = 365 * 24 * 3600_000;
 export function graphRoutes(d: AppDeps): Router {
   const router = Router();
   const owner = requireOwner(d.sessions);
-  const send = (res: Response, body: ReturnType<typeof graphPage>) => res.status(200).type('html').send(page('Graph', body, { nav: true, tab: 'graph' }));
+  const send = (res: Response, body: ReturnType<typeof graphPage>) => res.status(200).type('html').send(page(t('graph.title'), body, { nav: true, tab: 'graph' }));
 
   router.get('/graph', owner, (req: Request, res) => {
     const view = req.query.view;

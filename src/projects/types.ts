@@ -1,3 +1,4 @@
+import { SayableError, type Say } from '../i18n/errors.js';
 /** Where a project belongs in the brain; Personal is private to the owner's own assistants. */
 export const AREAS = ['apps', 'home', 'tools', 'work', 'personal'] as const;
 export type Area = (typeof AREAS)[number];
@@ -35,9 +36,9 @@ export interface Project {
   updatedBy: string;
 }
 
-export class ProjectError extends Error {
-  constructor(public code: 'not_found' | 'invalid' | 'pin_limit', message: string) {
-    super(message);
+export class ProjectError extends SayableError {
+  constructor(public code: 'not_found' | 'invalid' | 'pin_limit', message: string, say?: Say) {
+    super(message, say);
     this.name = 'ProjectError';
   }
 }

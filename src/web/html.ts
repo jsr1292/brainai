@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import type { Back, Tab } from './back.js';
+import { backLabel, type Back, type BackTarget, type Tab } from './back.js';
 import { sideStatus } from './sideStatus.js';
+import { t, tKey, currentLanguage, type Key } from '../i18n/core.js';
+import { tHtml } from '../i18n/tHtml.js';
+import { clientJson } from '../i18n/client.js';
 
-/** HTML that is already escaped (or deliberately trusted) and is inserted verbatim. */
-export class SafeHtml {
-  constructor(readonly value: string) {}
-}
+import { SafeHtml } from '../safeHtml.js';
+export { SafeHtml };
 
 const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
@@ -47,11 +48,11 @@ export const memoryName = (): string => 'BrainAI';
 export const memoryServerName = (): string => 'shared-memory';
 
 /** The main destinations, as in the approved mockups. */
-const TABS: { href: string; label: string; tab: Tab }[] = [
-  { href: '/', label: 'Projects', tab: 'projects' },
-  { href: '/pages', label: 'Pages', tab: 'pages' },
-  { href: '/approvals', label: 'Inbox', tab: 'inbox' },
-  { href: '/review', label: 'Week', tab: 'week' },
+const TABS: { href: string; label: Key; tab: Tab }[] = [
+  { href: '/', label: 'shell.nav.projects', tab: 'projects' },
+  { href: '/pages', label: 'shell.nav.pages', tab: 'pages' },
+  { href: '/approvals', label: 'shell.nav.inbox', tab: 'inbox' },
+  { href: '/review', label: 'shell.nav.week', tab: 'week' },
 ];
 
 /**
@@ -67,13 +68,13 @@ const phoneTabOf = (tab: Tab | null | undefined, sideTab: Tab | null | undefined
 export type Section = 'last' | 'now' | 'growth' | 'activity' | 'skills';
 
 /** The desktop sidebar's places, each with its sections (desktop design §3). */
-const PLACES: { href: string; label: string; tab: Tab; subs: { href: string; label: string; section: Section }[] }[] = [
-  { href: '/', label: 'Projects', tab: 'projects', subs: [] },
-  { href: '/pages', label: 'Pages', tab: 'pages', subs: [{ href: '/skills', label: 'Skills', section: 'skills' }] },
-  { href: '/facts', label: 'Facts', tab: 'facts', subs: [] },
-  { href: '/approvals', label: 'Inbox', tab: 'inbox', subs: [] },
-  { href: '/review', label: 'Week', tab: 'week', subs: [{ href: '/review', label: 'Last week', section: 'last' }, { href: '/review/now', label: 'So far', section: 'now' }, { href: '/growth', label: 'Growth', section: 'growth' }, { href: '/activity', label: 'Activity', section: 'activity' }] },
-  { href: '/graph', label: 'Graph', tab: 'graph', subs: [] },
+const PLACES: { href: string; label: Key; tab: Tab; subs: { href: string; label: Key; section: Section }[] }[] = [
+  { href: '/', label: 'shell.nav.projects', tab: 'projects', subs: [] },
+  { href: '/pages', label: 'shell.nav.pages', tab: 'pages', subs: [{ href: '/skills', label: 'shell.nav.skills', section: 'skills' }] },
+  { href: '/facts', label: 'shell.nav.facts', tab: 'facts', subs: [] },
+  { href: '/approvals', label: 'shell.nav.inbox', tab: 'inbox', subs: [] },
+  { href: '/review', label: 'shell.nav.week', tab: 'week', subs: [{ href: '/review', label: 'shell.nav.lastWeek', section: 'last' }, { href: '/review/now', label: 'shell.nav.soFar', section: 'now' }, { href: '/growth', label: 'shell.nav.growth', section: 'growth' }, { href: '/activity', label: 'shell.nav.activity', section: 'activity' }] },
+  { href: '/graph', label: 'shell.nav.graph', tab: 'graph', subs: [] },
 ];
 
 /**
@@ -88,15 +89,15 @@ function sidebar(opts: { tab?: Tab | null; section?: Section; query?: string }):
     const here = opts.tab === p.tab;
     const subs = p.subs;
     const lit = here ? subs.find((x) => x.section === section) : undefined;
-    const count = p.tab === 'inbox' && status.needsYouCount > 0 ? html`<span class="side-count" aria-label="${status.needsYouCount} waiting">${status.needsYouCount}</span>` : '';
-    return html`<li><a class="side-place" href="${p.href}"${here ? raw(` aria-current="${lit ? 'true' : 'page'}"`) : ''}>${p.label}${count}</a>${subs.length > 0 ? html`<ul class="side-subs">${subs.map((x) => html`<li><a class="side-sub" href="${x.href}"${x === lit ? raw(' aria-current="page"') : ''}>${x.label}</a></li>`)}</ul>` : ''}</li>`;
+    const count = p.tab === 'inbox' && status.needsYouCount > 0 ? html`<span class="side-count" aria-label="${t('shell.waiting', { count: status.needsYouCount })}">${status.needsYouCount}</span>` : '';
+    return html`<li><a class="side-place" href="${p.href}"${here ? raw(` aria-current="${lit ? 'true' : 'page'}"`) : ''}>${tKey(p.label)}${count}</a>${subs.length > 0 ? html`<ul class="side-subs">${subs.map((x) => html`<li><a class="side-sub" href="${x.href}"${x === lit ? raw(' aria-current="page"') : ''}>${tKey(x.label)}</a></li>`)}</ul>` : ''}</li>`;
   };
-  const warn = status.backupLate ? html`<span class="side-warn"><span class="dot attention" aria-hidden="true"></span>Backup late</span>` : '';
-  return html`<nav class="side" hidden aria-label="Main">
+  const warn = status.backupLate ? html`<span class="side-warn"><span class="dot attention" aria-hidden="true"></span>${t('shell.backupLate')}</span>` : '';
+  return html`<nav class="side" hidden aria-label="${t('shell.nav.main')}">
 <a class="brand" href="/"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></a>
-<form class="side-find" method="get" action="/search" role="search"><svg class="side-find-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input name="q" type="search" placeholder="Search" aria-label="Search" aria-keyshortcuts="Meta+K Control+K" value="${opts.query ?? ''}"><kbd><span class="k-mac">⌘K</span><span class="k-pc">Ctrl K</span></kbd></form>
+<form class="side-find" method="get" action="/search" role="search"><svg class="side-find-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input name="q" type="search" placeholder="${t('shell.search.placeholder')}" aria-label="${t('shell.search.label')}" aria-keyshortcuts="Meta+K Control+K" value="${opts.query ?? ''}"><kbd><span class="k-mac">⌘K</span><span class="k-pc">Ctrl K</span></kbd></form>
 <ul class="side-places">${PLACES.map(place)}</ul>
-<a class="side-place side-settings" href="/settings"${opts.tab === 'settings' ? raw(' aria-current="page"') : ''}>Settings${warn}</a>
+<a class="side-place side-settings" href="/settings"${opts.tab === 'settings' ? raw(' aria-current="page"') : ''}>${t('shell.nav.settings')}${warn}</a>
 </nav>
 `;
 }
@@ -105,9 +106,8 @@ function sidebar(opts: { tab?: Tab | null; section?: Section; query?: string }):
  * The place the desktop sidebar lights: every page under Settings lights Settings (they all go back to it), and the pages that
  * belong to the Inbox light the Inbox (Tidy up, Facts that disagree). The phone's bar is not touched by this.
  */
-function sideTabOf(title: string, opts: { tab?: Tab | null; sideTab?: Tab | null; back?: Pick<Back, 'href'> }): Tab | null | undefined {
+function sideTabOf(opts: { tab?: Tab | null; sideTab?: Tab | null; back?: Pick<Back, 'href'> }): Tab | null | undefined {
   if (opts.sideTab !== undefined) return opts.sideTab;
-  if (title === 'Tidy up') return 'inbox';
   if (opts.tab == null && opts.back?.href.split(/[#?]/)[0]!.startsWith('/settings')) return 'settings';
   return opts.tab;
 }
@@ -131,10 +131,12 @@ export function setPausedBanner(fn: () => string | null): void {
 }
 
 /** Where the palette (Ctrl/⌘K) can jump besides the sidebar's places, for this brain's mode: set by createApp. */
-export interface GoTo { label: string; href: string; alias?: string }
-let goTo: GoTo[] = [];
-export function setGoTo(list: GoTo[]): void {
-  goTo = list;
+/** `key` (and `params`) are translated when the page is rendered; `alias` is extra words the palette matches, kept as written. */
+export interface GoTo { key: Key; params?: Record<string, string | number>; href: string; alias?: string }
+let goTo: () => GoTo[] = () => [];
+/** The palette's extra rows: a function, so labels are worked out in each request's language. */
+export function setGoTo(list: GoTo[] | (() => GoTo[])): void {
+  goTo = typeof list === 'function' ? list : () => list;
 }
 
 let serverMode = false;
@@ -149,26 +151,26 @@ export function setConsentPoller(on: boolean): void {
   consentPoller = on;
 }
 
-export function page(title: string, body: SafeHtml, opts: { nav?: boolean; /** Which place the desktop sidebar lights, when it is not `tab` (the phone bar keeps using `tab`). */ sideTab?: Tab | null; query?: string; tab?: Tab | null; section?: Section; back?: Pick<Back, 'href' | 'label'>; crumb?: boolean; /** The app's first-run setup: its own frame, with the brand in its step list. */ shell?: 'setup' } = {}): string {
+export function page(title: string, body: SafeHtml, opts: { nav?: boolean; /** Which place the desktop sidebar lights, when it is not `tab` (the phone bar keeps using `tab`). */ sideTab?: Tab | null; query?: string; tab?: Tab | null; section?: Section; back?: BackTarget; crumb?: boolean; /** The app's first-run setup: its own frame, with the brand in its step list. */ shell?: 'setup' } = {}): string {
   const brand = html`<a class="brand" href="/"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></a>`;
-  const phoneTab = opts.nav ? phoneTabOf(opts.tab, sideTabOf(title, opts)) : null;
+  const phoneTab = opts.nav ? phoneTabOf(opts.tab, sideTabOf(opts)) : null;
   const waiting = opts.nav ? sideStatus().needsYouCount : 0;
-  const link = (t: { href: string; label: string; tab: Tab }) =>
-    html`<a href="${t.href}"${phoneTab === t.tab ? raw(' aria-current="page"') : ''}>${t.label}${t.tab === 'inbox' && waiting > 0 ? html`<span class="tab-count" aria-label="${waiting} waiting">${waiting}</span>` : ''}</a>`;
-  const settings = html`<a class="settings-link" href="/settings"${opts.tab === 'settings' ? raw(' aria-current="page"') : ''} aria-label="Settings"><span class="settings-word">Settings</span><svg class="cog" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></a>`;
+  const link = (tb: { href: string; label: Key; tab: Tab }) =>
+    html`<a href="${tb.href}"${phoneTab === tb.tab ? raw(' aria-current="page"') : ''}>${tKey(tb.label)}${tb.tab === 'inbox' && waiting > 0 ? html`<span class="tab-count" aria-label="${t('shell.waiting', { count: waiting })}">${waiting}</span>` : ''}</a>`;
+  const settings = html`<a class="settings-link" href="/settings"${opts.tab === 'settings' ? raw(' aria-current="page"') : ''} aria-label="${t('shell.nav.settings')}"><span class="settings-word">${t('shell.nav.settings')}</span><svg class="cog" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></a>`;
   const header = opts.nav
-    ? html`<header class="top">${brand}${opts.back ? html`<a class="top-back" href="${opts.back.href}"><span>${opts.back.label}</span></a>` : ''}
-<nav class="tabs" aria-label="Main">${TABS.map(link)}</nav>
-<form class="find" method="get" action="/search" role="search"><input name="q" type="search" placeholder="Search the brain" aria-label="Search" aria-keyshortcuts="Meta+K Control+K" title="Search (Ctrl K or ⌘K)" value="${opts.query ?? ''}"><button type="button" class="find-cancel">Cancel</button><div class="find-hints"><a href="/review/now#latest">Latest changes</a><a href="/facts">All facts</a><p>Or type: projects, facts and page sections.</p></div></form>
+    ? html`<header class="top">${brand}${opts.back ? html`<a class="top-back" href="${opts.back.href}"><span>${backLabel(opts.back)}</span></a>` : ''}
+<nav class="tabs" aria-label="${t('shell.nav.main')}">${TABS.map(link)}</nav>
+<form class="find" method="get" action="/search" role="search"><input name="q" type="search" placeholder="${t('shell.search.placeholderTop')}" aria-label="${t('shell.search.label')}" aria-keyshortcuts="Meta+K Control+K" title="${t('shell.search.title')}" value="${opts.query ?? ''}"><button type="button" class="find-cancel">${t('shell.search.cancel')}</button><div class="find-hints"><a href="/review/now#latest">${t('shell.search.latest')}</a><a href="/facts">${t('shell.search.allFacts')}</a><p>${t('shell.search.hint')}</p></div></form>
 ${settings}
 </header>`
     : opts.shell === 'setup' ? html`` : html`<header class="top solo">${brand}</header>`;
   return html`<!doctype html>
-<html lang="en">
+<html lang="${currentLanguage()}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>${title === 'Shared memory' ? memoryName() : title}</title>
+<title>${title}</title>
 <link rel="manifest" href="${asset('manifest.webmanifest')}">
 <meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0f1320" media="(prefers-color-scheme: dark)">
@@ -178,13 +180,15 @@ ${settings}
 <script src="${asset('platform.js')}"></script>
 <link rel="stylesheet" href="${asset('style.css')}">
 <link rel="stylesheet" href="${asset('desk.css')}" media="screen and (min-width: 1100px)">
+${raw(`<script type="application/json" id="i18n">${clientJson()}</script>`)}
+<script src="${asset('i18n.js')}"></script>
 <script src="${asset('app.js')}" defer></script>
 </head>
-<body class="${opts.nav ? 'app' : opts.shell === 'setup' ? 'setup' : 'auth'}"${opts.nav ? html` data-desk="${asset('desk.js')}"${goTo.length > 0 ? html` data-goto="${JSON.stringify(goTo)}"` : ''}` : ''}${opts.nav && serverMode ? raw(' data-server') : ''}${consentPoller ? raw(' data-consents-waiting="/consents/waiting"') : ''}>
-${header}${opts.nav ? sidebar({ ...opts, tab: sideTabOf(title, opts) }) : ''}<main>
-${(() => { const to = opts.nav ? movedTo() : null; return to ? html`<p class="notice" role="status">This brain now lives at <a href="${to.origin}">${to.origin}</a>. Changes made here are not copied there.</p>
-` : ''; })()}${(() => { const since = opts.nav ? pausedSince() : null; return since ? html`<div class="notice undo-line" role="status"><span>Saving is paused: assistants cannot save, change or forget anything.</span><form method="post" action="/settings/pause/resume"><button type="submit" class="linklike">Resume</button></form></div>
-` : ''; })()}${opts.nav && opts.back && opts.crumb !== false ? html`<p class="crumb back"><a href="${opts.back.href}">‹ ${opts.back.label}</a></p>` : ''}
+<body class="${opts.nav ? 'app' : opts.shell === 'setup' ? 'setup' : 'auth'}"${opts.nav ? html` data-desk="${asset('desk.js')}"${goTo().length > 0 ? html` data-goto="${JSON.stringify(goTo().map((g) => ({ label: tKey(g.key, g.params), href: g.href, ...(g.alias ? { alias: g.alias } : {}) })))}"` : ''}` : ''}${opts.nav && serverMode ? raw(' data-server') : ''}${consentPoller ? raw(' data-consents-waiting="/consents/waiting"') : ''}>
+${header}${opts.nav ? sidebar({ ...opts, tab: sideTabOf(opts) }) : ''}<main>
+${(() => { const to = opts.nav ? movedTo() : null; return to ? html`<p class="notice" role="status">${tHtml('shell.moved', { address: html`<a href="${to.origin}">${to.origin}</a>` })}</p>
+` : ''; })()}${(() => { const since = opts.nav ? pausedSince() : null; return since ? html`<div class="notice undo-line" role="status"><span>${t('shell.paused')}</span><form method="post" action="/settings/pause/resume"><button type="submit" class="linklike">${t('shell.resume')}</button></form></div>
+` : ''; })()}${opts.nav && opts.back && opts.crumb !== false ? html`<p class="crumb back"><a href="${opts.back.href}"${opts.back.mark ? html` data-back="${opts.back.mark}"` : ''}>‹ ${backLabel(opts.back)}</a></p>` : ''}
 ${body}
 </main>
 </body>

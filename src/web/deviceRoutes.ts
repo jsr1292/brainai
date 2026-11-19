@@ -95,24 +95,24 @@ const MAX_REPORTED_SKILLS = 200;
 
 function parseSkillReport(body: unknown): ReportItem[] {
   const list = (body as { skills?: unknown } | null)?.skills;
-  if (!Array.isArray(list) || list.length > MAX_REPORTED_SKILLS) throw new SkillError('invalid', 'Expected {skills: [...]}, at most 200.');
+  if (!Array.isArray(list) || list.length > MAX_REPORTED_SKILLS) throw new SkillError('invalid', 'Expected {skills: [...]}, at most 200.', { key: 'err.skill.expectSkills200' });
   return list.map((x) => {
     const o = x as Record<string, unknown>;
     if (typeof o.name !== 'string' || typeof o.hash !== 'string' || typeof o.description !== 'string' || typeof o.files !== 'number' || typeof o.bytes !== 'number'
-      || !(o.shareable === null || typeof o.shareable === 'string')) throw new SkillError('invalid', 'Each skill needs name, description, hash, files, bytes and shareable.');
+      || !(o.shareable === null || typeof o.shareable === 'string')) throw new SkillError('invalid', 'Each skill needs name, description, hash, files, bytes and shareable.', { key: 'err.skill.eachNeedsFull' });
     return { name: o.name, description: o.description, hash: o.hash, files: o.files, bytes: o.bytes, shareable: o.shareable === null ? null : String(o.shareable).slice(0, 200) };
   });
 }
 
 function parseSkillUpload(body: unknown): { name: string; hash: string; files: SkillFile[] }[] {
   const list = (body as { skills?: unknown } | null)?.skills;
-  if (!Array.isArray(list) || list.length > MAX_REPORTED_SKILLS) throw new SkillError('invalid', 'Expected {skills: [...]}.');
+  if (!Array.isArray(list) || list.length > MAX_REPORTED_SKILLS) throw new SkillError('invalid', 'Expected {skills: [...]}.', { key: 'err.skill.expectSkills' });
   return list.map((x) => {
     const o = x as Record<string, unknown>;
-    if (typeof o.name !== 'string' || typeof o.hash !== 'string' || !Array.isArray(o.files)) throw new SkillError('invalid', 'Each skill needs name, hash and files.');
+    if (typeof o.name !== 'string' || typeof o.hash !== 'string' || !Array.isArray(o.files)) throw new SkillError('invalid', 'Each skill needs name, hash and files.', { key: 'err.skill.eachNeedsThree' });
     const files = o.files.map((f) => {
       const ff = f as Record<string, unknown>;
-      if (typeof ff.path !== 'string' || typeof ff.text !== 'string') throw new SkillError('invalid', 'Each file needs path and text.');
+      if (typeof ff.path !== 'string' || typeof ff.text !== 'string') throw new SkillError('invalid', 'Each file needs path and text.', { key: 'err.skill.eachFileNeeds' });
       return { path: ff.path, text: ff.text };
     });
     return { name: o.name, hash: o.hash, files };

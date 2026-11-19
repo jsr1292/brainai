@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
 import { clockTo, seedWildlogWeek } from '../testing/reviewFixtures.js';
 import { seedFlaggedWildlog } from '../testing/staleFixtures.js';
+import { decodeEntities, withoutClientCatalog } from '../testing/entities.js';
 
 const ai = { type: 'ai', name: 'Claude Code' } as const;
 
@@ -83,7 +84,7 @@ test('last week shows the sentence, the parts in order and the footer, with no i
   const f = await loggedIn(app);
   const res = await f('/review');
   assert.equal(res.status, 200);
-  const body = await res.text();
+  const body = withoutClientCatalog(await res.text());
   assert.match(body, /<h1>Last week<\/h1>/);
   assert.match(body, /Monday 26 October – Sunday 1 November 2026/);
   assert.match(body, /<p class="lede">3 steps done, all in wildlog\. 1 thing is late, and energy went quiet\.<\/p>/);
@@ -179,7 +180,7 @@ test('last week\'s ticks return to /review even when opened by its date; so far\
   assert.match(part(byDate, 'Waiting on you'), /<form method="post" action="\/projects\/wildlog\/waiting\/0\/done"><input type="hidden" name="text" value="Run .\/scripts\/release.sh 0.2.2"><input type="hidden" name="back" value="\/review">/);
   assert.match(part(byDate, 'Went quiet'), /name="back" value="\/review"[\s\S]*Park it/);
   assert.doesNotMatch(byDate, /value="\/review\/2026-10-26"/);
-  const now = await (await f('/review/now')).text();
+  const now = decodeEntities(await (await f('/review/now')).text());
   assert.match(now, /<h1>This week so far<\/h1>/);
   assert.match(part(now, 'Waiting on you'), /name="back" value="\/review\/now"/);
   assert.match(now, /So far: made just now from what is stored\. It changes as the week goes on and isn't kept\./);
@@ -308,7 +309,7 @@ test('All weeks lists every week newest first with its sentence and no unread ma
   await app.deps.service.remember({ kind: 'decision', content: 'wildlog labels are scanned on the phone', project: 'wildlog' }, ai);
   clockTo(app.deps, app.advance, '2026-10-27T08:00:00Z');
   const f = await loggedIn(app);
-  const body = await (await f('/review/all')).text();
+  const body = withoutClientCatalog(await (await f('/review/all')).text());
   assert.match(body, /<h1>All weeks<\/h1>/);
   assert.match(body, /One line per week\. A week opens as it stood at its end\./);
   const weeks = [...body.matchAll(/<a class="wk" href="([^"]+)">([^<]+)<\/a>/g)].map((m) => [m[1], m[2]]);

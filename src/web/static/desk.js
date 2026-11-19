@@ -8,6 +8,9 @@
  * Nothing here is needed: with JavaScript off, or "Open things beside the list" off, every link and form still works.
  */
 
+const T = typeof globalThis.T === 'function' ? globalThis.T : (key, english, params) => { const s = english !== undefined ? english : key; return params ? s.replace(/\{(\w+)\}/g, (m, n) => (Object.prototype.hasOwnProperty.call(params, n) ? String(params[n]) : m)) : s; };
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
 // ---- Preferences (Settings › This Mac), per device in localStorage: absent means on ----
 
 export const PREF = { keys: 'desk.keys', beside: 'desk.beside', nolist: (place) => `desk.nolist.${place}` };
@@ -193,9 +196,10 @@ export function sideUrl(kind, href, base) {
 
 /** The sheet bar's crumb. For a discussion, `title` is its project (or empty: "Discussions"). */
 export function crumbParts(kind, title) {
-  if (kind === 'project') return ['Projects', title];
-  if (kind === 'discussion') return ['Projects', title || 'Discussions', 'Discussion'];
-  return ['Projects', 'Not in the brain yet'];
+  const projects = T('client.nav.projects', 'Projects');
+  if (kind === 'project') return [projects, title];
+  if (kind === 'discussion') return [projects, title || T('client.nav.discussions', 'Discussions'), T('client.nav.discussion', 'Discussion')];
+  return [projects, T('client.nav.notYet', 'Not in the brain yet')];
 }
 
 /**
@@ -259,20 +263,26 @@ export function pageCrumb(area, project, title) {
 
 /** Decided's "N more ›" on the desktop (nine rows shown), or null when every row shows. */
 export function capLabel(total, cap = 9) {
-  return total > cap ? `${total - cap} more ›` : null;
+  return total > cap ? T('client.desk.more', '{count} more ›', { count: total - cap }) : null;
 }
 
 /** The tick toast's words. */
 export function toastText(text) {
   const t = String(text);
-  return `Ticked “${t.length > 60 ? `${t.slice(0, 60)}…` : t}”`;
+  return T('client.desk.ticked', 'Ticked “{text}”', { text: t.length > 60 ? `${t.slice(0, 60)}…` : t });
 }
 
 // ---- The ⌘K palette (design §4.10): pure helpers ----
 
-/** The places the palette's Do group jumps to (GET only), in the sidebar's order; the digit where one exists, and another name it answers to. */
+/** The places the palette's Do group jumps to (GET only), in the sidebar's order (English names, the keys of placeName); the digit where one exists, and another name it answers to. */
 const DO_PLACES = [['Projects', '/', '1'], ['Pages', '/pages', '2'], ['Facts', '/facts'], ['Inbox', '/approvals', undefined, 'Approvals'],
   ['Last week', '/review', '3'], ['So far', '/review/now'], ['Growth', '/growth'], ['Activity', '/activity'], ['Graph', '/graph', '4'], ['Settings', '/settings']];
+/** A place's name in the page's language. */
+const placeName = (en) => ({
+  Projects: T('client.nav.projects', 'Projects'), Pages: T('client.nav.pages', 'Pages'), Facts: T('client.nav.facts', 'Facts'), Inbox: T('client.nav.inbox', 'Inbox'),
+  'Last week': T('client.nav.lastWeek', 'Last week'), 'So far': T('client.nav.soFar', 'So far'), Growth: T('client.nav.growth', 'Growth'),
+  Activity: T('client.nav.activity', 'Activity'), Graph: T('client.nav.graph', 'Graph'), Settings: T('client.nav.settings', 'Settings'),
+})[en] ?? en;
 const fold = (t) => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 /**
@@ -283,20 +293,25 @@ const fold = (t) => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCa
 export function paletteDo(q, extra = []) {
   const t = String(q ?? '').trim();
   const out = [];
-  if (t.length >= 1 && t.length <= 140) out.push({ label: `Add “${t}” as an idea`, idea: t });
-  for (const [name, href, key, alias] of DO_PLACES) {
-    if (t !== '' && !fold(name).includes(fold(t)) && !(alias && fold(alias).includes(fold(t)))) continue;
-    out.push(key ? { label: `Go to ${name}`, href, key } : { label: `Go to ${name}`, href });
+  const names = []; // beside `out`: [name in the page's language, English name] of a row that goes to a place, else null
+  const go = (name) => T('client.desk.palGoTo', 'Go to {name}', { name });
+  if (t.length >= 1 && t.length <= 140) { out.push({ label: T('client.desk.palAddIdea', 'Add “{text}” as an idea', { text: t }), idea: t }); names.push(null); }
+  for (const [en, href, key, alias] of DO_PLACES) {
+    const name = placeName(en);
+    if (t !== '' && !fold(name).includes(fold(t)) && !fold(en).includes(fold(t)) && !(alias && fold(alias).includes(fold(t)))) continue;
+    out.push(key ? { label: go(name), href, key } : { label: go(name), href });
+    names.push([name, en]);
   }
   // The pages beside the sidebar's places (Skills, Map, the Settings subpages), offered once something is typed.
   if (t !== '') {
     for (const { label, href, alias } of extra) {
       if (!fold(label).includes(fold(t)) && !(alias && fold(alias).includes(fold(t)))) continue;
-      out.push({ label: `Go to ${label}`, href });
+      out.push({ label: go(label), href });
+      names.push([label, label]);
     }
   }
   // A place named exactly as typed comes first, above adding the text as an idea: Enter opens it.
-  const exact = out.findIndex((r) => r.href !== undefined && fold(r.label.slice('Go to '.length)) === fold(t));
+  const exact = names.findIndex((n) => n !== null && (fold(n[0]) === fold(t) || fold(n[1]) === fold(t)));
   if (t !== '' && exact > 0) out.unshift(...out.splice(exact, 1));
   return out;
 }
@@ -432,19 +447,19 @@ function keysSheet() {
   if (keysDialog) return keysDialog;
   const k = (keys, words) => [el('dt', {}, ...keys.flatMap((x, i) => (i ? [' ', el('kbd', { text: x })] : [el('kbd', { text: x })]))), el('dd', { text: words })];
   const rows = [
-    [[MOD + 'K'], 'Search'],
-    [['1', '4'], 'Projects, Pages, Week, Graph'],
-    [['↑', '↓'], 'Move in the list, the sheet follows'],
-    [['Esc'], 'Close, back to the overview'],
-    [['\\'], 'Hide or show the list'],
-    [['e'], 'Edit what is open'],
-    [['x'], 'Tick the item in focus, with Undo (not on Week)'],
-    [['z'], 'Undo the tick'],
-    [['n'], 'Write an idea (Projects)'],
-    [['/'], 'Filter the list (Facts)'],
-    [['←', '→'], 'Older or newer week (Week)'],
-    [[MOD + '↵'], 'Approve or decide, inside the sheet or the Inbox'],
-    [['?'], 'This sheet'],
+    [[MOD + 'K'], T('client.desk.key.search', 'Search')],
+    [['1', '4'], T('client.desk.key.places', 'Projects, Pages, Week, Graph')],
+    [['↑', '↓'], T('client.desk.key.move', 'Move in the list, the sheet follows')],
+    [['Esc'], T('client.desk.key.esc', 'Close, back to the overview')],
+    [['\\'], T('client.desk.key.hide', 'Hide or show the list')],
+    [['e'], T('client.desk.key.edit', 'Edit what is open')],
+    [['x'], T('client.desk.key.tick', 'Tick the item in focus, with Undo (not on Week)')],
+    [['z'], T('client.desk.key.undo', 'Undo the tick')],
+    [['n'], T('client.desk.key.idea', 'Write an idea (Projects)')],
+    [['/'], T('client.desk.key.filter', 'Filter the list (Facts)')],
+    [['←', '→'], T('client.desk.key.weeks', 'Older or newer week (Week)')],
+    [[MOD + '↵'], T('client.desk.key.approve', 'Approve or decide, inside the sheet or the Inbox')],
+    [['?'], T('client.desk.key.this', 'This sheet')],
   ];
   const dl = el('dl');
   for (const [keys, words] of rows) {
@@ -452,10 +467,10 @@ function keysSheet() {
     if (keys[0] === '1') { dt.textContent = ''; dt.append(el('kbd', { text: '1' }), '–', el('kbd', { text: '4' })); }
     dl.append(dt, dd);
   }
-  dl.append(el('dt'), el('dd', { class: 'desk-muted', text: 'No single key approves, rejects or deletes.' }));
+  dl.append(el('dt'), el('dd', { class: 'desk-muted', text: T('client.desk.keysNone', 'No single key approves, rejects or deletes.') }));
   keysDialog = add(el('dialog', { class: 'desk-keys', 'aria-labelledby': 'desk-keys-h' },
-    el('h2', { id: 'desk-keys-h', text: 'Keys' }),
-    el('p', { text: `Single keys only work outside a text field. Turn them off in Settings › ${thisDeviceName()}.` }),
+    el('h2', { id: 'desk-keys-h', text: T('client.desk.keys', 'Keys') }),
+    el('p', { text: T('client.desk.keysIntro', 'Single keys only work outside a text field. Turn them off in Settings › {device}.', { device: thisDeviceName() }) }),
     dl));
   document.body.append(keysDialog);
   return keysDialog;
@@ -533,7 +548,7 @@ function onKey(e) {
 function addHint() {
   const ongo = document.querySelector('.phome:not(.has-panel) #ongo');
   if (!ongo || !prefs().keys || ongo.querySelector('.desk-hint')) return;
-  ongo.append(add(el('span', { class: 'desk-hint' }, el('kbd', { text: '↓' }), ' opens beside the list')));
+  ongo.append(add(el('span', { class: 'desk-hint' }, el('kbd', { text: '↓' }), ` ${T('client.desk.hintBeside', 'opens beside the list')}`)));
 }
 
 // ---- Settings › This Mac (design §4.9): two switches, stored per device ----
@@ -541,9 +556,9 @@ function addHint() {
 /** What Settings calls this computer: "This Mac" on a Mac, "This computer" on Windows and anything else. */
 function thisDeviceName() {
   // A server's Settings names the same section for the browser, not a computer.
-  if (typeof document !== 'undefined' && document.body && document.body.dataset.server !== undefined) return 'This browser';
+  if (typeof document !== 'undefined' && document.body && document.body.dataset.server !== undefined) return T('client.desk.thisBrowser', 'This browser');
   const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || '';
-  return /mac/i.test(platform) ? 'This Mac' : 'This computer';
+  return /mac/i.test(platform) ? T('client.desk.thisMac', 'This Mac') : T('client.desk.thisComputer', 'This computer');
 }
 
 function thisMac() {
@@ -556,7 +571,7 @@ function thisMac() {
     restores.push(() => status.replaceChildren(...before));
   }
   // Looked up each time: on the desktop, mountSettings moves Settings' index after this.
-  const showStatus = () => { const st = document.querySelector('a[href="#this-device"] .st'); if (st) st.textContent = prefs().keys ? 'Shortcuts on' : 'Shortcuts off'; };
+  const showStatus = () => { const st = document.querySelector('a[href="#this-device"] .st'); if (st) st.textContent = prefs().keys ? T('client.desk.shortcutsOn', 'Shortcuts on') : T('client.desk.shortcutsOff', 'Shortcuts off'); };
   const row = (name, key, title, note) => {
     const noteId = `desk-mac-${key}`;
     const sw = el('button', { type: 'button', class: 'desk-switch', role: 'switch', 'aria-checked': String(prefs()[key]), 'aria-label': title, 'aria-describedby': noteId });
@@ -569,8 +584,8 @@ function thisMac() {
     return el('li', {}, el('span', { class: 'desk-mac-name', text: title }), el('span', { class: 'desk-mac-note', id: noteId, text: note }), sw);
   };
   const list = add(el('ul', { class: 'desk-mac' },
-    row('keys', 'keys', 'Keyboard shortcuts', `Single keys such as 1–4, x and e. ${MOD}K and Esc always work.`),
-    row('beside', 'beside', 'Open things beside the list', 'Off opens every project, page and fact as its own page, like the iPhone.')));
+    row('keys', 'keys', T('client.desk.shortcuts', 'Keyboard shortcuts'), T('client.desk.shortcutsNote', 'Single keys such as 1–4, x and e. {mod}K and Esc always work.', { mod: MOD })),
+    row('beside', 'beside', T('client.desk.beside', 'Open things beside the list'), T('client.desk.besideNote', 'Off opens every project, page and fact as its own page, like the iPhone.'))));
   const head = section.querySelector('.panel-head');
   if (head) head.after(list); else section.prepend(list);
   showStatus();
@@ -623,19 +638,19 @@ function liveSay(text) {
 }
 
 function buildSheet(place = 'projects') {
-  const hide = el('button', { type: 'button', class: 'desk-hide', 'aria-pressed': 'false', text: 'Hide list' });
+  const hide = el('button', { type: 'button', class: 'desk-hide', 'aria-pressed': 'false', text: T('client.desk.hideList', 'Hide list') });
   hide.addEventListener('click', () => toggleList());
   return el('section', { class: 'desk-sheet', id: 'desk-sheet', tabindex: '-1' },
     el('div', { class: 'desk-bar' },
-      el('nav', { class: 'desk-crumb', 'aria-label': 'Where you are' }),
-      el('div', { class: 'desk-acts' }, hide, el('a', { class: 'desk-x', href: placeOf(place)?.overview() ?? '/', 'aria-label': 'Close (Esc)' }, svgX()))),
+      el('nav', { class: 'desk-crumb', 'aria-label': T('client.desk.whereYouAre', 'Where you are') }),
+      el('div', { class: 'desk-acts' }, hide, el('a', { class: 'desk-x', href: placeOf(place)?.overview() ?? '/', 'aria-label': T('client.desk.close', 'Close (Esc)') }, svgX()))),
     el('div', { class: 'desk-body' }, el('div', { class: 'desk-head' }), el('div', { class: 'desk-cols' }, el('div', { class: 'desk-main' }), el('div', { class: 'desk-aside' }))));
 }
 
 function addOverview(plist) {
   if (!plist || plist.querySelector(':scope > a.desk-overview')) return;
   const h1 = plist.querySelector(':scope > h1');
-  const a = el('a', { class: 'desk-overview', href: '/', text: 'Overview' });
+  const a = el('a', { class: 'desk-overview', href: '/', text: T('client.desk.overview', 'Overview') });
   if (h1) h1.after(a); else plist.prepend(a);
 }
 
@@ -677,11 +692,11 @@ function placeSide(text, main, aside) {
 
 function keyline() {
   return el('p', { class: 'desk-keyline' },
-    el('span', {}, el('kbd', { text: '↑' }), ' ', el('kbd', { text: '↓' }), ' next project'),
+    el('span', {}, el('kbd', { text: '↑' }), ' ', el('kbd', { text: '↓' }), ` ${T('client.desk.keylineProject', 'next project')}`),
     el('span', { class: 'desk-sep', text: ' · ' }),
-    el('span', {}, el('kbd', { text: 'x' }), ' tick the item in focus'),
+    el('span', {}, el('kbd', { text: 'x' }), ` ${T('client.desk.keylineTick', 'tick the item in focus')}`),
     el('span', { class: 'desk-sep', text: ' · ' }),
-    el('span', {}, el('kbd', { text: 'Esc' }), ' back to the overview'));
+    el('span', {}, el('kbd', { text: 'Esc' }), ` ${T('client.desk.keylineBack', 'back to the overview')}`));
 }
 
 const rootOf = (doc) => doc.querySelector('#panel') ?? doc.querySelector('main > .discussion, main > .pages-wrap.on-page')
@@ -690,17 +705,19 @@ const rootOf = (doc) => doc.querySelector('#panel') ?? doc.querySelector('main >
 function crumbTitle(kind, doc, root) {
   if (kind === 'project') return root.querySelector('#panel-title')?.textContent.trim() ?? '';
   if (kind === 'discussion') {
-    const back = doc.querySelector('main > p.crumb.back a')?.textContent.replace(/^‹\s*/, '').trim() ?? '';
-    return back === 'Discussions' ? '' : back;
+    const link = doc.querySelector('main > p.crumb.back a');
+    // The server marks the link that goes to the list of discussions (data-back): the words are the page's language, never compared.
+    if (!link || link.dataset.back === 'discussions') return '';
+    return link.textContent.replace(/^‹\s*/, '').trim();
   }
   return '';
 }
 function sheetTitle(kind, root) {
   if (kind === 'project') return root.querySelector('#panel-title')?.textContent.trim() ?? '';
-  if (kind === 'discussion') return root.querySelector(':scope > h1')?.textContent.trim() ?? 'the discussion';
-  if (kind === 'page') return root.querySelector('.pmain > h1')?.textContent.trim() ?? 'the page';
-  if (kind === 'fact') return root.querySelector(':scope > h1.fact-text')?.textContent.trim() ?? 'the fact';
-  return 'Not in the brain yet';
+  if (kind === 'discussion') return root.querySelector(':scope > h1')?.textContent.trim() ?? T('client.desk.theDiscussion', 'the discussion');
+  if (kind === 'page') return root.querySelector('.pmain > h1')?.textContent.trim() ?? T('client.desk.thePage', 'the page');
+  if (kind === 'fact') return root.querySelector(':scope > h1.fact-text')?.textContent.trim() ?? T('client.desk.theFact', 'the fact');
+  return T('client.nav.notYet', 'Not in the brain yet');
 }
 
 /**
@@ -723,7 +740,7 @@ function fillSheet(kind, root, sideText, crumb) {
   if (kind === 'fact') splitFact(node, aside);
   placeSide(sideText, main, aside);
   if (kind === 'project' && prefs().keys) main.append(keyline());
-  if (kind === 'fact') setCrumb(['Facts', node.querySelector(':scope > .fact-kind a.project')?.textContent.trim() || node.querySelector(':scope > .fact-kind .kind')?.textContent.trim() || 'Fact']);
+  if (kind === 'fact') setCrumb([T('client.nav.facts', 'Facts'), node.querySelector(':scope > .fact-kind a.project')?.textContent.trim() || node.querySelector(':scope > .fact-kind .kind')?.textContent.trim() || T('client.desk.fact', 'Fact')]);
   else if (crumbs) setCrumb(crumbs.parts, crumbs.ring);
   else setCrumb(crumbParts(kind, crumb));
   s.dataset.kind = kind;
@@ -738,7 +755,7 @@ function failLine(href) {
   s.querySelector('.desk-head').replaceChildren();
   // Without the hash: a link to the URL already shown plus a fragment would only jump, not load the page.
   const own = String(href).split('#')[0];
-  s.querySelector('.desk-main').replaceChildren(el('p', { class: 'desk-fail' }, 'Couldn’t load this. ', el('a', { href: own, 'data-desk-native': '', text: 'Open it as its own page ›' })));
+  s.querySelector('.desk-main').replaceChildren(el('p', { class: 'desk-fail' }, T('client.desk.failed', 'Couldn’t load this. '), el('a', { href: own, 'data-desk-native': '', text: T('client.desk.openOwn', 'Open it as its own page ›') })));
 }
 
 function focusSheet(kind) {
@@ -820,7 +837,7 @@ function applyNolist(f) {
 function setNolist(f, off) {
   f.classList.toggle('desk-nolist', off);
   const b = f.querySelector('.desk-hide');
-  if (b) { b.setAttribute('aria-pressed', String(off)); b.textContent = off ? 'Show list' : 'Hide list'; }
+  if (b) { b.setAttribute('aria-pressed', String(off)); b.textContent = off ? T('client.desk.showList', 'Show list') : T('client.desk.hideList', 'Hide list'); }
 }
 function toggleList() {
   const f = frame();
@@ -875,7 +892,7 @@ function setHistory(push, kind, href) {
 function settle(kind, href, title, focus) {
   labelList();
   markSelected(href);
-  liveSay(`Opened ${title}`);
+  liveSay(T('client.desk.opened', 'Opened {title}', { title }));
   fade();
   const s = sheet();
   if (s) s.scrollTop = 0;
@@ -1251,7 +1268,7 @@ function hideToast() {
 }
 function showToast(text, undo, said = false) {
   hideToast();
-  const button = undo ? el('button', { type: 'button', text: 'Undo' }) : null;
+  const button = undo ? el('button', { type: 'button', text: T('client.desk.undo', 'Undo') }) : null;
   toast = add(el('div', { class: 'desk-toast', role: 'status' }, el('span', { text: said ? text : toastText(text) }), button, button && prefs().keys ? el('kbd', { text: 'z' }) : null));
   toastUndo = undo;
   button?.addEventListener('click', () => runUndo());
@@ -1342,7 +1359,7 @@ async function onSubmit(e) {
         const href = kind === 'project' ? `${out.url.split('#')[0]}#panel` : out.url;
         setHistory(historyMode(location.href, href) === 'push', kind, href);
         markSelected(href);
-        if (kindBefore !== kind || title) liveSay(`Opened ${title}`);
+        if (kindBefore !== kind || title) liveSay(T('client.desk.opened', 'Opened {title}', { title }));
         const g2 = sheetGen;
         const side = sideUrl(kind, href, location.href);
         fetchSide(side, undefined).then((text) => {
@@ -1427,7 +1444,7 @@ setups.push((signal) => {
 function notyetSheet(from) {
   const fold = from && (from.id === 'notyet' ? from : from.querySelector('#notyet'));
   if (!fold) return null;
-  const box = el('div', { class: 'desk-notyet' }, el('h1', { tabindex: '-1', text: 'Not in the brain yet' }));
+  const box = el('div', { class: 'desk-notyet' }, el('h1', { tabindex: '-1', text: T('client.nav.notYet', 'Not in the brain yet') }));
   for (const n of fold.children) if (n.tagName !== 'SUMMARY') box.append(document.importNode(n, true));
   return box;
 }
@@ -1574,7 +1591,7 @@ function pageCrumbOf(node) {
   const crumb = node.querySelector('.pmain > p.crumb');
   const parts = (crumb?.textContent ?? '').split('›').map((x) => x.trim()).filter(Boolean);
   const title = node.querySelector('.pmain > h1')?.textContent.trim() ?? '';
-  const area = parts[0] ?? 'Pages';
+  const area = parts[0] ?? T('client.nav.pages', 'Pages');
   const h2 = [...(listPane()?.querySelectorAll(':scope > h2, :scope > details > summary') ?? [])].find((h) => h.textContent.replace(/\d+/g, '').trim() === area);
   const ring = h2?.querySelector('.ring')?.cloneNode(true) ?? null;
   return { parts: pageCrumb(area, parts[1] ?? null, title), ring };
@@ -1606,9 +1623,9 @@ function pageBar(kind, node, s) {
   s.querySelector('.desk-acts > .desk-narrow')?.remove();
   if (kind !== 'page') return;
   const edit = s.querySelector('.desk-aside .paside > .sticky > a.button.primary');
-  const ask = s.querySelector('.desk-aside details#ask_ai') ? el('button', { type: 'button', class: 'desk-ask', text: 'Ask an AI to update' }) : null;
+  const ask = s.querySelector('.desk-aside details#ask_ai') ? el('button', { type: 'button', class: 'desk-ask', text: T('client.desk.askUpdate', 'Ask an AI to update') }) : null;
   ask?.addEventListener('click', () => askAI());
-  const pill = edit ? el('a', { class: 'button primary', href: edit.getAttribute('href'), text: 'Edit' }) : null;
+  const pill = edit ? el('a', { class: 'button primary', href: edit.getAttribute('href'), text: T('client.desk.edit', 'Edit') }) : null;
   if (edit && prefs().keys && !edit.querySelector('kbd')) {
     edit.setAttribute('aria-keyshortcuts', 'E');
     edit.append(el('kbd', { 'aria-hidden': 'true', text: 'E' }));
@@ -1680,7 +1697,7 @@ function markPage(href) {
 /** The list's header (Pages, the count, New page) and each area's count. */
 function pnavHeader(pn) {
   const n = pn.querySelectorAll(':scope > ul a[href], :scope > details a[href]').length;
-  pn.prepend(el('div', { class: 'desk-list-h' }, el('h1', {}, 'Pages', el('span', { class: 'n', text: String(n) })), el('a', { href: '/pages/new', text: 'New page' })));
+  pn.prepend(el('div', { class: 'desk-list-h' }, el('h1', {}, T('client.nav.pages', 'Pages'), el('span', { class: 'n', text: String(n) })), el('a', { href: '/pages/new', text: T('client.desk.newPage', 'New page') })));
   for (const h2 of pn.querySelectorAll(':scope > h2')) {
     const ul = h2.nextElementSibling;
     if (ul && ul.tagName === 'UL') h2.append(el('span', { class: 'n', text: String(ul.querySelectorAll('a[href]').length) }));
@@ -1794,9 +1811,9 @@ function splitFact(node, aside) {
 function factBar(kind, node, s) {
   for (const b of s.querySelectorAll('.desk-acts > :is(.desk-edit, .desk-delete)')) b.remove();
   if (kind !== 'fact' || !node.querySelector('#edit')) return;
-  const edit = el('button', { type: 'button', class: 'desk-edit', 'aria-keyshortcuts': prefs().keys ? 'E' : null }, 'Edit', prefs().keys ? el('kbd', { 'aria-hidden': 'true', text: 'E' }) : null);
+  const edit = el('button', { type: 'button', class: 'desk-edit', 'aria-keyshortcuts': prefs().keys ? 'E' : null }, T('client.desk.edit', 'Edit'), prefs().keys ? el('kbd', { 'aria-hidden': 'true', text: 'E' }) : null);
   edit.addEventListener('click', () => openEdit());
-  const del = node.querySelector('#edit form.danger') ? el('button', { type: 'button', class: 'desk-delete', 'aria-haspopup': 'dialog', text: 'Delete…' }) : null;
+  const del = node.querySelector('#edit form.danger') ? el('button', { type: 'button', class: 'desk-delete', 'aria-haspopup': 'dialog', text: T('client.desk.delete', 'Delete…') }) : null;
   del?.addEventListener('click', () => confirmDelete(del));
   s.querySelector('.desk-acts').prepend(...[edit, del].filter(Boolean));
 }
@@ -1822,11 +1839,11 @@ function openEdit() {
 let confirmDialog = null;
 function confirmDelete(from) {
   if (!confirmDialog) {
-    const yes = el('button', { type: 'button', class: 'danger', text: 'Delete' });
-    const no = el('button', { type: 'button', class: 'secondary', autofocus: true, text: 'Cancel' });
+    const yes = el('button', { type: 'button', class: 'danger', text: T('client.desk.deleteYes', 'Delete') });
+    const no = el('button', { type: 'button', class: 'secondary', autofocus: true, text: T('client.desk.cancel', 'Cancel') });
     confirmDialog = add(el('dialog', { class: 'desk-confirm', 'aria-labelledby': 'desk-confirm-h' },
-      el('h2', { id: 'desk-confirm-h', text: 'Delete this fact?' }),
-      el('p', { text: 'It leaves search for you and your assistants. Assistants that try to save it again will ask you first. You can bring it back from its History.' }),
+      el('h2', { id: 'desk-confirm-h', text: T('client.desk.deleteTitle', 'Delete this fact?') }),
+      el('p', { text: T('client.desk.deleteBody', 'It leaves search for you and your assistants. Assistants that try to save it again will ask you first. You can bring it back from its History.') }),
       el('div', { class: 'actions' }, no, yes)));
     no.addEventListener('click', () => confirmDialog.close());
     yes.addEventListener('click', () => {
@@ -2038,10 +2055,10 @@ function closePeek() {
 /** A decision in a peek over the right side: its canonical page's fact (no Edit, History or picker), no history entry. */
 async function openPeek(a) {
   if (!peekDialog) {
-    const x = el('button', { type: 'button', class: 'desk-x', 'aria-label': 'Close (Esc)' }, svgX());
+    const x = el('button', { type: 'button', class: 'desk-x', 'aria-label': T('client.desk.close', 'Close (Esc)') }, svgX());
     x.addEventListener('click', () => closePeek());
     peekDialog = add(el('dialog', { class: 'desk-peek', 'aria-labelledby': 'desk-peek-crumb' },
-      el('div', { class: 'desk-bar' }, el('nav', { class: 'desk-crumb', id: 'desk-peek-crumb', 'aria-label': 'Where you are' }), el('a', { class: 'desk-peek-open', text: 'Open in Facts' }), x),
+      el('div', { class: 'desk-bar' }, el('nav', { class: 'desk-crumb', id: 'desk-peek-crumb', 'aria-label': T('client.desk.whereYouAre', 'Where you are') }), el('a', { class: 'desk-peek-open', text: T('client.desk.openInFacts', 'Open in Facts') }), x),
       el('div', { class: 'desk-peek-body' })));
     document.body.append(peekDialog);
     restores.push(() => { for (const r of document.querySelectorAll('.row.decision.is-selected')) r.classList.remove('is-selected'); });
@@ -2050,9 +2067,9 @@ async function openPeek(a) {
   peekRow = a;
   for (const r of document.querySelectorAll('main > .review .row.decision.is-selected')) r.classList.remove('is-selected');
   a.closest('.row.decision')?.classList.add('is-selected');
-  const project = a.closest('.row.decision')?.querySelector('.pj')?.textContent.trim() || 'No project';
+  const project = a.closest('.row.decision')?.querySelector('.pj')?.textContent.trim() || T('client.desk.noProject', 'No project');
   const crumb = peekDialog.querySelector('.desk-crumb');
-  crumb.replaceChildren(el('span', { text: 'Decided' }), el('span', { class: 'desk-sep', 'aria-hidden': 'true', text: '›' }), el('b', { text: project }));
+  crumb.replaceChildren(el('span', { text: T('client.desk.decided', 'Decided') }), el('span', { class: 'desk-sep', 'aria-hidden': 'true', text: '›' }), el('b', { text: project }));
   peekDialog.querySelector('.desk-peek-open').setAttribute('href', a.getAttribute('href'));
   const body = peekDialog.querySelector('.desk-peek-body');
   if (!peekDialog.open) peekDialog.show();
@@ -2063,9 +2080,9 @@ async function openPeek(a) {
   } catch { /* offline: the line below */ }
   if (gen !== peekGen || !peekDialog.open) return;
   const keys = prefs().keys ? el('p', { class: 'desk-keyline' },
-    el('span', {}, el('kbd', { text: '↑' }), ' ', el('kbd', { text: '↓' }), ' next decision'), el('span', { class: 'desk-sep', text: ' · ' }), el('span', {}, el('kbd', { text: 'Esc' }), ' close')) : null;
+    el('span', {}, el('kbd', { text: '↑' }), ' ', el('kbd', { text: '↓' }), ` ${T('client.desk.keylineDecision', 'next decision')}`), el('span', { class: 'desk-sep', text: ' · ' }), el('span', {}, el('kbd', { text: 'Esc' }), ` ${T('client.desk.keylineClose', 'close')}`)) : null;
   if (node) body.replaceChildren(document.importNode(node, true), ...(keys ? [keys] : []));
-  else body.replaceChildren(el('p', { class: 'desk-fail' }, 'Couldn’t load this. ', el('a', { href: a.href.split('#')[0], text: 'Open it as its own page ›' })));
+  else body.replaceChildren(el('p', { class: 'desk-fail' }, T('client.desk.failed', 'Couldn’t load this. '), el('a', { href: a.href.split('#')[0], text: T('client.desk.openOwn', 'Open it as its own page ›') })));
   const h = body.querySelector('h1.fact-text');
   if (h) { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); } else peekDialog.focus();
   peekDialog.scrollTop = 0;
@@ -2132,7 +2149,7 @@ function settingsSpy(byHash = null) {
     if (on) r.setAttribute('aria-current', 'true'); else r.removeAttribute('aria-current');
   }
   const row = pn.querySelector(`.settings-index a.row[href="#${id}"] .txt`);
-  setCrumb(['Settings', row?.textContent.trim() || sections[at]?.querySelector('h2')?.textContent.trim() || 'Settings']);
+  setCrumb([T('client.nav.settings', 'Settings'), row?.textContent.trim() || sections[at]?.querySelector('h2')?.textContent.trim() || T('client.nav.settings', 'Settings')]);
 }
 
 /** Scrolls the sheet to a section, the hash replaced (no history entry), the index and crumb following. */
@@ -2209,7 +2226,23 @@ let palTimer = 0;
 let palAbort = null;
 const palLatest = createLatest();
 let graphOverview = null;
-const AREA_NAMES = { apps: 'Apps', home: 'Home & infrastructure', tools: 'Tools & AI', work: 'Work', personal: 'Personal', start: 'Start here' };
+const areaNameOf = (a) => ({
+  apps: T('client.area.apps', 'Apps'), home: T('client.area.home', 'Home & infrastructure'), tools: T('client.area.tools', 'Tools & AI'),
+  work: T('client.area.work', 'Work'), personal: T('client.area.personal', 'Personal'), start: T('client.area.start', 'Start here'),
+})[a];
+/** A palette group's heading in the page's language (the groups themselves are told apart by their English names). */
+const groupName = (l) => ({
+  Do: T('client.desk.palDo', 'Do'), 'In the graph': T('client.desk.palGraph', 'In the graph'),
+  Projects: T('client.nav.projects', 'Projects'), Pages: T('client.nav.pages', 'Pages'), Facts: T('client.nav.facts', 'Facts'),
+})[l] ?? l;
+/** Which group a /search section is, from where its first row goes (its heading is in the page's language). */
+function groupKind(rows, heading) {
+  const href = rows[0]?.href ?? '';
+  if (href.startsWith('/pages/')) return 'Pages';
+  if (href.startsWith('/memories/')) return 'Facts';
+  if (href.startsWith('/?project=')) return 'Projects';
+  return heading;
+}
 const onGraph = () => document.body.classList.contains('graph-on');
 
 function svgFind() {
@@ -2227,16 +2260,16 @@ function svgFind() {
 }
 
 function buildPalette() {
-  const input = el('input', { type: 'text', class: 'desk-pal-q', placeholder: 'Search or jump to', 'aria-label': 'Search or jump to', autocomplete: 'off', spellcheck: 'false',
+  const input = el('input', { type: 'text', class: 'desk-pal-q', placeholder: T('client.desk.searchOrJump', 'Search or jump to'), 'aria-label': T('client.desk.searchOrJump', 'Search or jump to'), autocomplete: 'off', spellcheck: 'false',
     role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'desk-pal-res', 'aria-autocomplete': 'list' });
-  const d = add(el('dialog', { class: 'desk-palette', 'aria-label': 'Search or jump to' },
+  const d = add(el('dialog', { class: 'desk-palette', 'aria-label': T('client.desk.searchOrJump', 'Search or jump to') },
     el('div', { class: 'desk-pal-in' }, svgFind(), input, el('kbd', { text: 'esc' })),
-    el('div', { class: 'desk-pal-body' }, el('div', { class: 'desk-pal-res', id: 'desk-pal-res', role: 'listbox', 'aria-label': 'Results' }), el('aside', { class: 'desk-pal-prev', 'aria-live': 'polite' })),
+    el('div', { class: 'desk-pal-body' }, el('div', { class: 'desk-pal-res', id: 'desk-pal-res', role: 'listbox', 'aria-label': T('client.desk.results', 'Results') }), el('aside', { class: 'desk-pal-prev', 'aria-live': 'polite' })),
     el('div', { class: 'desk-pal-foot' },
-      el('span', {}, el('kbd', { text: '↑' }), ' ', el('kbd', { text: '↓' }), ' move'), el('span', { class: 'desk-sep', text: ' · ' }),
-      el('span', {}, el('kbd', { text: '↵' }), ' open beside the list'), el('span', { class: 'desk-sep', text: ' · ' }),
-      el('span', {}, el('kbd', { text: MOD + '↵' }), ' open as its own page'),
-      el('span', { class: 'desk-pal-scope', text: 'Searches projects, pages, facts and page sections' }))));
+      el('span', {}, el('kbd', { text: '↑' }), ' ', el('kbd', { text: '↓' }), ` ${T('client.desk.palMove', 'move')}`), el('span', { class: 'desk-sep', text: ' · ' }),
+      el('span', {}, el('kbd', { text: '↵' }), ` ${T('client.desk.palOpenBeside', 'open beside the list')}`), el('span', { class: 'desk-sep', text: ' · ' }),
+      el('span', {}, el('kbd', { text: MOD + '↵' }), ` ${T('client.desk.palOpenOwn', 'open as its own page')}`),
+      el('span', { class: 'desk-pal-scope', text: T('client.desk.palScope', 'Searches projects, pages, facts and page sections') }))));
   input.addEventListener('input', () => {
     clearTimeout(palTimer);
     palTimer = setTimeout(() => palSearch(input.value), 120);
@@ -2277,15 +2310,15 @@ function closePalette() {
 
 /** One group's rows from the /search page: title, sub, meta and where it goes. */
 function searchGroups(doc) {
-  return [...doc.querySelectorAll('main section.search-group')].map((g) => ({
-    label: g.querySelector('h2')?.textContent.trim() ?? '',
-    rows: [...g.querySelectorAll('a.row[href]')].map((a) => {
+  return [...doc.querySelectorAll('main section.search-group')].map((g) => {
+    const rows = [...g.querySelectorAll('a.row[href]')].map((a) => {
       const txt = a.querySelector('.txt');
       const b = txt?.querySelector(':scope > b');
       const first = [...(txt?.childNodes ?? [])].find((n) => n.nodeType === 3 && n.textContent.trim() !== '');
       return { title: (b?.textContent ?? first?.textContent ?? a.textContent).trim(), sub: txt?.querySelector(':scope > .sub')?.textContent.trim() ?? '', meta: [...(txt?.querySelectorAll(':scope > .meta-line > li') ?? [])].map((li) => li.textContent.trim()).filter(Boolean).join(' · '), href: a.getAttribute('href') };
-    }),
-  }));
+    });
+    return { label: groupKind(rows, g.querySelector('h2')?.textContent.trim() ?? ''), rows };
+  });
 }
 
 /** This brain's extra jumps, written into the page by the server (only the pages its mode has). */
@@ -2313,7 +2346,7 @@ async function palSearch(q) {
     const doc = new DOMParser().parseFromString(await page.text(), 'text/html');
     groups = searchGroups(doc);
     empty = !!doc.querySelector('main p.empty');
-    if (graph?.projects?.length) groups.unshift({ label: 'In the graph', rows: graph.projects.map((x) => ({ title: x.name, sub: `${x.hits} ${x.hits === 1 ? 'match' : 'matches'}`, meta: '', node: x.name })) });
+    if (graph?.projects?.length) groups.unshift({ label: 'In the graph', rows: graph.projects.map((x) => ({ title: x.name, sub: x.hits === 1 ? T('client.desk.palMatchOne', '{n} match', { n: x.hits }) : T('client.desk.palMatchMany', '{n} matches', { n: x.hits }), meta: '', node: x.name })) });
   } catch (e) {
     if (isAbort(e)) return;
     failed = true;
@@ -2322,7 +2355,7 @@ async function palSearch(q) {
   const order = paletteOrder([...groups.map((g) => g.label), 'Do'], onGraph());
   const all = [...groups, { label: 'Do', rows: doRows }];
   const shown = order.map((l) => all.find((g) => g.label === l)).filter((g) => g && g.rows.length > 0);
-  palRender(shown, t, failed ? 'Couldn’t search right now.' : empty || groups.every((g) => g.rows.length === 0) ? `Nothing matches “${t}”.` : null);
+  palRender(shown, t, failed ? T('client.desk.palFailed', 'Couldn’t search right now.') : empty || groups.every((g) => g.rows.length === 0) ? T('client.desk.palNone', 'Nothing matches “{q}”.', { q: t }) : null);
 }
 
 function palRender(groups, q, note = null) {
@@ -2331,7 +2364,7 @@ function palRender(groups, q, note = null) {
   palItems = [];
   if (note) kids.push(el('p', { class: 'desk-pal-note', text: note }));
   for (const g of groups) {
-    const box = el('div', { class: 'desk-pal-group', role: 'group', 'aria-label': g.label }, el('p', { class: 'desk-pal-h', 'aria-hidden': 'true', text: g.label }));
+    const box = el('div', { class: 'desk-pal-group', role: 'group', 'aria-label': groupName(g.label) }, el('p', { class: 'desk-pal-h', 'aria-hidden': 'true', text: groupName(g.label) }));
     for (const r of g.rows) {
       const i = palItems.length;
       const title = el('span', { class: 'desk-pal-t' });
@@ -2376,13 +2409,13 @@ async function palPreview(r) {
     const g = await graphOverview;
     const p = g?.projects?.find((x) => x.name === name);
     if (!p || palItems[palAt] !== r) return;
-    const area = AREA_NAMES[p.area] ?? (p.area ? p.area : 'Unsorted');
+    const area = areaNameOf(p.area) ?? (p.area ? p.area : T('client.area.unsorted', 'Unsorted'));
     put(
-      el('p', { class: 'desk-pal-pk', text: [area, p.onTheGo ? 'On the go' : p.state === 'idea' ? 'Idea' : p.state === 'parked' ? 'Parked' : 'Open'].filter(Boolean).join(' · ') }),
+      el('p', { class: 'desk-pal-pk', text: [area, cap(p.onTheGo ? T('client.state.onTheGo', 'on the go') : p.state === 'idea' ? T('client.state.idea', 'idea') : p.state === 'parked' ? T('client.state.parked', 'parked') : T('client.state.open', 'open'))].filter(Boolean).join(' · ') }),
       el('p', { class: 'desk-pal-pt', text: p.name }),
       p.oneLiner ? el('p', { class: 'desk-pal-ps', text: p.oneLiner }) : null,
-      p.next ? el('p', { class: 'desk-pal-pn' }, el('span', { class: 'desk-pal-pl', text: 'Next' }), p.next) : null,
-      p.waiting ? el('p', { class: 'desk-pal-pm', text: `Waiting on you · ${p.waiting}` }) : null);
+      p.next ? el('p', { class: 'desk-pal-pn' }, el('span', { class: 'desk-pal-pl', text: T('client.desk.palNext', 'Next') }), p.next) : null,
+      p.waiting ? el('p', { class: 'desk-pal-pm', text: T('client.desk.palWaiting', 'Waiting on you · {text}', { text: p.waiting }) }) : null);
   } catch { /* the plain preview stays */ }
 }
 
@@ -2466,7 +2499,9 @@ setups.push((signal) => {
 
 // ---- Polish (design §6): Skip to content first; the list pane a landmark VoiceOver can reach after the sidebar ----
 
-const PLACE_NAMES = { projects: 'Projects', pages: 'Pages', facts: 'Facts', settings: 'Settings' };
+const placeNameOf = (p) => ({
+  projects: T('client.nav.projects', 'Projects'), pages: T('client.nav.pages', 'Pages'), facts: T('client.nav.facts', 'Facts'), settings: T('client.nav.settings', 'Settings'),
+})[p];
 /** The list pane: id="desk-list", focusable, and a labelled region where it is not already a nav. */
 function labelList() {
   const pn = listPane();
@@ -2475,7 +2510,7 @@ function labelList() {
   pn.setAttribute('tabindex', '-1');
   if (pn.tagName !== 'NAV' && !pn.hasAttribute('role')) {
     pn.setAttribute('role', 'region');
-    pn.setAttribute('aria-label', PLACE_NAMES[framePlace()] ?? 'List');
+    pn.setAttribute('aria-label', placeNameOf(framePlace()) ?? T('client.desk.list', 'List'));
   }
 }
 
@@ -2486,7 +2521,7 @@ function skipLink() {
     main.id = 'desk-main-start';
     restores.push(() => { if (main.id === 'desk-main-start') main.removeAttribute('id'); });
   }
-  const a = add(el('a', { class: 'desk-skip', href: listPane() ? '#desk-list' : `#${main.id}`, text: 'Skip to content' }));
+  const a = add(el('a', { class: 'desk-skip', href: listPane() ? '#desk-list' : `#${main.id}`, text: T('client.desk.skip', 'Skip to content') }));
   a.addEventListener('click', (e) => {
     e.preventDefault();
     labelList();

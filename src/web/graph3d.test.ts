@@ -330,8 +330,9 @@ test('the script stays one small file with no library', () => {
   // The spec's estimate is about 30–40 KB; everything section 15 draws came to about 45 KB, keeping every label off
   // every other label added about 4 KB, and the polish round (one placement pass for all text, the found group's
   // threads and lines, pages and decisions round the project) leaves room up to 64 KB, about 20 KB compressed; the
-  // window's second palette (paper) and live re-theming add about 2 KB, so 68 KB.
-  assert.ok(Buffer.byteLength(src) <= 68 * 1024, `${Buffer.byteLength(src)} bytes`);
+  // window's second palette (paper) and live re-theming add about 2 KB, so 68 KB; the Spanish words (T() keys with their
+  // English beside them) add about 4 KB, so 73 KB.
+  assert.ok(Buffer.byteLength(src) <= 73 * 1024, `${Buffer.byteLength(src)} bytes`);
   assert.doesNotMatch(src, /^\s*import\s/m);
   assert.doesNotMatch(src, /https?:/);
 });

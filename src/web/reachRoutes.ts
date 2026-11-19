@@ -12,6 +12,8 @@ import { generateTotpSecret, otpauthUri, totpAt } from '../auth/totp.js';
 import type { AppDeps } from './app.js';
 import { requireOwner, SESSION_COOKIE, sessionCookieOptions } from './authRoutes.js';
 import { html, page } from './html.js';
+import { t } from '../i18n/core.js';
+import { tHtml } from '../i18n/tHtml.js';
 import { viaDoor } from '../desktop/publicDoor.js';
 import { reachPage, reachSwitch, tailscaleBox } from './reachViews.js';
 import { funnelOff, funnelOffSync, funnelOn, tailscaleState, type TailscaleEnv } from '../desktop/tailscale.js';
@@ -92,11 +94,11 @@ export async function reachOff(d: AppDeps): Promise<string> {
   const waited = gateOf(d).waiting;
   gateOf(d).gen++;
   d.reach?.set(null);
-  if (!wasOn || via === 'cloudflare') return 'Off: BrainAI answers only on this Mac again.' + (wasOn ? ' The name stays in Cloudflare, ready for next time.' : '');
+  if (!wasOn || via === 'cloudflare') return t('setup.reach.off.local') + (wasOn ? ` ${t('setup.reach.off.cfName')}` : '');
   const r = await locked(d, () => funnelOffRemembered(d));
-  if (!r.ok && waited) return 'Reach is off. Tailscale did not let BrainAI check that Funnel is off, so BrainAI checks again the next time it starts.';
-  return r.ok ? 'Off: BrainAI answers only on this Mac again.'
-    : `Off: BrainAI no longer answers at the public address, but Tailscale still lists it (${r.reason}). Turn Funnel off in Tailscale.`;
+  if (!r.ok && waited) return t('setup.reach.off.unchecked');
+  return r.ok ? t('setup.reach.off.local')
+    : t('setup.reach.off.stillListed', { reason: r.reason });
 }
 
 export function reachRoutes(d: AppDeps): Router {
@@ -125,30 +127,30 @@ export function reachRoutes(d: AppDeps): Router {
   let signing: SignInRun | null = null;
   // Reach from phone and web is Mac-only in D6: on Windows nothing here runs tailscale or cloudflared.
   const windows = (d.tools?.platform ?? process.platform) === 'win32';
-  const macOnly = (_req: Request, res: Response, next: () => void) => (windows ? back(res, 'Reach from phone and web is not on Windows yet.') : next());
+  const macOnly = (_req: Request, res: Response, next: () => void) => (windows ? back(res, () => t('setup.reach.noWindows')) : next());
   let pending: { secret: string; until: number } | null = null;
-  // The last result, shown once on the page: kept here, never taken from the URL.
-  let said: string | null = null;
+  // The last result, shown once on the page: kept here, never taken from the URL. A function is worked out when the page is drawn, in the owner's language.
+  let said: string | (() => string) | null = null;
 
   /** A new password or authenticator signs every browser out: this one gets a fresh session, so the owner stays in. */
   const keepSignedIn = (req: Request, res: Response) => {
     const token = d.sessions.create(req.get('user-agent'));
     res.cookie(SESSION_COOKIE, token, { ...sessionCookieOptions(d.publicUrl), maxAge: SESSION_DAYS * 86_400_000 });
   };
-  const back = (res: Response, text: string | null) => { said = text; res.redirect(303, '/settings/reach'); };
+  const back = (res: Response, text: string | (() => string) | null) => { said = text; res.redirect(303, '/settings/reach'); };
 
   router.get('/settings/reach', owner, async (_req, res) => {
     const now = d.now().getTime();
     if (pending && pending.until < now) pending = null;
     const view = {
-      said, hasPassword: d.owner.hasPassword(), hasAuthenticator: d.owner.isConfigured(),
+      said: typeof said === 'function' ? said() : said, hasPassword: d.owner.hasPassword(), hasAuthenticator: d.owner.isConfigured(),
       pending: pending ? { secret: pending.secret, svg: await QRCode.toString(otpauthUri(pending.secret, 'owner'), { type: 'svg', margin: 1 }) } : null,
       reach: d.owner.isConfigured()
-        ? windows ? html`<p>Reach from phone and web is not on Windows yet: for now, use BrainAI from the apps on this computer, or <a href="/settings/move">move it to a server</a>.</p>` : reachSwitch({ waiting: gate.waiting, reason: gate.reason, on: d.reach?.url() ?? null, via: d.reach?.via() ?? 'tailscale', cloudflare: { ...(await cloudflaredState(cf)), signingIn: signing ? signing.url() ?? '' : null } })
+        ? windows ? html`<p>${tHtml('setup.reach.noWindowsNote', { link: html`<a href="/settings/move">${t('setup.reach.moveItLink')}</a>` })}</p>` : reachSwitch({ waiting: gate.waiting, reason: gate.reason, on: d.reach?.url() ?? null, via: d.reach?.via() ?? 'tailscale', cloudflare: { ...(await cloudflaredState(cf)), signingIn: signing ? signing.url() ?? '' : null } })
         : null,
     };
     said = null;
-    res.type('html').send(page('Reach from phone and web', reachPage(view), { nav: true, tab: null, back: { href: '/settings', label: 'Settings' } }));
+    res.type('html').send(page(t('setup.reach.title'), reachPage(view), { nav: true, tab: null, back: { href: '/settings', labelKey: 'shell.nav.settings' } }));
   });
 
   // The Tailscale check shown in step 3, off the page's own request (Tailscale can take seconds to answer, or never):
@@ -186,7 +188,7 @@ export function reachRoutes(d: AppDeps): Router {
       const url = reach.url()!;
       if (!dir || !runner) return reach.set(null);
       const p = await prepareTunnel(cf, dir, url.hostname);
-      if (!p.ok) { reach.set(null); said = `Reach was turned off: ${p.reason}`; return; }
+      if (!p.ok) { reach.set(null); said = () => t('setup.reach.turnedOff', { reason: p.reason }); return; }
       const port = await door.open();
       runner.start(p.tunnelId, p.credentials, port);
       reach.set(url, port, { via: 'cloudflare', tunnel: p.tunnelId });
@@ -225,7 +227,7 @@ export function reachRoutes(d: AppDeps): Router {
     if (on.refused) {
       gate.waiting = false;
       reach.set(null);
-      said = `Reach was turned off: ${on.reason}`;
+      said = () => t('setup.reach.turnedOff', { reason: on.reason });
       await funnelOffRemembered(d);
       return;
     }
@@ -243,45 +245,45 @@ export function reachRoutes(d: AppDeps): Router {
     d.reach.ready = resume().catch((e: unknown) => {
       console.error('bringing Reach back failed:', e);
       d.reach?.set(null);
-      said = 'Reach was turned off: BrainAI could not open its public door.';
+      said = () => t('setup.reach.noDoor');
     });
   }
 
   // Once set, the password and the authenticator are not replaced from here (D4 review): a borrowed or stolen
   // session must not be able to lock the owner out. Adding the authenticator asks for the password again.
   router.post('/settings/reach/password', owner, async (req, res) => {
-    if (d.owner.hasPassword()) return back(res, 'A password is already set.');
+    if (d.owner.hasPassword()) return back(res, () => t('setup.reach.pwAlreadySet'));
     const pw = field(req, 'password');
-    if (pw !== field(req, 'again')) return back(res, 'The two passwords are not the same.');
-    if (pw.length < 12) return back(res, 'The password needs at least 12 characters.');
+    if (pw !== field(req, 'again')) return back(res, () => t('setup.reach.pwMismatch'));
+    if (pw.length < 12) return back(res, () => t('setup.reach.pwShort'));
     await d.owner.setPassword(pw);
     keepSignedIn(req, res);
-    back(res, 'Password set. Every other browser is signed out. Apps connected before now keep their access: check Settings › Connections.');
+    back(res, () => t('setup.reach.pwSet'));
   });
 
   router.post('/settings/reach/authenticator/start', owner, async (req, res) => {
-    if (!d.owner.hasPassword()) return back(res, 'Set the password first.');
-    if (d.owner.isConfigured()) return back(res, 'The authenticator is already set.');
-    if (!(await d.owner.verifyPassword(field(req, 'current')))) return back(res, 'That password is not right.');
+    if (!d.owner.hasPassword()) return back(res, () => t('setup.reach.pwFirst'));
+    if (d.owner.isConfigured()) return back(res, () => t('setup.reach.authAlreadySet'));
+    if (!(await d.owner.verifyPassword(field(req, 'current')))) return back(res, () => t('setup.reach.pwWrong'));
     pending = { secret: generateTotpSecret(), until: d.now().getTime() + PENDING_MS };
     back(res, null);
   });
 
   router.post('/settings/reach/authenticator/confirm', owner, (req, res) => {
     const now = d.now().getTime();
-    if (!pending || pending.until < now) { pending = null; return back(res, 'That QR code expired: show a new one.'); }
+    if (!pending || pending.until < now) { pending = null; return back(res, () => t('setup.reach.qrExpired')); }
     const code = field(req, 'code').trim();
     const step = Math.floor(now / 30_000);
-    if (![step - 1, step, step + 1].some((s) => same(totpAt(pending!.secret, s), code))) return back(res, 'That code is not right: try the newest one.');
-    if (d.owner.isConfigured()) { pending = null; return back(res, 'The authenticator is already set.'); }
+    if (![step - 1, step, step + 1].some((s) => same(totpAt(pending!.secret, s), code))) return back(res, () => t('setup.reach.codeWrong'));
+    if (d.owner.isConfigured()) { pending = null; return back(res, () => t('setup.reach.authAlreadySet')); }
     d.owner.setTotpSecret(pending.secret);
     pending = null;
     keepSignedIn(req, res);
-    back(res, 'Authenticator added. Browsers now ask for the password and a code.');
+    back(res, () => t('setup.reach.authAdded'));
   });
   router.post('/settings/reach/on', owner, macOnly, async (_req, res) => {
-    if (!d.owner.isConfigured()) return back(res, 'Set the password and the authenticator first.');
-    if (!d.reach || !d.door) return back(res, 'Reach is not available here.');
+    if (!d.owner.isConfigured()) return back(res, () => t('setup.reach.setBoth'));
+    if (!d.reach || !d.door) return back(res, () => t('setup.reach.notHere'));
     const reach = d.reach;
     const doorOf = d.door;
     gateOf(d).gen++;
@@ -294,7 +296,7 @@ export function reachRoutes(d: AppDeps): Router {
       const m = pendingOff(d);
       if (m) rmSync(m, { force: true });
       reach.set(new URL(r.url), door);
-      back(res, `On: BrainAI answers at ${r.url}.`);
+      back(res, () => t('setup.reach.onAt', { address: r.url }));
     });
   });
 
@@ -305,20 +307,20 @@ export function reachRoutes(d: AppDeps): Router {
     signing = run;
     void run.done.then((r) => {
       if (signing === run) signing = null;
-      said = r.ok ? 'Signed in to Cloudflare. Now choose the name BrainAI answers at.' : r.reason;
+      said = r.ok ? () => t('setup.reach.cfSignedIn') : r.reason;
     });
   };
   router.post('/settings/reach/cloudflare/signin', owner, macOnly, (_req, res) => {
-    if (!d.owner.isConfigured()) return back(res, 'Set the password and the authenticator first.');
+    if (!d.owner.isConfigured()) return back(res, () => t('setup.reach.setBoth'));
     beginSignIn();
     back(res, null);
   });
 
   // Signed in with the wrong domain or account: BrainAI forgets its own sign-in and tunnel, then signs in again.
   router.post('/settings/reach/cloudflare/another', owner, macOnly, (_req, res) => {
-    if (!d.owner.isConfigured()) return back(res, 'Set the password and the authenticator first.');
-    if (d.reach?.saved()) return back(res, 'Reach is on: turn it off first.');
-    if (!d.statusDir || !cf.home) return back(res, 'Reach is not available here.');
+    if (!d.owner.isConfigured()) return back(res, () => t('setup.reach.setBoth'));
+    if (d.reach?.saved()) return back(res, () => t('setup.reach.turnOffFirst'));
+    if (!d.statusDir || !cf.home) return back(res, () => t('setup.reach.notHere'));
     rmSync(join(cf.home, '.cloudflared', 'cert.pem'), { force: true });
     rmSync(join(d.statusDir, 'cloudflared', 'tunnel.json'), { force: true });
     beginSignIn();
@@ -326,11 +328,11 @@ export function reachRoutes(d: AppDeps): Router {
   });
 
   router.post('/settings/reach/cloudflare/on', owner, macOnly, async (req, res) => {
-    if (!d.owner.isConfigured()) return back(res, 'Set the password and the authenticator first.');
-    if (!d.reach || !d.door || !runner || !d.statusDir) return back(res, 'Reach is not available here.');
-    if (d.reach.saved()) return back(res, 'Reach is already on: turn it off first.');
+    if (!d.owner.isConfigured()) return back(res, () => t('setup.reach.setBoth'));
+    if (!d.reach || !d.door || !runner || !d.statusDir) return back(res, () => t('setup.reach.notHere'));
+    if (d.reach.saved()) return back(res, () => t('setup.reach.alreadyOn'));
     const hostname = String((req.body as Record<string, unknown> | undefined)?.hostname ?? '').trim().toLowerCase();
-    if (!validHostname(hostname)) return back(res, 'Give a name under your domain, such as brain.example.com.');
+    if (!validHostname(hostname)) return back(res, () => t('setup.reach.giveName'));
     const p = await prepareTunnel(cf, d.statusDir, hostname);
     if (!p.ok) return back(res, p.reason);
     const door = await d.door.open();
@@ -342,9 +344,9 @@ export function reachRoutes(d: AppDeps): Router {
     if (!(await (d.reachCheck ?? answersAt)(url))) {
       const log = runner.lastLog();
       d.reach.set(null);
-      return back(res, `Cloudflare did not reach BrainAI at ${url.origin} within a minute, so Reach stays off.${log ? ` The tunnel said: ${log}` : ''}`);
+      return back(res, () => t('setup.reach.cfNoReach', { address: url.origin }) + (log ? ` ${t('setup.reach.tunnelSaid', { log })}` : ''));
     }
-    back(res, `On: BrainAI answers at ${url.origin}.`);
+    back(res, () => t('setup.reach.onAt', { address: url.origin }));
   });
 
   router.post('/settings/reach/off', owner, async (_req, res) => {

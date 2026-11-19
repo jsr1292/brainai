@@ -1,3 +1,4 @@
+import type { Say } from './i18n/errors.js';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -43,6 +44,9 @@ function readRun(path: string): BackupRun | undefined {
   }
 }
 
+/** A placeholder the screen replaces with its own words ("see the backup log"). */
+const LOG = '';
+
 export function readBackupStatus(dir: string): BackupStatus {
   const nightly = readRun(join(dir, FILES.nightly));
   const offsite = readRun(join(dir, FILES.offsite));
@@ -53,33 +57,36 @@ export function readBackupStatus(dir: string): BackupStatus {
 
 /** Each problem as a sentence for the owner; none means the backups are fine. */
 /** `jobs`: also check the git copy and the Markdown export (the nightly scripts on the server). */
-export function backupHealth(s: BackupStatus, now: Date, opts: { offsite?: boolean; jobs?: boolean } = {}): { ok: boolean; problems: string[] } {
+export function backupHealth(s: BackupStatus, now: Date, opts: { offsite?: boolean; jobs?: boolean } = {}): { ok: boolean; problems: string[]; say: Say[] } {
   const problems: string[] = [];
+  /** The same problems as catalog keys, one for one, for a screen to word in the owner's language. */
+  const say: Say[] = [];
+  const add = (text: string, s: Say): void => { problems.push(text); say.push(s); };
   const age = (at: string) => now.getTime() - Date.parse(at);
-  if (!s.nightly) problems.push('No nightly backup has run yet.');
-  else if (!s.nightly.ok) problems.push(`The nightly backup failed: ${s.nightly.error ?? 'see the backup log'}.`);
+  if (!s.nightly) add('No nightly backup has run yet.', { key: 'backup.p.none' });
+  else if (!s.nightly.ok) add(`The nightly backup failed: ${s.nightly.error ?? 'see the backup log'}.`, { key: 'backup.p.failed', params: { error: s.nightly.error ?? LOG } });
   else {
-    if (age(s.nightly.at) > NIGHTLY_MAX_HOURS * HOUR_MS) problems.push('The last nightly backup is more than a day old.');
+    if (age(s.nightly.at) > NIGHTLY_MAX_HOURS * HOUR_MS) add('The last nightly backup is more than a day old.', { key: 'backup.p.old' });
     for (const c of s.nightly.copies ?? []) {
-      if (c.result !== 'copied') problems.push(`The nightly copy to ${c.where} was ${c.result}${c.detail ? `: ${c.detail}` : ''}.`);
+      if (c.result !== 'copied') add(`The nightly copy to ${c.where} was ${c.result}${c.detail ? `: ${c.detail}` : ''}.`, { key: 'backup.p.copy', params: { where: c.where, result: c.result, detail: c.detail ? `: ${c.detail}` : '' } });
     }
     // A restore would lack these pictures (audit F11): stray files are only reported, missing ones need a look.
     const missing = s.nightly.pictures?.missing ?? 0;
-    if (missing > 0) problems.push(`${missing === 1 ? '1 picture the database lists is' : `${missing} pictures the database lists are`} missing from the brain's folder.`);
+    if (missing > 0) add(`${missing === 1 ? '1 picture the database lists is' : `${missing} pictures the database lists are`} missing from the brain's folder.`, { key: 'backup.p.pictures', params: { count: missing } });
   }
   const jobs = () => {
     if (!opts.jobs) return;
     for (const [run, name] of [[s.git, 'git copy'], [s.export, 'Markdown export']] as const) {
       // Optional: a job that has never run is not set up, which is the owner's choice (Settings lists it as "not yet").
       if (!run) continue;
-      if (!run.ok) problems.push(`The ${name} failed${run.detail ? `: ${run.detail}` : ''}.`);
-      else if (age(run.at) > JOB_MAX_HOURS * HOUR_MS) problems.push(`The last ${name} is more than a day old.`);
+      if (!run.ok) add(`The ${name} failed${run.detail ? `: ${run.detail}` : ''}.`, { key: 'backup.p.jobFailed', params: { name: name === 'git copy' ? 'git copy' : 'Markdown export', detail: run.detail ? `: ${run.detail}` : '' } });
+      else if (age(run.at) > JOB_MAX_HOURS * HOUR_MS) add(`The last ${name} is more than a day old.`, { key: 'backup.p.jobOld', params: { name } });
     }
   };
-  if (opts.offsite === false) { jobs(); return { ok: problems.length === 0, problems }; }
-  if (!s.offsite) { jobs(); return { ok: problems.length === 0, problems }; }
-  if (!s.offsite.ok) problems.push(`The off-site copy failed: ${s.offsite.error ?? 'see the backup log'}.`);
-  else if (age(s.offsite.at) > OFFSITE_MAX_DAYS * 24 * HOUR_MS) problems.push(`The last off-site copy is more than ${OFFSITE_MAX_DAYS} days old.`);
+  if (opts.offsite === false) { jobs(); return { ok: problems.length === 0, problems, say }; }
+  if (!s.offsite) { jobs(); return { ok: problems.length === 0, problems, say }; }
+  if (!s.offsite.ok) add(`The off-site copy failed: ${s.offsite.error ?? 'see the backup log'}.`, { key: 'backup.p.offFailed', params: { error: s.offsite.error ?? LOG } });
+  else if (age(s.offsite.at) > OFFSITE_MAX_DAYS * 24 * HOUR_MS) add(`The last off-site copy is more than ${OFFSITE_MAX_DAYS} days old.`, { key: 'backup.p.offOld', params: { days: OFFSITE_MAX_DAYS } });
   jobs();
-  return { ok: problems.length === 0, problems };
+  return { ok: problems.length === 0, problems, say };
 }

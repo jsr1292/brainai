@@ -1,15 +1,32 @@
-import { topReason, type Health, type Part } from '../health/health.js';
+import { topReasonOf, type Health, type Part, type Reason } from '../health/health.js';
+import { t, tKey, fmt, tHtml, currentLanguage } from '../i18n/index.js';
+import { pseudoWrap } from '../i18n/core.js';
 import { html, type SafeHtml } from './html.js';
 import { excerpt } from './dashboardViews.js';
+import { backupProblems } from './errorText.js';
 
 /** Under this, a part of brain health earns a row in For you. */
 export const HEALTH_FOR_YOU = 70;
 
 const PARTS = (h: Health): [string, Part, string][] => [
-  ['Up to date', h.upToDate, 'How many projects have a status or roadmap from the last month.'],
-  ['Ready', h.ready, 'How ready an assistant is to pick your projects up cold: each has a status and a roadmap, the apps run the newest setup text, backups work.'],
-  ['Waiting on you', h.waiting, 'What needs you: approvals, facts that disagree, due dates, discussions. It drops by 10 for each.'],
+  [t('health.upToDate'), h.upToDate, t('health.upToDate.what')],
+  [t('health.ready'), h.ready, t('health.ready.what')],
+  [t('health.waiting'), h.waiting, t('health.waiting.what')],
 ];
+
+/** A reason in the owner's language (its English `text` when it has no key). */
+export function reasonLine(r: Reason): string {
+  if (!r.say) return r.text;
+  const params = { ...r.say.params };
+  if (r.dueDay !== undefined) params.day = dayWords(r.dueDay);
+  if (r.say.key === 'health.r.backups') params.problem = r.problemSay ? backupProblems({ problems: [''], say: [r.problemSay] })[0]! : params.problem === '' ? t('health.r.backupsDefault') : params.problem;
+  return tKey(r.say.key, params);
+}
+/** A calendar day (YYYY-MM-DD) as "3 Nov" / "3 nov". */
+const dayWords = (ymd: string): string => {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  return currentLanguage() === 'es' ? pseudoWrap(d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', timeZone: 'UTC' }).replace(/\.$/, '')) : `${d.getUTCDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()]}`;
+};
 
 /** Settings › Backups and copies › Brain health (B1): each part's number on a meter, then its reasons as links. */
 export function healthBlock(h: Health | undefined): SafeHtml {
@@ -17,8 +34,8 @@ export function healthBlock(h: Health | undefined): SafeHtml {
   return html`<ul class="health-parts">${PARTS(h).map(([label, p, what]) => html`<li>
     <div class="hp-head"><span class="hp-label">${label}</span><span class="hp-score">${p.score}</span></div>
     <p class="hp-what">${what}</p>
-    <meter class="hp-bar" min="0" max="100" low="${HEALTH_FOR_YOU}" high="90" optimum="100" value="${p.score}" aria-label="${label}: ${p.score} of 100"></meter>
-    ${p.reasons.length === 0 ? html`<p class="quiet">Nothing to do</p>` : html`<ul class="hp-reasons">${p.reasons.map((r) => html`<li><a href="${r.href}">${r.text}</a></li>`)}</ul>`}
+    <meter class="hp-bar" min="0" max="100" low="${HEALTH_FOR_YOU}" high="90" optimum="100" value="${p.score}" aria-label="${t('health.meter', { label, score: p.score })}"></meter>
+    ${p.reasons.length === 0 ? html`<p class="quiet">${t('health.nothing')}</p>` : html`<ul class="hp-reasons">${p.reasons.map((r) => html`<li><a href="${r.href}">${reasonLine(r)}</a></li>`)}</ul>`}
   </li>`)}</ul>`;
 }
 
@@ -28,9 +45,10 @@ const OWN_ROW = (href: string) => href === '/approvals' || href === '/disagreeme
 /** For you: while a part is under HEALTH_FOR_YOU, its first reason that For you doesn't already show; else nothing. */
 export function healthRow(h: Health | undefined): SafeHtml | null {
   if (!h) return null;
-  const text = topReason(h, OWN_ROW, HEALTH_FOR_YOU);
+  const top = topReasonOf(h, OWN_ROW, HEALTH_FOR_YOU);
+  const text = top === null ? null : reasonLine(top);
   if (text === null) return null;
-  return html`<a class="row" href="/settings#brain-health"><span class="dot muted" aria-hidden="true"></span><span class="txt"><b>Brain health</b>: ${text}</span><span class="chev"></span></a>`;
+  return html`<a class="row" href="/settings#brain-health"><span class="dot muted" aria-hidden="true"></span><span class="txt"><b>${t('health.title')}</b>: ${text}</span><span class="chev"></span></a>`;
 }
 
 /**
@@ -47,8 +65,8 @@ export interface ProfileHealth { entries: number; words: number; pairs: { a: { i
 /** Settings › Brain health: how big the profile is, and which entries say nearly the same thing. Nothing without entries. */
 export function profileBlock(p: ProfileHealth | undefined): SafeHtml | null {
   if (!p || p.entries === 0) return null;
-  const size = `Your profile: ${p.entries} ${p.entries === 1 ? 'entry' : 'entries'}, about ${p.words.toLocaleString('en-US')} words.`;
-  return html`<div class="profile-health"><p class="hp-what">${size}${p.words > PROFILE_LARGE_WORDS ? ' That is large: every assistant reads all of this at the start of every conversation; consider merging or removing entries.' : ''}</p>${p.pairs.length === 0 ? '' : html`<p class="hp-what">Entries that say nearly the same thing:</p><ul class="hp-reasons">${p.pairs.map((x) => html`<li><a href="/memories/${x.a.id}">${excerpt(x.a.content)}</a> and <a href="/memories/${x.b.id}">${excerpt(x.b.content)}</a></li>`)}</ul>`}</div>`;
+  const size = t('health.profile.size', { count: p.entries, words: fmt.number(p.words, 0) });
+  return html`<div class="profile-health"><p class="hp-what">${size}${p.words > PROFILE_LARGE_WORDS ? ` ${t('health.profile.large')}` : ''}</p>${p.pairs.length === 0 ? '' : html`<p class="hp-what">${t('health.profile.pairs')}</p><ul class="hp-reasons">${p.pairs.map((x) => html`<li>${tHtml('health.profile.pair', { a: html`<a href="/memories/${x.a.id}">${excerpt(x.a.content)}</a>`, b: html`<a href="/memories/${x.b.id}">${excerpt(x.b.content)}</a>` })}</li>`)}</ul>`}</div>`;
 }
 
 /**
@@ -61,8 +79,8 @@ const HOOK_APPS = /^(claude[ -]code|codex|cursor)\b/i;
 export function quietAppsBlock(apps: QuietApp[] | undefined, local: boolean): SafeHtml | null {
   if (!apps || apps.length === 0) return null;
   const reminded = (app: string) => HOOK_APPS.test(app);
-  const tail = (app: string) => (!reminded(app)
-    ? 'It has no save reminders to set up: ask it to save as it works, or to run the harvest-session skill.'
-    : local ? html`Its tool may not be reminding it: see <a href="/settings/tools">Tools on this computer</a>.` : html`Its tool may not be reminding it: set up its save reminders (docs/CLIENTS.md, Hooks).`);
-  return html`<ul class="hp-reasons quiet-apps">${apps.map((a) => html`<li>${a.app} used your memory ${a.reads} times this week but saved nothing. ${tail(a.app)}</li>`)}</ul>`;
+  const tail = (app: string): SafeHtml => (!reminded(app)
+    ? html`${t('health.quiet.noReminders')}`
+    : local ? tHtml('health.quiet.local', { link: html`<a href="/settings/tools">${t('health.quiet.toolsLink')}</a>` }) : html`${t('health.quiet.server')}`);
+  return html`<ul class="hp-reasons quiet-apps">${apps.map((a) => html`<li>${tHtml('health.quiet.line', { app: a.app, reads: a.reads, tail: tail(a.app) })}</li>`)}</ul>`;
 }

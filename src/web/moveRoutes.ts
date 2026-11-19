@@ -15,12 +15,17 @@ import type { AppDeps } from './app.js';
 import { requireOwner } from './authRoutes.js';
 import { page } from './html.js';
 import { movePage } from './moveViews.js';
-import { thisComputer } from '../desktop/computer.js';
+import { currentLanguage, t } from '../i18n/core.js';
+import { tHtml } from '../i18n/tHtml.js';
+import { computerName } from '../desktop/computer.js';
 
 /** The command that shows a file selected in Finder (the Mac) or Explorer (Windows). */
 export function revealCommand(path: string, platform: NodeJS.Platform): [string, string[]] {
   return platform === 'win32' ? ['explorer.exe', [`/select,${path}`]] : ['open', ['-R', path]];
 }
+
+/** Megabytes with one decimal, the decimal comma in Spanish. */
+const mbText = (bytes: number): string => { const mb = (bytes / 1_048_576).toFixed(1); return currentLanguage() === 'es' ? mb.replace('.', ',') : mb; };
 
 export function moveRoutes(d: AppDeps): Router {
   const router = Router();
@@ -38,22 +43,22 @@ export function moveRoutes(d: AppDeps): Router {
     const st = path ? statSync(path) : null;
     const view = {
       said,
-      file: path && st ? { name: basename(path), mb: (st.size / 1_048_576).toFixed(1), made: st.mtime.toISOString().slice(0, 16).replace('T', ' ') } : null,
+      file: path && st ? { name: basename(path), mb: mbText(st.size), made: st.mtime.toISOString().slice(0, 16).replace('T', ' ') } : null,
       missingPictures: missingPictures(db, dataDir) ?? 0,
       movedTo: movedTo(dataDir),
       revealIn: (d.tools?.platform ?? process.platform) === 'win32' ? 'Explorer' as const : 'Finder' as const,
     };
     said = null;
-    res.type('html').send(page('Move to a server', movePage(view), { nav: true, tab: null, back: { href: '/settings', label: 'Settings' } }));
+    res.type('html').send(page(t('data.move.title'), movePage(view), { nav: true, tab: null, back: { href: '/settings', labelKey: 'shell.nav.settings' } }));
   });
 
   router.post('/settings/move/file', here, owner, async (_req, res) => {
     try {
       await makeMoveFile(db, dataDir, d.now());
-      back(res, 'The moving file is ready.');
+      back(res, t('data.move.msgReady'));
     } catch (e) {
       console.error('making the moving file failed:', e);
-      back(res, `The moving file could not be made: ${e instanceof Error ? e.message : String(e)}`);
+      back(res, t('data.move.msgFailed', { reason: e instanceof Error ? e.message : String(e) }));
     }
   });
 
@@ -63,16 +68,16 @@ export function moveRoutes(d: AppDeps): Router {
       if (d.reveal) d.reveal(path);
       else { const [cmd, args] = revealCommand(path, d.tools?.platform ?? process.platform); execFile(cmd, args, () => {}); }
     }
-    back(res, path ? null : 'There is no moving file yet.');
+    back(res, path ? null : t('data.move.msgNone'));
   });
 
   router.post('/settings/move/file/delete', here, owner, (_req, res) => {
     deleteMoveFile(dataDir);
-    back(res, 'The moving file is deleted.');
+    back(res, t('data.move.msgDeleted'));
   });
   router.post('/settings/move/done', here, owner, async (req, res) => {
     const to = serverAddress(String((req.body as Record<string, unknown> | undefined)?.address ?? ''));
-    if (!to) return back(res, "That is not a server address: it starts with https:// (for example https://brain.example.com).");
+    if (!to) return back(res, t('data.move.msgAddress'));
     setMoved(dataDir, to);
     // Nothing should reach the Mac copy from the internet any more.
     if (d.reach?.saved()) await reachOff(d);
@@ -89,16 +94,16 @@ export function moveRoutes(d: AppDeps): Router {
   router.get('/app/goodbye', here, (_req, res, next) => {
     const to = movedTo(dataDir);
     if (!to) return next();
-    res.type('html').send(page('BrainAI is moving out', html`<div class="narrow">
-<h1>BrainAI is moving out of ${thisComputer()}</h1>
-<p>Your brain lives at <a href="${to.origin}">${to.origin}</a> now. The tools on ${thisComputer()} were disconnected from this copy: connect them to the server from its Settings.</p>
-<p>The app asks whether to stop and stop starting at login. Then drag BrainAI from Applications to the Trash. The data folder stays, in case you need it.</p>
+    res.type('html').send(page(t('data.move.goodbyeTitle'), html`<div class="narrow">
+<h1>${t('data.move.goodbyeHead', { computer: computerName() })}</h1>
+<p>${tHtml('data.move.goodbye1', { link: html`<a href="${to.origin}">${to.origin}</a>`, computer: computerName() })}</p>
+<p>${t('data.move.goodbye2')}</p>
 </div>`, { tab: null }));
   });
 
   router.post('/settings/move/undo', here, owner, (_req, res) => {
     setMoved(dataDir, null);
-    back(res, `Not moved: ${thisComputer()} answers its apps again.`);
+    back(res, t('data.move.msgUndo', { computer: computerName() }));
   });
   return router;
 }

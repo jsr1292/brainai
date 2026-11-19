@@ -9,6 +9,7 @@ import { ReviewService, type ReviewDeps } from '../review/service.js';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
 import { clockTo, seedWildlogWeek } from '../testing/reviewFixtures.js';
 import { localDay } from '../timezone.js';
+import { decodeEntities } from '../testing/entities.js';
 
 const ai = { type: 'ai', name: 'Claude Code' } as const;
 const owner = { type: 'owner' } as const;
@@ -528,7 +529,7 @@ test("the panel's Edit details sets nicknames, comma-separated, and shows a clas
   assert.match(await (await f('/?project=vino-db')).text(), /<input name="nicknames" maxlength="340" placeholder="comma-separated" value="cellar app, the cellar">/);
   const bad = await post(f, '/projects/vino-db/info', { ...fields, nicknames: 'Garden' });
   assert.equal(bad.status, 400);
-  assert.match(await bad.text(), /already garden&#39;s name or nickname|already garden's name or nickname/);
+  assert.match(decodeEntities(await bad.text()), /already garden's name or nickname/);
   assert.deepEqual(app.deps.registry.get('vino-db')!.nicknames, ['cellar app', 'the cellar']);
 });
 

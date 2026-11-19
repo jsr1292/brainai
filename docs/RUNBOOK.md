@@ -1,3 +1,5 @@
+Leer en español: [docs/es/RUNBOOK.md](es/RUNBOOK.md)
+
 # Runbook: running your brain
 
 A single-owner memory server for AI clients (OAuth only, no static keys). It runs as one app container behind a Cloudflare Tunnel. **No ports are published**: the tunnel is the only way in.
@@ -41,8 +43,8 @@ A single-owner memory server for AI clients (OAuth only, no static keys). It run
 
    **Those drives may hold other data. The script only writes to its own `memory-backups` folder.**
 
-   Try it once by hand: `~/memory/scripts/backup.sh`. Settings › Backups and health shows when each copy last succeeded and warns when one was skipped or failed (from `data/backup-status.json`, which the script writes).
-9. Nightly Markdown export and git copy. Every page and fact is written as Markdown into a git repo each night (`scripts/export-brain.sh`), and the bare git repos in `~/git` (that export, and any of your own) are copied to your other drives (`scripts/backup-git.sh`). Settings › Backups and health shows them as "not yet" until they first run, then warns if one fails or is more than a day old.
+   Try it once by hand: `~/memory/scripts/backup.sh`. Settings › Backups and copies shows when each copy last succeeded and warns when one was skipped or failed (from `data/backup-status.json`, which the script writes).
+9. Nightly Markdown export and git copy. Every page and fact is written as Markdown into a git repo each night (`scripts/export-brain.sh`), and the bare git repos in `~/git` (that export, and any of your own) are copied to your other drives (`scripts/backup-git.sh`). Settings › Backups and copies shows them as "not yet" until they first run, then warns if one fails or is more than a day old.
    - Create the folder for bare repos once: `mkdir -p ~/git`. The export makes its own repo there (`~/git/brain-export.git`) on its first run; it never re-creates a missing `~/git`, so a lost folder is noticed instead of silently replaced.
    - In `overlay/scripts.env`, set `GIT_COPY_DIRS` (the folders the repos are copied to, like `COPY_DIRS`) and `EXPORT_GIT_NAME` / `EXPORT_GIT_EMAIL` (the name on the export's commits). See `overlay.example/scripts.env`.
    - `crontab -e` and add, after the backup and before the off-site copy:
@@ -60,7 +62,7 @@ A single-owner memory server for AI clients (OAuth only, no static keys). It run
 11. Monitoring: set up a free uptime alert on `https://memory.<domain>` (for example UptimeRobot, or a Cloudflare health check) that emails you if it goes down.
 
 ## 2. Day to day
-- **Updating:** in `~/memory`, `git pull && docker compose up -d --build`. The site is down for a few seconds. Before any change to the database, the brain copies it to `data/pre-migrate/` (the newest 3 are kept). Settings › Backups and health shows the running version; `CHANGELOG.md` says what changed. If you use Watchtower, it never touches these containers (label `com.centurylinklabs.watchtower.enable=false`).
+- **Updating:** in `~/memory`, `git pull && docker compose up -d --build`. The site is down for a few seconds. Before any change to the database, the brain copies it to `data/pre-migrate/` (the newest 3 are kept). Settings › Backups and copies shows the running version; `CHANGELOG.md` says what changed. If you use Watchtower, it never touches these containers (label `com.centurylinklabs.watchtower.enable=false`).
 - **Redirect allowlist** (which AI clients may sign in): `docker compose exec app node dist/cli.js redirects list`, and `redirects add <entry>` / `redirects remove <entry>`.
 - **Connected clients:** `docker compose exec app node dist/cli.js clients list`, and `clients revoke <grantId>` (the id shown by `clients list`) to cut one off. New anonymous registrations stop at 200 a day (so nobody can fill the database); if that blocks a real app from connecting, `clients purge-unused` deletes every registration that never got a grant, and the app can register again.
 - **Project aliases** (another name a project is saved, briefed and searched under, e.g. an app name for its repo folder): `docker compose exec app node dist/cli.js aliases list`, `aliases add <alias> <project>` (moves any memories filed under the alias) and `aliases remove <alias>`. "Move all" on the dashboard's Tidy up page records one too.

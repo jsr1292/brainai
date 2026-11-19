@@ -10,6 +10,7 @@ import { heldView } from './factMetaViews.js';
 import { suggestionCard, tidyView, writerName } from './dashboardViews.js';
 import { disagreementsView, pairs, type OpenDisagreement } from './disagreeViews.js';
 import { html, page, type SafeHtml } from './html.js';
+import { t, tKey } from '../i18n/core.js';
 import { inboxModel, tidyOnly, type InboxItem, type InboxModel } from './inboxModel.js';
 import { primeSideStatus } from './sideStatus.js';
 import { takeStatusLine } from './inboxUndo.js';
@@ -69,10 +70,10 @@ export function makeInbox(d: AppDeps) {
     // What Approve all will save: the items without a warning. The others wait for their own answer.
     const plain = items.filter((s) => !isFlagged(s)).length;
     return html`<div class="approvals harvest">
-<h2>Harvested from ${writerName(h.suggestedBy)} · ${h.harvest!.label}</h2>
-<p class="lede">${writerName(h.suggestedBy)} went over its session and suggests ${items.length === 1 ? 'one memory' : `these ${items.length} memories`}. Nothing is saved until you approve.${plain < items.length ? ` Approve ${plain === 0 ? 'all' : plain} leaves ${items.length - plain === 1 ? 'the 1 item that carries a warning' : `the ${items.length - plain} items that carry a warning`}: answer ${items.length - plain === 1 ? 'it' : 'those'} on ${items.length - plain === 1 ? 'its' : 'their'} own card.` : ''}</p>
-<p class="meta">Approve and Reject on a card bring you back here, and the item goes.</p>
-<form method="post" class="actions">${plain > 0 ? html`<button type="submit" class="primary" formaction="/harvest/${batch}/approve">Approve ${plain}</button> ` : ''}<button type="submit" class="ghost" formaction="/harvest/${batch}/reject" formnovalidate>Reject all</button></form>
+<h2>${t('inbox.row.harvest', { who: writerName(h.suggestedBy), label: h.harvest!.label })}</h2>
+<p class="lede">${t('inbox.harvest.lede', { who: writerName(h.suggestedBy), count: items.length })}${plain < items.length ? ` ${items.length - plain === 1 ? t('inbox.harvest.warnOne', { approve: plain === 0 ? t('inbox.harvest.all') : plain }) : t('inbox.harvest.warnMany', { approve: plain === 0 ? t('inbox.harvest.all') : plain, count: items.length - plain })}` : ''}</p>
+<p class="meta">${t('inbox.harvest.hint')}</p>
+<form method="post" class="actions">${plain > 0 ? html`<button type="submit" class="primary" formaction="/harvest/${batch}/approve">${t('inbox.harvest.approve', { count: plain })}</button> ` : ''}<button type="submit" class="ghost" formaction="/harvest/${batch}/reject" formnovalidate>${t('inbox.harvest.rejectAll')}</button></form>
 ${cards.map((c) => suggestionCard(c.suggestion, c.current, { back: '/approvals', next: `batch:${batch}`, currentMeta: c.currentMeta, heldOutcome: c.heldOutcome, replaces: c.replaces, deleted: c.deleted, similar: c.similar, inBatch: true }))}
 </div>`;
   };
@@ -85,7 +86,8 @@ ${cards.map((c) => suggestionCard(c.suggestion, c.current, { back: '/approvals',
     const facts = new Map(ids.map((fid) => [fid, d.store.get(fid)] as const));
     const page = p.body.type === 'move_to_page' ? d.pages.get(p.body.pageId) : undefined;
     const anchor = p.body.type === 'move_to_page' ? p.body.section : '';
-    const stale = d.tidy.staleReason(p);
+    const staleSay = d.tidy.staleSay(p);
+    const stale = staleSay === null ? null : tKey(staleSay.key, staleSay.params);
     const staleView = stale === null ? {} : {
       asProposed: new Map(ids.map((fid) => [fid, d.tidy.textAtProposal(p, fid)] as const).filter((x): x is [string, string] => x[1] !== null)),
       now: new Map(ids.map((fid) => [fid, d.tidy.factNow(p, fid)] as const)),
@@ -111,51 +113,51 @@ ${cards.map((c) => suggestionCard(c.suggestion, c.current, { back: '/approvals',
     if (!item && !(pick && 'all' in pick) && batchItems.length === 0) item = first;
 
     let pane: SafeHtml = html``;
-    let crumb = 'Inbox';
+    let crumb = t('shell.nav.inbox');
     let selectedKey: string | null = null;
     let pos: string | null = null;
     if (batchItems.length > 0) {
-      crumb = 'Approvals';
-      pos = `${batchItems.length} ${batchItems.length === 1 ? 'suggestion' : 'suggestions'}`;
+      crumb = t('inbox.group.approvals');
+      pos = t('inbox.pos.suggestions', { count: batchItems.length });
       pane = harvestPane(batch!, batchItems, pendingCards().filter((c) => c.suggestion.harvest?.batch === batch));
     } else if (pick && 'all' in pick) {
       const now = d.now();
-      if (pick.all === 'disagree') { crumb = 'Facts that disagree'; pane = disagreementsView(disagreeGroups(), now); { const n = model.groups.find((g) => g.kind === 'disagree')?.items.length ?? 0; pos = `${n} ${n === 1 ? 'pair' : 'pairs'}`; } }
-      else { crumb = 'Tidy-ups'; pane = tidyView(tidyItems(), undefined, now); }
+      if (pick.all === 'disagree') { crumb = t('inbox.group.disagree'); pane = disagreementsView(disagreeGroups(), now); { const n = model.groups.find((g) => g.kind === 'disagree')?.items.length ?? 0; pos = t('inbox.pos.pairs', { count: n }); } }
+      else { crumb = t('inbox.group.tidy'); pane = tidyView(tidyItems(), undefined, now); }
     } else if (item) {
       selectedKey = item.key;
       const tidyRow = item.kind === 'tidy';
       const ofKind = model.items.filter((i) => (i.kind === 'tidy') === tidyRow);
-      pos = `${tidyRow ? 'Tidy-up ' : ''}${ofKind.indexOf(item) + 1} of ${ofKind.length}`;
+      pos = t(tidyRow ? 'inbox.pos.tidyOf' : 'inbox.pos.of', { n: ofKind.indexOf(item) + 1, total: ofKind.length });
       const next = nextOf(model, item);
       if (item.kind === 'suggestion') {
-        crumb = 'Approvals';
+        crumb = t('inbox.group.approvals');
         const p = pendingCards().find((c) => c.suggestion.id === item!.id);
         if (p) pane = html`<div class="approvals">${suggestionCard(p.suggestion, p.current, { back: '/approvals', next, currentMeta: p.currentMeta, heldOutcome: p.heldOutcome, replaces: p.replaces, deleted: p.deleted, similar: p.similar })}</div>`;
       } else if (item.kind === 'proposal') {
-        crumb = 'Approvals';
+        crumb = t('inbox.group.approvals');
         const p = d.skills.pendingProposals().find((x) => x.id === item!.id);
         if (p) pane = html`<div class="approvals">${proposalCard(p, p.skillId ? d.skills.get(p.skillId) : undefined, { back: '/approvals', next })}</div>`;
       } else if (item.kind === 'tidyProposal') {
-        crumb = 'Tidy proposals';
+        crumb = t('inbox.group.tidyProposals');
         pane = tidyProposalPane(item.id, next);
       } else if (item.kind === 'disagree') {
-        crumb = 'Facts that disagree';
+        crumb = t('inbox.group.disagree');
         const g = disagreeGroups(item.id)[0];
-        pane = g ? html`<div class="narrow"><p class="lede">An assistant flagged this pair: they can't both be true. Pick the one that is right (the other is replaced, or deleted when the two can't replace each other), or say both are.</p>${pairs(g.list, d.now(), '/approvals', g.project, next)}</div>` : html``;
+        pane = g ? html`<div class="narrow"><p class="lede">${t('inbox.disagree.ledeOne')}</p>${pairs(g.list, d.now(), '/approvals', g.project, next)}</div>` : html``;
       } else if (item.kind === 'tidy') {
-        crumb = 'Tidy-ups';
+        crumb = t('inbox.group.tidy');
         const only = tidyOnly(tidyItems(), item.id);
         pane = only ? tidyView(only, undefined, d.now(), 'inbox') : html``;
       } else {
         // A discussion opens on its own page; the list only counts it.
-        crumb = 'Discussions waiting';
-        pane = html`<p class="quiet">${model.groups.find((g) => g.kind === 'discussions')?.items.length ?? 0} discussions wait for your reply. Open one from the list.</p>`;
+        crumb = t('inbox.group.discussions');
+        pane = html`<p class="quiet">${t('inbox.discussionsWait', { count: model.groups.find((g) => g.kind === 'discussions')?.items.length ?? 0 })}</p>`;
         pos = null;
         selectedKey = null;
       }
     }
-    res.status(o.status ?? 200).type('html').send(page('Inbox', inboxView({ model, selectedKey, explicit, crumb, pos, pane, notice: o.notice, error: o.error, status: takeStatusLine(d.service, d.now().getTime()) }), { nav: true, tab: 'inbox', sideTab: 'inbox', back: explicit && model.items.length > 0 ? { href: '/approvals', label: 'Inbox' } : { href: '/', label: 'Projects' }, crumb: false }));
+    res.status(o.status ?? 200).type('html').send(page(t('shell.nav.inbox'), inboxView({ model, selectedKey, explicit, crumb, pos, pane, notice: o.notice, error: o.error, status: takeStatusLine(d.service, d.now().getTime()) }), { nav: true, tab: 'inbox', sideTab: 'inbox', back: explicit && model.items.length > 0 ? { href: '/approvals', labelKey: 'shell.nav.inbox' } : { href: '/', labelKey: 'shell.nav.projects' }, crumb: false }));
   }
 
   /** /approvals?id= or ?proposal=, else the first item. */

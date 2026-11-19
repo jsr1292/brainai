@@ -2,6 +2,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { loggedIn, startTestApp, TEST_PASSWORD } from '../testing/helpers.js';
 import { ACTIVITY_PAGE_SIZE } from '../memory/assistantActivity.js';
+import { decodeEntities } from '../testing/entities.js';
 
 const DAY = 86_400_000;
 const codex = { type: 'ai', name: 'Codex' } as const;
@@ -24,7 +25,7 @@ async function start(t: TestContext) {
   const body = async (path = '/activity') => (await f(path)).text();
   return { app, f, post, save, body, svc: app.deps.service, store: app.deps.store };
 }
-const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+const text = (html: string) => decodeEntities(html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 const rowsOf = (html: string) => html.split('<li class="entry').slice(1);
 
 test('/activity needs the owner, and Undo needs the owner too', async (t) => {

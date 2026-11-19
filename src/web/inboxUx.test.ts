@@ -3,6 +3,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
+import { decodeEntities } from '../testing/entities.js';
 
 const ai = { type: 'ai', name: 'Grok' } as const;
 const owner = { type: 'owner' } as const;
@@ -36,7 +37,7 @@ test('Tidy up says what Keep this one does, and the disagreement page says the o
   await app.deps.service.remember({ kind: 'decision', content: 'Prefers dark mode', allowDuplicate: true }, owner);
   const body = await (await f('/facts/tidy')).text();
   assert.equal(body.match(/>Keep this one, delete the other</g)!.length, 2);
-  assert.match(await (await f('/disagreements')).text(), /replaced, or deleted when the two can't replace each other/);
+  assert.match(decodeEntities((await (await f('/disagreements')).text())), /replaced, or deleted when the two can't replace each other/);
 });
 
 test('Reject shows "Rejected. Undo" on the next screen once, and Undo puts the suggestion back', async (t) => {

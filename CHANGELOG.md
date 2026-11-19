@@ -4,6 +4,18 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Version shows the version you run.
 
+## 1.7.0 (2026-11-19)
+
+Updating needs one thing from you: connected apps will show a "new setup text" notice once (setup text version 3). It appears even if you use BrainAI in English, because the text each app reads came in a new version. Press Connect again (or Replace) on those apps to refresh their rules; nothing breaks if you do not.
+
+**BrainAI in Spanish**
+- **The dashboard speaks English and Spanish (Spain).** The language follows your computer. Settings › Language lets you choose Automatic, English or Español; the choice applies at once, to every screen, error page and message in the browser scripts. Dates, times and numbers follow the language too (19 nov 2026, 1,5 MB).
+- **The desktop app's tray menu and dialogs** (Abrir BrainAI, Iniciar al arrancar, Salir de BrainAI, the update notices, the remove and move dialogs) are Spanish on a Spanish computer, and follow the language you choose in Settings within a few seconds.
+- **The Windows installer and uninstaller** follow the display language (English or Spanish).
+- **Setup texts.** The pages that tell each assistant app how to connect (Claude Code, Codex, Cursor, OpenCode, Gemini CLI, ChatGPT, Grok, Claude) exist in Spanish too. The rules block that Connect writes into an app's instructions file uses the language you had chosen when you pressed Connect.
+- **Docs.** README, SECURITY and every guide in `docs/` have a Spanish twin (`README.es.md`, `SECURITY.es.md`, `docs/es/`), linked from the first line of each file. `docs/I18N.md` explains how to translate a screen.
+- Everything that assistants read (tool descriptions, replies, the server's instructions) stays in English, whatever your language. What you store (facts, pages, history) is never translated; it stays in the language it was written in.
+
 ## 1.6.0 (2026-11-19)
 
 Updating needs nothing from you. There is no database change. Saves already waiting in your Inbox are judged by the new rule when you approve them.

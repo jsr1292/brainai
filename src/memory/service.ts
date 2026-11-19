@@ -1,3 +1,4 @@
+import type { Key } from '../i18n/core.js';
 import { isStatus, projectBrief, type Brief } from './brief.js';
 import { embedText, normalizeKeys } from './keys.js';
 import { EPOCH, factDates, parseTimeRange, todayIn } from './timeRange.js';
@@ -103,17 +104,24 @@ export const PROJECT_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 export const LIST_CHANGED = 'This list changed: reload';
 
 export class MemoryError extends Error {
-  /** `current`: for 'changed', the memory as it is now, for the writer to merge its change into. */
-  constructor(public code: 'not_found' | 'invalid' | 'secret_detected' | 'changed', message: string, public current?: Memory) {
+  /** Set with `i18n`: the catalog key of this text, for the dashboard to show in the owner's language (see `errorText` in src/web/errorText.ts). */
+  readonly key?: Key;
+  readonly params?: Record<string, string | number>;
+  /**
+   * `message` stays English: it is what assistants read through MCP. `current`: for 'changed', the memory as it is now, for the
+   * writer to merge its change into. `i18n`: the same text as a catalog key, for the web layer.
+   */
+  constructor(public code: 'not_found' | 'invalid' | 'secret_detected' | 'changed', message: string, public current?: Memory, i18n?: { key: Key; params?: Record<string, string | number> }) {
     super(message);
     this.name = 'MemoryError';
+    if (i18n) { this.key = i18n.key; if (i18n.params) this.params = i18n.params; }
   }
 }
 
 /** B9: an assistant's search words are names, words and dates, never a message to the assistants that read briefings. */
 function checkAiKeys(keys: string): void {
   if (keys !== '' && looksLikeInstruction(keys)) {
-    throw new MemoryError('invalid', 'keys: they read like an instruction to AI assistants. Keep them to names, words and dates someone might search for.');
+    throw new MemoryError('invalid', 'keys: they read like an instruction to AI assistants. Keep them to names, words and dates someone might search for.', undefined, { key: 'err.keysInstruction' });
   }
 }
 
@@ -220,7 +228,7 @@ function checkContent(content: unknown, max = MAX_CONTENT): string {
     throw new MemoryError('invalid', `content is ${c.length} characters; the limit is ${max}. Shorten it (drop detail that is finished or already in the project's files)${split}, then save again now.`);
   }
   const reason = looksLikeSecret(c);
-  if (reason) throw new MemoryError('secret_detected', `This looks like a secret (${reason}). Secrets are never stored in memory.`);
+  if (reason) throw new MemoryError('secret_detected', `This looks like a secret (${reason}). Secrets are never stored in memory.`, undefined, { key: 'err.secret', params: { reason } });
   return c;
 }
 
@@ -1133,7 +1141,7 @@ export class MemoryService {
       const latest = this.store.get(id);
       if (!latest || latest.deletedAt) throw notFound(id);
       if (opts.expectContent !== undefined && latest.content !== opts.expectContent) {
-        throw new MemoryError('invalid', LIST_CHANGED);
+        throw new MemoryError('invalid', LIST_CHANGED, undefined, { key: 'err.listChanged' });
       }
       // Changed meanwhile: start again from what is there now (an assistant's roadmap then keeps a tick made meanwhile).
       if (latest.content !== current.content || latest.project !== current.project || JSON.stringify(latest.tags) !== JSON.stringify(current.tags) || latest.keys !== current.keys || metaChanged(metaOf(latest), metaOf(current))) {

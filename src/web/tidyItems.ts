@@ -3,6 +3,7 @@ import type { AppDeps } from './app.js';
 import type { TidyItems } from './dashboardViews.js';
 import { memoByKey } from './memo.js';
 import { localDay } from '../timezone.js';
+import { t } from '../i18n/core.js';
 
 /** One lazy set of Tidy checks, shared by the list and summary renderers. */
 const shared = new WeakMap<object, () => TidyItems>();
@@ -62,17 +63,17 @@ export function tidySummary(v: TidyItems): TidySummary {
 /** A plain sentence fragment; the caller supplies the full stop and link. */
 export function tidySentence(s: TidySummary): string | null {
   const parts: string[] = [];
-  if (s.duplicates) parts.push(s.duplicates === 1 ? '2 facts look like duplicates' : `${s.duplicates} pairs of facts look like duplicates`);
+  if (s.duplicates) parts.push(s.duplicates === 1 ? t('inbox.tidySentence.duplicatesOne') : t('inbox.tidySentence.duplicates', { count: s.duplicates }));
   if (s.statuses.length === 1) {
     const { project, old } = s.statuses[0]!;
-    parts.push(`${project} has ${old} old ${old === 1 ? 'status' : 'statuses'}`);
-  } else if (s.statuses.length) parts.push(`${s.statuses.length} projects have old statuses`);
+    parts.push(t('inbox.tidySentence.status', { project, count: old }));
+  } else if (s.statuses.length) parts.push(t('inbox.tidySentence.projectsStatuses', { count: s.statuses.length }));
   // Overlaps count pairs, as duplicates do.
-  if (s.overlaps) parts.push(s.overlaps === 1 ? '2 project names look alike' : `${s.overlaps} pairs of project names look alike`);
-  if (s.stale) parts.push(s.stale === 1 ? "1 fact hasn't been touched in six months" : `${s.stale} facts haven't been touched in six months`);
-  if (s.pastDate) parts.push(s.pastDate === 1 ? '1 fact is past its date' : `${s.pastDate} facts are past their date`);
-  if (s.gone) parts.push(s.gone === 1 ? '1 replaced fact lost its replacement' : `${s.gone} replaced facts lost their replacement`);
+  if (s.overlaps) parts.push(s.overlaps === 1 ? t('inbox.tidySentence.overlapsOne') : t('inbox.tidySentence.overlaps', { count: s.overlaps }));
+  if (s.stale) parts.push(t('inbox.tidySentence.stale', { count: s.stale }));
+  if (s.pastDate) parts.push(t('inbox.tidySentence.past', { count: s.pastDate }));
+  if (s.gone) parts.push(t('inbox.tidySentence.gone', { count: s.gone }));
   if (parts.length === 0) return null;
   if (parts.length === 1) return parts[0]!;
-  return `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
+  return t('inbox.tidySentence.and', { list: parts.slice(0, -1).join(', '), last: parts.at(-1)! });
 }

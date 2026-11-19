@@ -1,3 +1,4 @@
+import { t } from '../i18n/core.js';
 /** The update the desktop app has found, as it tells the server (src-tauri writes update.json; the server only reads it). */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -53,13 +54,13 @@ export function setLater(dataDir: string, version: string): void {
 
 /** What the card says. The title is the headline of an available update; text is the progress or problem line. */
 export function updateLine(u: UpdateFile): { title: string; text: string; busy: boolean; failed: boolean } {
-  const title = `BrainAI ${u.version} is ready (you have ${u.current})`;
+  const title = t('update.title', { version: u.version, current: u.current });
   switch (u.state) {
-    case 'backing-up': return { title, text: 'Making a backup of your brain first…', busy: true, failed: false };
-    case 'downloading': return { title, text: `Downloading BrainAI ${u.version}…${u.percent === undefined ? '' : ` ${u.percent}%`}`, busy: true, failed: false };
-    case 'installing': return { title, text: 'Installing… BrainAI reopens by itself in a moment.', busy: true, failed: false };
-    case 'failed': return { title, text: `The update did not finish: ${u.problem ?? 'something went wrong.'} BrainAI ${u.current} is still running.`, busy: false, failed: true };
-    case 'blocked': return { title, text: u.problem ?? 'The update cannot start right now.', busy: false, failed: false };
+    case 'backing-up': return { title, text: t('update.backingUp'), busy: true, failed: false };
+    case 'downloading': return { title, text: t('update.downloading', { version: u.version, percent: u.percent === undefined ? '' : ` ${u.percent}%` }), busy: true, failed: false };
+    case 'installing': return { title, text: t('update.installing'), busy: true, failed: false };
+    case 'failed': return { title, text: t('update.failed', { problem: u.problem ?? t('update.failedDefault'), current: u.current }), busy: false, failed: true };
+    case 'blocked': return { title, text: u.problem ?? t('update.blockedDefault'), busy: false, failed: false };
     default: return { title, text: '', busy: false, failed: false };
   }
 }
