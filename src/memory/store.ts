@@ -65,7 +65,9 @@ export const toHistory = (r: HistoryRow): HistoryEntry => ({
   ...rowMeta(r),
 });
 const toSuggestion = (r: SuggestionRow): Suggestion => ({
-  id: r.id, action: r.action, memoryId: r.memory_id, content: r.content, tags: JSON.parse(r.tags) as string[],
+  // A held update that left the text (content NULL) or the tags (stored as JSON null) out is resolved to the fact's own by
+  // MemoryStore.resolveHeld; until then the tags read as none.
+  id: r.id, action: r.action, memoryId: r.memory_id, content: r.content, tags: (JSON.parse(r.tags) as string[] | null) ?? [],
   kind: r.kind, project: r.project, reason: r.reason, suggestedAt: r.suggested_at, suggestedBy: r.suggested_by, status: r.status,
   supersedes: JSON.parse(r.supersedes ?? '[]') as string[], deletedMatch: r.deleted_match ?? null, keys: r.keys ?? null,
   // A held save: null = none given, '' = clear it.
@@ -749,7 +751,10 @@ export class MemoryStore {
   }
 
   /** Kind, project and reason default to a profile change. */
-  addSuggestion(s: Omit<Suggestion, 'id' | 'suggestedAt' | 'status' | 'kind' | 'project' | 'reason' | 'supersedes' | 'deletedMatch' | 'keys' | 'validUntil' | 'source' | 'sourceNote' | 'sourceBy' | 'harvest' | 'similarId'> & Partial<Pick<Suggestion, 'kind' | 'project' | 'reason' | 'supersedes' | 'deletedMatch' | 'keys' | 'validUntil' | 'source' | 'sourceNote' | 'sourceBy' | 'harvest' | 'similarId'>>): Suggestion {
+  addSuggestion(s: Omit<Suggestion, 'tags' | 'id' | 'suggestedAt' | 'status' | 'kind' | 'project' | 'reason' | 'supersedes' | 'deletedMatch' | 'keys' | 'validUntil' | 'source' | 'sourceNote' | 'sourceBy' | 'harvest' | 'similarId'> & Partial<Pick<Suggestion, 'kind' | 'project' | 'reason' | 'supersedes' | 'deletedMatch' | 'keys' | 'validUntil' | 'source' | 'sourceNote' | 'sourceBy' | 'harvest' | 'similarId'>> & {
+    /** null (an update only): the tags were left out, so approval keeps the fact's own as they are then. */
+    tags: string[] | null;
+  }): Suggestion {
     const id = randomUUID();
     this.db.prepare(
       'INSERT INTO profile_suggestions(id, action, memory_id, content, tags, kind, project, reason, suggested_at, suggested_by, supersedes, deleted_match, keys, valid_until, source, source_note, source_by, harvest_batch, harvest_label, similar_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -757,15 +762,28 @@ export class MemoryStore {
     return this.getSuggestion(id)!;
   }
 
+  /**
+   * A held update that left the text or the tags out (stored as NULL / JSON null: it did not change them) reads with
+   * the fact's own as they are now, so what the Inbox card shows and what approval saves is one thing, and the owner's
+   * edit made while it waited is never put back. Text or tags it did change are the row's own.
+   */
+  private resolveHeld(r: SuggestionRow): Suggestion {
+    const s = toSuggestion(r);
+    if (s.action !== 'update' || !s.memoryId) return s;
+    const target = this.get(s.memoryId);
+    if (!target) return s;
+    return { ...s, content: s.content ?? target.content, tags: r.tags === 'null' ? target.tags : s.tags };
+  }
+
   listSuggestions(status: Suggestion['status']): Suggestion[] {
     const rows = this.db.prepare('SELECT * FROM profile_suggestions WHERE status = ? ORDER BY suggested_at, rowid')
       .all(status) as SuggestionRow[];
-    return rows.map(toSuggestion);
+    return rows.map((r) => this.resolveHeld(r));
   }
 
   getSuggestion(id: string): Suggestion | undefined {
     const r = this.db.prepare('SELECT * FROM profile_suggestions WHERE id = ?').get(id) as SuggestionRow | undefined;
-    return r && toSuggestion(r);
+    return r && this.resolveHeld(r);
   }
 
   /** Undo: a suggestion just answered waits again. */

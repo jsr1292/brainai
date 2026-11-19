@@ -1,7 +1,7 @@
 {
   "name": "brainai",
   "displayName": "BrainAI",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Connects Claude Code to your own BrainAI shared memory: MCP server, save reminders and the harvest-session skill.",
   "author": {
     "name": "BrainAI"

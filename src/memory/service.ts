@@ -190,6 +190,16 @@ function heldMeta(res: AiMetaResult, given: MetaInput | undefined, by: string, e
   };
 }
 
+/**
+ * What a held update stores for its text and tags: NULL for those that are the fact's own as it is now (the call did not
+ * change them), so approval keeps whatever the fact has by then instead of putting this call's copy back over the
+ * owner's edit made while it waited. Text or tags it did change are stored and applied as they are.
+ */
+function leftOut(content: string, tags: string[], current: Pick<Memory, 'content' | 'tags'>): { content: string | null; tags: string[] | null } {
+  const sameTags = tags.length === current.tags.length && tags.every((t, i) => t === current.tags[i]);
+  return { content: content === current.content ? null : content, tags: sameTags ? null : tags };
+}
+
 type Similar = { memory: Memory; similarity: number }[];
 
 export type RememberResult =
@@ -1081,7 +1091,7 @@ export class MemoryService {
         .filter((s) => s.action === 'update' && s.memoryId === id && s.suggestedBy === by);
       this.checkHeldRoom(superseded.length);
       for (const s of superseded) this.store.resolveSuggestion(s.id, 'rejected');
-      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, keys: input.keys === undefined ? own?.keys ?? null : keys, reason, suggestedBy: by, ...heldMeta(metaR, input.meta, by, own, !textNew) });
+      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, ...leftOut(content, tags, current), keys: input.keys === undefined ? own?.keys ?? null : keys, reason, suggestedBy: by, ...heldMeta(metaR, input.meta, by, own, !textNew) });
       return { status: 'suggested', suggestion };
     }
     /** Adds the replacement rows in the caller's transaction, decided again on the fact as it is now. */
@@ -1098,7 +1108,7 @@ export class MemoryService {
       for (const s of superseded) this.store.resolveSuggestion(s.id, 'rejected');
       // Only a project the AI chose is recorded: approval otherwise keeps whatever project the memory has by then.
       const chosen = input.project === undefined ? null : project;
-      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, content, tags, keys: input.keys === undefined ? null : keys, kind: current.kind, project: chosen, reason, suggestedBy: by, supersedes: ids, deletedMatch, ...heldMeta(metaR, input.meta, by) });
+      const suggestion = this.store.addSuggestion({ action: 'update', memoryId: id, ...leftOut(content, tags, current), keys: input.keys === undefined ? null : keys, kind: current.kind, project: chosen, reason, suggestedBy: by, supersedes: ids, deletedMatch, ...heldMeta(metaR, input.meta, by) });
       return { status: 'suggested', suggestion };
     };
     if (content === current.content) {
@@ -1514,6 +1524,8 @@ export class MemoryService {
     const notReplaced: { id: string; why: string }[] = [];
     const result = this.store.atomic((): Memory | null | 'changed' => {
       const s = this.pendingSuggestion(id);
+      // The fact's text or tags changed while this was embedded, and the suggestion keeps them: start again from what is there.
+      if (s.action === 'update' && ((editedContent === undefined && s.content !== first.content) || JSON.stringify(s.tags) !== JSON.stringify(first.tags))) return 'changed';
       // The roadmap changed while the text was embedded: start again from what is there now.
       if (roadmap && this.roadmapReplacedBy(s)?.content !== replaced) return 'changed';
       // The fact's own search words changed meanwhile, and this update keeps them: embed them again.

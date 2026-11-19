@@ -4,6 +4,12 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Version shows the version you run.
 
+## 1.7.1 (2026-11-19)
+
+Updating needs nothing from you.
+
+- **Fix: approving a held change no longer undoes your edit.** When an assistant only added search words to a fact (or left its tags alone) and that change waited in the Inbox, approving it after you had edited the fact put the old text (or tags) back. It now keeps the fact as it is when you approve, and the Inbox card shows exactly that.
+
 ## 1.7.0 (2026-11-19)
 
 Updating needs one thing from you: connected apps will show a "new setup text" notice once (setup text version 3). It appears even if you use BrainAI in English, because the text each app reads came in a new version. Press Connect again (or Replace) on those apps to refresh their rules; nothing breaks if you do not.
