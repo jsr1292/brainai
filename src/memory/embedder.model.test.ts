@@ -143,3 +143,25 @@ test(`${profile.id}: the nearest facts returned for a nonsense query are never m
   assert.ok(store.list({}).find((m) => m.content === RECALL_MEMORIES[1])!.lastRecalledAt, 'a confident match is marked recalled');
 });
 }
+
+// Forgetting that sticks: the deleted-match band (duplicate - deletedMargin, plus "keeps the deleted fact's numbers") against
+// the texts assistants re-saved in the lifecycle eval, and related facts that must still save (measured 2026-11-19).
+// Known gap on gemma (margin 0): the eval's Claude run 3 text (0.691) and Codex run 3 text (0.559) are not held there;
+// any margin wide enough would also hold related facts that share the deleted fact's numbers (0.72-0.77).
+for (const profile of [E5_PROFILE, GEMMA_PROFILE]) {
+  test(`${profile.id}: reworded and re-kinded re-saves of a deleted fact score in the deleted-match band, related facts below it`, { skip: !enabled }, async () => {
+    const e = await model(profile);
+    const deleted = 'Harbor staging box is called lantern. Its nightly database backup runs at 02:30 UTC.';
+    const score = async (a: string, b: string) => cosine(await e.embed(a, 'passage'), await e.embed(b, 'passage'));
+    const floor = profile.duplicate - profile.deletedMargin;
+    assert.ok(await score(deleted, 'Harbor: the staging box is called "lantern". Its backup is believed to run at 02:30 UTC (owner unsure, "I think", as of 2026-11-19; not verified). Lantern staging was reported slow on 2026-11-19 and the cause is not known yet.') >= profile.duplicate, 'eval Claude run 2');
+    if (profile.id === 'e5') {
+      assert.ok(await score('Harbor staging box is called lantern. The nightly database backup on lantern runs at 02:30 UTC (as of 2026-11-19).', 'Harbor status 2026-11-19: staging box ("lantern") was slow again today; cause not investigated yet. No host or service details recorded. Open: find why staging is slow (check CPU, memory, disk I/O, and whether it overlaps the 02:30 UTC backup window).') >= floor, 'eval Claude run 3');
+      assert.ok(await score("Harbor's staging box is called lantern, and its nightly database backup runs at 02:30 UTC.", "The owner thinks lantern's backup is still scheduled for 02:30 UTC (mentioned 2026-11-19; not independently verified).") >= floor, 'eval Codex run 3');
+    }
+    for (const other of ['Harbor staging box lantern has 4 GB of RAM and runs Ubuntu Server.', 'Harbor production backups run at 04:00 UTC to a Backblaze B2 bucket.', 'Harbor production database is hosted on Fly.io in the Frankfurt region.', 'Harbor status 2026-11-19: staging was slow today; cause not investigated yet.']) {
+      assert.ok(await score(deleted, other) < profile.duplicate, other); // inside the loose band only counts with the same numbers: none of these has 02:30
+    }
+    assert.ok(await score('staging runs on port 8080', 'production runs on port 443') < floor);
+  });
+}

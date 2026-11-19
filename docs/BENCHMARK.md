@@ -4,6 +4,10 @@ BrainAI's search is measured on LoCoMo, a public test of memory over long conver
 ([snap-research/locomo](https://github.com/snap-research/locomo), Maharana et al., 2024, CC BY-NC 4.0). Its ten
 conversations run to about 600 turns each, over many weeks, with questions about what was said.
 
+> These tests start from facts that are already stored. They do not show that the right things get saved, replaced and
+> forgotten in normal use. That is measured end to end, with real assistants and the real save and approval paths, in
+> [LIFECYCLE-EVAL.md](LIFECYCLE-EVAL.md).
+
 ## What is measured
 
 **Retrieval only.** Every turn of a conversation is saved as one fact in a fresh, empty brain ("Caroline on 8 May,

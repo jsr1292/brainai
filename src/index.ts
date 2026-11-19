@@ -101,6 +101,8 @@ const learning = new LearningService(db, now, folders, { get: (n) => registry.ge
 service.setProjectMoveHook((from, to) => learning.moveProject(from, to));
 const pages = new PageService(new PageStore(db, now), embedder, service, registry, store, now, { keywordWeight: () => cut().keywordWeight });
 pages.realignAnchors();
+// A marker refresh that fails must never stop the server from starting.
+try { pages.refreshInstructionMarks(); } catch (e) { console.warn('could not refresh the instruction markers on pages:', e); }
 // The graph's meaning links: every save updates them right after it commits; the catch-up after listen is the safety net.
 const meaning = new MeaningIndex(db, { floor: () => cut().threadFloor, kinds: THREAD_KINDS, now });
 service.setMeaningHook(meaning);

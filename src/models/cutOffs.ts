@@ -38,5 +38,6 @@ export function memoryCutOffs(cut: () => EmbeddingProfile, extra: { reranker?: R
     get keywordWeight() { return cut().keywordWeight; },
     get rerankPrior() { return cut().rerankPrior; },
     get closeFacts() { return cut().closeFacts; },
+    get deletedMargin() { return cut().deletedMargin; },
   };
 }

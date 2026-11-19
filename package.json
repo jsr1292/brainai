@@ -1,6 +1,6 @@
 {
   "name": "brainai",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "scripts": {
     "test": "node --import tsx --test --test-concurrency=1 \"src/**/*.test.ts\"",
     "test:model": "RUN_MODEL_TESTS=1 node --import tsx --test src/memory/embedder.model.test.ts",
@@ -9,11 +9,13 @@
     "build": "tsc -p tsconfig.build.json && cp -r src/web/static dist/web/ && mkdir -p dist/skills && cp -r src/skills/builtin dist/skills/",
     "dev": "tsx src/index.ts",
     "cli": "tsx src/cli.ts",
+    "drill:restore": "node --import tsx src/scripts/restoreDrill.ts",
     "demo:seed": "node --import tsx src/scripts/seedDemo.ts",
     "demo:code": "node --import tsx src/scripts/seedDemo.ts --code",
     "model": "node --import tsx src/scripts/warmModel.ts",
     "bench:locomo": "node --import tsx src/scripts/benchLocomo.ts",
-    "bench:longmemeval": "node --import tsx src/scripts/benchLongMemEval.ts"
+    "bench:longmemeval": "node --import tsx src/scripts/benchLongMemEval.ts",
+    "eval:lifecycle": "node --import tsx src/eval/lifecycle/run.ts"
   },
   "type": "module",
   "private": true,

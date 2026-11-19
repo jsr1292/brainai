@@ -13,7 +13,7 @@ test('profileFor picks the model by EMBED_MODEL and refuses an unknown one', () 
 test('the e5 profile keeps every value the e5 model was tuned with', () => {
   assert.deepEqual(E5_PROFILE, {
     id: 'e5', dim: 384,
-    duplicate: 0.93, minRecall: 0.75, window: 0.015, confident: 0.86, closeFacts: 0.86,
+    duplicate: 0.93, minRecall: 0.75, window: 0.015, confident: 0.86, closeFacts: 0.86, deletedMargin: 0.03,
     sameProject: 0.88, related: 0.88, threadFloor: 0.87,
     keywordWeight: 0.5, rerankPrior: 0,
   });

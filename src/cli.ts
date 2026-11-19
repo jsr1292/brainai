@@ -182,6 +182,7 @@ async function recallTest({ db, args = [], embedder: given, reranker, dbPath }: 
     keywordWeight: config.embedModel.keywordWeight,
     rerankPrior: config.embedModel.rerankPrior,
     closeFacts: config.embedModel.closeFacts,
+    deletedMargin: config.embedModel.deletedMargin,
     // What assistants get: the server's reranker setting.
     reranker: reranker ?? await startReranker(config),
   });

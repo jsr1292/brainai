@@ -10,7 +10,12 @@
 #   - A gate finding is exit 1 and publishes nothing.
 #   - Refuses an unreadable or empty denylist, and (run from the repo it releases) uncommitted edits to the gate.
 #   - The caller's git hooks and signing are switched off for the public commit and tag.
+#   - Docs mode (--docs, no version): the same gate on the committed HEAD, then one commit "BrainAI docs <YYYY-MM-DD>" on
+#     top of the public repo's current main, with no tag. Refused (exit 2, listing the paths) when anything but
+#     documentation (README.md, docs/**, CHANGELOG.md, LICENSE, plugins/**/README.md) differs from the tree of the latest
+#     v* snapshot on the public repo: code only goes out in a versioned release.
 # Usage: PUBLISH_NAME=… PUBLISH_EMAIL=… scripts/publish/release.sh <denylist> <public-repo-url> <version> [--no-tests] [--dry-run]
+#        PUBLISH_NAME=… PUBLISH_EMAIL=… scripts/publish/release.sh <denylist> <public-repo-url> --docs [--no-tests] [--dry-run]
 set -uo pipefail
 # The caller's environment must not redirect git, and dates carry no local offset.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
@@ -18,17 +23,22 @@ export TZ=UTC
 
 SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GATE="$SELF_ROOT/scripts/publish/check-public-tree.sh"
-DENYLIST="" PUBLIC="" VERSION="" GATE_ARGS=() DRY=0
+DENYLIST="" PUBLIC="" VERSION="" GATE_ARGS=() DRY=0 DOCS=0
 for arg in "$@"; do
   case "$arg" in
     --no-tests) GATE_ARGS+=(--no-tests) ;;
     --dry-run) DRY=1 ;;
+    --docs) DOCS=1 ;;
     -*) echo "Unknown option: $arg" >&2; exit 2 ;;
     *) if [ -z "$DENYLIST" ]; then DENYLIST="$arg"; elif [ -z "$PUBLIC" ]; then PUBLIC="$arg"; elif [ -z "$VERSION" ]; then VERSION="$arg"; else echo "Too many arguments" >&2; exit 2; fi ;;
   esac
 done
-[ -n "$VERSION" ] || { echo "Usage: release.sh <denylist> <public-repo-url> <version> [--no-tests] [--dry-run]" >&2; exit 2; }
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Give a version like 1.2.3" >&2; exit 2; }
+if [ "$DOCS" = 1 ]; then
+  [ -z "$VERSION" ] && [ -n "$PUBLIC" ] || { echo "Usage: release.sh <denylist> <public-repo-url> --docs [--no-tests] [--dry-run]" >&2; exit 2; }
+else
+  [ -n "$VERSION" ] || { echo "Usage: release.sh <denylist> <public-repo-url> <version> [--no-tests] [--dry-run]" >&2; exit 2; }
+  [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Give a version like 1.2.3" >&2; exit 2; }
+fi
 [ -n "${PUBLISH_NAME:-}" ] && [ -n "${PUBLISH_EMAIL:-}" ] || { echo "Set PUBLISH_NAME and PUBLISH_EMAIL: the public commit's author" >&2; exit 2; }
 [ -f "$DENYLIST" ] && [ -r "$DENYLIST" ] || { echo "No readable denylist file at the path given" >&2; exit 2; }
 # Absolute, so the gate (run inside the clone) reads this file and never a tracked one of the same name.
@@ -41,18 +51,20 @@ HEAD="$(git -C "$REPO" rev-parse HEAD)"
 if [ "$(cd "$SELF_ROOT" && pwd -P)" = "$(cd "$REPO" && pwd -P)" ] && ! git -C "$REPO" diff --quiet HEAD -- scripts/publish src/scripts/secretScan.ts; then
   echo "There are uncommitted changes to the gate (scripts/publish or src/scripts/secretScan.ts): commit or undo them first" >&2; exit 2
 fi
-git -C "$REPO" show "$HEAD:CHANGELOG.md" 2>/dev/null | grep -E "^## ${VERSION//./\\.}( |$)" >/dev/null || { echo "CHANGELOG.md has no \"## $VERSION\" entry: write it and commit first" >&2; exit 2; }
-git ls-remote --exit-code --tags "$PUBLIC" "refs/tags/v$VERSION" >/dev/null 2>&1
-case $? in
-  0) echo "v$VERSION is already on the public repo" >&2; exit 2 ;;
-  2) ;;
-  *) echo "Could not reach the public repo" >&2; exit 2 ;;
-esac
-# The version the app reports (Settings, the desktop app) must be the one released.
-for f in package.json desktop/src-tauri/tauri.conf.json; do
-  v="$(git -C "$REPO" show "$HEAD:$f" 2>/dev/null | node -e 'let s="";process.stdin.on("data",(d)=>{s+=d}).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).version??""))}catch{}})' || true)"
-  [ -z "$v" ] || [ "$v" = "$VERSION" ] || { echo "$f says $v, not $VERSION: bump it and commit first" >&2; exit 2; }
-done
+if [ "$DOCS" = 0 ]; then
+  git -C "$REPO" show "$HEAD:CHANGELOG.md" 2>/dev/null | grep -E "^## ${VERSION//./\\.}( |$)" >/dev/null || { echo "CHANGELOG.md has no \"## $VERSION\" entry: write it and commit first" >&2; exit 2; }
+  git ls-remote --exit-code --tags "$PUBLIC" "refs/tags/v$VERSION" >/dev/null 2>&1
+  case $? in
+    0) echo "v$VERSION is already on the public repo" >&2; exit 2 ;;
+    2) ;;
+    *) echo "Could not reach the public repo" >&2; exit 2 ;;
+  esac
+  # The version the app reports (Settings, the desktop app) must be the one released.
+  for f in package.json desktop/src-tauri/tauri.conf.json; do
+    v="$(git -C "$REPO" show "$HEAD:$f" 2>/dev/null | node -e 'let s="";process.stdin.on("data",(d)=>{s+=d}).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).version??""))}catch{}})' || true)"
+    [ -z "$v" ] || [ "$v" = "$VERSION" ] || { echo "$f says $v, not $VERSION: bump it and commit first" >&2; exit 2; }
+  done
+fi
 
 WORK="$(mktemp -d)" && [ -n "$WORK" ] || { echo "Could not make a temporary folder" >&2; exit 2; }
 trap 'rm -rf "$WORK"' EXIT
@@ -73,14 +85,33 @@ git -C "$WORK/pub" add -A --force . || { echo "Could not stage the checked tree"
 # The commit must hold exactly the checked tree, file for file.
 diff <(cd "$WORK/tree" && find . \( -type f -o -type l \) | sed 's|^\./||' | LC_ALL=C sort) <(git -C "$WORK/pub" ls-files | LC_ALL=C sort) >/dev/null \
   || { echo "The staged files differ from the checked tree: nothing published" >&2; exit 2; }
-if git -C "$WORK/pub" diff --cached --quiet; then echo "Nothing changed since the last release: nothing published." >&2; exit 2; fi
+if [ "$DOCS" = 1 ]; then
+  # Only documentation may differ from the last versioned snapshot (the newest v* tag): list what else changed.
+  LAST="$(git -C "$WORK/pub" tag --list 'v[0-9]*' --sort=-v:refname | head -n 1)"
+  [ -n "$LAST" ] || { echo "The public repo has no versioned snapshot yet: publish a release first" >&2; exit 2; }
+  OTHER="$(git -C "$WORK/pub" diff --cached --name-only --no-renames "$LAST" | grep -vE '^(README\.md|CHANGELOG\.md|LICENSE|docs/.*|plugins/.*/README\.md)$' || true)"
+  if [ -n "$OTHER" ]; then
+    echo "Docs mode publishes documentation only. These paths differ from $LAST and are not documentation:" >&2
+    printf '%s\n' "$OTHER" | sed 's/^/  /' >&2
+    echo "Publish them in a versioned release." >&2; exit 2
+  fi
+fi
+if git -C "$WORK/pub" diff --cached --quiet; then echo "Nothing changed since the last publish: nothing published." >&2; exit 2; fi
 export GIT_AUTHOR_NAME="$PUBLISH_NAME" GIT_AUTHOR_EMAIL="$PUBLISH_EMAIL" GIT_COMMITTER_NAME="$PUBLISH_NAME" GIT_COMMITTER_EMAIL="$PUBLISH_EMAIL"
 # No signing and no hooks from the caller's config: either could put the owner's identity in the public history.
 PUBGIT=(git -C "$WORK/pub" -c commit.gpgsign=false -c tag.gpgsign=false -c core.hooksPath=/dev/null)
-"${PUBGIT[@]}" commit -q -m "BrainAI $VERSION" && "${PUBGIT[@]}" tag -a "v$VERSION" -m "BrainAI $VERSION" || { echo "Could not commit" >&2; exit 2; }
+if [ "$DOCS" = 1 ]; then
+  "${PUBGIT[@]}" commit -q -m "BrainAI docs $(date -u +%F)" || { echo "Could not commit" >&2; exit 2; }
+else
+  "${PUBGIT[@]}" commit -q -m "BrainAI $VERSION" && "${PUBGIT[@]}" tag -a "v$VERSION" -m "BrainAI $VERSION" || { echo "Could not commit" >&2; exit 2; }
+fi
 git -C "$WORK/pub" --no-pager show --stat --format='%h %s (%an)' HEAD | tail -n 3
 
 # 3. Push the commit and the tag together.
 if [ "$DRY" = 1 ]; then echo "Dry run: nothing pushed."; exit 0; fi
+if [ "$DOCS" = 1 ]; then
+  "${PUBGIT[@]}" push -q origin HEAD:main || { echo "The push failed: nothing was published." >&2; exit 1; }
+  echo "Published the docs ($(git -C "$WORK/pub" rev-parse --short HEAD)) to $PUBLIC"; exit 0
+fi
 "${PUBGIT[@]}" push -q --atomic origin HEAD:main "v$VERSION" || { echo "The push failed: nothing was published." >&2; exit 1; }
 echo "Published BrainAI $VERSION ($(git -C "$WORK/pub" rev-parse --short HEAD)) to $PUBLIC"

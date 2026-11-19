@@ -1564,12 +1564,55 @@ test('an approved profile deletion sticks', async () => {
   assert.equal(again.suggestion.deletedMatch, p);
 });
 
-test('another project or another kind is not held', async () => {
+test('a related but different fact is not held', async () => {
   const { service, save } = clocked();
   const a = await save(long('8080'));
   service.forget(a, owner);
-  assert.equal((await aiSave(service, { content: long('8080'), project: 'cellar', newProject: true })).status, 'saved');
-  assert.equal((await aiSave(service, { kind: 'summary', content: long('8080') + ' status', tags: ['status'] })).status, 'saved');
+  assert.equal((await aiSave(service, { content: 'wildlog production runs on port 443 behind the load balancer in the main region' })).status, 'saved');
+});
+
+test('the same claim re-saved as another kind, with more words, is held and names the deleted fact', async () => {
+  const { service, store, save } = clocked();
+  const a = await save('Harbor staging box is called lantern. Its nightly database backup runs at 02:30 UTC.', 'harbor');
+  service.forget(a, owner);
+  const r = await aiSave(service, {
+    kind: 'summary', tags: ['status'], project: 'harbor',
+    content: 'Harbor staging box is called lantern. Its nightly database backup runs at 02:30 UTC, not verified.',
+  });
+  assert.equal(r.status, 'suggested');
+  assert.equal(r.suggestion.deletedMatch, a);
+  assert.match(r.suggestion.reason, /^is close to a fact you deleted on /);
+  assert.equal(store.list({ project: 'harbor' }).length, 0);
+});
+
+test('a deleted decision re-saved as a decision with a hedge is held when it keeps the deleted fact\'s numbers', async () => {
+  const { service, save } = clocked();
+  const a = await save('Harbor staging box is called lantern. Its nightly database backup runs at 02:30 UTC.', 'harbor');
+  service.forget(a, owner);
+  const r = await aiSave(service, { project: 'harbor', content: 'Harbor staging box is called lantern. Its nightly database backup runs at 02:30 UTC, still not verified today.' });
+  assert.equal(r.status, 'suggested');
+  assert.equal(r.suggestion.deletedMatch, a);
+  // With the fake embedder, the same wording with another time is below the loose band and saves. Real models score it as
+  // close (0.99 e5, 0.93 gemma): there it is held like any near-duplicate.
+  assert.equal((await aiSave(service, { project: 'harbor', content: 'Harbor staging box is called lantern. Its nightly database backup runs at 04:15 UTC, still not verified today.' })).status, 'saved');
+});
+
+test('related but different facts still save after a deletion, in any kind', async () => {
+  const { service, save } = clocked();
+  const a = await save('staging runs on port 8080 behind the proxy on the staging box', 'harbor');
+  service.forget(a, owner);
+  assert.equal((await aiSave(service, { project: 'harbor', content: 'production runs on port 443 behind the proxy on the production host' })).status, 'saved');
+  assert.equal((await aiSave(service, { kind: 'summary', tags: ['status'], project: 'harbor', content: 'Harbor status: staging was slow today and the cause is not investigated yet' })).status, 'saved');
+});
+
+test('update_memory that rewrites a fact of another kind into a deleted one is held', async () => {
+  const { service, save } = clocked();
+  const x = await save('Harbor staging box is called lantern. Its nightly database backup runs at 02:30 UTC.', 'harbor');
+  service.forget(x, owner);
+  const y = await save('harbor status: staging was slow today and the cause is not known yet', 'harbor', 'summary', ['status']);
+  const r = await service.update(y, { content: 'Harbor staging box is called lantern. Its nightly database backup runs at 02:30 UTC, staging was slow today.' }, ai) as any;
+  assert.equal(r.status, 'suggested');
+  assert.equal(r.suggestion.deletedMatch, x);
 });
 
 test('update_memory that rewrites a fact into a deleted one is held as an update', async () => {
@@ -1680,4 +1723,80 @@ test('undoing an approved addition is refused when the Inbox is full', async () 
   for (let i = 0; i < MAX_HELD_PENDING; i++) store.addSuggestion({ action: 'add', memoryId: null, content: `held ${i}`, tags: [], kind: 'decision', reason: 'x', suggestedBy: 'Codex' });
   assert.throws(() => service.undoApprovedAdd(id, m.id), (e: any) => e.code === 'invalid' && /already wait/.test(e.message));
   assert.equal(store.get(m.id)!.deletedAt, null, 'the fact stays');
+});
+
+const LANTERN = 'Harbor staging box is called lantern. Its nightly database backup runs at 02:30 UTC.';
+
+test('a decision deleted while its status twin is still live: the re-saved decision is held', async () => {
+  const { service, save } = clocked();
+  const d = await save(LANTERN, 'harbor');
+  await save('Harbor staging box is called lantern. Its nightly database backup runs at 02:30 UTC, status.', 'harbor', 'summary', ['status']);
+  service.forget(d, owner);
+  const r = await aiSave(service, { project: 'harbor', content: 'Harbor staging box is called lantern. Its nightly database backup runs at 02:30 UTC.' });
+  assert.equal(r.status, 'suggested');
+  assert.equal(r.suggestion.deletedMatch, d);
+});
+
+test('a live twin of the same kind and project, or one written after the deletion, still covers the deleted fact', async () => {
+  const { service, save } = clocked();
+  const d = await save(LANTERN, 'harbor');
+  service.forget(d, owner);
+  // The owner approved it again as another kind, later: it is back by the owner's choice.
+  await save('Harbor staging box is called lantern. Its nightly database backup runs at 02:30 UTC, status.', 'harbor', 'summary', ['status']);
+  const r = await aiSave(service, { project: 'harbor', content: 'Harbor staging box is called lantern. Its nightly database backup runs at 02:30 UTC.' });
+  assert.notEqual(r.status, 'suggested');
+});
+
+test('the same sentence of another existing project is not held, and a discussion close is not refused by it', async () => {
+  const { service, store, save } = clocked();
+  const a = await save('wildlog staging runs on port 8080 behind the nginx proxy', 'wildlog');
+  await save('harbor deploys with a single compose file on the staging box', 'harbor');
+  service.forget(a, owner);
+  const r = await aiSave(service, { project: 'harbor', content: 'harbor staging runs on port 8080 behind the nginx proxy' });
+  assert.equal(r.status, 'saved');
+  const b = await save('wildlog uses Node 22 for the build on every runner it has', 'wildlog');
+  service.forget(b, owner);
+  const refuse = (day: string) => `refused ${day}`;
+  const c = await aiSave(service, { project: 'harbor', content: 'wildlog uses Node 22 for the build on every runner it has'.replace('wildlog', 'harbor'), refuseDeleted: refuse });
+  assert.equal(c.status, 'saved');
+  void store;
+});
+
+test('another project\'s deleted fact holds a save with no project, a project that does not exist yet, or one that names it', async () => {
+  const { service, store, save } = clocked();
+  const clear = () => store.listSuggestions('pending').forEach((x) => service.rejectSuggestion(x.id));
+  const a = await save(LANTERN, 'harbor');
+  service.forget(a, owner);
+  const text = 'Harbor staging box is called lantern. Its nightly database backup runs at 02:30 UTC, not verified.';
+  const none = await service.remember({ kind: 'profile', content: text }, ai) as any;
+  assert.equal(none.suggestion.deletedMatch, a);
+  clear();
+  const fresh = await aiSave(service, { project: 'lantern', newProject: true, content: text });
+  assert.equal(fresh.status, 'suggested');
+  clear();
+  await save('cellar list sorts by drinking window with the soonest bottles first', 'lantern');
+  // Now "lantern" exists, but the text names harbor.
+  const named = await aiSave(service, { project: 'lantern', content: text.replace('not verified', 'unchecked') });
+  assert.equal(named.status, 'suggested');
+  clear();
+  const unnamed = await aiSave(service, { project: 'lantern', content: text.replace('Harbor ', '').replace('not verified', 'as told') });
+  assert.equal(unnamed.status, 'saved');
+});
+
+test('a hedged re-save in the loose band is held for a deleted fact only when it keeps the numbers (and a different number is not held)', async () => {
+  const { service, save } = clocked();
+  const d = await save(LANTERN, 'harbor');
+  service.forget(d, owner);
+  assert.equal((await aiSave(service, { project: 'harbor', content: 'Harbor staging box is called lantern. Its nightly database backup runs at 04:15 UTC, still not verified today.' })).status, 'saved');
+});
+
+test('a look-alike saved into an unrelated project after the deletion does not unlock the deleted fact', async () => {
+  const { service, save } = clocked();
+  const a = await save('wildlog staging runs on port 8080 behind the nginx proxy', 'wildlog');
+  await save('harbor deploys with a single compose file on the staging box', 'harbor');
+  service.forget(a, owner);
+  assert.equal((await aiSave(service, { project: 'harbor', content: 'harbor staging runs on port 8080 behind the nginx proxy' })).status, 'saved');
+  const again = await aiSave(service, { project: 'wildlog', content: 'wildlog staging runs on port 8080 behind the nginx proxy' });
+  assert.equal(again.status, 'suggested');
+  assert.equal(again.suggestion.deletedMatch, a);
 });

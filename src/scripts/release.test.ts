@@ -180,3 +180,60 @@ test("a release is refused when package.json (or the desktop app's tauri.conf.js
   assert.match(d.out, /desktop\/src-tauri\/tauri\.conf\.json says 1\.0\.0, not 1\.0\.1/);
   assert.equal(w.git(w.pub, 'rev-parse', 'main'), before);
 });
+
+// Docs mode: a release first, so the public repo's latest tag holds the public tree of the private HEAD.
+function docsWorld(t: TestContext) {
+  const w = world(t);
+  const first = w.run('1.0.1');
+  assert.equal(first.status, 0, first.out);
+  const runDocs = (...opts: string[]) => {
+    const r = spawnSync('bash', [release, w.denylist, w.pub, '--docs', '--no-tests', ...opts], { cwd: w.priv, encoding: 'utf8', env: { ...callerEnv, ...AUTHOR } });
+    return { status: r.status, out: `${r.stdout}${r.stderr}` };
+  };
+  return { ...w, runDocs };
+}
+
+test('docs mode pushes one docs commit on top of main with the public tree, and no tag', { skip: !haveGit }, (t) => {
+  const w = docsWorld(t);
+  w.write('README.md', '# A brain\n\nNew words.\n');
+  w.write('docs/images/a.png', 'png');
+  w.write('docs/superpowers/plans/q.md', 'still private\n');
+  w.git(w.priv, 'add', '-A');
+  w.git(w.priv, 'commit', '-qm', 'docs');
+  const tagsBefore = w.git(w.pub, 'tag');
+  const r = w.runDocs();
+  assert.equal(r.status, 0, r.out);
+  assert.match(w.pubLog()[0] ?? '', new RegExp(`^BrainAI docs \\d{4}-\\d{2}-\\d{2}\\|publisher\\|publisher@users\\.noreply\\.example$`));
+  assert.equal(w.pubLog()[1], 'BrainAI 1.0.1|publisher|publisher@users.noreply.example');
+  assert.deepEqual(w.pubFiles(), ['CHANGELOG.md', 'README.md', 'docs/images/a.png', 'package.json', 'src/a.ts']);
+  assert.equal(w.git(w.pub, 'tag'), tagsBefore);
+});
+
+test('docs mode refuses a change to anything but documentation and lists the paths', { skip: !haveGit }, (t) => {
+  const w = docsWorld(t);
+  w.write('README.md', '# A brain\n\nNew words.\n');
+  w.write('src/a.ts', 'export const a = 2;\n');
+  w.write('src/new.ts', 'export const n = 1;\n');
+  w.git(w.priv, 'add', '-A');
+  w.git(w.priv, 'commit', '-qm', 'docs and code');
+  const before = w.git(w.pub, 'rev-parse', 'main');
+  const r = w.runDocs();
+  assert.equal(r.status, 2, r.out);
+  assert.match(r.out, /not documentation/);
+  assert.match(r.out, /^ {2}src\/a\.ts$/m);
+  assert.match(r.out, /^ {2}src\/new\.ts$/m);
+  assert.doesNotMatch(r.out, /^ {2}README\.md$/m);
+  assert.equal(w.git(w.pub, 'rev-parse', 'main'), before);
+});
+
+test('docs mode --dry-run builds the commit but pushes nothing', { skip: !haveGit }, (t) => {
+  const w = docsWorld(t);
+  w.write('docs/RUNBOOK.md', 'steps\n');
+  w.git(w.priv, 'add', '-A');
+  w.git(w.priv, 'commit', '-qm', 'docs');
+  const before = w.git(w.pub, 'rev-parse', 'main');
+  const r = w.runDocs('--dry-run');
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /Dry run: nothing pushed/);
+  assert.equal(w.git(w.pub, 'rev-parse', 'main'), before);
+});

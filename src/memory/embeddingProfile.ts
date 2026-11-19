@@ -20,6 +20,11 @@ export interface EmbeddingProfile {
   confident: number;
   /** A save's close facts (same project and kind, below duplicate): fact-to-fact pairs at or above this. */
   closeFacts: number;
+  /**
+   * Forgetting that sticks: a save this far below `duplicate` still matches an owner-deleted fact when it keeps all of that
+   * fact's numbers (a time, a port). 0 = only duplicates match.
+   */
+  deletedMargin: number;
   /** Tidy: projects whose facts match this closely on average are offered as one project. */
   sameProject: number;
   /** A page's (and a fact's) related decisions from other projects. */
@@ -47,12 +52,15 @@ export interface EmbeddingProfile {
  *   (2026-11-03).
  * - threadFloor 0.87: src/scripts/calibrateThreads.ts at 0.84 to 0.88; 0.87 with decisions only gave a median of 4
  *   threads per open project.
+ * - deletedMargin 0.03 (2026-11-19): reworded S5 texts from the lifecycle eval scored 0.906 and 0.938 against the deleted
+ *   fact; related facts that share its numbers scored up to 0.925 (accepted: it costs one click). Reworded eval texts
+ *   0.966 / 0.938 / 0.906; different facts 0.872-0.912.
  * - keywordWeight 0.5: words shared with many facts (a project name, "owner") otherwise lift keyword-only matches
  *   above the best match by meaning (recall test, 2026-10-18).
  */
 export const E5_PROFILE: EmbeddingProfile = {
   id: 'e5', dim: 384,
-  duplicate: 0.93, minRecall: 0.75, window: 0.015, confident: 0.86, closeFacts: 0.86,
+  duplicate: 0.93, minRecall: 0.75, window: 0.015, confident: 0.86, closeFacts: 0.86, deletedMargin: 0.03,
   sameProject: 0.88, related: 0.88, threadFloor: 0.87,
   keywordWeight: 0.5, rerankPrior: 0,
 };
@@ -66,6 +74,9 @@ export const E5_PROFILE: EmbeddingProfile = {
  *   held-out one included). On the mini PC (x86) the chosen settings gave 149 / 162 / 165 against e5's 143 / 160 / 166
  *   on the same copy. Gemma's scores spread out (related questions 0.41 and
  *   up, unrelated ones 0.28 and below in the model tests), so no window is needed.
+ * - deletedMargin 0 (2026-11-19): the eval's reworded S5 text scores 0.691 and 0.559 (a known gap: only 0.810 is held), and
+ *   related facts sharing the deleted fact's numbers score 0.72-0.77, so any margin wide enough to catch the 0.691 one (0.09)
+ *   would hold them too.
  * - duplicate 0.78: the share of fact pairs e5 put at 0.93 or above (22 of 47,905) falls at 0.782 under Gemma; the
  *   model tests' lowest duplicate pair scores 0.783, the highest different pair 0.711.
  * - confident 0.35: the best match of 18 off-topic questions against the real brain was 0.339 (e5's was 0.861, its
@@ -80,7 +91,7 @@ export const E5_PROFILE: EmbeddingProfile = {
  */
 export const GEMMA_PROFILE: EmbeddingProfile = {
   id: 'gemma', dim: 768,
-  duplicate: 0.78, minRecall: 0.3, window: undefined, confident: 0.35, closeFacts: 0.48,
+  duplicate: 0.78, minRecall: 0.3, window: undefined, confident: 0.35, closeFacts: 0.48, deletedMargin: 0,
   sameProject: 0.54, related: 0.46, threadFloor: 0.52,
   keywordWeight: 0, rerankPrior: 1,
 };

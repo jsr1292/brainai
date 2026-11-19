@@ -49,7 +49,9 @@ server later without losing a memory.
 - **Recall by meaning,** in several languages, with a briefing per project: its statuses, decisions, roadmap and pages
   in one call. A small local model reorders each search's first matches so the best answer comes first. Projects can
   have nicknames, and an assistant can send an English version of a question asked in another language. How well it
-  finds things is measured on two public tests, LoCoMo and LongMemEval, retrieval only (`docs/BENCHMARK.md`).
+  finds things is measured on two public tests, LoCoMo and LongMemEval, retrieval only (`docs/BENCHMARK.md`); whether
+  the whole loop (saving, replacing, forgetting, answering) works with real assistants is measured in a small end-to-end
+  eval, with its failures and open gaps published (`docs/LIFECYCLE-EVAL.md`).
 - **Facts that say how long they hold and where they came from.** An assistant can mark a fact as valid until a date
   (a deadline, a version, who holds a job): every assistant then sees when it is past its date. Each fact can say
   whether you said it or an assistant inferred it, and who recorded that, so an assistant's claim never reads as your
@@ -70,7 +72,8 @@ server later without losing a memory.
 - **Discussions:** ask several assistants the same question and let them answer each other in rounds.
 - **Shared skills:** share a skill from one computer and your other assistants can load it.
 - **Backups that leave the house:** nightly snapshots to your other drives, a nightly Markdown export into git, and a
-  weekly encrypted copy in the cloud. In the app, Back up now and a second folder of your choice.
+  weekly encrypted copy in the cloud. In the app, Back up now and a second folder of your choice. A scripted restore
+  drill restores each kind of copy onto a clean machine and checks the facts, pages, pictures, history and search: `npm run drill:restore`, results in `docs/RESTORE-DRILL.md`.
 - **You can leave any time, with everything:** one saved folder with every memory, readable and ready to bring back.
 
 ## A look around
@@ -173,6 +176,7 @@ Anything personal lives in `overlay/`, which is never committed and never touche
 - `docs/IMPORT.md`: bringing in what you already have.
 - `docs/ARCHITECTURE.md`: how it is built.
 - `docs/BENCHMARK.md`: how well recall finds things, measured on LoCoMo.
+- `docs/LIFECYCLE-EVAL.md`: the end-to-end memory loop with real assistants, failures included.
 - `SECURITY.md`: how it is kept safe, and how to report a problem.
 
 ## Developing
@@ -209,6 +213,10 @@ PUBLISH_NAME=… PUBLISH_EMAIL=… scripts/publish/release.sh <denylist> <public
 It checks the committed HEAD with the publish gate (`scripts/publish/check-public-tree.sh`, tests included) and only
 then pushes it to the public repo as one commit and tag, authored as `PUBLISH_NAME <PUBLISH_EMAIL>`. Write and commit
 the version's `CHANGELOG.md` entry first.
+
+## Security
+
+The trust boundaries, the controls and the author's own adversarial review (not an independent audit) are in [`docs/SECURITY.md`](docs/SECURITY.md); how to report a problem is in `SECURITY.md`.
 
 ## Licence
 

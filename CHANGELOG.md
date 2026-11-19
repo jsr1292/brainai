@@ -4,6 +4,26 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Backups and health shows the version you run.
 
+## 1.5.1 (2026-11-19)
+
+Updating needs one check from you if you run the server yourself: BrainAI now makes `data/memory.db` and its side files readable by their owner only. The nightly `scripts/backup.sh` must run as the same user as `PUID` in `.env` (the usual setup), or as root; a job that runs as another user can no longer read the database. The desktop apps need nothing. There is no database change.
+
+**Privacy fixes**
+- **The database and its copies are owner-only.** The live database, the copies BrainAI makes in `data/pre-migrate/` before an upgrade and the backup folder could be read by other accounts on the same computer. All of them hold your sign-in secrets. Each start narrows them; nothing is ever loosened.
+- **Deleted facts stay deleted more often.** When you delete a fact, an assistant that saves it again reworded, as another kind (a status instead of a decision) or under another project is held for your approval, as an exact copy already was. It is always a hold for you to decide, never a refusal.
+- **The instruction check sees through disguises.** Text that reads like an instruction to an assistant is no longer missed when it uses lookalike letters from other alphabets, fullwidth forms, invisible characters, accents or line breaks inside the words. Discussion questions, replies and attached files are marked the same way pages are. Existing pages are checked again once on the first start.
+- **The weekly review saves nothing while saves are paused.** Asking for the weekly review during "Pause all saves" shows the week without storing it.
+
+**For assistants**
+- Asking an assistant to harvest a session now sends it to `suggest_memories` (you pick in the Inbox), not straight to `remember`.
+- An assistant is asked to keep what you said and its own suggestion in separate facts, each with its source.
+- `keys` can be sent as a list of words as well as one line.
+
+**Evidence, published**
+- **Restore drill** (`npm run drill:restore`, docs/RESTORE-DRILL.md): builds a brain with every kind of data, restores it on a clean setup from the nightly copy, "Save a copy", the encrypted off-site copy and a failed upgrade, and checks 192 things, including that old sign-ins stop working and deleted facts stay deleted.
+- **Security model** (docs/SECURITY.md): the trust boundaries, what each one is tested by, and the known gaps. It is the author's own review, not an independent audit.
+- **Memory loop eval** (`npm run eval:lifecycle`, docs/LIFECYCLE-EVAL.md): real Claude Code and Codex sessions against a throwaway brain, scored on what ends up stored and what the assistant answers, with results before and after the fixes above and every failure listed.
+
 ## 1.5.0 (2026-11-18)
 
 Updating needs nothing from you. BrainAI changes its database on the first start (six additions, nothing removed) and copies it to `data/pre-migrate/` first. On the desktop app, press Connect again (or "Add save reminders") on Settings › Tools to get the new save reminders.

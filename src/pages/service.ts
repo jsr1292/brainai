@@ -1,6 +1,6 @@
 import type { Clock } from '../clock.js';
 import { cosine, isZeroVector, type Embedder } from '../memory/embedder.js';
-import { looksLikeInstruction } from '../memory/instructionLike.js';
+import { INSTRUCTION_CHECK_VERSION, looksLikeInstruction } from '../memory/instructionLike.js';
 import { byMeaning, toFtsQuery } from '../memory/search.js';
 import { findSecret } from '../memory/secrets.js';
 import type { MemoryService } from '../memory/service.js';
@@ -31,6 +31,11 @@ const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` 
 type SaveInput = { base: number; title?: string; project?: string | null; area?: string | null; body: string };
 /** Why a page is written: decides whether it counts as brought up to date (round 2 section 13). */
 type WriteReason = 'created' | 'saved' | { section: string; text: string } | { restored: number } | 'undeleted';
+
+/** What a section is checked as: its heading and text, and the page title for the lead section, each as its own paragraph. */
+function sectionLooksLikeInstruction(title: string, s: { anchor: string; heading: string; text: string }): boolean {
+  return looksLikeInstruction(`${s.anchor === 'top' ? `${title}\n\n` : ''}${s.heading}\n\n${s.text}`) !== null;
+}
 
 /** The owner's pages: every save a new version, sections embedded only when they change, links resolved at save. */
 export class PageService {
@@ -124,6 +129,17 @@ export class PageService {
   // ---- Derived data ----
 
   /**
+   * Once per version of the instruction check (stored in brain_switches): the marker of every stored section is worked out
+   * again with the current check, so pages saved under an older, weaker check are marked too. Cheap; no embeddings.
+   */
+  refreshInstructionMarks(): number {
+    if (this.memoryStore.switchValue('instruction_check_version') === INSTRUCTION_CHECK_VERSION) return 0;
+    const changed = this.store.remarkSections(sectionLooksLikeInstruction);
+    this.memoryStore.setSwitch('instruction_check_version', INSTRUCTION_CHECK_VERSION);
+    return changed;
+  }
+
+  /**
    * Sections with embeddings: those whose heading and text are unchanged keep their stored embedding, unless the title
    * changed, since every section's embedding includes the title.
    */
@@ -135,7 +151,7 @@ export class PageService {
     for (const [position, s] of splitSections(body).entries()) {
       const key = `${s.anchor}\n${s.heading}\n${s.text}`;
       const embedding = previous.get(key) ?? await this.embedder.embed(`${title} — ${s.heading || title}\n${s.text}`.slice(0, EMBED_CHARS), 'passage');
-      out.push({ anchor: s.anchor, position, heading: s.heading, level: s.level, text: s.text, embedding, instructionLike: looksLikeInstruction(`${s.anchor === 'top' ? `${title}\n` : ''}${s.heading}\n${s.text}`) !== null });
+      out.push({ anchor: s.anchor, position, heading: s.heading, level: s.level, text: s.text, embedding, instructionLike: sectionLooksLikeInstruction(title, s) });
     }
     return out;
   }

@@ -45,6 +45,21 @@ const taken = (title: string) => new PageError('invalid', `A page called “${ti
 export class PageStore {
   constructor(private db: DB, private now: Clock) {}
 
+  /** Recomputes `instruction_like` of every stored section with `mark(title, section)`; returns how many changed. No embeddings are touched. */
+  remarkSections(mark: (title: string, s: { anchor: string; heading: string; text: string }) => boolean): number {
+    const rows = this.db.prepare('SELECT s.page_id, s.anchor, s.heading, s.text, s.instruction_like, p.title FROM page_sections s JOIN pages p ON p.id = s.page_id')
+      .iterate() as IterableIterator<{ page_id: string; anchor: string; heading: string; text: string; instruction_like: number; title: string }>;
+    // Rows are collected first: SQLite cannot update the table while it is being read through the same statement.
+    const pending: { page_id: string; anchor: string; to: number }[] = [];
+    for (const r of rows) {
+      const now = mark(r.title, r) ? 1 : 0;
+      if (now !== r.instruction_like) pending.push({ page_id: r.page_id, anchor: r.anchor, to: now });
+    }
+    const set = this.db.prepare('UPDATE page_sections SET instruction_like = ? WHERE page_id = ? AND anchor = ?');
+    this.db.transaction(() => { for (const x of pending) set.run(x.to, x.page_id, x.anchor); })();
+    return pending.length;
+  }
+
   /** What makes two titles the same: trimmed, Unicode NFC, lowercase. */
   static titleKey(title: string): string {
     return title.trim().normalize('NFC').toLowerCase();

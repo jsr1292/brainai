@@ -127,3 +127,18 @@ test('harvested suggestions have their own room: they do not fill the plain 20, 
   assert.match(plain.text, /suggest|sent|owner/i);
   assert.equal(service.pendingSuggestions().length, 61);
 });
+
+test('the tool descriptions steer a harvest to suggest_memories and away from remember', async () => {
+  const { connect } = setup();
+  const { client } = await connect();
+  const tools = (await client.listTools()).tools;
+  assert.match(tools.find((x) => x.name === 'suggest_memories')!.description!, /harvest.*go(ing)? back over.*Inbox/is);
+  assert.match(tools.find((x) => x.name === 'remember')!.description!, /harvest.*suggest_memories/is);
+});
+
+test('the source description on remember says to keep the owner\'s words and your own suggestion apart', async () => {
+  const { connect } = setup();
+  const { client } = await connect();
+  const remember = (await client.listTools()).tools.find((x) => x.name === 'remember')!;
+  assert.match((remember.inputSchema.properties as any).source.description, /separate facts, each with its own source: never one fact that mixes them \(a status may sum up both\)\./);
+});

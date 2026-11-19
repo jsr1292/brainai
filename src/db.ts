@@ -1,6 +1,6 @@
 import { DEVICE_DAYS } from './auth/sessions.js';
 import Database from 'better-sqlite3';
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export type DB = Database.Database;
@@ -725,6 +725,10 @@ CREATE TABLE page_file_imports(
 );
 `;
 
+/**
+ * A new migration needs a downgrade recipe in `DOWNGRADES` (src/scripts/restoreDrill.ts), or the restore drill's test fails:
+ * the drill restores a brain one schema back and forward again. Add the recipe in the same commit.
+ */
 const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] = [
   { version: 1, sql: MIGRATION_1 },
   { version: 2, sql: MIGRATION_2 },
@@ -772,7 +776,23 @@ const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] 
   { version: 43, sql: MIGRATION_43 },
 ];
 
-/** `upTo` stops at that schema version (tests of a migration start from the one before it). */
+/**
+ * Takes group and other access off a file or folder that holds the sign-in data (the database, its side files, the
+ * pre-migrate copies). Never loosens, never fatal: a network share or a folder owned by someone else may refuse, and
+ * a brain that cannot be tightened must still start. Returns whether it is private now.
+ */
+export function tighten(path: string): boolean {
+  try {
+    const mode = statSync(path).mode & 0o777;
+    if ((mode & 0o077) === 0) return true;
+    chmodSync(path, mode & 0o700);
+    return true;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`could not make ${path} private (owner only): ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
+}
+
 /** Copies kept in <data>/pre-migrate/: the newest few, one per update that changed the database. */
 const PRE_MIGRATE_KEEP = 3;
 
@@ -785,9 +805,15 @@ function checkedCopy(db: DB, path: string, prefix: string): void {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
   const target = join(dir, `${prefix}-${stamp}.db`);
   try {
-    mkdirSync(dir, { recursive: true });
+    // A full copy: it still holds the password hash, authenticator secret and tokens (unlike a backup), so only the
+    // owner may open the folder or the file, whatever the umask. The file is created private before SQLite writes
+    // into it (VACUUM INTO accepts an empty file), so it is never readable, not even for a moment.
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    tighten(dir);
     if (existsSync(target)) rmSync(target);
+    closeSync(openSync(target, 'wx', 0o600));
     db.prepare('VACUUM INTO ?').run(target);
+    tighten(target);
     const check = new Database(target, { readonly: true });
     try {
       if ((check.pragma('integrity_check', { simple: true }) as string) !== 'ok') throw new Error('the copy failed its integrity check');
@@ -801,6 +827,8 @@ function checkedCopy(db: DB, path: string, prefix: string): void {
   const key = (f: string) => { const m = pattern.exec(f)!; return `${m[2]}:${(m[1] ?? '').padStart(6, '0')}`; };
   const copies = readdirSync(dir).filter((f) => pattern.test(f)).sort((a, b) => key(a).localeCompare(key(b)));
   for (const old of copies.slice(0, Math.max(0, copies.length - PRE_MIGRATE_KEEP))) rmSync(join(dir, old), { force: true });
+  // Copies an older version made (readable by others) are tightened too.
+  for (const kept of copies.slice(-PRE_MIGRATE_KEEP)) tighten(join(dir, kept));
 }
 
 /** The copy before a schema update; throws (and nothing migrates) if it fails. */
@@ -860,10 +888,16 @@ export function ensureOwnTriggers(db: DB): { triggers: string[]; listed: number 
   })();
 }
 
+/** `upTo` stops at that schema version (tests of a migration start from the one before it). */
 export function openDb(path: string, opts: { upTo?: number } = {}): DB {
   const db = new Database(path);
   db.pragma('foreign_keys = ON');
-  if (path !== ':memory:') db.pragma('journal_mode = WAL');
+  if (path !== ':memory:') {
+    // The database holds the sign-in data: owner only. SQLite gives -wal and -shm the main file's mode when it creates them.
+    tighten(path);
+    db.pragma('journal_mode = WAL');
+    for (const side of ['-wal', '-shm']) tighten(path + side);
+  }
 
   db.exec('CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL)');
   db.exec('INSERT INTO schema_version(version) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM schema_version)');

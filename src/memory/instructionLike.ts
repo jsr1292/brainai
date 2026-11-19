@@ -3,6 +3,10 @@
  * file or web page could be talked into saving such a line, and every assistant would then recall it, so a match
  * is held for the owner's approval instead of being saved. Narrow on purpose: a false match costs one click.
  */
+/** Bumped whenever the check changes, so stored results (page sections) are worked out again once at the next start. */
+/** Bump it whenever PATTERNS or the folding (fold, foldWord, joinWrapped) change. */
+export const INSTRUCTION_CHECK_VERSION = '3';
+
 const PATTERNS: [RegExp, string][] = [
   [/\b(ignore|disregard|forget|override|bypass)\b[^.\n]{0,40}\b(previous|prior|earlier|above|all|any|other|your|the|these)\b[^.\n]{0,30}\b(instructions?|rules?|prompts?|guidelines?|directives?|guardrails?)\b/i, 'asks to ignore instructions'],
   [/\b(ignora|ignorar|olvida|olvidar)\b[^.\n]{0,40}\b(instrucciones|reglas|indicaciones)\b/i, 'asks to ignore instructions'],
@@ -18,10 +22,124 @@ const PATTERNS: [RegExp, string][] = [
   [/\b(assistants?|agents?|ai|codex|claude|chatgpt|grok|llms?)\b[^.\n]{0,20}\b(must|should|shall|have to|need to)\b[^.\n]{0,20}\b(always|never|automatically)\b/i, 'sets a standing rule for assistants'],
 ];
 
+/**
+ * Lookalike letters from other alphabets, as the Latin letter a reader sees (Cyrillic, Greek, a few Latin extensions).
+ * Both cases are listed, because the mapping runs before the text is lower-cased.
+ */
+const CONFUSABLES: Record<string, string> = {
+  а: 'a', в: 'b', с: 'c', ԁ: 'd', е: 'e', һ: 'h', і: 'i', ј: 'j', к: 'k', ӏ: 'l', м: 'm', н: 'h', о: 'o', р: 'p', ԛ: 'q', г: 'r', ѕ: 's', т: 't', ц: 'u', ѵ: 'v', ԝ: 'w', х: 'x', у: 'y', ё: 'e', ї: 'i', ѐ: 'e',
+  А: 'a', В: 'b', С: 'c', Е: 'e', Н: 'h', І: 'i', Ј: 'j', К: 'k', М: 'm', О: 'o', Р: 'p', Ѕ: 's', Т: 't', Х: 'x', У: 'y', Ԁ: 'd', Ԛ: 'q', Ԝ: 'w',
+  Α: 'a', Β: 'b', Ε: 'e', Ζ: 'z', Η: 'h', Ι: 'i', Κ: 'k', Μ: 'm', Ν: 'n', Ο: 'o', Ρ: 'p', Τ: 't', Υ: 'y', Χ: 'x',
+  α: 'a', ε: 'e', ι: 'i', κ: 'k', ο: 'o', ρ: 'p', ν: 'v', τ: 't', υ: 'u', χ: 'x', ϲ: 'c', Ϲ: 'c',
+  ı: 'i', ɡ: 'g', ǀ: 'l',
+};
+const LATIN = /[a-z]/i;
+
+/**
+ * A word's lookalikes become Latin only when the word already mixes in a real Latin letter ("ignоre") or when every letter in
+ * it is a lookalike ("ΝΟΝ"), so a Greek or Russian word that merely shares a few letters with English keeps its own letters
+ * ("είμαι" must not become "…mai" and match "ai").
+ */
+function foldWord(word: string): string {
+  let allMap = true;
+  let latin = false;
+  for (const ch of word) {
+    if (LATIN.test(ch)) latin = true;
+    else if (!(ch in CONFUSABLES)) allMap = false;
+  }
+  return latin || allMap ? Array.from(word, (ch) => CONFUSABLES[ch] ?? ch).join('') : word;
+}
+
+const SHORT_LINE_WORDS = 8;
+const wordsIn = (line: string): number => (line.match(/\S+/g) ?? []).length;
+const endsSentence = (line: string): boolean => /[.!?:;]$/.test(line);
+
+/**
+ * Joins a line break that sits inside a sentence: the line before does not end a sentence, and the next one starts in lower
+ * case (a hard-wrapped sentence, or a hostile split of a keyword). Not joined: after a full stop, before a capital, a
+ * list or heading marker, a number; anywhere inside a code fence; and in a block of three or more short lines without
+ * full stops, at least two of them with three words or more (an unmarked list). One pass, linear in the text.
+ */
+function joinWrapped(text: string): string {
+  const lines = text.split('\n');
+  const listLike = new Array<boolean>(lines.length).fill(false);
+  for (let i = 0; i < lines.length;) {
+    let j = i;
+    while (j < lines.length && lines[j]!.trim() !== '' && wordsIn(lines[j]!) <= SHORT_LINE_WORDS && !endsSentence(lines[j]!.trim())) j++;
+    // A list has items of some length; a keyword split over short lines does not.
+    if (j - i >= 3 && lines.slice(i, j).filter((l) => wordsIn(l) >= 3).length >= 2) for (let k = i; k < j; k++) listLike[k] = true;
+    i = Math.max(j, i + 1);
+  }
+  let out = lines[0] ?? '';
+  let fenced = lines[0]?.trim().startsWith('```') ?? false;
+  for (let i = 1; i < lines.length; i++) {
+    const prev = lines[i - 1]!.trim();
+    const line = lines[i]!;
+    const wasFenced = fenced;
+    if (line.trim().startsWith('```')) fenced = !fenced;
+    const join = !wasFenced && !fenced && prev !== '' && !endsSentence(prev) && /^\s*\p{Ll}/u.test(line) && !listLike[i - 1] && !listLike[i];
+    out += join ? ` ${line.trim()}` : `\n${line}`;
+  }
+  return out;
+}
+
+/** The text with lookalikes, invisible characters, accents and spacing folded, line breaks kept (see readAsSeen). */
+function fold(text: string): string {
+  return text
+    .normalize('NFKD')
+    .replace(/[\p{Default_Ignorable_Code_Point}\p{Cf}\p{M}]/gu, '')
+    .normalize('NFKC')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/g, ' ')
+    .replace(/[^\S\n]+/g, ' ')
+    .replace(/\p{L}+/gu, foldWord);
+}
+
+/**
+ * What a reader sees, for the check: compatibility forms folded (fullwidth, ligatures), invisible characters (zero-width,
+ * bidi marks, soft hyphens) and accents dropped, lookalike letters mapped to Latin (see foldWord), spaces collapsed, and a
+ * line break inside a sentence read as a space (see joinWrapped). Linear time.
+ */
+export function readAsSeen(text: string): string {
+  return joinWrapped(fold(text)).toLowerCase();
+}
+
+/**
+ * Patterns about a command line: run on the text as written and on the folded text (lookalikes, invisible characters) but
+ * never on a joined copy (joining lines would run two shell lines into one).
+ */
+const RAW_ONLY = new Set(['runs a downloaded script']);
+
+/**
+ * The first pattern that matches the text as written, as read (see readAsSeen) or, with `joinAll`, with every line break read
+ * as a space whatever the lines look like (the held-save paths: a false hold costs one click, a miss costs a planted rule).
+ */
+function firstMatch(text: string, skip?: Set<string>, joinAll = false): string | null {
+  const folded = fold(text);
+  const seen = joinWrapped(folded).toLowerCase();
+  const foldedLower = folded.toLowerCase();
+  const all = joinAll ? folded.replace(/\n+/g, ' ').toLowerCase() : null;
+  for (const [re, reason] of PATTERNS) {
+    if (skip?.has(reason)) continue;
+    if (re.test(text)) return reason;
+    if (RAW_ONLY.has(reason)) { if (re.test(foldedLower)) return reason; continue; }
+    if (re.test(seen) || (all !== null && re.test(all))) return reason;
+  }
+  return null;
+}
+
 /** A short reason when the text reads like an instruction aimed at AI assistants, otherwise null. */
 export function looksLikeInstruction(text: string): string | null {
-  for (const [re, reason] of PATTERNS) if (re.test(text)) return reason;
-  return null;
+  return firstMatch(text);
+}
+
+/**
+ * For text an assistant wants saved, which is held for the owner when it matches: also tested with every line break read as a
+ * space, so a capital after the break, a numbered or fenced or three-line split cannot hide a keyword. More false holds,
+ * each costing one click. The marker (pages, discussions) and the refusing checks keep the conservative join.
+ */
+export function looksLikeInstructionForHold(text: string): string | null {
+  return firstMatch(text, undefined, true);
 }
 
 /**
@@ -31,6 +149,5 @@ export function looksLikeInstruction(text: string): string | null {
  */
 const DESCRIBES_WORK = new Set(["skips the owner's confirmation", 'sets a standing rule for assistants']);
 export function looksLikeInjection(text: string): string | null {
-  for (const [re, reason] of PATTERNS) if (!DESCRIBES_WORK.has(reason) && re.test(text)) return reason;
-  return null;
+  return firstMatch(text, DESCRIBES_WORK);
 }

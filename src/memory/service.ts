@@ -5,7 +5,7 @@ import { cosine, isZeroVector, type Embedder } from './embedder.js';
 import { findSimilar, hybridSearch, type SearchHit } from './search.js';
 import { RERANK_POOL, type Reranker } from './reranker.js';
 import { SwitchableReranker } from '../models/switchable.js';
-import { looksLikeInstruction } from './instructionLike.js';
+import { looksLikeInstruction, looksLikeInstructionForHold } from './instructionLike.js';
 import { isPastDate, metaChanged, metaOf, MetaError, NO_META, resolveMeta, type MetaInput } from './factMeta.js';
 import { checkRoadmap, keepTicked, parseRoadmap, type Roadmap, type WaitingItem } from './roadmap.js';
 import { looksLikeSecret } from './secrets.js';
@@ -272,6 +272,14 @@ export interface ProjectLeft { project: string; roadmap: Memory; parsed: Roadmap
  * It is no warning about the text: Approve all takes such a save like any other.
  */
 export const HOLD_REASON = "This assistant's saves wait for you";
+/** Words with a digit in them (a port, a time, a version): what a re-worded claim keeps. */
+const numberWords = (text: string): string[] => text.toLowerCase().match(/[a-z]*\d[a-z0-9:.,/-]*/g)?.map((w) => w.replace(/[.,:/-]+$/, '')) ?? [];
+const keepsNumbers = (deleted: string, next: string): boolean => {
+  const want = new Set(numberWords(deleted));
+  if (want.size === 0) return false;
+  const have = new Set(numberWords(next));
+  return [...want].every((w) => have.has(w));
+};
 export const isFlagged = (s: Pick<Suggestion, 'reason' | 'deletedMatch'>): boolean => (s.reason !== null && s.reason !== HOLD_REASON) || s.deletedMatch !== null;
 export function deletedReason(m: Pick<Memory, 'deletedAt'>): string {
   return `is close to a fact you deleted on ${deletedDay(m.deletedAt ?? '')}`;
@@ -319,6 +327,8 @@ export class MemoryService {
       keywordWeight?: number; rerankPrior?: number;
       /** A save's close facts start at this similarity (the model's profile); recall's confident level by default. */
       closeFacts?: number;
+      /** From the profile: how far below duplicateThreshold a save still matches a deleted fact that keeps its numbers (default 0.03). */
+      deletedMargin?: number;
     },
   ) {}
 
@@ -636,8 +646,8 @@ export class MemoryService {
       if (pending) return { status: 'already_suggested', suggestion: pending };
       this.checkHeldRoom();
       const similar = findSimilar(this.store, vector, { kind }, this.opts.duplicateThreshold);
-      const deleted = this.deletedMatch(vector, { kind, tags, project: null });
-      const reason = looksLikeInstruction(content) ?? (deleted ? deletedReason(deleted) : null) ?? input.hold ?? null;
+      const deleted = this.deletedMatch(vector, { kind, tags, project: null }, undefined, content);
+      const reason = looksLikeInstructionForHold(content) ?? (deleted ? deletedReason(deleted) : null) ?? input.hold ?? null;
       const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, reason, suggestedBy: by, deletedMatch: deleted?.id ?? null, ...heldMeta(meta, input.meta, by) });
       return { status: 'suggested', suggestion, similar };
     }
@@ -656,16 +666,16 @@ export class MemoryService {
       if (was) return was;
     }
     // Forgetting that sticks (§17a): a fact the owner deleted comes back only through the owner, allow_duplicate or not.
-    const deleted = fromAi ? this.deletedMatch(vector, { kind, tags, project }) : undefined;
+    const deleted = fromAi ? this.deletedMatch(vector, { kind, tags, project }, undefined, content) : undefined;
     if (deleted) {
       if (input.refuseDeleted) throw new MemoryError('invalid', input.refuseDeleted(deletedDay(deleted.deletedAt ?? '')));
       const pending = await this.matchingPendingSuggestion(vector, kind, project);
       if (pending) return { status: 'already_suggested', suggestion: pending };
       this.checkHeldRoom();
-      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, kind, project, reason: looksLikeInstruction(content) ?? deletedReason(deleted), suggestedBy: by, supersedes: ids, deletedMatch: deleted.id, ...heldMeta(meta, input.meta, by) });
+      const suggestion = this.store.addSuggestion({ action: 'add', memoryId: null, content, tags, keys, kind, project, reason: looksLikeInstructionForHold(content) ?? deletedReason(deleted), suggestedBy: by, supersedes: ids, deletedMatch: deleted.id, ...heldMeta(meta, input.meta, by) });
       return { status: 'suggested', suggestion, similar: [] };
     }
-    const reason = actor.type === 'ai' ? looksLikeInstruction(content) ?? input.hold ?? null : null;
+    const reason = actor.type === 'ai' ? looksLikeInstructionForHold(content) ?? input.hold ?? null : null;
     if (reason) {
       const pending = await this.matchingPendingSuggestion(vector, kind, project);
       if (pending) return { status: 'already_suggested', suggestion: pending };
@@ -740,32 +750,57 @@ export class MemoryService {
   }
 
   /**
-   * Forgetting that sticks (§17a): the fact deleted on purpose that this text is as close to as a duplicate, of the same
-   * kind (replaceable kinds compared as such) and the same project, aliases followed. `exclude`: the fact being edited.
+   * Forgetting that sticks (§17a): the fact deleted on purpose that this text says again. Any kind counts: the same claim
+   * saved as a status instead of a decision is still that claim. Close as a duplicate is enough; a little less (the
+   * profile's deletedMargin) is too when the new text keeps every number of the deleted fact ("same claim, more words").
+   * The same project always counts. Another project's deleted fact counts only when the save has no project, names one
+   * that does not exist yet, or the text names the deleted fact's project (assistants file the same news under different
+   * names, but two projects can hold look-alike facts). `exclude`: the fact being edited.
    */
-  deletedMatch(vector: Float32Array, next: { kind: Kind; tags: string[]; project: string | null }, exclude?: string): Memory | undefined {
+  deletedMatch(vector: Float32Array, next: { kind: Kind; tags: string[]; project: string | null }, exclude?: string, content?: string): Memory | undefined {
     // Roadmaps share one Done/Now/Next shape and are never duplicates of each other (as in duplicates() and remember).
     if (next.kind === 'roadmap') return undefined;
-    const kindOf = (m: { kind: Kind; tags: string[] }) => replaceableKind(m) ?? m.kind;
-    const want = kindOf(next);
     const project = next.project === null ? null : this.canonical(next.project);
-    const inScope = (m: Memory) => kindOf(m) === want && (m.project === null ? null : this.canonical(m.project)) === project;
+    const projectOf = (m: { project: string | null }) => (m.project === null ? null : this.canonical(m.project));
+    const openFiling = project === null || !this.projectExists(project);
+    const mentionedIn = (text: string, p: string) => { const q = words(text); return this.namesOf([p]).some((n) => { const w = words(n); return w.trim() !== '' && q.includes(w); }); };
+    const mentions = (p: string) => content !== undefined && mentionedIn(content, p);
+    // An "open filing" (no project, or one that does not exist yet) is reached by every deleted fact, so the first saves of a
+    // new project may be held until the owner approves one.
+    const inReach = (m: Memory) => {
+      if (m.kind === 'roadmap') return false;
+      const p = projectOf(m);
+      return p === null || p === project || openFiling || mentions(p);
+    };
+    const loose = this.opts.duplicateThreshold - (this.opts.deletedMargin ?? 0.03);
     const candidates: { m: Memory; embedding: Float32Array; similarity: number }[] = [];
     for (const e of this.store.deletedEmbeddings()) {
       if (e.id === exclude) continue;
       const similarity = cosine(vector, e.embedding);
-      if (similarity < this.opts.duplicateThreshold) continue;
+      if (similarity < loose) continue;
       const m = this.store.get(e.id);
-      if (m && inScope(m)) candidates.push({ m, embedding: e.embedding, similarity });
+      if (!m || !inReach(m)) continue;
+      if (similarity < this.opts.duplicateThreshold && !(content !== undefined && keepsNumbers(m.content, content))) continue;
+      candidates.push({ m, embedding: e.embedding, similarity });
     }
     if (candidates.length === 0) return undefined;
     // A deleted fact that a live one already says (a held save the owner approved, the twin a merge kept) no longer
-    // holds anything: its content is back by the owner's own choice. The fact being edited counts as live.
-    const live = this.store.activeEmbeddings({ replaced: 'include' }).filter((e) => {
-      const m = this.store.get(e.id);
-      return m !== undefined && inScope(m);
+    // holds anything: its content is back by the owner's own choice. A live fact counts for the deleted one m only if it is
+    // of m's own kind and project, or was written after m was deleted: an older status quoting a deleted decision does not.
+    // The fact being edited counts as live.
+    const kindOf = (m: { kind: Kind; tags: string[] }) => replaceableKind(m) ?? m.kind;
+    const live = this.store.activeEmbeddings({ replaced: 'include' });
+    const covered = (c: { m: Memory; embedding: Float32Array }) => live.some((e) => {
+      if (cosine(c.embedding, e.embedding) < this.opts.duplicateThreshold) return false;
+      const l = this.store.get(e.id);
+      if (!l || l.kind === 'roadmap') return false;
+      if (kindOf(l) === kindOf(c.m) && projectOf(l) === projectOf(c.m)) return true;
+      // A later live fact counts only if the guard could have checked it against c.m (same project, either without one, or
+      // it names c.m's project): a look-alike saved into an unrelated project must not unlock the deleted fact.
+      const lp = projectOf(l), mp = projectOf(c.m);
+      const reached = lp === mp || lp === null || mp === null || mentionedIn(l.content, mp);
+      return reached && l.updatedAt > (c.m.deletedAt ?? '');
     });
-    const covered = (c: { embedding: Float32Array }) => live.some((e) => cosine(c.embedding, e.embedding) >= this.opts.duplicateThreshold);
     return candidates.sort((a, b) => b.similarity - a.similarity).find((c) => !covered(c))?.m;
   }
 
@@ -833,10 +868,10 @@ export class MemoryService {
       return { status: 'refused', code: 'no_room', why: `${MAX_HARVEST_PENDING} harvested suggestions already wait for the owner. Tell the owner to review them in the Inbox.` };
     }
     const similar = findSimilar(this.store, vector, { kind, project }, this.opts.duplicateThreshold);
-    const deleted = this.deletedMatch(vector, { kind, tags: [], project });
+    const deleted = this.deletedMatch(vector, { kind, tags: [], project }, undefined, content);
     // The same check remember makes: text that matches a replaced fact is held with that as its reason, so Approve all leaves it.
     const was = this.wasReplaced(vector, { kind, tags: [], project }, new Set());
-    const reasons = [looksLikeInstruction(content), deleted ? deletedReason(deleted) : null, similar.length > 0 ? 'is close to a memory the owner already has' : null,
+    const reasons = [looksLikeInstructionForHold(content), deleted ? deletedReason(deleted) : null, similar.length > 0 ? 'is close to a memory the owner already has' : null,
       was?.status === 'was_replaced' ? 'matches a fact that was replaced by a newer one' : null].filter((r): r is string => r !== null);
     if (reasons.length === 0 && hold) reasons.push(hold);
     const suggestion = this.store.addSuggestion({
@@ -978,7 +1013,7 @@ export class MemoryService {
       }
     }
     if (actor.type === 'ai' && current.kind === 'profile') {
-      const reason = looksLikeInstruction(content) ?? opts.hold ?? null;
+      const reason = looksLikeInstructionForHold(content) ?? opts.hold ?? null;
       // Its newer edit of a profile memory replaces its own edit still waiting, so re-saves don't pile up.
       const superseded = this.store.listSuggestions('pending')
         .filter((s) => s.action === 'update' && s.memoryId === id && s.suggestedBy === by);
@@ -1030,11 +1065,11 @@ export class MemoryService {
       this.indexFacts([id]);
       return { status: 'updated', memory: relabelled, replaced: this.memories(ids) };
     }
-    const reason = actor.type === 'ai' ? looksLikeInstruction(content) : null;
+    const reason = actor.type === 'ai' ? looksLikeInstructionForHold(content) : null;
     if (reason) return holdUpdate(reason);
     const embedding = await this.embedder.embed(embedText(content, keys), 'passage');
     // Forgetting that sticks (§17a): an assistant can't rewrite a fact into one the owner deleted.
-    const deleted = actor.type === 'ai' ? this.deletedMatch(embedding, { kind: current.kind, tags, project }, id) : undefined;
+    const deleted = actor.type === 'ai' ? this.deletedMatch(embedding, { kind: current.kind, tags, project }, id, content) : undefined;
     if (deleted) return holdUpdate(deletedReason(deleted), deleted.id);
     // Only now the plain "saves wait" hold: the warnings above must not be lost behind it.
     if (opts.hold && actor.type === 'ai') return holdUpdate(opts.hold);

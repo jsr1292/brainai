@@ -81,7 +81,7 @@ function healthParts(health: (() => Health) | undefined): { sentence: string; da
   };
 }
 
-export function registerReviewTools(server: McpServer, reviews: ReviewService, o: { actorName: string; scope: Scope; health?: () => Health }, guard: Guard): void {
+export function registerReviewTools(server: McpServer, reviews: ReviewService, o: { actorName: string; scope: Scope; health?: () => Health; /** Whether this call may store a newly built week: false while saving is paused. */ canStore?: () => boolean }, guard: Guard): void {
   server.registerTool('weekly_review', {
     title: 'Weekly review',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -98,7 +98,7 @@ export function registerReviewTools(server: McpServer, reviews: ReviewService, o
       const h = healthParts(o.scope.kind === 'full' ? o.health : undefined);
       return withData(`This week so far, made just now from what is stored${limited}.${h.sentence}`, { ...reviewJson(view), ...h.data });
     }
-    const stored = at.to === 'week' ? reviews.ensure(at.monday, o.actorName) : undefined;
+    const stored = at.to === 'week' ? (o.canStore?.() ?? true ? reviews.ensure(at.monday, o.actorName) : reviews.preview(at.monday, o.actorName)) : undefined;
     if (!stored) {
       const first = reviews.earliestMonday();
       return refuse(first === null || first > reviews.lastMonday()

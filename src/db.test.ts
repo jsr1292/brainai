@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { openDb, purgeExpired } from './db.js';
+import { openDb, purgeExpired, tighten } from './db.js';
 
 test('openDb creates every table and seeds the redirect allowlist', () => {
   const db = openDb(':memory:');
@@ -378,6 +378,51 @@ test('before migrating a file database, the brain copies it to pre-migrate/, kee
   const fresh = join(dir, 'fresh.db');
   openDb(fresh).close();
   assert.equal(copies().length, 3, 'a new, empty database has nothing to copy');
+});
+
+test('a pre-migration copy holds the sign-in data, so only its owner can read it', { skip: process.platform === 'win32' }, (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'memtest-premigrate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'memory.db');
+  openDb(path, { upTo: 25 }).close();
+  openDb(path, { upTo: 26 }).close();
+  const folder = join(dir, 'pre-migrate');
+  const copy = join(folder, readdirSync(folder)[0]!);
+  assert.equal(statSync(copy).mode & 0o077, 0, 'the copy is not readable by group or others');
+  assert.equal(statSync(folder).mode & 0o077, 0, 'nor is the folder that holds it, when the brain made it');
+});
+
+test('opening a database tightens it, its side files and older pre-migrate copies to owner only', { skip: process.platform === 'win32' }, (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'memtest-private-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'memory.db');
+  openDb(path, { upTo: 25 }).close();
+  // What an older version left: everything readable by others, in a folder made the old way.
+  mkdirSync(join(dir, 'pre-migrate'), { mode: 0o755 });
+  chmodSync(join(dir, 'pre-migrate'), 0o755);
+  const old = join(dir, 'pre-migrate', 'pre-migrate-20-to-25-20260101-000000.db');
+  writeFileSync(old, 'x', { mode: 0o644 });
+  chmodSync(path, 0o644);
+  const db = openDb(path, { upTo: 26 });
+  try {
+    for (const f of [path, path + '-wal', path + '-shm', join(dir, 'pre-migrate'), old, ...readdirSync(join(dir, 'pre-migrate')).map((n) => join(dir, 'pre-migrate', n))]) {
+      if (existsSync(f)) assert.equal(statSync(f).mode & 0o077, 0, `${f} is private`);
+    }
+  } finally { db.close(); }
+});
+
+test('tighten never loosens and never throws', { skip: process.platform === 'win32' }, (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'memtest-tighten-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.equal(tighten(join(dir, 'missing')), false);
+  const f = join(dir, 'f');
+  writeFileSync(f, 'x');
+  chmodSync(f, 0o400);
+  assert.equal(tighten(f), true);
+  assert.equal(statSync(f).mode & 0o777, 0o400, 'a stricter mode is left as it is');
+  chmodSync(f, 0o664);
+  assert.equal(tighten(f), true);
+  assert.equal(statSync(f).mode & 0o777, 0o600);
 });
 
 test('a pre-migration copy that cannot be written stops the migration', (t) => {

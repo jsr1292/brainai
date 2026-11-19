@@ -20,8 +20,13 @@ export interface DiscussionSummary {
   waitingFor: string[];
   expectsCaller: boolean;
 }
+/** A reply as read: `contains_instructions` is there (true) when its text reads like an instruction to assistants. Marked, never held or refused: every reader sees the marker. */
+export type MarkedPost = Post & { contains_instructions?: true };
+/** Works out the marker at read time, so it always follows the current check and needs no stored column. */
+export const markInstructions = (posts: Post[]): MarkedPost[] => posts.map((p) => (p.kind === 'reply' && looksLikeInstruction(p.text) !== null ? { ...p, contains_instructions: true as const } : p));
+
 export interface DiscussionView extends DiscussionSummary {
-  question: string; openedBy: Voice; files: DiscussionFile[]; notes: Post[]; replies: Post[];
+  question: string; question_contains_instructions?: true; openedBy: Voice; files: (DiscussionFile & { contains_instructions?: true })[]; notes: Post[]; replies: MarkedPost[];
   hidden: number; decision: string | null; stage: 'blind' | 'respond' | 'replied' | 'closed';
 }
 
@@ -69,6 +74,13 @@ export interface Closed { memoryId: string; project: string | null }
 
 /** A file as callers see it, without the internal link to its reply. */
 const publicFile = ({ postId: _postId, ...f }: StoredFile): DiscussionFile => f;
+/** A file as read, marked (true) when its text reads like instructions: assistants write these and other assistants read them. */
+const markedFile = (store: DiscussionStore, id: string, f: StoredFile): DiscussionFile & { contains_instructions?: true } => {
+  const text = store.fileContent(id, f.name);
+  return text !== undefined && looksLikeInstruction(text) !== null ? { ...publicFile(f), contains_instructions: true } : publicFile(f);
+};
+/** The opening question, marked the same way. */
+const questionMark = (q: string): { question_contains_instructions?: true } => (looksLikeInstruction(q) !== null ? { question_contains_instructions: true } : {});
 
 /** Forms send '' for "no project". */
 const blankToUndefined = (p: string | undefined): string | undefined => (typeof p === 'string' && p.trim() === '' ? undefined : p);
@@ -247,13 +259,13 @@ export class DiscussionService {
     const shown = blind ? [] : replies;
     const stage = closed ? 'closed' : this.repliedIn(caller, posts, d.round) ? 'replied' : d.round === 1 ? 'blind' : 'respond';
     return {
-      ...base, question: d.question, openedBy: d.openedBy, files: this.filesFor(caller, d, posts).map(publicFile),
-      notes: posts.filter((p) => p.kind === 'note'), replies: shown, hidden: replies.length - shown.length,
+      ...base, question: d.question, openedBy: d.openedBy, files: this.filesFor(caller, d, posts).map((f) => markedFile(this.store, id, f)), ...questionMark(d.question),
+      notes: posts.filter((p) => p.kind === 'note'), replies: markInstructions(shown), hidden: replies.length - shown.length,
       decision: d.decision, stage,
     };
   }
 
-  readFile(caller: Caller, id: string, name: string, part = 1): { name: string; part: number; parts: number; text: string } {
+  readFile(caller: Caller, id: string, name: string, part = 1): { name: string; part: number; parts: number; text: string; contains_instructions?: true } {
     const d = this.find(caller, id);
     const visible = this.filesFor(caller, d, this.store.posts(id)).some((f) => f.name === name);
     const content = visible ? this.store.fileContent(id, name) : undefined;
@@ -262,7 +274,7 @@ export class DiscussionService {
     const parts = Math.max(1, Math.ceil(chars.length / FILE_PART_CHARS));
     if (!Number.isInteger(part) || part < 1 || part > parts) throw new MemoryError('invalid', `part must be a whole number from 1 to ${parts}.`);
     const text = chars.slice((part - 1) * FILE_PART_CHARS, part * FILE_PART_CHARS).join('');
-    return { name, part, parts, text };
+    return { name, part, parts, text, ...(looksLikeInstruction(text) !== null ? { contains_instructions: true as const } : {}) };
   }
 
   reply(caller: Caller, id: string, a: { text: string; files?: NewFile[] }): { post: Post; round: number; roundEnded: boolean } {
@@ -421,8 +433,8 @@ export class DiscussionService {
     const replies = posts.filter((p) => p.kind === 'reply');
     const closed = d.closedAt !== null;
     return {
-      ...this.summary(DiscussionService.OWNER, d, posts), question: d.question, openedBy: d.openedBy, files: this.store.files(id).map(publicFile),
-      notes: posts.filter((p) => p.kind === 'note'), replies, hidden: 0, decision: d.decision,
+      ...this.summary(DiscussionService.OWNER, d, posts), question: d.question, openedBy: d.openedBy, files: this.store.files(id).map((f) => markedFile(this.store, id, f)), ...questionMark(d.question),
+      notes: posts.filter((p) => p.kind === 'note'), replies: markInstructions(replies), hidden: 0, decision: d.decision,
       stage: closed ? 'closed' : d.round === 1 ? 'blind' : 'respond',
       ask: d.ask, includeLimited: d.includeLimited, openedAt: d.openedAt, closedAt: d.closedAt, decisionMemoryId: d.decisionMemoryId,
     };

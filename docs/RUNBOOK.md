@@ -68,7 +68,7 @@ A single-owner memory server for AI clients (OAuth only, no static keys). It run
 - **Locked out of the dashboard** after too many failed logins: wait for the time the login page shows, or run `docker compose restart app` in `~/memory`. The login limiter lives in memory, so a restart clears it.
 
 ## 3. Restore from backup
-Only if `data/memory.db` is damaged or lost. **Done by hand by the owner; nothing automated does this.** Run in `~/memory`:
+Only if `data/memory.db` is damaged or lost. **Done by hand by the owner; nothing automated does this.** A scripted drill (`npm run drill:restore`) walks the same steps on a clean machine and checks the result: `docs/RESTORE-DRILL.md`, with what a restore does not bring back. Run in `~/memory`:
 1. `docker compose stop app`
 2. Keep the broken database aside (SQLite would otherwise try to apply a leftover `-wal` or `-shm` file to the restored copy), then copy the chosen backup in its place. Pick the file with `ls backups` (or from one of your `COPY_DIRS`):
    ```bash

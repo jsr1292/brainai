@@ -32,6 +32,7 @@ import { NoteService } from '../pages/notes.js';
 import { PageService } from '../pages/service.js';
 import { PageStore } from '../pages/store.js';
 import { createFakeEmbedder } from '../memory/fakeEmbedder.js';
+import type { Embedder } from '../memory/embedder.js';
 import { MemoryService } from '../memory/service.js';
 import { MemoryStore } from '../memory/store.js';
 import { ProjectStore } from '../projects/store.js';
@@ -54,10 +55,11 @@ export function seedSignIn(db: DB): string {
   return secret;
 }
 
-export function makeService(opts: { now?: Clock; threshold?: number } = {}): { db: DB; store: MemoryStore; service: MemoryService } {
-  const db = openDb(':memory:');
+/** `dbPath` opens a database file instead of memory; `embedder` and `serviceOpts` replace the fake embedder and its test cut-offs (the restore drill's real-model run). */
+export function makeService(opts: { now?: Clock; threshold?: number; dbPath?: string; embedder?: Embedder; serviceOpts?: ConstructorParameters<typeof MemoryService>[2] } = {}): { db: DB; store: MemoryStore; service: MemoryService } {
+  const db = openDb(opts.dbPath ?? ':memory:');
   const store = new MemoryStore(db, opts.now ?? (() => new Date()));
-  const service = new MemoryService(store, createFakeEmbedder(), { duplicateThreshold: opts.threshold ?? 0.9, minRecallSimilarity: 0.2, recallConfidentSimilarity: 0.2 });
+  const service = new MemoryService(store, opts.embedder ?? createFakeEmbedder(), opts.serviceOpts ?? { duplicateThreshold: opts.threshold ?? 0.9, minRecallSimilarity: 0.2, recallConfidentSimilarity: 0.2 });
   return { db, store, service };
 }
 
@@ -72,8 +74,8 @@ export function makeGrowth(given: { db: DB; store: MemoryStore; service: MemoryS
 }
 
 /** The page service on a test database (fake embedder). */
-export function makePages(given: { db: DB; store: MemoryStore; service: MemoryService }, now: Clock = () => new Date(), opts: { sectionMatch?: number | null } = {}): PageService {
-  return new PageService(new PageStore(given.db, now), createFakeEmbedder(), given.service, new ProjectStore(given.db, now), given.store, now, opts);
+export function makePages(given: { db: DB; store: MemoryStore; service: MemoryService }, now: Clock = () => new Date(), opts: { sectionMatch?: number | null; embedder?: Embedder; keywordWeight?: number } = {}): PageService {
+  return new PageService(new PageStore(given.db, now), opts.embedder ?? createFakeEmbedder(), given.service, new ProjectStore(given.db, now), given.store, now, opts);
 }
 
 export const TEST_PASSWORD = 'correct horse battery';
@@ -88,7 +90,9 @@ const noNetwork = (async () => { throw new Error('no network in tests'); }) as u
  * non-replayed code. `publicUrl` overrides PUBLIC_URL (default http://localhost:<port>);
  * `trustCfConnectingIp` is passed to the app as given; `sectionMatch` to the page service (undefined: the constant).
  */
-export async function startTestApp(opts: { publicUrl?: string; trustCfConnectingIp?: boolean; statusDir?: string; startAt?: Date; sectionMatch?: number | null; setupOverlay?: SetupOverlay; localMode?: boolean; appSecret?: string | null; backupDir?: string | null; noPassword?: boolean; tools?: AppDeps['tools']; models?: AppDeps['models']; hardware?: AppDeps['hardware']; reachRetry?: AppDeps['reachRetry'] } = {}): Promise<{
+export async function startTestApp(opts: { publicUrl?: string; trustCfConnectingIp?: boolean; statusDir?: string; startAt?: Date; sectionMatch?: number | null; setupOverlay?: SetupOverlay; localMode?: boolean; appSecret?: string | null; backupDir?: string | null; noPassword?: boolean; tools?: AppDeps['tools']; models?: AppDeps['models']; hardware?: AppDeps['hardware']; reachRetry?: AppDeps['reachRetry'];
+  /** A data folder to keep the brain in (memory.db and images/), left in place on close; without it the brain lives in memory. */
+  dataDir?: string; embedder?: Embedder; serviceOpts?: ConstructorParameters<typeof MemoryService>[2] } = {}): Promise<{
   baseUrl: string;
   deps: AppDeps;
   nextTotp(): string;
@@ -99,11 +103,11 @@ export async function startTestApp(opts: { publicUrl?: string; trustCfConnecting
   let t = opts.startAt?.getTime() ?? Date.now();
   const now: Clock = () => new Date(t);
   const server = createServer();
-  await new Promise<void>((resolve) => server.listen(0, resolve));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://localhost:${(server.address() as AddressInfo).port}`;
   const publicUrl = new URL(opts.publicUrl ?? baseUrl);
 
-  const { db, store, service } = makeService({ now });
+  const { db, store, service } = makeService({ now, dbPath: opts.dataDir ? join(opts.dataDir, 'memory.db') : undefined, embedder: opts.embedder, serviceOpts: opts.serviceOpts });
   const registry = new ProjectStore(db, now);
   const allowlist = new RedirectAllowlist(db);
   const clients = new ClientsStore(db, allowlist, now, noNetwork);
@@ -115,7 +119,7 @@ export async function startTestApp(opts: { publicUrl?: string; trustCfConnecting
     await owner.setPassword(TEST_PASSWORD);
     owner.setTotpSecret(TEST_TOTP_SECRET);
   }
-  const pages = makePages({ db, store, service }, now, { sectionMatch: opts.sectionMatch });
+  const pages = makePages({ db, store, service }, now, { sectionMatch: opts.sectionMatch, embedder: opts.embedder, keywordWeight: opts.serviceOpts?.keywordWeight });
   // The test floor: the fake embedder's similarities are not e5's.
   const meaning = new MeaningIndex(db, { floor: 0.5, kinds: ['decision'], now });
   service.setMeaningHook(meaning);
@@ -132,7 +136,7 @@ export async function startTestApp(opts: { publicUrl?: string; trustCfConnecting
   }, now, () => {});
   const projects = new ProjectsService(registry, service, store, discussions, pages, folders, learning);
   const graph = new GraphService({ db, projects, registry, service, pages, meaning, now });
-  const imagesDir = mkdtempSync(join(tmpdir(), 'brain-test-images-'));
+  const imagesDir = opts.dataDir ?? mkdtempSync(join(tmpdir(), 'brain-test-images-'));
   const images = new ImageStore(db, imagesDir, now);
   pages.setPictureStore(images);
   const skills = new SkillService(db, now);
@@ -165,7 +169,7 @@ export async function startTestApp(opts: { publicUrl?: string; trustCfConnecting
       server.closeAllConnections();
       server.close((e) => {
         db.close();
-        rmSync(imagesDir, { recursive: true, force: true });
+        if (!opts.dataDir) rmSync(imagesDir, { recursive: true, force: true });
         if (e) reject(e); else resolve();
       });
     }),
@@ -219,7 +223,7 @@ const CALLBACK = 'http://localhost:9999/callback';
  * Connects an AI client through the real OAuth flow (register, authorize, owner consent, token) and returns its
  * access token. `f` is a logged-in fetch wrapper from loggedIn(); the client appears under `clientName`.
  */
-export async function connectClient(baseUrl: string, f: (path: string, init?: RequestInit) => Promise<Response>, clientName = 'Claude Code'): Promise<{ accessToken: string }> {
+export async function connectClient(baseUrl: string, f: (path: string, init?: RequestInit) => Promise<Response>, clientName = 'Claude Code'): Promise<{ accessToken: string; refreshToken: string; clientId: string }> {
   const reg = await fetch(baseUrl + '/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -244,5 +248,6 @@ export async function connectClient(baseUrl: string, f: (path: string, init?: Re
     body: new URLSearchParams({ grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: CALLBACK, resource: `${baseUrl}/mcp` }),
   });
   if (tok.status !== 200) throw new Error(`token failed: ${tok.status}`);
-  return { accessToken: ((await tok.json()) as { access_token: string }).access_token };
+  const issued = (await tok.json()) as { access_token: string; refresh_token: string };
+  return { accessToken: issued.access_token, refreshToken: issued.refresh_token, clientId };
 }

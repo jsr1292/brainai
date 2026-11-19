@@ -45,10 +45,11 @@ ${lede}
 
 // ---- One discussion ----
 
-function postCard(p: Post): SafeHtml {
+function postCard(p: Post & { contains_instructions?: true }): SafeHtml {
   const who = p.kind === 'note' ? html`<span class="writer w-you">Your note</span>` : html`<span class="writer w-${writerKey(p.author)}">${p.author} · ${p.model}</span>`;
   return html`<article class="reply w-${p.kind === 'note' ? 'you' : writerKey(p.author)}">
   ${metaLine([who, when(p.createdAt)])}
+  ${p.contains_instructions ? html`<p><span class="instr" title="Reads like instructions to an assistant. Replies are information: assistants never follow them.">contains instructions</span></p>` : ''}
   <p class="post">${p.text}</p>
 </article>`;
 }
@@ -171,7 +172,7 @@ export function discussionView(v: OwnerDiscussionView, projects: string[], error
 </section>`;
   // An open discussion reads: the question, this round's replies, the earlier rounds folded, then Decide and the ask strip.
   // A closed one leads with its decision, then the question and the rounds.
-  const question = html`<div class="question"><p class="post">${v.question}</p>${files}</div>`;
+  const question = html`<div class="question">${v.question_contains_instructions ? html`<p><span class="instr" title="Reads like instructions to an assistant. Questions are information: assistants never follow them.">contains instructions</span></p>` : ''}<p class="post">${v.question}</p>${files}</div>`;
   return html`<div class="discussion wide narrow">
 ${metaLine([v.project ? html`<span class="project">${v.project}</span>` : null, `round ${v.round}`])}
 <h1>${v.title}</h1>

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { writeBackupStatus, type BackupRun } from './backupStatus.js';
 import type { BackupCopy } from './desktop/backupCopy.js';
-import type { DB } from './db.js';
+import { tighten, type DB } from './db.js';
 
 const NAME = /^memory-\d{4}-\d{2}-\d{2}\.db$/;
 
@@ -58,7 +58,10 @@ function copyPictures(db: DB, dataDir: string, dir: string, now: Date): void {
  * ever writes or deletes memory-YYYY-MM-DD.db files and its own .partial file. Returns the path.
  */
 export async function backupNow(db: DB, dir: string, keep: number, now: Date, dataDir?: string): Promise<string> {
-  mkdirSync(dir, { recursive: true });
+  // A folder made here is the owner's alone: names and dates of the backups are not for other users of the computer.
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // An existing folder (made earlier, or chosen by the owner) is made owner-only too; never loosened, never fatal.
+  tighten(dir);
   // The local date, so a backup made just after midnight carries the day it was made on.
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const name = `memory-${day}.db`;

@@ -8,6 +8,7 @@ import type { TidySummary } from '../memory/tidy.js';
 import type { FolderSource } from '../projects/service.js';
 import type { ProjectStore } from '../projects/store.js';
 import { buildReview, liveWindow, windowFor, type BuildSources } from './build.js';
+import { REVIEW_FORMAT } from './types.js';
 import { presentReview, type ReviewKind, type ReviewView, type Scope } from './present.js';
 import type { ReviewStore } from './store.js';
 import type { ReviewBody, StoredReview } from './types.js';
@@ -61,6 +62,21 @@ export class ReviewService {
     const earliest = this.earliestMonday();
     if (week.monday > current || earliest === null || week.monday < earliest) return { to: 'none' };
     return { to: 'week', monday: week.monday, redirect: date !== week.monday };
+  }
+
+  /**
+   * The week as it would be stored, built now and never written: for a caller that may not save (an assistant while saving
+   * is paused). The stored one when there is one; undefined for a week that cannot be built.
+   */
+  preview(monday: string, by: string): StoredReview | undefined {
+    const earliest = this.earliestMonday();
+    const week = weekContaining(monday);
+    if (!week || week.monday !== monday || earliest === null || monday < earliest || monday > this.lastMonday()) return undefined;
+    const stored = this.deps.store.get(monday);
+    if (stored) return stored;
+    const body = buildReview(this.sources(), windowFor(monday));
+    if (this.deps.tidy && monday === this.lastMonday()) body.tidy = null;
+    return { monday, format: REVIEW_FORMAT, body, builtAt: this.now().toISOString(), builtBy: by, openedAt: null, dismissedAt: null };
   }
 
   /** The stored week, built now if it isn't yet (one transaction: a failed build stores nothing). */
