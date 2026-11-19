@@ -451,3 +451,29 @@ test('F10 review: a lock being taken right now (no pid yet) is busy; leftovers o
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('backups and their copies are owner-only, and older ones are narrowed', { skip: !haveSqlite || process.platform === 'win32' }, () => {
+  const { root, appDir } = setup();
+  try {
+    const copyDir = join(root, 'copy', 'memory-backups');
+    const dirs = [join(appDir, 'backups'), copyDir];
+    const now = new Date();
+    for (const dir of dirs) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'memory-2026-01-01.db'), 'x');
+      chmodSync(join(dir, 'memory-2026-01-01.db'), 0o644);
+      utimesSync(join(dir, 'memory-2026-01-01.db'), now, now);
+    }
+    // A permissive umask in the child: the script has to set its own.
+    execFileSync('bash', ['-c', 'umask 022; exec bash "$0"', 'scripts/backup.sh'], {
+      env: { ...process.env, APP_DIR: appDir, COPY_DIRS: copyDir, SKIP_MOUNT_CHECK: '1' },
+    });
+    for (const dir of dirs) {
+      for (const f of [`memory-${today()}.db`, 'memory-2026-01-01.db']) {
+        assert.equal(statSync(join(dir, f)).mode & 0o777, 0o600, `${f} in ${dir}`);
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -411,6 +411,27 @@ test('opening a database tightens it, its side files and older pre-migrate copie
   } finally { db.close(); }
 });
 
+test('every open narrows pre-migrate and its copies, even when no migration runs, and touches nothing else', { skip: process.platform === 'win32' }, (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'brain-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'memory.db');
+  openDb(path).close();
+  const folder = join(dir, 'pre-migrate');
+  mkdirSync(folder);
+  chmodSync(folder, 0o755);
+  const copy = join(folder, 'pre-migrate-36-to-37-20261113-222010.db');
+  const notes = join(folder, 'notes.txt');
+  writeFileSync(copy, 'x');
+  writeFileSync(notes, 'x');
+  chmodSync(copy, 0o644);
+  chmodSync(notes, 0o644);
+  openDb(path).close();
+  const mode = (p: string) => statSync(p).mode & 0o777;
+  assert.equal(mode(folder), 0o700);
+  assert.equal(mode(copy), 0o600);
+  assert.equal(mode(notes), 0o644);
+});
+
 test('tighten never loosens and never throws', { skip: process.platform === 'win32' }, (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'memtest-tighten-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

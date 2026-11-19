@@ -4,6 +4,14 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Backups and health shows the version you run.
 
+## 1.5.2 (2026-11-19)
+
+Updating needs nothing from you.
+
+**Privacy fixes**
+- **The copies kept before an update are now narrowed at every start.** 1.5.1 said each start makes `data/pre-migrate` (full copies, with the sign-in data) readable by its owner only, but it did so only when an update changed the database. Now every start does.
+- **The nightly backup is owner-only too (servers run with Docker).** `scripts/backup.sh` now writes its backups, and the copies in `COPY_DIRS`, readable by their owner only. They hold every memory, though not the sign-in data. Older ones are narrowed on its next run. A network share mounted with fixed permissions keeps its own, so check who can open that share.
+
 ## 1.5.1 (2026-11-19)
 
 Updating needs one check from you if you run the server yourself: BrainAI now makes `data/memory.db` and its side files readable by their owner only. The nightly `scripts/backup.sh` must run as the same user as `PUID` in `.env` (the usual setup), or as root; a job that runs as another user can no longer read the database. The desktop apps need nothing. There is no database change.

@@ -5,6 +5,8 @@
 # next to each copy with rsync --ignore-existing (files never change), checked against their rows, and removed from
 # the copies only 30 days after Delete for good; data/images itself is never touched.
 set -euo pipefail
+# Snapshots hold every memory: new files are owner-only whatever the cron job's umask.
+umask 077
 
 # The clone this script lives in (scripts/..), wherever it was cloned; APP_DIR overrides.
 APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -85,6 +87,8 @@ if [ "$lock" != 0 ]; then
 fi
 # Holding the lock, nothing else is using these: what a killed run left (its snapshot may not be stripped yet).
 find "$BACKUP_DIR" -maxdepth 1 \( -name '.memory-*' -o -name '.backup.lock.stale.*' \) -exec rm -rf -- {} + 2>/dev/null || true
+# Backups an older version of this script wrote are readable by others: narrow them (never loosen; a failure is ignored).
+find "$BACKUP_DIR" -maxdepth 1 -type f -name 'memory-*.db' -exec chmod go-rwx -- {} + 2>/dev/null || true
 # Built under a temporary name of its own (mktemp) and moved into place only once stripped and checked, so a failed
 # run never leaves a half-stripped file that looks like a backup.
 TMP="$(mktemp "$BACKUP_DIR/.memory-XXXXXX")"
@@ -171,6 +175,8 @@ for dir in $COPY_DIRS; do
     status=1
     continue
   }
+  # A network share may ignore modes, so a failure here is not one.
+  find "$dir" -maxdepth 1 -type f -name 'memory-*.db' -exec chmod go-rwx -- {} + 2>/dev/null || true
   prune "$dir" || { echo "backup: could not prune $dir" >&2; status=1; }
   copy_pictures "$dir" || {
     echo "backup: could not copy the pictures to $dir" >&2

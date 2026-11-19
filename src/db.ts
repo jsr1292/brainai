@@ -793,6 +793,9 @@ export function tighten(path: string): boolean {
   }
 }
 
+/** A copy BrainAI made in <data>/pre-migrate/ before a schema update or a re-embed. */
+const PRE_MIGRATE_COPY = /^pre-(?:migrate-(\d+)-to-\d+|reembed-[a-z0-9]+-to-[a-z0-9]+)-(\d{8}-\d{6})\.db$/;
+
 /** Copies kept in <data>/pre-migrate/: the newest few, one per update that changed the database. */
 const PRE_MIGRATE_KEEP = 3;
 
@@ -823,7 +826,7 @@ function checkedCopy(db: DB, path: string, prefix: string): void {
     throw e;
   }
   // Oldest first: by the time in the name, then by the schema version it came from (several updates in one second).
-  const pattern = /^pre-(?:migrate-(\d+)-to-\d+|reembed-[a-z0-9]+-to-[a-z0-9]+)-(\d{8}-\d{6})\.db$/;
+  const pattern = PRE_MIGRATE_COPY;
   const key = (f: string) => { const m = pattern.exec(f)!; return `${m[2]}:${(m[1] ?? '').padStart(6, '0')}`; };
   const copies = readdirSync(dir).filter((f) => pattern.test(f)).sort((a, b) => key(a).localeCompare(key(b)));
   for (const old of copies.slice(0, Math.max(0, copies.length - PRE_MIGRATE_KEEP))) rmSync(join(dir, old), { force: true });
@@ -888,6 +891,18 @@ export function ensureOwnTriggers(db: DB): { triggers: string[]; listed: number 
   })();
 }
 
+/** The copies kept before an update hold the sign-in data too: narrowed at every open, not only when one is made. */
+function tightenPreMigrate(dataDir: string): void {
+  const dir = join(dataDir, 'pre-migrate');
+  try {
+    const names = readdirSync(dir).filter((f) => PRE_MIGRATE_COPY.test(f));
+    tighten(dir);
+    for (const f of names) tighten(join(dir, f));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`could not make ${dir} private (owner only): ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 /** `upTo` stops at that schema version (tests of a migration start from the one before it). */
 export function openDb(path: string, opts: { upTo?: number } = {}): DB {
   const db = new Database(path);
@@ -897,6 +912,7 @@ export function openDb(path: string, opts: { upTo?: number } = {}): DB {
     tighten(path);
     db.pragma('journal_mode = WAL');
     for (const side of ['-wal', '-shm']) tighten(path + side);
+    tightenPreMigrate(dirname(path));
   }
 
   db.exec('CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL)');
