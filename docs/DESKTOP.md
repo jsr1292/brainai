@@ -356,7 +356,8 @@ its usual port rather than moving. Links to other sites open in your browser.
 On an Apple-silicon Mac with Node 22 and Rust (`rustup`):
 
 ```bash
-desktop/scripts/stage-server.sh          # the server, its darwin-arm64 dependencies and Node 22 (no models)
+desktop/scripts/stage-server.sh          # the server bundled with esbuild (dist/index.js, cli.js, hooks; about 330 files) + the darwin-arm64 native packages and Node 22 (no models)
+desktop/scripts/smoke-staged-server.sh   # starts the staged server on a temp folder and checks pages, ticket, MCP, search model, cli
 cd desktop && npm install && npx tauri build --bundles app
 ```
 

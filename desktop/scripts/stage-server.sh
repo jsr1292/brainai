@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stages what the Mac app runs (D2, docs/DESKTOP.md): the compiled server with its production dependencies (the
+# Stages what the Mac app runs (D2, docs/DESKTOP.md): the esbuild-bundled server (bundle-server.mjs) with its native packages (the
 # darwin-arm64 binaries only) in desktop/src-tauri/resources/server/, with no models (the app downloads them), and a
 # checksum-verified Node 22 as the Tauri sidecar desktop/src-tauri/binaries/node-aarch64-apple-darwin. Run on an
 # Apple-silicon Mac.
@@ -18,23 +18,24 @@ if [ -n "$(cd "$ROOT" && git status --porcelain -- src package.json package-lock
   echo "Uncommitted changes in the server: commit them first (or set ALLOW_DIRTY=1 for a throwaway build)." >&2; exit 1
 fi
 
-echo "Building the server ..."
-(cd "$ROOT" && rm -rf dist && npm run build >/dev/null)
+echo "Bundling the server ..."
+# The type check is the build's gate; the shipped JavaScript is the esbuild bundle (dist/index.js, dist/cli.js and the
+# hooks, with every dependency inside except the native packages, which are installed below).
+(cd "$ROOT" && npx tsc --noEmit -p tsconfig.build.json)
 rm -rf "$SERVER" && mkdir -p "$SERVER" "$TAURI/binaries"
-cp -R "$ROOT/dist" "$ROOT/package.json" "$ROOT/package-lock.json" "$SERVER/"
+NODE_TARGET="node$NODE_MAJOR" node "$ROOT/desktop/scripts/bundle-server.mjs" "$SERVER" >/dev/null
 # No models: the app downloads the ones the owner chooses into its data folder (src/models/manager.ts). The licences
 # stay with the app: a Gemma download gets its notice and terms from licenses/ (Gemma Terms of Use, section 3.1).
 cp -R "$ROOT/licenses" "$SERVER/licenses"
 [ -f "$SERVER/licenses/GEMMA-NOTICE.txt" ] || { echo "licenses/GEMMA-NOTICE.txt is missing: a Gemma download needs it" >&2; exit 1; }
 
-echo "Installing the darwin-arm64 dependencies ..."
+echo "Installing the native darwin-arm64 packages ..."
 (cd "$SERVER" && npm ci --omit=dev --ignore-scripts --os=darwin --cpu=arm64 --no-audit --no-fund >/dev/null)
 # onnxruntime-node ships binaries for every platform; only darwin-arm64 is used.
 ORT="$SERVER/node_modules/onnxruntime-node/bin/napi-v6"
 rm -rf "$ORT/linux" "$ORT/win32" "$ORT/darwin/x64"
 rm -f "$SERVER/node_modules/better-sqlite3/prebuilds/"{linux,win32,darwin-x64}*.node 2>/dev/null || true
-# The browser build of the runtime (about 140 MB): the server uses onnxruntime-node (checked: it starts and searches without it).
-rm -rf "$SERVER/node_modules/onnxruntime-web"
+"$ROOT/desktop/scripts/prune-server-modules.sh" "$SERVER"
 for f in \
   better-sqlite3/prebuilds/darwin-arm64.node \
   @node-rs/argon2-darwin-arm64/argon2.darwin-arm64.node \

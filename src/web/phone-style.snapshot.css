@@ -99,8 +99,9 @@
 }
 
 /* Deep navy: every surface, line and grey has more blue than red (at least 12 of 255), so it never reads warm. */
+:root[data-theme="light"] { color-scheme: light; }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0f1320;
     --surface: #161b2b;
     --raised: #1f2538;
@@ -146,6 +147,54 @@
     --g-line-strong: #4b6a96;
     --g-chrome: rgb(6 11 20 / .9);
   }
+}
+/* The same tokens once more, for a forced dark theme (tests keep the two bodies equal). */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1320;
+  --surface: #161b2b;
+  --raised: #1f2538;
+  --elevated: #1a2032;
+  --line: #2a3147;
+  --line-strong: #3a4360;
+  --field-border: #6e7896;
+  --fg: #e7ebf5;
+  --ink2: #c9d0e0;
+  --muted: #929cb6;
+  --link: #93b4ff;
+  --accent: #f0864f;
+  --accent-fg: #0f1320;
+  --primary: #e7ebf5;
+  --primary-fg: #0f1320;
+  --error: #ff8a70;
+  --attention: #f2b35b;
+  --focus: #e7ebf5;
+  --added: #6fdcc8;
+  --shadow-pop: inset 0 1px 0 rgb(255 255 255 / .04), 0 16px 40px rgb(0 0 0 / .5);
+
+  --w-you: #e7ebf5;
+  --w-code: #a9b8d6;
+  --w-claude: #f29bc4;
+  --w-grok: #6fdcc8;
+  --w-gpt: #c3a6ff;
+  --w-x0: #7cc4ff;
+  --w-x1: #c8e07a;
+  --w-x2: #d7a6db;
+
+  --a-apps: #7cc39e;
+  --a-home: #b9b3a8;
+  --a-tools: #8db8e0;
+  --a-work: #b3a6e6;
+  --a-personal: #df9fc2;
+
+  /* The Graph at night: the approved blue-black, navy lines (graph3d.js WINDOW_INKS.dark) */
+  --g-bg: #02050a;
+  --g-ink: #d7e3f4;
+  --g-muted: #8ea2bf;
+  --g-faint: #6f86a8;
+  --g-line: #1d2a3d;
+  --g-line-strong: #4b6a96;
+  --g-chrome: rgb(6 11 20 / .9);
 }
 
 * { box-sizing: border-box; }
@@ -363,7 +412,7 @@ body.graph-on main { display: flex; flex: 1; width: 100%; min-height: 0; max-wid
 .graph-hint.graph-fade { opacity: 0; }
 @media (prefers-reduced-motion: no-preference) { .graph-hint { transition: opacity 0.6s; } }
 /* The card and the sheet follow the theme (paper in light, navy in dark), in the app's sans type. */
-.graph-card, .graph-sheet { color-scheme: light dark; background: var(--surface); color: var(--fg); border: 1px solid var(--line); font-family: var(--text); }
+.graph-card, .graph-sheet { color-scheme: inherit; background: var(--surface); color: var(--fg); border: 1px solid var(--line); font-family: var(--text); }
 .graph-card { position: absolute; top: 1rem; left: 1rem; z-index: 2; width: min(20rem, calc(100% - 2rem)); max-height: calc(100% - 5.5rem); overflow-y: auto; padding: 0.875rem 1rem; border-radius: var(--r-card); box-shadow: 0 12px 32px rgb(0 0 0 / 0.35); }
 .graph-card.graph-peek { pointer-events: none; }
 .graph-card p, .graph-sheet p { margin: 0 0 0.375rem; font-size: var(--t-sub); }
@@ -512,9 +561,11 @@ summary > .chev { margin-left: 0.5rem; vertical-align: 0.125em; }
 .chip.soon { background: color-mix(in srgb, var(--attention) 12%, var(--surface)); color: var(--attention); }
 .chip.plain { background: var(--raised); color: var(--muted); }
 .chip.you { background: var(--raised); color: var(--fg); }
+:root[data-theme="dark"] .chip.late { background: color-mix(in srgb, var(--error) 16%, var(--surface)); }
+:root[data-theme="dark"] .chip.soon { background: color-mix(in srgb, var(--attention) 16%, var(--surface)); }
 @media (prefers-color-scheme: dark) {
-  .chip.late { background: color-mix(in srgb, var(--error) 16%, var(--surface)); }
-  .chip.soon { background: color-mix(in srgb, var(--attention) 16%, var(--surface)); }
+  :root:not([data-theme="light"]) .chip.late { background: color-mix(in srgb, var(--error) 16%, var(--surface)); }
+  :root:not([data-theme="light"]) .chip.soon { background: color-mix(in srgb, var(--attention) 16%, var(--surface)); }
 }
 
 /*
@@ -623,6 +674,10 @@ input, select, textarea {
   font-size: var(--t-body);
 }
 /* A radio with its text on one line; the global input rule would stretch the radio into a box. */
+/* A radio group is a plain stack of choices, not a boxed fieldset (the user agent's border is white in the dark). */
+fieldset.choices { border: 0; margin: 0; padding: 0; min-width: 0; }
+/* While the look flips (theme.js), nothing fades from the old colours. */
+:root.theme-switching *, :root.theme-switching *::before, :root.theme-switching *::after { transition: none !important; }
 label.choice { flex-direction: row; align-items: center; gap: 0.6rem; min-height: 2.75rem; color: var(--fg); font-weight: 400; font-size: var(--t-body); }
 label.choice input { width: auto; min-height: auto; padding: 0; margin: 0; flex: none; }
 textarea { min-height: 6rem; resize: vertical; line-height: 1.5; }

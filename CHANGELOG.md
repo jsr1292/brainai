@@ -4,6 +4,23 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Version shows the version you run.
 
+## 1.10.1 (2026-11-20)
+
+Updating needs nothing from you. On the desktop app it downloads in the background and installs when you restart.
+
+- **Choose the look: Automatic, Light or Dark.** Settings › Appearance. Automatic follows your computer, as before. The
+  choice applies at once and is kept on this computer or browser; in the app, the window's title bar follows it too.
+
+- **Updates on Windows close BrainAI for much less time.** The app now carries its server as about 330 files instead
+  of about 7,000, so the installer has far less to remove and copy (and antivirus less to scan). Fresh installs are
+  faster too. The update to 1.10.1 itself still replaces the old files; the gain shows from the next update on.
+
+- **Opening BrainAI while an update installs no longer fails.** It says "Finishing the update…" and starts as soon as
+  the installer is done, instead of showing that it could not start.
+
+- **Settings keeps your place.** After Check for updates, or when the app refreshes itself after you have been away,
+  the page used to jump back to the top; it now stays on the section you were reading.
+
 ## 1.10.0 (2026-11-20)
 
 Updating needs nothing from you. On the desktop app it downloads in the background and installs when you restart. The

@@ -155,6 +155,8 @@ test('pages without the app nav (login, 404 without nav) get no sidebar', async 
 // ---- The shell (desktop design §2, §3): tiers, the sidebar, the capped column ----
 
 const DARK = `${D} @media (prefers-color-scheme: dark)`;
+const AUTO_DARK = ':root:not([data-theme="light"])', FORCED_DARK = ':root[data-theme="dark"]';
+const isRoot = (x: string) => x === ':root' || x === AUTO_DARK || x === FORCED_DARK;
 const HOVER = `${D} @media (hover: hover) and (pointer: fine)`;
 const MOTION = `${D} @media (prefers-reduced-motion: no-preference)`;
 
@@ -184,13 +186,14 @@ test('the sticky parts built for the phone header sit near the top instead', () 
 
 test('the sidebar paper and navy are the approved ones', () => {
   assert.equal(propIn(deskRules, ':root', '--side-bg', D), '#f4f2ec');
-  assert.equal(propIn(deskRules, ':root', '--side-bg', DARK), '#0c101b');
+  assert.equal(propIn(deskRules, AUTO_DARK, '--side-bg', DARK), '#0c101b', 'a dark system, Automatic');
+  assert.equal(propIn(deskRules, FORCED_DARK, '--side-bg', D), '#0c101b', 'Dark forced');
   assert.equal(propIn(deskRules, '.side', 'background', D), 'var(--side-bg)');
 });
 
 test('sidebar text and dots keep their contrast on the sidebar paper and navy', () => {
   const p = palettes(styleCss);
-  const sidePalettes: Record<string, Record<string, string>> = { light: { ...p.light, 'side-bg': propIn(deskRules, ':root', '--side-bg', D)! }, dark: { ...p.dark, 'side-bg': propIn(deskRules, ':root', '--side-bg', DARK)! } };
+  const sidePalettes: Record<string, Record<string, string>> = { light: { ...p.light, 'side-bg': propIn(deskRules, ':root', '--side-bg', D)! }, dark: { ...p.dark, 'side-bg': propIn(deskRules, AUTO_DARK, '--side-bg', DARK)! } };
   for (const [name, c] of Object.entries(sidePalettes)) {
     for (const t of ['fg', 'ink2', 'muted', 'attention']) assert.ok(contrast(rgb(c[t]!), rgb(c['side-bg'])) >= 4.5, `${name} --${t} on --side-bg`);
     assert.ok(contrast(rgb(c.accent!), rgb(c['side-bg'])) >= 3, `${name} needs-you dot on --side-bg`);
@@ -213,7 +216,7 @@ test('desk.css keeps the one-hand rules: tokens only, three radii, hover for a r
   const colour = /#[0-9a-f]{3,8}\b|rgba?\(\s*\d/i;
   for (const r of deskRules) {
     const sel = r.selectors.join(', ');
-    if (!r.selectors.every((x) => x === ':root')) for (const [k, v] of Object.entries(r.decls)) assert.doesNotMatch(v, colour, `${sel} { ${k}: ${v} }`);
+    if (!r.selectors.every(isRoot)) for (const [k, v] of Object.entries(r.decls)) assert.doesNotMatch(v, colour, `${sel} { ${k}: ${v} }`);
     for (const k of ['font-size', 'font']) if (k in r.decls) assert.match(r.decls[k]!, /var\(--t-[a-z]+\)|^inherit$/, `${sel} { ${k} }`);
     if ('border-radius' in r.decls) assert.match(r.decls['border-radius']!, /^(var\(--r-(pill|card|inset)\)|50%|0)$/, sel);
     if (r.selectors.some((x) => x.includes(':hover'))) assert.equal(r.media, HOVER, sel);

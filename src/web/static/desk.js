@@ -1020,6 +1020,7 @@ function adoptPanes() {
     placeSide(text, s2.querySelector('.desk-main'), s2.querySelector('.desk-aside'));
     const kl = s2.querySelector('.desk-main > .desk-keyline');
     if (kl) s2.querySelector('.desk-main').append(kl);
+    deskReady();
   }).catch(() => {});
   void title;
 }
@@ -1054,6 +1055,7 @@ async function mountFromPage() {
   touched = true;
   shownKey = pathKey(location.href);
   settle(kind, location.href, title, 'keep');
+  deskReady();
 }
 
 /**
@@ -1933,6 +1935,7 @@ async function mountFact() {
   touched = true;
   shownKey = pathKey(location.href);
   settle('fact', location.href, title, 'keep');
+  deskReady();
 }
 
 /** After a post: the list fetched again, the same scroll, the filter as it was. */
@@ -2541,6 +2544,11 @@ setups.push(() => {
 // ---- Set-up and tear-down ----
 
 
+/** app.js puts a saved scroll place back into the panes built so far (it cannot before: this module loads after the page). */
+function deskReady() {
+  document.dispatchEvent(new Event('desk:ready'));
+}
+
 function setup() {
   if (ac) return;
   ac = new AbortController();
@@ -2549,6 +2557,7 @@ function setup() {
   addHint();
   thisMac();
   for (const s of setups) s(ac.signal);
+  deskReady();
 }
 
 function teardown() {

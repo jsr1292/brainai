@@ -11,4 +11,12 @@ export const language_es: Record<keyof typeof language, Entry> = {
   'lang.name.en': 'English',
   'lang.name.es': 'Español',
   'lang.goto': 'Ajustes › Idioma',
+  'theme.title': 'Apariencia',
+  'theme.lede': 'Automático sigue el ajuste de tu ordenador.',
+  'theme.ledeBrowser': 'Automático sigue el ajuste de tu ordenador. Esta elección se guarda solo en este navegador.',
+  'theme.auto': 'Automático',
+  'theme.light': 'Claro',
+  'theme.dark': 'Oscuro',
+  'theme.save': 'Guardar',
+  'theme.goto': 'Ajustes › Apariencia',
 };

@@ -354,7 +354,10 @@ function problem(block, error, text) {
   return { box, sentence };
 }
 
+// The page's look (theme.js): Automatic follows the system, Light and Dark are forced. Without theme.js, the system's setting.
 const darkQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
+const isDark = () => (globalThis.brainTheme ? globalThis.brainTheme.dark() : !!darkQuery?.matches);
+const onThemeChange = (fn) => { if (globalThis.brainTheme) globalThis.brainTheme.onChange(fn); else darkQuery?.addEventListener?.('change', fn); };
 const readVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
 /** Draws one block: from the device if it was kept, otherwise through the frame (and keeps it). */
@@ -362,7 +365,7 @@ async function render(block, hooks, version) {
   const code = block.querySelector('pre.diagram-src code');
   if (!code) return;
   const text = code.textContent.replace(/\n$/, '');
-  const dark = !!darkQuery?.matches;
+  const dark = isDark();
   const key = cacheKey(version, dark ? 'dark' : 'light', await sha256(text));
   let drawing = await kept(key);
   if (!drawing) {
@@ -425,5 +428,5 @@ export function setUpDiagrams(root, hooks = {}) {
     }
   }, { rootMargin: '300px 0px' });
   for (const b of blocks) io.observe(b);
-  darkQuery?.addEventListener?.('change', () => { for (const b of seen) enqueue(b); });
+  onThemeChange(() => { for (const b of seen) enqueue(b); });
 }

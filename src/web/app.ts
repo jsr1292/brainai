@@ -75,6 +75,7 @@ import { setViewClock } from './when.js';
 import { storedChoice, UI_LANGUAGE_SWITCH, writeUiLanguageFile } from '../i18n/uiLanguage.js';
 import { t } from '../i18n/core.js';
 import { CLIENT_ENDPOINTS, localeMiddleware } from './locale.js';
+import { themeMiddleware } from './theme.js';
 import { fmt } from '../i18n/fmt.js';
 import type { GraphService } from '../graph/data.js';
 import { graphRoutes } from './graphRoutes.js';
@@ -343,6 +344,7 @@ export function createApp(d: AppDeps): express.Express {
       ...(app ? [{ key: 'shell.goto.reach' as const, href: '/settings/reach', alias: 'Reach' }] : []),
       ...(app && d.models ? [{ key: 'shell.goto.search' as const, href: '/settings#search' }] : []),
       { key: 'lang.goto', href: '/settings#language', alias: 'Language Idioma' },
+      { key: 'theme.goto', href: '/settings#appearance', alias: 'Appearance Apariencia Theme Dark mode Light Tema Modo oscuro claro' },
       { key: 'coaching.goto', href: '/settings#coaching', alias: 'Developer coaching Aprendizaje' },
       { key: 'shell.goto.backups', href: '/settings#health' },
       { key: 'shell.goto.version', href: '/settings#version', alias: 'Check for updates' },
@@ -355,6 +357,7 @@ export function createApp(d: AppDeps): express.Express {
   // 1. Security headers.
   app.use(securityHeaders);
   app.use((req, _res, next) => runWithDoorFlag(viaDoor(req), next));
+  app.use(themeMiddleware());
   app.use(localeMiddleware((name) => d.store.switchValue(name), { localMode: d.localMode === true, systemLocale: () => process.env.BRAINAI_SYSTEM_LOCALE }));
   // Local mode: the desktop shell reads the choice at start, so write it once now (a change in Settings rewrites it).
   if (d.localMode && d.statusDir) {

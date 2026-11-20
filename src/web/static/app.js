@@ -193,18 +193,106 @@ document.addEventListener('keydown', (e) => {
 // Never over a focused or edited field, a draft or a page drawn from a form POST, never offline.
 // The hash goes: the same URL plus a fragment would only jump.
 const scrollKey = (url) => `scroll:${url}`;
+// On a wide window the page does not scroll: the sheet and the list panes do (desk.css). The place is the window's
+// scroll plus each of those panes' scrollTop, found by a stable selector. It is stored as a plain number when only the
+// window scrolled (the old format, still read) and as JSON {y, p:{selector: top}} otherwise.
+const SCROLL_PANES = ['#desk-sheet', '.desk-list', '.plist', '.ppanel', '.inbox-list', '.inbox-pane'];
+const paneAt = (sel) => (document.querySelector ? document.querySelector(sel) : null);
+// Settings: content above a section (the added-tools line in Connections) arrives later and would shift a bare scrollTop,
+// so the sheet's place is the section at its top (the one the index marks) and where that section's top sits.
+const settingsAnchor = () => {
+  const sheet = paneAt('#desk-sheet');
+  if (!sheet || !sheet.dataset || sheet.dataset.kind !== 'settings' || !sheet.querySelectorAll) return null;
+  const top = sheet.getBoundingClientRect().top;
+  let pick = null;
+  for (const sec of sheet.querySelectorAll('.desk-main > section[id]')) {
+    const d = sec.getBoundingClientRect().top - top;
+    if (!pick || d <= 80) pick = { id: sec.id, d: Math.round(d) }; else break;
+  }
+  return pick;
+};
+const savePlace = () => {
+  const p = {};
+  for (const sel of SCROLL_PANES) {
+    const pane = paneAt(sel);
+    if (pane && pane.scrollTop > 0) p[sel] = Math.round(pane.scrollTop);
+  }
+  const a = settingsAnchor();
+  if (a) delete p['#desk-sheet'];
+  return Object.keys(p).length || a ? JSON.stringify({ y: scrollY, p, ...(a ? { a } : {}) }) : String(scrollY);
+};
+const readPlace = (saved) => {
+  try {
+    const v = JSON.parse(saved);
+    if (typeof v === 'number') return { y: v, p: {}, a: null };
+    if (v && typeof v === 'object') return { y: Number(v.y) || 0, p: v.p && typeof v.p === 'object' ? v.p : {}, a: v.a && typeof v.a.id === 'string' ? { id: v.a.id, d: Number(v.a.d) || 0 } : null };
+  } catch { /* not JSON: fall through */ }
+  return { y: Number(saved) || 0, p: {}, a: null };
+};
+// The panes are put back for up to 3 s: desk.js builds them after load ('desk:ready', also after its async mounts) and
+// content arrives later still, so a pane is applied again whenever its content height changes. It stops at the first
+// touch, wheel, key or press (the reader has taken over) and at the time limit, and a place left over is dropped, so it
+// can never land on a later desk set-up. One chain of frames runs at a time.
+const RESTORE_MS = 3000;
+const nowMs = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
+const TAKEOVER = ['wheel', 'touchstart', 'keydown', 'pointerdown'];
+let pending = null;
+let applied = {};
+let chain = false;
+const stopRestore = () => {
+  pending = null; applied = {}; chain = false;
+  if (typeof document.removeEventListener === 'function') for (const t of TAKEOVER) document.removeEventListener(t, stopRestore, true);
+};
+const applyPane = (sel, want) => {
+  const pane = paneAt(sel);
+  if (!pane) return;
+  const h = Number(pane.scrollHeight) || 0;
+  if (applied[sel] === h) return; // nothing changed since the last apply
+  applied[sel] = h;
+  const a = sel === '#desk-sheet' ? pending.a : null;
+  const sec = a && document.getElementById ? document.getElementById(a.id) : null;
+  if (sec && pane.contains(sec)) pane.scrollTop += sec.getBoundingClientRect().top - pane.getBoundingClientRect().top - a.d;
+  else pane.scrollTop = want;
+};
+const applyAll = () => {
+  for (const sel of Object.keys(pending.p)) applyPane(sel, Number(pending.p[sel]) || 0);
+  if (pending.a && !('#desk-sheet' in pending.p)) applyPane('#desk-sheet', 0);
+};
+const restorePanes = () => {
+  if (!pending) return;
+  // The limit holds here too: a hidden window runs no frames, so a late desk:ready must not apply an old place.
+  if (nowMs() > pending.until) { stopRestore(); return; }
+  applyAll();
+  if (chain || typeof requestAnimationFrame !== 'function') return;
+  chain = true;
+  if (typeof document.addEventListener === 'function') for (const t of TAKEOVER) document.addEventListener(t, stopRestore, { capture: true, passive: true });
+  const tick = () => {
+    if (!pending) { chain = false; return; }
+    if (nowMs() > pending.until) { stopRestore(); return; }
+    applyAll();
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+};
 if (typeof addEventListener === 'function') {
   addEventListener('pageshow', () => {
     const key = scrollKey(location.href.split('#')[0]);
     let saved = null;
     try { saved = sessionStorage.getItem(key); sessionStorage.removeItem(key); } catch { /* storage off */ }
     if (saved === null) return;
+    const place = readPlace(saved);
     const before = history.scrollRestoration;
     history.scrollRestoration = 'manual';
-    scrollTo(0, Number(saved));
+    scrollTo(0, place.y);
     history.scrollRestoration = before;
+    if (!Object.keys(place.p).length && !place.a) return;
+    pending = { p: { ...place.p }, a: place.a, until: nowMs() + RESTORE_MS };
+    applied = {};
+    restorePanes();
   });
 }
+// desk.js says when its panes are built or filled (it is imported after load): the place held back goes in then.
+document.addEventListener('desk:ready', () => restorePanes());
 const installed = (typeof matchMedia === 'function' && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
 const AWAY_MS = 120000;
 let hiddenAt = null;
@@ -225,7 +313,7 @@ if (installed) {
     if (document.body && document.body.dataset.fresh === 'off') return;
     for (const t of document.querySelectorAll('textarea')) if (t.value.trim() !== '') return;
     const url = location.href.split('#')[0];
-    try { sessionStorage.setItem(scrollKey(url), String(scrollY)); } catch { /* storage off: the place is lost, the page is fresh */ }
+    try { sessionStorage.setItem(scrollKey(url), savePlace()); } catch { /* storage off: the place is lost, the page is fresh */ }
     location.replace(url);
   });
 }
@@ -625,7 +713,7 @@ for (const box of document.querySelectorAll('[data-check-updates]')) {
         if (r.ok && (await r.json()).at > since) {
           // A same-URL replace keeping the scroll (as "fresh on return" does), never location.reload.
           const url = location.href.split('#')[0];
-          try { sessionStorage.setItem(scrollKey(url), String(scrollY)); } catch { /* storage off: the page opens at the top */ }
+          try { sessionStorage.setItem(scrollKey(url), savePlace()); } catch { /* storage off: the page opens at the top */ }
           location.replace(url);
           return;
         }

@@ -104,6 +104,24 @@ pub fn is_check_updates(url: &str, port: u16) -> bool {
     url == format!("http://localhost:{port}/app/check-updates")
 }
 
+/// Settings › Appearance: the page tells the window which look was chosen by going to `/app/theme/auto|light|dark`. The
+/// link is cancelled (the page stays) and the window's title bar follows. Exact match; None for any other address.
+pub fn theme_choice(url: &str, port: u16) -> Option<&'static str> {
+    let rest = url.strip_prefix(&format!("http://localhost:{port}/app/theme/"))?;
+    ["auto", "light", "dark"].into_iter().find(|c| *c == rest)
+}
+
+/// The saved choice (`ui-theme.json`, `{"theme":"auto|light|dark"}`): "light" or "dark" when forced, None for auto,
+/// a missing file or anything unreadable.
+pub fn saved_theme(content: Option<&str>) -> Option<&'static str> {
+    let value = serde_json::from_str::<serde_json::Value>(content?).ok()?;
+    match value.get("theme")?.as_str()? {
+        "light" => Some("light"),
+        "dark" => Some("dark"),
+        _ => None,
+    }
+}
+
 /// Where the window goes after a folder was chosen: Settings with the path in the query, to fill the second-folder box.
 /// Nothing is saved by this: the page only shows the path, and Save is the owner's own press.
 pub fn folder_page(port: u16, folder: &str) -> String {
@@ -187,6 +205,30 @@ pub fn install_location_ok(exe: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_theme_address_is_exact_and_on_the_apps_own_port() {
+        for c in ["auto", "light", "dark"] {
+            assert_eq!(theme_choice(&format!("http://localhost:3100/app/theme/{c}"), 3100), Some(c));
+        }
+        assert_eq!(theme_choice("http://localhost:3100/app/theme/purple", 3100), None);
+        assert_eq!(theme_choice("http://localhost:3100/app/theme/", 3100), None);
+        assert_eq!(theme_choice("http://localhost:3100/app/theme/dark?x=1", 3100), None, "a query string");
+        assert_eq!(theme_choice("http://localhost:3100/app/theme/dark/", 3100), None);
+        assert_eq!(theme_choice("http://localhost:3101/app/theme/dark", 3100), None, "another port");
+        assert_eq!(theme_choice("http://127.0.0.1:3100/app/theme/dark", 3100), None, "another host");
+        assert_eq!(theme_choice("https://evil.example/app/theme/dark", 3100), None);
+        assert_eq!(theme_choice("http://localhost:3100/settings/theme", 3100), None);
+    }
+
+    #[test]
+    fn the_saved_theme_is_light_or_dark_and_anything_else_is_auto() {
+        assert_eq!(saved_theme(Some(r#"{"theme":"dark"}"#)), Some("dark"));
+        assert_eq!(saved_theme(Some(r#"{"theme":"light"}"#)), Some("light"));
+        for bad in [Some(r#"{"theme":"auto"}"#), Some(r#"{"theme":"purple"}"#), Some(r#"{"theme":3}"#), Some("{}"), Some("{not json"), None] {
+            assert_eq!(saved_theme(bad), None, "{bad:?}");
+        }
+    }
 
     #[test]
     fn check_for_updates_is_only_the_apps_own_address() {

@@ -43,6 +43,7 @@ import { readKey } from '../models/onlineKey.js';
 import { computeSpace, SpaceCache } from '../diskSpace.js';
 import { spaceBlock, spaceTotalText } from './spaceViews.js';
 import { settingsView } from './settingsViews.js';
+import { currentTheme, isThemeChoice, THEME_COOKIE, THEME_COOKIE_MAX_AGE } from './theme.js';
 import { html, page, type SafeHtml } from './html.js';
 import { backFrom, factBackDefault, nextHref, suggestionBack, withFrom, type Back, type BackTarget } from './back.js';
 import { backLookups } from './backLookups.js';
@@ -184,6 +185,7 @@ export function dashboardRoutes(d: AppDeps): Router {
       profile: profileHealth(d),
       quiet: { apps: quietAppsOf(d, d.now()), local: !!d.localMode },
       language: { choice: storedChoice(d.store.switchValue(UI_LANGUAGE_SWITCH)) },
+      appearance: { choice: currentTheme() ?? 'auto' },
       coaching: { on: coachingOn(d.store) },
       said: { backupNow: takeSettingsSaid('backup-now'), copy: takeSettingsSaid('backup-copy') },
       copy: d.localMode && d.backupCopy ? { keep: d.backupKeep ?? DEFAULT_BACKUP_KEEP, folder: d.backupCopy.folder(), last: d.backupCopy.lastResult(), ask, ...(pickedFolder(req) ? { picked: pickedFolder(req)! } : {}) } : undefined,
@@ -750,6 +752,16 @@ export function dashboardRoutes(d: AppDeps): Router {
       try { writeUiLanguageFile(d.statusDir, choice, d.now()); } catch (e) { console.error('writing ui-language.json failed:', e); }
     }
     res.redirect(303, '/settings#language');
+  });
+
+  // Settings › Appearance: this browser's look (Automatic, Light, Dark) in the `theme` cookie, never in the brain. With scripts theme.js sets the same cookie without this trip.
+  router.post('/settings/theme', owner, (req: Request, res) => {
+    const choice = str(req, 'theme');
+    if (!isThemeChoice(choice)) return badRequest(res);
+    const options = { path: '/', sameSite: 'lax' as const };
+    if (choice === 'auto') res.clearCookie(THEME_COOKIE, options);
+    else res.cookie(THEME_COOKIE, choice, { ...options, maxAge: THEME_COOKIE_MAX_AGE });
+    res.redirect(303, '/settings#appearance');
   });
 
   // Settings › Developer coaching: a brain-wide switch (brain_switches). Off hides the growth and learning parts; nothing is deleted.

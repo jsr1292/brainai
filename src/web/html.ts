@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { backLabel, type Back, type BackTarget, type Tab } from './back.js';
 import { coachingShown, graphTabShown, sideStatus } from './sideStatus.js';
+import { currentTheme, THEME_COLOURS } from './theme.js';
 import { t, tKey, currentLanguage, type Key } from '../i18n/core.js';
 import { tHtml } from '../i18n/tHtml.js';
 import { clientJson } from '../i18n/client.js';
@@ -162,6 +163,7 @@ export function setConsentPoller(on: boolean): void {
 }
 
 export function page(title: string, body: SafeHtml, opts: { nav?: boolean; /** Which place the desktop sidebar lights, when it is not `tab` (the phone bar keeps using `tab`). */ sideTab?: Tab | null; query?: string; tab?: Tab | null; section?: Section; back?: BackTarget; crumb?: boolean; /** The app's first-run setup: its own frame, with the brand in its step list. */ shell?: 'setup' } = {}): string {
+  const theme = currentTheme();
   const brand = html`<a class="brand" href="/"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></a>`;
   const phoneTab = opts.nav ? phoneTabOf(opts.tab, sideTabOf(opts)) : null;
   const waiting = opts.nav ? sideStatus().needsYouCount : 0;
@@ -176,18 +178,19 @@ ${settings}
 </header>`
     : opts.shell === 'setup' ? html`` : html`<header class="top solo">${brand}</header>`;
   return html`<!doctype html>
-<html lang="${currentLanguage()}">
+<html lang="${currentLanguage()}"${theme ? raw(` data-theme="${theme}"`) : ''}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${title}</title>
 <link rel="manifest" href="${asset('manifest.webmanifest')}">
-<meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0f1320" media="(prefers-color-scheme: dark)">
+${theme ? raw(`<meta name="theme-color" content="${THEME_COLOURS[theme]}">`) : raw(`<meta name="theme-color" content="${THEME_COLOURS.light}" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="${THEME_COLOURS.dark}" media="(prefers-color-scheme: dark)">`)}
 <link rel="apple-touch-icon" href="${asset('apple-touch-icon.png')}">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <script src="${asset('platform.js')}"></script>
+<script src="${asset('theme.js')}"></script>
 <link rel="stylesheet" href="${asset('style.css')}">
 <link rel="stylesheet" href="${asset('desk.css')}" media="screen and (min-width: 1100px)">
 ${raw(`<script type="application/json" id="i18n">${clientJson()}</script>`)}

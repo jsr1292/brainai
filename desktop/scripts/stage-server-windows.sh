@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Stages what the Windows app runs (D6, docs/DESKTOP.md), on the Mac: the compiled server with its production
-# dependencies (their Windows x64 binaries only, no models: the app downloads them) in resources/server-windows/,
+# Stages what the Windows app runs (D6, docs/DESKTOP.md), on the Mac: the server bundled by esbuild (desktop/scripts/bundle-server.mjs: all
+# JavaScript in a few files) with the native packages (their Windows x64 binaries only, no models: the app downloads them) in resources/server-windows/,
 # and a checksum-verified Windows node.exe (Node 22) as the Tauri sidecar binaries/node-x86_64-pc-windows-msvc.exe.
 # Every native file in the staged tree is checked to be a Windows x64 binary.
 set -euo pipefail
@@ -18,23 +18,24 @@ if [ -n "$(cd "$ROOT" && git status --porcelain -- src package.json package-lock
   echo "Uncommitted changes in the server: commit them first (or set ALLOW_DIRTY=1 for a throwaway build)." >&2; exit 1
 fi
 
-echo "Building the server ..."
-(cd "$ROOT" && rm -rf dist && npm run build >/dev/null)
+echo "Bundling the server ..."
+# The type check is the build's gate; the shipped JavaScript is the esbuild bundle (dist/index.js, dist/cli.js and the
+# hooks, with every dependency inside except the native packages, which are installed below).
+(cd "$ROOT" && npx tsc --noEmit -p tsconfig.build.json)
 rm -rf "$SERVER" && mkdir -p "$SERVER" "$TAURI/binaries"
-cp -R "$ROOT/dist" "$ROOT/package.json" "$ROOT/package-lock.json" "$SERVER/"
+NODE_TARGET="node$NODE_MAJOR" node "$ROOT/desktop/scripts/bundle-server.mjs" "$SERVER" >/dev/null
 # No models: the app downloads the ones the owner chooses into its data folder (src/models/manager.ts). The licences
 # stay with the app: a Gemma download gets its notice and terms from licenses/ (Gemma Terms of Use, section 3.1).
 cp -R "$ROOT/licenses" "$SERVER/licenses"
 [ -f "$SERVER/licenses/GEMMA-NOTICE.txt" ] || { echo "licenses/GEMMA-NOTICE.txt is missing: a Gemma download needs it" >&2; exit 1; }
 
-echo "Installing the win32-x64 dependencies ..."
+echo "Installing the native win32-x64 packages ..."
 (cd "$SERVER" && npm ci --omit=dev --ignore-scripts --os=win32 --cpu=x64 --no-audit --no-fund >/dev/null)
 # onnxruntime-node ships binaries for every platform; only Windows x64 is used.
 ORT="$SERVER/node_modules/onnxruntime-node/bin/napi-v6"
 rm -rf "$ORT/darwin" "$ORT/linux" "$ORT/win32/arm64"
 rm -f "$SERVER/node_modules/better-sqlite3/prebuilds/"{linux,darwin,win32-arm64,win32-ia32}*.node 2>/dev/null || true
-# The browser build of the runtime (about 140 MB): the server uses onnxruntime-node.
-rm -rf "$SERVER/node_modules/onnxruntime-web"
+"$ROOT/desktop/scripts/prune-server-modules.sh" "$SERVER"
 for f in \
   better-sqlite3/prebuilds/win32-x64.node \
   @node-rs/argon2-win32-x64-msvc/argon2.win32-x64-msvc.node \

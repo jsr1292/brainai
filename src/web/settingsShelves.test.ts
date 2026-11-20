@@ -27,13 +27,15 @@ test("the app's Settings: This computer, Assistants, Search, Backups and copies,
   const { f } = await local(t, { nightly: true });
   const body = await (await f('/settings')).text();
   // Search needs the model manager, which this app does not have: the shelf is left out (settingsSearch.test covers it).
-  assert.deepEqual(ids(body), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'language', 'coaching', 'remove']);
+  assert.deepEqual(ids(body), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'language', 'appearance', 'coaching', 'remove']);
   const rows = index(body);
-  assert.deepEqual(rows.map((r) => r[0]), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'language', 'coaching', 'remove']);
+  assert.deepEqual(rows.map((r) => r[0]), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'language', 'appearance', 'coaching', 'remove']);
   assert.deepEqual(rows.slice(1, 6).map((r) => r[1]), ['Assistants', 'Backups and copies', 'Version', 'Other computers', 'Your login']);
   assert.equal(rows[6]![1], 'Language');
-  assert.equal(rows[7]![1], 'Developer coaching');
-  assert.match(rows[8]![1]!, /^Remove BrainAI from this /);
+  assert.equal(rows[7]![1], 'Appearance');
+  assert.equal(rows[7]![2], 'Automatic');
+  assert.equal(rows[8]![1], 'Developer coaching');
+  assert.match(rows[9]![1]!, /^Remove BrainAI from this /);
   assert.equal(rows[2]![2], '● Backups: all fine · 14:30');
   assert.equal(rows[5]![2], '1 browser signed in');
   assert.match(body, /<section id="remove" class="panel danger-zone">[\s\S]*href="\/settings\/remove"/);

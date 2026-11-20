@@ -16,6 +16,7 @@ import { basename } from 'node:path';
 import { fmt } from '../i18n/fmt.js';
 import { t, tKey } from '../i18n/core.js';
 import { UI_LANGUAGES, type UiLanguage } from '../i18n/uiLanguage.js';
+import { THEME_CHOICES, type ThemeChoice } from './theme.js';
 import { html, raw, type SafeHtml } from './html.js';
 import { metaLine } from './metaLine.js';
 import { needsLook, type ConnStatus } from './connStatus.js';
@@ -94,6 +95,8 @@ export function settingsView(v: {
   said?: { backupNow: string | null; copy: string | null };
   /** Settings › Language: the owner's stored choice (auto, English or Español). */
   language?: { choice: UiLanguage };
+  /** Settings › Appearance: this browser's choice of look (the `theme` cookie). */
+  appearance?: { choice: ThemeChoice };
   /** Settings › Developer coaching: whether the brain-wide switch is on. */
   coaching?: { on: boolean };
 }): SafeHtml {
@@ -103,8 +106,8 @@ export function settingsView(v: {
   // "this device", Search or Remove: Assistants, Backups and copies, Other computers, Your login. The ids stay as
   // other pages link them (#connections, #health, #setup, #devices, #search, #login).
   const sections: [string, string][] = v.localMode
-    ? [['this-device', device], ['connections', t('settings.sec.assistants')], ...(v.search ? [['search', t('settings.sec.search')] as [string, string]] : []), ['health', t('settings.sec.backups')], ...(v.versionPanel ? [['version', t('settings.sec.version')] as [string, string]] : []), ['devices', t('settings.sec.devices')], ['login', t('settings.sec.login')], ['language', t('lang.title')], ['coaching', t('coaching.title')], ['remove', t('settings.sec.remove', { here })]]
-    : [['connections', t('settings.sec.assistants')], ['health', t('settings.sec.backups')], ...(v.versionPanel ? [['version', t('settings.sec.version')] as [string, string]] : []), ['devices', t('settings.sec.devices')], ['login', t('settings.sec.login')], ['language', t('lang.title')], ['coaching', t('coaching.title')], ['this-device', t('settings.thisBrowser')]];
+    ? [['this-device', device], ['connections', t('settings.sec.assistants')], ...(v.search ? [['search', t('settings.sec.search')] as [string, string]] : []), ['health', t('settings.sec.backups')], ...(v.versionPanel ? [['version', t('settings.sec.version')] as [string, string]] : []), ['devices', t('settings.sec.devices')], ['login', t('settings.sec.login')], ['language', t('lang.title')], ['appearance', t('theme.title')], ['coaching', t('coaching.title')], ['remove', t('settings.sec.remove', { here })]]
+    : [['connections', t('settings.sec.assistants')], ['health', t('settings.sec.backups')], ...(v.versionPanel ? [['version', t('settings.sec.version')] as [string, string]] : []), ['devices', t('settings.sec.devices')], ['login', t('settings.sec.login')], ['language', t('lang.title')], ['appearance', t('theme.title')], ['coaching', t('coaching.title')], ['this-device', t('settings.thisBrowser')]];
   const assistants = v.grants.filter((g) => !g.revokedAt).length;
   const liveDevices = v.devices.filter((x) => x.revokedAt === null).length;
   // Backups only: a dot and the nightly's time when all is well; a dot that needs a look otherwise; nothing set up yet.
@@ -126,6 +129,7 @@ export function settingsView(v: {
     version: html`${v.version ? `BrainAI ${v.version.brain}` : ''}`,
     login: html`${t('settings.n.browsers', { count: v.sessions.length })}`,
     language: html`${v.language ? languageName(v.language.choice) : ''}`,
+    appearance: html`<span data-theme-status>${themeName(v.appearance?.choice ?? 'auto')}</span>`,
     coaching: html`${v.coaching?.on ? t('coaching.status.on') : t('coaching.status.off')}`,
     remove: html``,
   };
@@ -266,6 +270,7 @@ ${devicesSection(v.devices, v.created, v.now, v.brainUrl)}
   ${sessionCards({ sessions: v.sessions, currentSessionId: v.currentSessionId })}
 </section>
 ${languagePanel(v.language?.choice ?? 'auto')}
+${appearancePanel(v.appearance?.choice ?? 'auto', v.localMode === true)}
 ${coachingPanel(v.coaching?.on ?? false)}
 ${v.localMode ? '' : thisDeviceSection}
 ${removeSection}
@@ -318,6 +323,25 @@ function languagePanel(choice: UiLanguage): SafeHtml {
     ${UI_LANGUAGES.map((c) => html`<p><label class="choice"><input type="radio" name="language" value="${c}"${c === choice ? raw(' checked') : ''}> ${languageName(c)}${c === 'auto' ? html`<span class="sub"> · ${t('lang.autoSub')}</span>` : ''}</label></p>`)}
     </fieldset>
     <p><button type="submit" class="secondary">${t('lang.save')}</button></p>
+  </form>
+</section>`;
+}
+
+const themeName = (c: ThemeChoice): string => tKey(`theme.${c}` as const);
+
+/**
+ * Settings › Appearance: Automatic / Light / Dark, per browser (the `theme` cookie, not brain data). With scripts, a choice
+ * applies at once (theme.js); without, Save posts to the owner-only /settings/theme, which sets the cookie.
+ */
+function appearancePanel(choice: ThemeChoice, inApp: boolean): SafeHtml {
+  return html`<section id="appearance" class="panel">
+  <div class="panel-head"><h2>${t('theme.title')}</h2></div>
+  <p class="meta">${t(inApp ? 'theme.lede' : 'theme.ledeBrowser')}</p>
+  <form method="post" action="/settings/theme" class="stack" data-theme-form>
+    <fieldset class="choices"><legend class="visually-hidden">${t('theme.title')}</legend>
+    ${THEME_CHOICES.map((c) => html`<p><label class="choice"><input type="radio" name="theme" value="${c}"${c === choice ? raw(' checked') : ''}> ${themeName(c)}</label></p>`)}
+    </fieldset>
+    <p data-theme-save><button type="submit" class="secondary">${t('theme.save')}</button></p>
   </form>
 </section>`;
 }

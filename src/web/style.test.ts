@@ -426,7 +426,8 @@ test('Settings › Devices: a long device or ignored folder name wraps instead o
 test('the 3D window follows the theme: paper in light, blue-black in dark, with a visible frame', () => {
   assert.equal(prop('.graph', 'background'), 'var(--g-bg)');
   assert.equal(prop(':root', '--g-bg'), '#f6f3ec');
-  assert.equal(prop(':root', '--g-bg', '@media (prefers-color-scheme: dark)'), '#02050a');
+  assert.equal(prop(':root:not([data-theme="light"])', '--g-bg', '@media (prefers-color-scheme: dark)'), '#02050a');
+  assert.equal(prop(':root[data-theme="dark"]', '--g-bg'), '#02050a', 'Dark forced');
   assert.match(prop('.graph', 'border') ?? '', /^1px solid var\(--g-line\)$/);
   assert.equal(prop('.graph', 'color-scheme'), undefined, 'no forced dark scheme');
   assert.equal(prop('.graph-canvas', 'touch-action'), 'none');
@@ -487,7 +488,7 @@ test('no hex or rgb colour outside the palettes', () => {
   // which would vanish on the paper Graph window. Only `:root` (light and the dark block) holds colour values.
   // The one allowance: neutral black shadows, `rgb(0 0 0 / …)`, inside box-shadow.
   const colour = /#[0-9a-f]{3,8}\b|rgba?\(\s*\d/i;
-  for (const r of rules) if (!r.selectors.every((s) => s === ':root')) for (const [k, v] of Object.entries(r.decls)) {
+  for (const r of rules) if (!r.selectors.every((s) => s === ':root' || s === ':root[data-theme="dark"]' || s === ':root:not([data-theme="light"])')) for (const [k, v] of Object.entries(r.decls)) {
     const rest = k === 'box-shadow' ? v.replace(/rgb\(0 0 0 \/ [\d.]+\)/g, '') : v;
     assert.doesNotMatch(rest, colour, `${r.selectors.join(', ')} { ${k}: ${v} }`);
   }

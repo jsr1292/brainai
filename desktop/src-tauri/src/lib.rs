@@ -6,13 +6,14 @@ pub mod port;
 pub mod proof;
 pub mod server;
 pub mod update;
+pub mod updating;
 
 use server::StartError;
 use std::fs::OpenOptions;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use lang::{tr, tr_with};
@@ -33,10 +34,49 @@ const MAX_RESTARTS: u32 = 3;
 const HIDDEN_ARG: &str = "--hidden";
 /// Links that would open a new window open in the same one, where the navigation rule below sends outside links to
 /// the browser. Runs in every page the window loads.
-const NEW_WINDOW_LINKS: &str = r#"document.addEventListener('click', (e) => {
+const NEW_WINDOW_LINKS: &str = r#"window.__brainaiApp = true;
+document.addEventListener('click', (e) => {
   const a = e.target instanceof Element ? e.target.closest('a[target="_blank"]') : null;
   if (a && a.href) { e.preventDefault(); window.location.href = a.href; }
 }, true);"#;
+
+/// The window's own look follows Settings › Appearance: the title bar and scroll bars are native. Remembered in the
+/// app's data folder (outside the brain's own data), so the next start opens the window already in it.
+fn theme_file(app: &AppHandle) -> PathBuf {
+    app_data(app).join("ui-theme.json")
+}
+
+fn saved_window_theme(app: &AppHandle) -> Option<tauri::Theme> {
+    match nav::saved_theme(std::fs::read_to_string(theme_file(app)).ok().as_deref()) {
+        Some("light") => Some(tauri::Theme::Light),
+        Some("dark") => Some(tauri::Theme::Dark),
+        _ => None,
+    }
+}
+
+/// `auto` hands the title bar back to the system; light and dark force it. Saved so a restart keeps it.
+/// Numbers the choices in the order the page made them: a thread holding an older one does nothing.
+static THEME_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn set_window_theme(app: &AppHandle, choice: &str, seq: u64) {
+    // Two quick choices run on two threads: one at a time, and only the newest is applied, so the title bar and the
+    // saved file always end on the last choice.
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    if seq != THEME_SEQ.load(Ordering::SeqCst) {
+        return;
+    }
+    let theme = match choice {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None,
+    };
+    if let Some(w) = app.get_webview_window(MAIN) {
+        let _ = w.set_theme(theme);
+    }
+    let _ = std::fs::create_dir_all(app_data(app));
+    let _ = std::fs::write(theme_file(app), format!("{{\"theme\":\"{choice}\"}}"));
+}
 
 /// The running server and what the rest of the app needs to know about it.
 #[derive(Default)]
@@ -530,10 +570,43 @@ fn launch_to(app: AppHandle, page: &'static str) {
     });
 }
 
+/// Windows update: the installer writes `updating` next to the exe while it replaces the server folder. An app opened
+/// meanwhile shows a waiting text and holds back the server until the marker is gone (or the limits in `updating` pass).
+/// Harmless elsewhere: no marker, and the entry file is there.
+fn wait_for_installer(app: &AppHandle) {
+    let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from)) else { return };
+    let marker = dir.join("updating");
+    let entry = resources_dir(app).join("server").join("dist").join("index.js");
+    updating::wait_for_install(
+        &marker,
+        &entry,
+        || {
+            if let Some(w) = app.get_webview_window(MAIN) {
+                let text = tr("start.finishing_update").replace('\\', "\\\\").replace('\'', "\\'");
+                // Called on every poll: the first calls may run before the page has loaded, so it is applied again.
+                let _ = w.eval(format!("var p=document.querySelector('p');if(p&&p.lastChild){{p.lastChild.textContent='{text}'}}"));
+            }
+        },
+        |line| {
+            use std::io::Write;
+            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path(app)) {
+                let _ = writeln!(f, "{line}");
+            }
+        },
+        std::thread::sleep,
+        || quitting(app),
+    );
+}
+
 /// Starts the server, waits until it proves it is ours, and opens the dashboard in the window with a fresh ticket.
 /// The key is never sent to anything that has not proved it is ours. A new port is saved only once it worked.
 fn start_and_open(app: &AppHandle, page: &str) {
     lang::refresh();
+    // First: the runtime check below looks inside server/node_modules, which an installer may still be replacing.
+    wait_for_installer(app);
+    if quitting(app) {
+        return;
+    }
     // Windows: the search engine and the password hashing need Microsoft's Visual C++ runtime, which Windows itself
     // does not include. The app ships its own copy in the folder of each native module that loads it (B8); should one
     // be gone and the PC lack the runtime too, say so plainly rather than "the server did not start".
@@ -663,6 +736,7 @@ pub fn run() {
                 .title("BrainAI")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(420.0, 520.0)
+                .theme(saved_window_theme(app.handle()))
                 .visible(!std::env::args().any(|a| a == HIDDEN_ARG))
                 .initialization_script(NEW_WINDOW_LINKS)
                 .on_navigation(move |url| {
@@ -694,6 +768,15 @@ pub fn run() {
                         // Cancelled: the window stays on Settings, which follows update-check.json for the answer.
                         let app = leaving.clone();
                         std::thread::spawn(move || update::check_now_manual(&app));
+                        return false;
+                    }
+                    if let Some(choice) = nav::theme_choice(url.as_str(), port.load(Ordering::SeqCst)) {
+                        // Cancelled: the page already applied its look; the title bar follows.
+                        // Off this callback (WebView2's NavigationStarting runs on the main thread).
+                        let app = leaving.clone();
+                        let choice = choice.to_string();
+                        let seq = THEME_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+                        std::thread::spawn(move || set_window_theme(&app, &choice, seq));
                         return false;
                     }
                     if nav::is_choose_folder(url.as_str(), port.load(Ordering::SeqCst)) {

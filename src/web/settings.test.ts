@@ -50,14 +50,14 @@ test("A server's Settings holds four things, in order", async (t) => {
   assert.match(body, /<title>Settings<\/title>/);
   assert.match(body, /<a class="settings-link" href="\/settings" aria-current="page"/);
   const ids = [...body.matchAll(/<section id="([a-z-]+)"/g)].map((m) => m[1]!);
-  assert.deepEqual(ids, ['connections', 'health', 'version', 'devices', 'login', 'language', 'coaching', 'this-device']);
+  assert.deepEqual(ids, ['connections', 'health', 'version', 'devices', 'login', 'language', 'appearance', 'coaching', 'this-device']);
   for (const gone of ['approvals', 'activity', 'growth', 'tidy', 'moved', 'facts']) assert.ok(!ids.includes(gone), gone);
   assert.doesNotMatch(body, /href="\/discussions"/, 'the Discussions link left with the moved sections');
   // The phone's index: one row per section, each with a one-line status.
   const rows = [...body.matchAll(/<a class="row" href="#([a-z-]+)"><span class="txt">([^<]+)<\/span><span class="st">([\s\S]*?)<\/span><span class="chev"><\/span><\/a>/g)]
     .map((m) => [m[1]!, m[2]!, m[3]!.replace(/<[^>]+>/g, '').trim()] as const);
-  assert.deepEqual(rows.map((r) => r[0]), ['connections', 'health', 'version', 'devices', 'login', 'language', 'coaching', 'this-device']);
-  assert.deepEqual(rows.map((r) => r[1]), ['Assistants', 'Backups and copies', 'Version', 'Other computers', 'Your login', 'Language', 'Developer coaching', 'This browser']);
+  assert.deepEqual(rows.map((r) => r[0]), ['connections', 'health', 'version', 'devices', 'login', 'language', 'appearance', 'coaching', 'this-device']);
+  assert.deepEqual(rows.map((r) => r[1]), ['Assistants', 'Backups and copies', 'Version', 'Other computers', 'Your login', 'Language', 'Appearance', 'Developer coaching', 'This browser']);
   assert.equal(rows[0]![2], '1 assistant');
   assert.equal(rows[1]![2], '● Backups: all fine · 03:10');
   assert.match(rows[2]![2], /^BrainAI \d+\.\d+\.\d+$/);
@@ -65,8 +65,9 @@ test("A server's Settings holds four things, in order", async (t) => {
   assert.equal(rows[4]![2], '1 browser signed in');
   // A server keeps a minimal "This browser" for desk.js's two switches: no version line, no iPhone/Mac naming.
   assert.equal(rows[5]![2], 'Automatic');
-  assert.equal(rows[6]![2], 'On');
-  assert.equal(rows[7]![2], '');
+  assert.equal(rows[6]![2], 'Automatic');
+  assert.equal(rows[7]![2], 'On');
+  assert.equal(rows[8]![2], '');
   const mine = body.slice(body.indexOf('<section id="this-device"'), body.indexOf('</section>', body.indexOf('<section id="this-device"')));
   assert.match(mine, /<h2>This browser<\/h2>/);
   assert.doesNotMatch(mine, /BrainAI \d|database \d/);

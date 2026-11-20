@@ -5,6 +5,12 @@
 ; The installer now runs silently for updates (installMode "quiet": /S /UPDATE /R). Nothing in these hooks may show a
 ; dialog or wait for input: no MessageBox (it would need an /SD default); only hidden nsExec commands and a silent Abort.
 !macro NSIS_HOOK_PREINSTALL
+  ; The marker comes FIRST, before the app is stopped: an app opened during the stop phase waits too. The template's own
+  ; CheckIfAppIsRunning can abort without running our cleanup and leave the marker behind, so the app trusts a marker for
+  ; 3 minutes only (updating.rs); our own Abort below deletes it.
+  FileOpen $R9 "$INSTDIR\updating" w
+  FileWrite $R9 "${VERSION}"
+  FileClose $R9
   ; This hook runs before the template's own CheckIfAppIsRunning, so it does the same first: brainai.exe is shut down
   ; with the Restart Manager (forced when silent), and the install is aborted, before anything is deleted, if it
   ; cannot be stopped. Silent: no dialog, no MessageBox.
@@ -21,11 +27,18 @@
   ; CheckIfAppIsRunning (above) has already made sure the app is gone. Aborting there would leave a silent update half
   ; done with the app closed and /R never run: BrainAI would just vanish, on every update.
   ${If} $0 == "1"
+    Delete "$INSTDIR\updating"
     Abort
-  ${ElseIf} $0 == "0"
+  ${EndIf}
+  ${If} $0 == "0"
     ; Clear the old server folder so no file from an older version stays behind.
     RMDir /r "$INSTDIR\server"
   ${EndIf}
+!macroend
+
+; The copy is done (the template's /R relaunch comes after this): let a waiting app go on. Silent, nothing to answer.
+!macro NSIS_HOOK_POSTINSTALL
+  Delete "$INSTDIR\updating"
 !macroend
 
 ; Uninstalling for good: take BrainAI's entries out of the owner's AI tools first, with the server's own command, which

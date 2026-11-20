@@ -8,7 +8,8 @@
 /* ---- Tiers (design §2): sidebar width, content cap, padding, the home's right column; the sidebar's paper ---- */
 @media (min-width: 1100px) {
   :root { --side-w: 208px; --list-w: 280px; --cap: 1040px; --pad: 28px; --desk-right: 280px; --side-bg: #f4f2ec; }
-  @media (prefers-color-scheme: dark) { :root { --side-bg: #0c101b; } }
+  :root[data-theme="dark"] { --side-bg: #0c101b; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --side-bg: #0c101b; } }
   @media (min-width: 1280px) { :root { --side-w: 216px; --list-w: 300px; --cap: 1100px; --pad: 32px; --desk-right: 300px; } }
   @media (min-width: 1440px) { :root { --side-w: 232px; --list-w: 320px; --cap: 1200px; --pad: 40px; --desk-right: 340px; } }
   @media (min-width: 1920px) { :root { --side-w: 248px; --list-w: 360px; --cap: 1440px; --pad: 48px; --desk-right: 400px; } }

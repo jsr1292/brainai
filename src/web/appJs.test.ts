@@ -186,7 +186,7 @@ test('times keep the server\'s words (one date language) and gain the full local
 // ---- Fresh on return (the installed app) ----
 
 /** app.js in a page of the installed app (or a browser tab), with a clock, storage and navigation we control. */
-function loadFresh(o: { href?: string; standalone?: boolean; online?: boolean; focused?: string | null; edited?: boolean; draft?: string; fromPost?: boolean } = {}) {
+function loadFresh(o: { href?: string; standalone?: boolean; online?: boolean; focused?: string | null; edited?: boolean; draft?: string; fromPost?: boolean; panes?: Record<string, number> } = {}) {
   const docListeners: Record<string, (() => void)[]> = {};
   const winListeners: Record<string, (() => void)[]> = {};
   let clock = 1_000_000;
@@ -198,20 +198,26 @@ function loadFresh(o: { href?: string; standalone?: boolean; online?: boolean; f
   const field = o.draft !== undefined
     ? { tagName: 'TEXTAREA', type: 'textarea', value: o.draft, defaultValue: o.draft, checked: false, defaultChecked: false }
     : { tagName: 'INPUT', type: 'text', value: o.edited ? 'typed' : '', defaultValue: '', checked: false, defaultChecked: false };
+  const frames: (() => void)[] = [];
+  const panes: Record<string, { scrollTop: number; scrollHeight: number }> = {};
+  const built = new Set<string>(Object.keys(o.panes ?? {}));
+  for (const [sel, top] of Object.entries(o.panes ?? {})) panes[sel] = { scrollTop: top, scrollHeight: 5000 };
   const body = new FakeElement('body');
   if (o.fromPost) body.dataset.fresh = 'off';
   const active = o.focused ? { matches: (s: string) => s.split(',').map((x) => x.trim()).includes(o.focused!) } : { matches: () => false };
   const document = {
     body, visibilityState: 'visible', activeElement: active,
     querySelectorAll: (s: string) => (s === 'input, textarea, select' ? [field] : s === 'textarea' && field.tagName === 'TEXTAREA' ? [field] : []),
-    querySelector: () => null,
+    querySelector: (s: string) => (built.has(s) ? panes[s] : null),
     createElement: (tag: string) => new FakeElement(tag),
     addEventListener: (type: string, fn: () => void) => { (docListeners[type] ??= []).push(fn); },
+    removeEventListener: (type: string, fn: () => void) => { docListeners[type] = (docListeners[type] ?? []).filter((f) => f !== fn); },
   };
   class FakeDate extends Date { static now() { return clock; } }
   runInNewContext(readFileSync(new URL('./static/app.js', import.meta.url), 'utf8'), {
     document, navigator: { onLine: o.online ?? true, standalone: false }, Element: FakeElement, Intl, Date: FakeDate, Number, String,
     setTimeout: () => 0, clearTimeout: () => {}, location, history, scrollY: 640,
+    requestAnimationFrame: (fn: () => void) => { frames.push(fn); }, performance: { now: () => clock },
     scrollTo: (x: number, y: number) => { scrolled.push([x, y]); },
     sessionStorage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } },
     matchMedia: (q: string) => ({ matches: q === '(display-mode: standalone)' ? (o.standalone ?? true) : false }),
@@ -222,8 +228,12 @@ function loadFresh(o: { href?: string; standalone?: boolean; online?: boolean; f
     clock += ms;
     document.visibilityState = 'visible'; for (const fn of docListeners.visibilitychange ?? []) fn();
   };
+  const frame = () => { const run = frames.splice(0); for (const fn of run) fn(); };
+  const tickTime = (ms: number) => { clock += ms; };
+  const fire = (type: string) => { for (const fn of [...(docListeners[type] ?? [])]) (fn as (e: unknown) => void)({ key: '', target: null, defaultPrevented: true }); };
   const pageshow = () => { for (const fn of winListeners.pageshow ?? []) fn(); };
-  return { away, pageshow, store, replaced, scrolled, location, history };
+  const deskReady = () => { for (const fn of docListeners['desk:ready'] ?? []) fn(); };
+  return { away, pageshow, deskReady, frame, frames, tickTime, fire, panes, built, store, replaced, scrolled, location, history };
 }
 
 test('the installed app reloads the page in place after 2 minutes away, keeping the scroll', () => {
@@ -274,6 +284,74 @@ test('back from the replace, the scroll comes back once', () => {
   assert.equal(d.history.scrollRestoration, 'auto', 'manual only around the one restore');
   d.pageshow();
   assert.equal(d.scrolled.length, 1);
+});
+
+test('the scroll of the sheet and list panes is saved and put back once desk.js has built them', () => {
+  const d = loadFresh({ panes: { '#desk-sheet': 900, '.desk-list': 40 } });
+  d.away(121_000);
+  const key = 'scroll:https://brain.example/?project=wildlog';
+  assert.deepEqual(JSON.parse(d.store.get(key)!), { y: 640, p: { '#desk-sheet': 900, '.desk-list': 40 } });
+  // Back: the panes do not exist yet (desk.js loads after the page), so only the window goes back.
+  for (const p of Object.values(d.panes)) p.scrollTop = 0;
+  d.built.clear();
+  d.pageshow();
+  assert.deepEqual(d.scrolled, [[0, 640]]);
+  assert.equal(d.panes['#desk-sheet'].scrollTop, 0);
+  // desk.js builds its frame and says so.
+  d.built.add('#desk-sheet'); d.built.add('.desk-list');
+  d.deskReady();
+  assert.equal(d.panes['#desk-sheet'].scrollTop, 900);
+  assert.equal(d.panes['.desk-list'].scrollTop, 40);
+});
+
+/** A place waiting for panes that are not built, as after a reload (desk.js loads after the page). */
+function waiting() {
+  const d = loadFresh({ panes: { '#desk-sheet': 900 } });
+  d.away(121_000);
+  d.panes['#desk-sheet'].scrollTop = 0;
+  d.built.clear();
+  d.pageshow();
+  return d;
+}
+
+test('a place not applied within 3 seconds is dropped, so a later desk set-up never gets it', () => {
+  const d = waiting();
+  d.tickTime(1000); d.frame();
+  d.tickTime(2500); d.frame(); // past the limit: dropped
+  d.built.add('#desk-sheet');
+  d.deskReady();
+  assert.equal(d.panes['#desk-sheet'].scrollTop, 0);
+  assert.equal(d.frames.length, 0, 'the chain of frames ended');
+});
+
+test('a place is applied again when the content grows, and only one chain of frames runs', () => {
+  const d = waiting();
+  d.deskReady(); d.deskReady(); d.pageshow();
+  assert.equal(d.frames.length, 1, 'one chain, whoever asked');
+  d.built.add('#desk-sheet');
+  d.panes['#desk-sheet'].scrollHeight = 700; // too short to reach 900
+  d.frame();
+  d.panes['#desk-sheet'].scrollHeight = 3000; // the content arrived
+  d.frame();
+  assert.equal(d.panes['#desk-sheet'].scrollTop, 900);
+});
+
+test('the reader taking over (wheel, touch, key, press) ends the restore', () => {
+  for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) {
+    const d = waiting();
+    d.built.add('#desk-sheet');
+    d.fire(type);
+    d.frame();
+    d.deskReady();
+    assert.equal(d.panes['#desk-sheet'].scrollTop, 0, type);
+  }
+});
+
+test('an old plain-number place still restores the window', () => {
+  const d = loadFresh();
+  d.store.set('scroll:https://brain.example/?project=wildlog', '123');
+  d.pageshow();
+  assert.deepEqual(d.scrolled, [[0, 123]]);
 });
 
 test('app.js never calls location.reload', () => {

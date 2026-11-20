@@ -1,4 +1,4 @@
-/** Settings › Language. Keys: `lang.*`. The two language names are the same in every catalog: each in its own language. */
+/** Settings › Language and Settings › Appearance. Keys: `lang.*`, `theme.*`. The two language names are the same in every catalog: each in its own language. */
 export const language = {
   'lang.title': 'Language',
   'lang.lede': "The language of BrainAI's screens. It does not change how your assistants answer.",
@@ -9,4 +9,12 @@ export const language = {
   'lang.name.en': 'English',
   'lang.name.es': 'Español',
   'lang.goto': 'Settings › Language',
+  'theme.title': 'Appearance',
+  'theme.lede': "Automatic follows your computer's setting.",
+  'theme.ledeBrowser': "Automatic follows your computer's setting. This choice is kept on this browser only.",
+  'theme.auto': 'Automatic',
+  'theme.light': 'Light',
+  'theme.dark': 'Dark',
+  'theme.save': 'Save',
+  'theme.goto': 'Settings › Appearance',
 } as const;

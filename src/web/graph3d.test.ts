@@ -431,7 +431,9 @@ test('the dark window is the approved blue-black, the light one warm paper', () 
 
 test('the graph re-themes when the colour scheme changes', () => {
   const start = body('start');
-  assert.match(start, /matchMedia\('\(prefers-color-scheme: dark\)'\)/);
+  assert.match(start, /matchMedia\('\(prefers-color-scheme: dark\)'\)/, 'the system setting is the fallback');
+  assert.match(start, /theme\.dark\(\)/, 'the page choice (theme.js) wins');
+  assert.match(start, /theme\.onChange\(applyTheme\)/);
   assert.match(start, /addEventListener\('change'/);
   assert.match(body('applyTheme'), /setWindowTheme\(/); assert.match(body('applyTheme'), /sprites\.clear\(\)/);
   assert.doesNotMatch(src, /rgba\((222,222,228|220,220,228|232,232,238)/, 'no fixed Graphite greys left in the drawing');

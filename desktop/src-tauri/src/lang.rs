@@ -78,6 +78,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("err.ports_all_short", "Every port BrainAI can use is taken.", "Todos los puertos que BrainAI puede usar están ocupados."),
     ("err.start", "BrainAI could not start its server: {error}.", "BrainAI no ha podido arrancar su servidor: {error}."),
     ("err.window", "BrainAI could not open its window: {error}.", "BrainAI no ha podido abrir su ventana: {error}."),
+    ("start.finishing_update", "Finishing the update…", "Terminando la actualización…"),
     ("err.timeout", "BrainAI's server did not start.", "El servidor de BrainAI no ha arrancado."),
     ("err.squatter", "Another program keeps answering on BrainAI's port.", "Otro programa sigue respondiendo en el puerto de BrainAI."),
     ("err.keeps_stopping", "BrainAI's server keeps stopping.", "El servidor de BrainAI se sigue deteniendo."),

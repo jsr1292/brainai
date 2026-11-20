@@ -86,6 +86,7 @@ test('every /static/ link carries a fingerprint of the file, so a deploy is neve
 test('dark mode is the owner\'s deep navy, and the phone bar matches the background', () => {
   const css = readFileSync(new URL('./static/style.css', import.meta.url), 'utf8');
   const dark = css.slice(css.indexOf('@media (prefers-color-scheme: dark)'));
+  assert.match(dark, /^@media \(prefers-color-scheme: dark\) \{\n  :root:not\(\[data-theme="light"\]\) \{/, 'a dark system dark-themes unless Light is chosen');
   const v = (name: string) => dark.match(new RegExp(`--${name}: (#[0-9a-f]{6});`))?.[1];
   assert.equal(v('bg'), '#0f1320');
   assert.equal(v('surface'), '#161b2b');

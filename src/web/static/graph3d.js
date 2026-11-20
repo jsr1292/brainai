@@ -1255,16 +1255,18 @@ function start(root) {
   });
 
   // ---- The theme follows the app: blue-black in dark mode, paper in light, switched live (a phone turns dark at sunset).
+  // The page's look (theme.js): Automatic follows the system, Light and Dark are forced. Without theme.js, the system's setting.
   const darkQ = matchMedia('(prefers-color-scheme: dark)');
+  const theme = globalThis.brainTheme;
   function applyTheme() {
-    dark = darkQ.matches;
+    dark = theme ? theme.dark() : darkQ.matches;
     setWindowTheme(dark);
     sprites.clear();
     if (data) { measure(); draw(clock()); }
     wake();
   }
   applyTheme();
-  darkQ.addEventListener('change', applyTheme);
+  if (theme) theme.onChange(applyTheme); else darkQ.addEventListener('change', applyTheme);
 
   // ---- Size, visibility, reduced motion.
   if (typeof ResizeObserver === 'function') new ResizeObserver(() => { measure(); draw(clock()); wake(); }).observe(root);
