@@ -209,7 +209,7 @@ const claudeCode: Tool = {
     return r.code === 0 ? null : `Claude Code could not remove BrainAI: ${why(r)}`;
   },
   rulesFile: (env) => join(env.home, '.claude', 'CLAUDE.md'),
-  signIn: 'In Claude Code, type /mcp, choose brainai and Authenticate; your browser asks you to Allow.',
+  signIn: 'In Claude Code, type /mcp, choose brainai and Authenticate; then approve the sign-in in BrainAI.',
 };
 
 /**
@@ -257,7 +257,7 @@ const codex: Tool = {
     return r.code === 0 ? null : `Codex could not remove BrainAI: ${why(r)}`;
   },
   rulesFile: (env) => join(env.home, '.codex', 'AGENTS.md'),
-  signIn: 'Your browser opens to sign Codex in: click Allow. If it did not, run codex mcp login brainai in a terminal.',
+  signIn: 'Your browser opens to sign Codex in: approve it in BrainAI. If it did not, run codex mcp login brainai in a terminal.',
   after: (env) => startDetached(env, 'codex', ['mcp', 'login', NAME]),
 };
 
@@ -307,7 +307,7 @@ const opencode: Tool = {
     return null;
   },
   rulesFile: (env) => join(OPENCODE_DIR(env), 'AGENTS.md'),
-  signIn: 'In a terminal, run opencode mcp auth brainai; your browser asks you to Allow.',
+  signIn: 'In a terminal, run opencode mcp auth brainai; then approve the sign-in in BrainAI.',
 };
 
 function cursorConfig(env: ToolEnv): { path: string; json: { mcpServers?: Record<string, unknown> } & Record<string, unknown> } | { refuse: string } {
@@ -405,7 +405,7 @@ const gemini: Tool = {
     return null;
   },
   rulesFile: (env) => join(GEMINI_DIR(env), 'GEMINI.md'),
-  signIn: 'In Gemini CLI, type /mcp auth brainai; your browser asks you to Allow.',
+  signIn: 'In Gemini CLI, type /mcp auth brainai; then approve the sign-in in BrainAI.',
 };
 
 const NEEDS_AGAIN = 'needs connecting again';

@@ -209,6 +209,16 @@ test('docs mode pushes one docs commit on top of main with the public tree, and 
   assert.equal(w.git(w.pub, 'tag'), tagsBefore);
 });
 
+test('docs mode counts the Spanish README as documentation', { skip: !haveGit }, (t) => {
+  const w = docsWorld(t);
+  w.write('README.es.md', '# Un cerebro\n');
+  w.git(w.priv, 'add', '-A');
+  w.git(w.priv, 'commit', '-qm', 'docs es');
+  const r = w.runDocs();
+  assert.equal(r.status, 0, r.out);
+  assert.ok(w.pubFiles().includes('README.es.md'), w.pubFiles().join(' '));
+});
+
 test('docs mode refuses a change to anything but documentation and lists the paths', { skip: !haveGit }, (t) => {
   const w = docsWorld(t);
   w.write('README.md', '# A brain\n\nNew words.\n');

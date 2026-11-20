@@ -151,9 +151,9 @@ test('Gemini CLI: found on the PATH only; Connect adds mcpServers.brainai.httpUr
   none.f.write('.gemini/settings.json', '{}');
   assert.equal((await stateOf(none.env, 'gemini')).installed, false, 'a ~/.gemini folder alone is not enough');
   const { f, env } = gemWorld(t);
-  assert.deepEqual(await stateOf(env, 'gemini'), { id: 'gemini', name: 'Gemini CLI', installed: true, state: 'not-connected', signIn: 'In Gemini CLI, type /mcp auth brainai; your browser asks you to Allow.', hooks: 'none' });
+  assert.deepEqual(await stateOf(env, 'gemini'), { id: 'gemini', name: 'Gemini CLI', installed: true, state: 'not-connected', signIn: 'In Gemini CLI, type /mcp auth brainai; then approve the sign-in in BrainAI.', hooks: 'none' });
   const r = await connect('gemini', env, {});
-  assert.deepEqual(r, { ok: true, signIn: 'In Gemini CLI, type /mcp auth brainai; your browser asks you to Allow.' });
+  assert.deepEqual(r, { ok: true, signIn: 'In Gemini CLI, type /mcp auth brainai; then approve the sign-in in BrainAI.' });
   assert.deepEqual(JSON.parse(f.read('.gemini/settings.json')!), { mcpServers: { brainai: { httpUrl: URL_ } } });
   assert.equal(findBlock(f.read('.gemini/GEMINI.md')!)!.host, 'localhost:3100');
   assert.equal((await stateOf(env, 'gemini')).state, 'connected');

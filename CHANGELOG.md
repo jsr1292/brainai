@@ -4,6 +4,17 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Version shows the version you run.
 
+## 1.9.1 (2026-11-20)
+
+Updating needs nothing from you. On the desktop app it downloads in the background and installs when you restart.
+
+- **The README starts with what BrainAI does,** and a short example: save something in one assistant, ask another.
+  It says plainly that ChatGPT, Claude on the web and Grok need BrainAI to have an internet address. A new page,
+  `docs/COMPARISON.md`, compares BrainAI with Mem0, Hindsight and Basic Memory, including where the others are ahead.
+
+- **Connect's sign-in hint matches what you see.** It said your browser asks you to Allow; you approve the sign-in in
+  BrainAI (in the app: Review, then Approve).
+
 ## 1.9.0 (2026-11-20)
 
 Updating needs nothing from you. On the desktop app this is the first quiet update: if you run 1.8.0, it downloads in

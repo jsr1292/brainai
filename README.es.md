@@ -2,15 +2,39 @@ Read in English: [README.md](README.md)
 
 # BrainAI
 
-Una memoria compartida para todos tus asistentes de IA, en tu propio servidor.
+Memoria compartida para tus asistentes de IA. De código abierto, en tu ordenador o en tu propio servidor.
 
-Cuéntale una decisión a Claude y ChatGPT la conocerá mañana. Pregunta a Codex qué falta en un proyecto y leerá la
-hoja de ruta que Claude Code actualizó anoche. BrainAI es un servidor pequeño al que se conecta, por MCP, cada
-asistente que usas. Guarda **datos** cortos (decisiones, estados, hojas de ruta, tu perfil) y **páginas** largas (qué
-es un proyecto, cómo funciona, por qué se construyó así), y tiene un panel donde ves y corriges todo.
+Cuéntale algo a un asistente y otro podrá usarlo más tarde para responderte. BrainAI guarda **datos** cortos (decisiones,
+estados, hojas de ruta, tu perfil) y **páginas** largas (qué es un proyecto, cómo funciona, por qué se construyó así)
+en un único sitio al que se conectan Claude Code, Codex, Cursor, OpenCode, Gemini CLI (aún sin probar) y la app de escritorio de Claude,
+y tiene un panel donde ves y corriges todo. ChatGPT, Claude en la web y Grok también pueden usarlo, cuando BrainAI
+tiene una dirección de internet (más en "¿Dónde va a vivir?").
 
 Está pensado para una sola persona. No hay cuentas que compartir ni servicio en la nube: tus recuerdos viven en un
 único archivo SQLite, en una máquina que es tuya.
+
+## Así funciona
+
+```text
+Lunes, en Claude Code
+  Tú:      Recuerda que hemos elegido Postgres para el proyecto casa, porque necesitamos transacciones.
+  Claude:  Guardado en BrainAI: casa usa Postgres, por las transacciones.
+
+Martes, en Codex o Cursor
+  Tú:      ¿Qué base de datos usa casa?
+  Codex:   Postgres. Lo decidiste el lunes, por las transacciones (de tu BrainAI, proyecto casa).
+```
+
+Los dos asistentes no hablan entre sí. Ambos leen y escriben la misma memoria. Las apps de tu ordenador se conectan
+directamente a la app de escritorio de BrainAI. ChatGPT, Claude en la web y Grok se ejecutan en los ordenadores de
+OpenAI, Anthropic y xAI, así que solo pueden llegar a BrainAI cuando tiene una dirección de internet: *Acceso desde el
+móvil y la web* en el Mac (solo mientras el Mac está encendido y despierto), o BrainAI en un servidor.
+
+**Compruébalo tú mismo.** Una evaluación de extremo a extremo con asistentes reales, con sus fallos publicados, está en
+[docs/es/LIFECYCLE-EVAL.md](docs/es/LIFECYCLE-EVAL.md); el banco de pruebas solo de recuperación, en
+[docs/es/BENCHMARK.md](docs/es/BENCHMARK.md); [docs/es/REPRODUCE.md](docs/es/REPRODUCE.md) tiene los comandos para
+comprobar cada afirmación. Cómo se compara con Mem0, Hindsight y Basic Memory:
+[docs/es/COMPARISON.md](docs/es/COMPARISON.md).
 
 > **Una versión temprana.** BrainAI gestiona a diario la memoria de una persona y se ensayó desde una instalación
 > limpia, pero es joven.
@@ -46,18 +70,16 @@ ordenador y pasar más adelante a un servidor sin perder ningún recuerdo.
 
 ## Qué obtienes
 
-- **Todos los asistentes, una sola memoria.** Claude, ChatGPT y Grok (web y móvil), y Claude Code, Codex, Grok Build
-  y OpenCode en tu ordenador. Cada uno se conecta con OAuth y tú decides qué puede hacer.
+- **Todos los asistentes, una sola memoria.** Claude Code, Codex, Cursor, OpenCode, Gemini CLI (aún sin probar) y la app de escritorio
+  de Claude en tu ordenador; ChatGPT, Claude en la web y Grok (web y móvil) cuando BrainAI tiene una dirección de
+  internet. Cada uno tiene su propia conexión (inicio de sesión OAuth, o un archivo de clave para la app de escritorio de Claude) y tú decides qué puede hacer.
 - **Un plugin de una sola instalación para Claude Code:** `claude plugin marketplace add jsr1292/brainai`, y después
   `claude plugin install brainai@brainai-plugins` (`docs/es/CLIENTS.md`, "Instalar como plugin").
 - **Recuperación por significado,** en varios idiomas, con un resumen por proyecto: sus estados, decisiones, hoja de
   ruta y páginas en una sola llamada. Un pequeño modelo local reordena las primeras coincidencias de cada búsqueda
-  para que la mejor respuesta salga primero. Los proyectos pueden tener apodos, y un asistente puede enviar una
-  versión en inglés de una pregunta hecha en otro idioma. Lo bien que encuentra las cosas se mide en dos pruebas
-  públicas, LoCoMo y LongMemEval, solo de recuperación (`docs/es/BENCHMARK.md`); que el ciclo completo (guardar,
-  sustituir, olvidar, responder) funcione con asistentes reales se mide en una pequeña evaluación de extremo a
-  extremo, con sus fallos y sus carencias abiertas publicados (`docs/es/LIFECYCLE-EVAL.md`). `docs/es/REPRODUCE.md`
-  tiene los comandos para comprobar tú mismo cada afirmación.
+  para que la mejor respuesta salga primero. Lo bien que encuentra las cosas, y si el ciclo completo funciona con
+  asistentes reales, se mide y se publica (`docs/es/BENCHMARK.md`, `docs/es/LIFECYCLE-EVAL.md`,
+  `docs/es/REPRODUCE.md`).
 - **Datos que dicen cuánto duran y de dónde vienen.** Un asistente puede marcar un dato como válido hasta una fecha
   (un plazo, una versión, quién tiene un trabajo): así todos los asistentes ven cuándo ha pasado su fecha. Cada dato
   puede indicar si lo dijiste tú o lo dedujo un asistente, y quién lo anotó. Un asistente que dice que tú dijiste
@@ -70,8 +92,8 @@ ordenador y pasar más adelante a un servidor sin perder ningún recuerdo.
   aprobación. Una reformulación profunda aún puede colarse (límites medidos en `docs/es/SECURITY.md`). Las contraseñas
   y las claves se rechazan.
 - **Ves y controlas lo que hacen los asistentes.** Actividad enumera lo que cada asistente guardó, cambió o borró, con
-  Deshacer en cada dato. "El guardado espera mi aprobación" retiene los guardados de un asistente hasta que los
-  apruebes; "Pausar el guardado de todos los asistentes" los detiene todos.
+  Deshacer en cada dato. "El guardado espera mi aprobación" retiene el guardado de un asistente hasta que lo
+  apruebes; "Pausar el guardado de todos los asistentes" lo detiene en todos.
 - **Nada se pierde al acabar una sesión.** Recordatorios de guardado para Claude Code, Codex y Cursor, y una habilidad
   de cosecha: un asistente envía en un solo lote lo que decidió una sesión, y el lote espera en tu Bandeja hasta que
   lo apruebes.
@@ -193,7 +215,7 @@ Todo lo personal vive en `overlay/`, que nunca se sube a git ni lo toca una actu
 
 - `docs/es/RUNBOOK.md`: instalar, ejecutar, hacer copias, restaurar y actualizar.
 - `docs/es/CLIENTS.md`: conectar cada app.
-- `docs/es/DESKTOP.md`: la app de escritorio (Mac, y Windows en pruebas): conectar tus herramientas, acceso desde el
+- `docs/es/DESKTOP.md`: la app de escritorio (Mac, y Windows 10/11, más reciente y menos probado que la app para Mac): conectar tus herramientas, acceso desde el
   móvil y la web, pasar a un servidor.
 - `docs/es/CLOUD.md`: ejecutar BrainAI en un servidor alquilado.
 - `docs/es/IMPORT.md`: traer lo que ya tienes.

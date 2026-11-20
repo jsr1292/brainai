@@ -67,7 +67,7 @@ export const setup = {
   'setup.where.gemini-cli': 'In ~/.gemini/GEMINI.md: replace the part between the two brain-setup lines, or add it at the end.',
 
   // ---- Settings › Tools on this Mac ----
-  'setup.tools.lede': 'For each coding tool, Connect adds BrainAI and its short rules to the tool\'s instructions, and the tool then signs in once: your browser asks you to Allow.',
+  'setup.tools.lede': 'For each coding tool, Connect adds BrainAI and its short rules to the tool\'s instructions, and the tool then signs in once: you approve it in BrainAI.',
   'setup.tools.note': 'A tool that already uses another BrainAI is left as it is unless you press Replace. Before any change, a file is backed up next to itself as {code}.',
   'setup.tools.cursorHead': 'Rules for Cursor',
   'setup.tools.cursorHow': 'Cursor keeps its rules in its settings: paste this into Cursor › Settings › Rules.',
@@ -191,7 +191,7 @@ export const setup = {
   'setup.connect.title': 'Connect your assistants',
   'setup.connect.found': 'Found on {computer}:',
   'setup.connect.none': 'No coding tools found on {computer}. You can connect them later from Settings › Tools on {computer}.',
-  'setup.connect.note': 'For each coding tool, Connect adds BrainAI and its short rules to the tool\'s instructions, and the tool signs in once: your browser asks you to Allow. You can undo it in Settings.',
+  'setup.connect.note': 'For each coding tool, Connect adds BrainAI and its short rules to the tool\'s instructions, and the tool signs in once: you approve it in BrainAI. You can undo it in Settings.',
   'setup.try.title': 'Try it',
   'setup.try.none': 'No assistant is added yet. {link}, or open your brain and do it later.',
   'setup.try.goBack': 'Go back and connect one',

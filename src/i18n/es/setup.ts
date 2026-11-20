@@ -66,7 +66,7 @@ export const setup_es: Record<keyof typeof setup, Entry> = {
   'setup.connect.gemini-cli': 'En ~/.gemini/settings.json, dentro de "mcpServers": "{name}": { "httpUrl": "{address}" }; luego escribe /mcp auth {name} en Gemini CLI para iniciar sesión. Aún sin probar.',
   'setup.where.gemini-cli': 'En ~/.gemini/GEMINI.md: sustituye la parte entre las dos líneas de configuración de la memoria o añádela al final.',
 
-  'setup.tools.lede': 'Con cada herramienta de programación, Conectar añade BrainAI y sus reglas breves a las instrucciones de la herramienta, y la herramienta inicia sesión una sola vez: tu navegador te pide que pulses Permitir.',
+  'setup.tools.lede': 'Con cada herramienta de programación, Conectar añade BrainAI y sus reglas breves a las instrucciones de la herramienta, y la herramienta inicia sesión una sola vez: lo apruebas en BrainAI.',
   'setup.tools.note': 'Una herramienta que ya usa otro BrainAI se queda como está, salvo que pulses Sustituir. Antes de cualquier cambio, se guarda una copia del archivo a su lado como {code}.',
   'setup.tools.cursorHead': 'Reglas para Cursor',
   'setup.tools.cursorHow': 'Cursor guarda sus reglas en sus ajustes: pega esto en Cursor › Settings › Rules.',
@@ -188,7 +188,7 @@ export const setup_es: Record<keyof typeof setup, Entry> = {
   'setup.connect.title': 'Conecta tus asistentes',
   'setup.connect.found': 'Encontradas en {computer}:',
   'setup.connect.none': 'No se han encontrado herramientas de programación en {computer}. Puedes conectarlas más tarde desde Ajustes › Herramientas en {computer}.',
-  'setup.connect.note': 'Con cada herramienta de programación, Conectar añade BrainAI y sus reglas breves a las instrucciones de la herramienta, y la herramienta inicia sesión una sola vez: tu navegador te pide que pulses Permitir. Puedes deshacerlo en Ajustes.',
+  'setup.connect.note': 'Con cada herramienta de programación, Conectar añade BrainAI y sus reglas breves a las instrucciones de la herramienta, y la herramienta inicia sesión una sola vez: lo apruebas en BrainAI. Puedes deshacerlo en Ajustes.',
   'setup.try.title': 'Pruébalo',
   'setup.try.none': 'Todavía no has añadido ningún asistente. {link}, o abre tu memoria y hazlo más tarde.',
   'setup.try.goBack': 'Vuelve atrás y conecta uno',

@@ -2,15 +2,38 @@ Leer en español: [README.es.md](README.es.md)
 
 # BrainAI
 
-A shared brain for all your AI assistants, on your own server.
+Shared memory for your AI assistants. Open source, on your computer or your own server.
 
-Tell Claude about a decision, and ChatGPT knows it tomorrow. Ask Codex what's left on a project, and it reads the
-roadmap Claude Code updated last night. BrainAI is one small server that every assistant you use connects to over
-MCP. It keeps short **facts** (decisions, statuses, roadmaps, your profile) and long **pages** (what a project is,
-how it runs, why it was built that way), and a dashboard where you see and correct all of it.
+Tell one assistant something, and another one can answer with it later. BrainAI keeps short **facts** (decisions,
+statuses, roadmaps, your profile) and long **pages** (what a project is, how it runs, why it was built that way) in one
+place that Claude Code, Codex, Cursor, OpenCode, Gemini CLI (not tested yet) and the Claude desktop app all connect to, and a dashboard
+where you see and correct all of it. ChatGPT, Claude on the web and Grok can use it too, once BrainAI has an internet
+address (more under "Where will it live?").
 
 It is built for one person. There are no accounts to share and no cloud service: your memories live in one SQLite
 file on a machine you own.
+
+## See it work
+
+```text
+Monday, in Claude Code
+  You:     Remember that we chose Postgres for the casa project, because we need transactions.
+  Claude:  Saved to BrainAI: casa uses Postgres, for transactions.
+
+Tuesday, in Codex or Cursor
+  You:     What database does casa use?
+  Codex:   Postgres. You decided that on Monday, for transactions (from your BrainAI, project casa).
+```
+
+The two assistants never talk to each other. Both read and write the same memory. The apps on your computer connect to
+the BrainAI desktop app directly. ChatGPT, Claude on the web and Grok run on OpenAI's, Anthropic's and xAI's computers,
+so they can only reach BrainAI once it has an internet address: *Reach from phone and web* on the Mac (only while the
+Mac is on and awake), or BrainAI on a server.
+
+**Check it yourself.** An end-to-end eval with real assistants, failures published, is in
+[docs/LIFECYCLE-EVAL.md](docs/LIFECYCLE-EVAL.md); the retrieval-only benchmark is in
+[docs/BENCHMARK.md](docs/BENCHMARK.md); [docs/REPRODUCE.md](docs/REPRODUCE.md) has the commands to check each claim
+yourself. How it compares with Mem0, Hindsight and Basic Memory: [docs/COMPARISON.md](docs/COMPARISON.md).
 
 > **An early release.** BrainAI runs one person's brain every day, and it was rehearsed from a clean install, but it is
 > young.
@@ -44,16 +67,15 @@ server later without losing a memory.
 
 ## What you get
 
-- **Every assistant, one memory.** Claude, ChatGPT and Grok (web and phone), and Claude Code, Codex, Grok Build and
-  OpenCode on your computer. Each connects with OAuth, and you choose what it may do.
+- **Every assistant, one memory.** Claude Code, Codex, Cursor, OpenCode, Gemini CLI (not tested yet) and Claude's desktop app on your
+  computer; ChatGPT, Claude on the web and Grok (web and phone) once BrainAI has an internet address. Each gets its
+  own connection (OAuth sign-in, or a key for Claude's desktop app), and you choose what it may do.
 - **One-install plugin for Claude Code:** `claude plugin marketplace add jsr1292/brainai`, then
   `claude plugin install brainai@brainai-plugins` (`docs/CLIENTS.md`, "Install as a plugin").
 - **Recall by meaning,** in several languages, with a briefing per project: its statuses, decisions, roadmap and pages
-  in one call. A small local model reorders each search's first matches so the best answer comes first. Projects can
-  have nicknames, and an assistant can send an English version of a question asked in another language. How well it
-  finds things is measured on two public tests, LoCoMo and LongMemEval, retrieval only (`docs/BENCHMARK.md`); whether
-  the whole loop (saving, replacing, forgetting, answering) works with real assistants is measured in a small end-to-end
-  eval, with its failures and open gaps published (`docs/LIFECYCLE-EVAL.md`). `docs/REPRODUCE.md` has the commands to check each claim yourself.
+  in one call. A small local model reorders each search's first matches so the best answer comes first. How well it
+  finds things, and whether the whole loop works with real assistants, is measured and published
+  (`docs/BENCHMARK.md`, `docs/LIFECYCLE-EVAL.md`, `docs/REPRODUCE.md`).
 - **Facts that say how long they hold and where they came from.** An assistant can mark a fact as valid until a date
   (a deadline, a version, who holds a job): every assistant then sees when it is past its date. Each fact can say
   whether you said it or an assistant inferred it, and who recorded that. An assistant that says you said something
@@ -175,7 +197,7 @@ Anything personal lives in `overlay/`, which is never committed and never touche
 
 - `docs/RUNBOOK.md`: install, run, back up, restore and update.
 - `docs/CLIENTS.md`: connecting each app.
-- `docs/DESKTOP.md`: the desktop app (Mac, and Windows in testing): connecting your tools, Reach from phone and web,
+- `docs/DESKTOP.md`: the desktop app (Mac, and Windows 10/11, newer and less tested than the Mac app): connecting your tools, Reach from phone and web,
   moving to a server.
 - `docs/CLOUD.md`: running BrainAI on a rented server.
 - `docs/IMPORT.md`: bringing in what you already have.

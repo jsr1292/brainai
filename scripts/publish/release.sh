@@ -12,7 +12,7 @@
 #   - The caller's git hooks and signing are switched off for the public commit and tag.
 #   - Docs mode (--docs, no version): the same gate on the committed HEAD, then one commit "BrainAI docs <YYYY-MM-DD>" on
 #     top of the public repo's current main, with no tag. Refused (exit 2, listing the paths) when anything but
-#     documentation (README.md, docs/**, CHANGELOG.md, LICENSE, plugins/**/README.md) differs from the tree of the latest
+#     documentation (README.md, README.es.md, docs/**, CHANGELOG.md, LICENSE, plugins/**/README.md) differs from the tree of the latest
 #     v* snapshot on the public repo: code only goes out in a versioned release.
 # Usage: PUBLISH_NAME=… PUBLISH_EMAIL=… scripts/publish/release.sh <denylist> <public-repo-url> <version> [--no-tests] [--dry-run]
 #        PUBLISH_NAME=… PUBLISH_EMAIL=… scripts/publish/release.sh <denylist> <public-repo-url> --docs [--no-tests] [--dry-run]
@@ -89,7 +89,7 @@ if [ "$DOCS" = 1 ]; then
   # Only documentation may differ from the last versioned snapshot (the newest v* tag): list what else changed.
   LAST="$(git -C "$WORK/pub" tag --list 'v[0-9]*' --sort=-v:refname | head -n 1)"
   [ -n "$LAST" ] || { echo "The public repo has no versioned snapshot yet: publish a release first" >&2; exit 2; }
-  OTHER="$(git -C "$WORK/pub" diff --cached --name-only --no-renames "$LAST" | grep -vE '^(README\.md|CHANGELOG\.md|LICENSE|docs/.*|plugins/.*/README\.md)$' || true)"
+  OTHER="$(git -C "$WORK/pub" diff --cached --name-only --no-renames "$LAST" | grep -vE '^(README(\.es)?\.md|CHANGELOG\.md|LICENSE|docs/.*|plugins/.*/README\.md)$' || true)"
   if [ -n "$OTHER" ]; then
     echo "Docs mode publishes documentation only. These paths differ from $LAST and are not documentation:" >&2
     printf '%s\n' "$OTHER" | sed 's/^/  /' >&2
