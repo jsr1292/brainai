@@ -54,6 +54,11 @@ export function reasonText(reason: string): string {
   return reason.split(' and ').map(one).join(tKey('err.reason.and'));
 }
 
+/** A failed copy's code (see CopyWhy) in the owner's language, without paths. */
+export function copyWhyText(why: string): string {
+  return tKey((['folder', 'pictures', 'write', 'stuck'].includes(why) ? `backup.why.${why}` : 'backup.why.other') as 'backup.why.other');
+}
+
 /** The backup problems (`backupHealth`) in the owner's language; a health value without keys shows its English sentences. */
 export function backupProblems(h: { problems: string[]; say?: { key: Key; params?: Record<string, string | number> }[] }): string[] {
   return h.problems.map((p, i) => {
@@ -61,6 +66,7 @@ export function backupProblems(h: { problems: string[]; say?: { key: Key; params
     if (!say) return p;
     const params = { ...say.params };
     if (params.error === '') params.error = t('backup.p.logDefault');
+    if (say.key === 'backup.p.copyFailed') params.reason = copyWhyText(String(params.reason));
     if (say.key === 'backup.p.copy') params.result = tKey(params.result === 'skipped' ? 'backup.p.result.skipped' : 'backup.p.result.failed');
     if (say.key === 'backup.p.jobFailed' || say.key === 'backup.p.jobOld') params.name = tKey(params.name === 'git copy' ? 'backup.p.gitCopy' : 'backup.p.mdExport');
     return tKey(say.key, params);

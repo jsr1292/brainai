@@ -2,7 +2,7 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -545,4 +545,37 @@ test('A12: a saved copy carries the date and the source of a fact through a rest
   const opened = openDb(join(dir, 'memory.db'));
   t.after(() => opened.close());
   assert.deepEqual(opened.prepare('SELECT valid_until, source, source_note FROM memories').get(), { valid_until: '2027-01-31', source: 'owner_said', source_note: 'phone call' });
+});
+
+test('a backup file with an images folder beside it (the second backup folder) brings those pictures back', async (t) => {
+  const { file } = await backupFile(t, 3);
+  const beside = join(file, '..', 'images', '00');
+  mkdirSync(beside, { recursive: true });
+  writeFileSync(join(beside, `${'0'.repeat(24)}.png`), 'pic');
+  const dir = emptyData(t);
+  assert.deepEqual(await stageRestore(file, dir), { facts: 2, pages: 1, pictures_missing: 2 });
+  assert.deepEqual(applyPendingRestore(dir), { facts: 2, pages: 1, pictures_missing: 2 });
+  assert.equal(readFileSync(join(dir, 'images', '00', `${'0'.repeat(24)}.png`), 'utf8'), 'pic');
+  const restored = new Database(join(dir, 'memory.db'));
+  t.after(() => restored.close());
+  assert.equal(restored.prepare("SELECT removed_at FROM images WHERE id = ?").get('0'.repeat(24)) !== undefined, true);
+  assert.equal((restored.prepare("SELECT removed_at FROM images WHERE id = ?").get('0'.repeat(24)) as { removed_at: string | null }).removed_at, null, 'the picture that came back stays live');
+  assert.equal(missingPictures(restored, dir), 0);
+});
+
+test('an unreadable picture beside a backup file does not fail the restore and a stray file is not copied', async (t) => {
+  const { file } = await backupFile(t, 3);
+  const beside = join(file, '..', 'images');
+  for (const d of ['00', '11', '22', '33']) mkdirSync(join(beside, d), { recursive: true });
+  writeFileSync(join(beside, '00', `${'0'.repeat(24)}.png`), 'pic');
+  writeFileSync(join(beside, '11', `${'1'.repeat(24)}.png`), 'locked');
+  chmodSync(join(beside, '11', `${'1'.repeat(24)}.png`), 0o000);
+  t.after(() => { try { chmodSync(join(beside, '11', `${'1'.repeat(24)}.png`), 0o600); } catch { /* already removed */ } });
+  writeFileSync(join(beside, '33', `${'3'.repeat(24)}.png`), 'stray');
+  const dir = emptyData(t);
+  const counts = await stageRestore(file, dir);
+  assert.equal(counts.pictures_missing, process.getuid?.() === 0 ? 1 : 2, 'the locked and the absent picture are counted missing');
+  applyPendingRestore(dir);
+  assert.equal(existsSync(join(dir, 'images', '00', `${'0'.repeat(24)}.png`)), true);
+  assert.equal(existsSync(join(dir, 'images', '33')), false, 'a file the database does not list is not copied');
 });

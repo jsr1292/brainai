@@ -293,15 +293,15 @@ ${body}
 </div>`;
 }
 
-/** Where each tool signs in, in a few words, for step 4 when nothing has arrived yet. */
-const SIGN_IN_HINT: Record<ToolState['id'], PlainKey> = {
-  'claude-code': 'setup.hint.claude-code',
-  codex: 'setup.hint.codex',
-  opencode: 'setup.hint.opencode',
-  cursor: 'setup.hint.cursor',
-  gemini: 'setup.hint.gemini',
-  'claude-desktop': 'setup.hint.claude-desktop',
-};
+/**
+ * The one step still left in each app the owner connected, as Connect itself reported it (tools.signIn.*): signing in for the
+ * tools whose grant has not arrived, and for Claude's desktop app (which signs in at Connect time) opening it again. When the
+ * owner ticked apps on the Your apps step, only those count, unless none of them is connected.
+ */
+function stepsLeft(added: ToolState[], chosen: readonly string[] | undefined): { app: string; step: string }[] {
+  const mine = chosen && added.some((x) => chosen.includes(x.id)) ? added.filter((x) => chosen.includes(x.id)) : added;
+  return mine.filter((x) => x.signedIn === false || x.id === 'claude-desktop').map((x) => ({ app: toolName(x), step: x.id === 'cursor' ? tKey('tools.tryIt.cursor') : tKey(`tools.signIn.${x.id}`) }));
+}
 
 /** Step 2, Your apps: the ticks (screen 1) or what the answer means (screen 2). */
 export type AppsStep = { screen: 'pick'; ticked: AppId[]; found: ReadonlySet<ToolId> } | { screen: 'result'; ticked: AppId[]; outcome: Outcome; way: Way | null; windows: boolean };
@@ -326,6 +326,8 @@ ${head ? html`<h2 class="apps-group">${t('setup.apps.also')}</h2><ul class="grou
 
 export function welcomePage(v: {
   step: 1 | 2 | 3 | 4 | 5;
+  /** The apps ticked on Your apps (step 5 names what is left in these). */
+  chosen?: readonly string[];
   /** Connect: what the Your apps step stored, which of those apps are on this computer, and whether Reach is on. */
   yours?: { answer: Answer | null; found: ReadonlySet<ToolId>; reachOn: boolean };
   /** The last screen: the Home card for the internet apps, above Done. */
@@ -392,13 +394,13 @@ ${v.modelsLine ?? ''}
 ${v.nextCard ?? ''}
 <form method="post" action="/welcome/done" class="setup-actions"><button type="submit" class="primary">${t('setup.try.open')}</button></form>`);
   }
-  // Only the tools that have not signed in yet need a hint; when all have, the list is the whole set.
-  const hintFor = (added.some((x) => x.signedIn === false) ? added.filter((x) => x.signedIn === false) : added).map((x) => tKey(SIGN_IN_HINT[x.id]));
+  const left = stepsLeft(added, v.chosen).map((x) => t('setup.try.left', x));
   return setupFrame(5, html`<h1>${t('setup.try.title')}</h1>
 <p>${t('setup.try.open1')}</p>
 ${copyBox(sentence, 'setup.copy.sentence')}
+${left.map((line) => html`<p class="notice" role="status">${line}</p>`)}
 <p class="conn-setup" data-setup-status="/welcome/first"><span data-state="waiting">${t('setup.try.waiting')}</span></p>
-<p class="meta" data-nothing-yet hidden>${t('setup.try.nothing')} ${hintFor.join(' ')}</p>
+<p class="meta" data-nothing-yet hidden>${left.length > 0 ? left.join(' ') : t('setup.try.nothing')}</p>
 <p>${tHtml('setup.try.then', { phrase: html`<em>${t('setup.try.knowPhrase')}</em>` })}</p>
 ${v.modelsLine ?? ''}
 ${v.nextCard ?? ''}

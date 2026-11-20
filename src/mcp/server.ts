@@ -232,9 +232,13 @@ export function buildMcpServer(
     /** B2: assistant-run tidy sessions: tidy_session and propose_tidy, Full connections only. */
     tidy?: TidyService;
     /** C2: whether a connection's saves wait for the owner (Settings › Assistants). Read at every call. */
-    savesWait?: (grantId: string) => boolean },
+    savesWait?: (grantId: string) => boolean;
+    /** Developer coaching (Settings): off leaves out the growth and learning tools and parts and the two coaching rules. Left out, it counts as on. */
+    coaching?: boolean },
 ): McpServer {
   const { registry } = opts;
+  const coaching = opts.coaching ?? true;
+  const learningSvc = coaching ? opts.learning : undefined;
   const actor: Actor = { type: 'ai', name: actorName };
   const roadmapToo = (m: Memory): string => (isStatus(m) && m.project !== null && service.roadmapOf(m.project) ? ROADMAP_TOO(m.project) : '');
   const access = opts.access ?? 'full';
@@ -379,14 +383,14 @@ export function buildMcpServer(
 
   /** The brief's learning part: the five areas, the next one to bring up, and the handbook topics applied on the project. */
   const learningJson = (project: string): Record<string, unknown> => {
-    if (!opts.learning) return {};
-    const areas = opts.learning.areas(project);
+    if (!learningSvc) return {};
+    const areas = learningSvc.areas(project);
     return {
       five_areas: areas ? areas.map(areaJson) : null,
-      next_area: areas ? opts.learning.nextArea(project) : null,
+      next_area: areas ? learningSvc.nextArea(project) : null,
       // A full connection sees the whole handbook (so nothing the owner learned on another project is explained from zero);
       // a read-only one only the topics of the project it reads.
-      handbook: (readOnly ? opts.learning.topics(project) : opts.learning.topics()).map((t) => ({
+      handbook: (readOnly ? learningSvc.topics(project) : learningSvc.topics()).map((t) => ({
         title: t.title, level: t.level, page_id: t.pageId,
         projects: readOnly ? t.projects.filter((p) => visible(p)) : t.projects, here: t.projects.includes(service.projectNamed(project)),
       })),
@@ -423,7 +427,7 @@ export function buildMcpServer(
         id: note.id, page_id: p.id, page_title: p.title, ...noteSection(opts.pages, note), text: note.text, created_at: note.createdAt,
       })))}`;
     // The operating rules come from the server, never from stored data: their own block, before and outside every data envelope.
-    return { content: [{ type: 'text', text: operatingRulesBlock() }, { type: 'text', text: data }] };
+    return { content: [{ type: 'text', text: operatingRulesBlock(coaching) }, { type: 'text', text: data }] };
   }));
 
   server.registerTool('recall', {
@@ -684,7 +688,7 @@ export function buildMcpServer(
     }));
 
     // Only Full connections (spec section 11): never read-only or discussion guests.
-    server.registerTool('note_observation', {
+    if (coaching) server.registerTool('note_observation', {
       title: 'Note an observation',
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
       description: "Records a notable moment in the owner's way of working: a strength (something they do well) or something to improve "
@@ -705,8 +709,8 @@ export function buildMcpServer(
         : text(`Already noted: added as more evidence to an earlier observation (now ${r.observation.evidenceCount}).`);
     }));
 
-    if (opts.learning) {
-      const learning = opts.learning;
+    if (learningSvc) {
+      const learning = learningSvc;
       server.registerTool('set_project_area', {
         title: 'Set a project area',
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
@@ -895,7 +899,7 @@ export function buildMcpServer(
   }));
 
   if (opts.reviews) {
-    registerReviewTools(server, opts.reviews, { actorName, scope: readable === undefined ? { kind: 'full' } : { kind: 'read', projects: readable }, health: opts.health, canStore: () => service.savesPausedSince() === null }, guard);
+    registerReviewTools(server, opts.reviews, { actorName, scope: readable === undefined ? { kind: 'full' } : { kind: 'read', projects: readable }, health: opts.health, canStore: () => service.savesPausedSince() === null, coaching }, guard);
   }
 
   if (opts.skills && !readOnly && access === 'full') registerSkillTools(server, opts.skills, actorName, guard);

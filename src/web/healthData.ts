@@ -1,3 +1,4 @@
+import { copyState } from '../desktop/backupCopy.js';
 import { backupHealth, readBackupStatus } from '../backupStatus.js';
 import type { ProfileHealth } from './healthViews.js';
 import { quietApps, QUIET_WINDOW_DAYS, type QuietApp } from '../health/quietApps.js';
@@ -31,8 +32,12 @@ export function healthInput(d: AppDeps, now: Date): HealthInput {
   const backups = (() => {
     if (d.statusDir === undefined) return null;
     const status = readBackupStatus(d.statusDir);
-    if (d.localMode && !status.nightly) return null;
-    return backupHealth(status, now, { offsite: !d.localMode, jobs: !d.localMode });
+    const copy = d.localMode && d.backupCopy ? copyState(d.backupCopy.folder(), d.backupCopy.lastResult(), now) : undefined;
+    const copyBad = copy?.kind === 'failed' || copy?.kind === 'old';
+    if (d.localMode && !status.nightly && !copyBad) return null;
+    // Before the first nightly backup on the desktop only the second copy can be a problem; the nightly checks wait.
+    if (d.localMode && !status.nightly) return backupHealth({ nightly: { at: now.toISOString(), ok: true } }, now, { offsite: false, copy });
+    return backupHealth(status, now, { offsite: !d.localMode, jobs: !d.localMode, copy });
   })();
   const today = localDay(now);
   // The same count as the Inbox's badge: approvals include skill proposals.

@@ -6,6 +6,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Access } from '../discussions/types.js';
 import { buildMcpServer } from '../mcp/server.js';
 import type { AppDeps } from './app.js';
+import { coachingOn } from '../learning/coaching.js';
 import { healthOf } from './healthData.js';
 
 export function mcpServerFor(d: AppDeps, o: { actorName: string; access: Access; projects?: string[]; clientId?: string; grantId?: string; onSetup?: (n: number) => void }): McpServer {
@@ -32,5 +33,7 @@ export function mcpServerFor(d: AppDeps, o: { actorName: string; access: Access;
     tidy: d.tidy,
     savesWait: (id) => d.provider.grantSavesWait(id),
     health: () => healthOf(d, d.now()),
+    // Read for each connection, so flipping the switch applies to the next one without a restart.
+    coaching: coachingOn(d.store),
   });
 }

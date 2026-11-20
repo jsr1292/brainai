@@ -5,6 +5,8 @@ import { requireOwner } from './authRoutes.js';
 import { safeBack } from './back.js';
 import { growthView } from './growthViews.js';
 import { t } from '../i18n/index.js';
+import { coachingOn } from '../learning/coaching.js';
+import { coachingOffView } from './coachingOff.js';
 import { html, page } from './html.js';
 
 /** Week › Growth: the owner's list of what assistants noticed, and their reactions to it. */
@@ -13,6 +15,7 @@ export function growthRoutes(d: AppDeps): Router {
   const owner = requireOwner(d.sessions);
 
   router.get('/growth', owner, (_req, res) => {
+    if (!coachingOn(d.store)) return void res.status(200).type('html').send(page(t('shell.nav.growth'), coachingOffView(), { nav: true, tab: 'week', section: 'growth' }));
     res.status(200).type('html').send(page(t('shell.nav.growth'), growthView(d.growth.list()), { nav: true, tab: 'week', section: 'growth' }));
   });
 
@@ -21,6 +24,8 @@ export function growthRoutes(d: AppDeps): Router {
   });
 
   const react = (req: Request, res: Response) => {
+    // Coaching off: the page shows the off note, so a reaction posted from an old tab goes to the switch and changes nothing.
+    if (!coachingOn(d.store)) return void res.redirect(303, '/settings#coaching');
     const id = req.params.id as string;
     const raw = typeof req.body?.reaction === 'string' ? req.body.reaction : '';
     if (raw !== 'clear' && !(REACTIONS as readonly string[]).includes(raw)) {

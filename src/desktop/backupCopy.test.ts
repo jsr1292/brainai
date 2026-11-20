@@ -158,3 +158,103 @@ test('a copy already readable by its owner only is not opened again, and one wit
   assert.equal(lstatSync(open).mode & 0o777, 0o600);
   assert.equal(lstatSync(done).mode & 0o777, 0o600);
 });
+
+import { copyState, COPY_MAX_DAYS } from './backupCopy.js';
+import { openDb } from '../db.js';
+import { backupHealth } from '../backupStatus.js';
+
+/** A data folder with a database whose images table lists `rows`, and a picture file for each id in `files`. */
+function withPictures(t: import('node:test').TestContext, rows: { id: string; removedAt?: string }[], files: string[]) {
+  const s = setup(t);
+  const db = openDb(join(s.data, 'memory.db'));
+  t.after(() => db.close());
+  for (const r of rows) {
+    db.prepare(`INSERT INTO images(id, type, bytes, width, height, created_at, created_by, removed_at, removed_by) VALUES (?, 'png', 1, 1, 1, '2026-01-01', 'owner', ?, ?)`)
+      .run(r.id, r.removedAt ?? null, r.removedAt ? 'owner' : null);
+  }
+  for (const id of files) {
+    mkdirSync(join(s.data, 'images', id.slice(0, 2)), { recursive: true });
+    writeFileSync(join(s.data, 'images', id.slice(0, 2), `${id}.png`), `pic-${id}`);
+  }
+  return { ...s, db, pictures: { db, dataDir: s.data } };
+}
+
+test('pictures are copied into images/<2 hex>/ and only the missing ones the next time', (t) => {
+  const s = withPictures(t, [{ id: 'aa0001' }, { id: 'bb0002' }], ['aa0001']);
+  s.copy.run(s.finished, 14, NOW, s.pictures);
+  assert.equal(s.copy.lastResult()?.ok, true);
+  assert.equal(readFileSync(join(s.second, 'images', 'aa', 'aa0001.png'), 'utf8'), 'pic-aa0001');
+  assert.equal(readdirSync(join(s.second, 'images', 'aa')).length, 1, 'no .partial left');
+  // Changing the copy shows an existing file is not copied again; a new one is.
+  writeFileSync(join(s.second, 'images', 'aa', 'aa0001.png'), 'kept');
+  mkdirSync(join(s.data, 'images', 'bb'), { recursive: true });
+  writeFileSync(join(s.data, 'images', 'bb', 'bb0002.png'), 'pic-bb0002');
+  s.copy.run(s.finished, 14, NOW, s.pictures);
+  assert.equal(readFileSync(join(s.second, 'images', 'aa', 'aa0001.png'), 'utf8'), 'kept');
+  assert.equal(readFileSync(join(s.second, 'images', 'bb', 'bb0002.png'), 'utf8'), 'pic-bb0002');
+  assert.equal(lstatSync(join(s.second, 'images', 'bb', 'bb0002.png')).mode & 0o077, 0, 'owner only');
+});
+
+test('pictures deleted for good over 30 days ago leave the copy; newer ones stay', (t) => {
+  const old = new Date(NOW.getTime() - 31 * 86400_000).toISOString();
+  const recent = new Date(NOW.getTime() - 5 * 86400_000).toISOString();
+  const s = withPictures(t, [{ id: 'aa0001', removedAt: old }, { id: 'cc0003', removedAt: recent }], []);
+  for (const id of ['aa0001', 'cc0003']) {
+    mkdirSync(join(s.second, 'images', id.slice(0, 2)), { recursive: true });
+    writeFileSync(join(s.second, 'images', id.slice(0, 2), `${id}.png`), 'x');
+  }
+  mkdirSync(join(s.data, 'images'));
+  s.copy.run(s.finished, 14, NOW, s.pictures);
+  assert.equal(existsSync(join(s.second, 'images', 'aa', 'aa0001.png')), false);
+  assert.equal(existsSync(join(s.second, 'images', 'cc', 'cc0003.png')), true);
+});
+
+test('a picture failure is a failed result with a reason, and the database copy is whole', (t) => {
+  const s = withPictures(t, [{ id: 'aa0001' }], ['aa0001']);
+  const outside = join(s.root, 'elsewhere');
+  mkdirSync(outside);
+  symlinkSync(outside, join(s.second, 'images'));
+  s.copy.run(s.finished, 14, NOW, s.pictures);
+  const r = s.copy.lastResult();
+  assert.equal(r?.ok, false);
+  assert.match(r && !r.ok ? r.reason : '', /Pictures could not be copied/);
+  assert.equal(r && !r.ok ? r.why : '', 'pictures');
+  assert.equal(readFileSync(join(s.second, 'memory-2026-10-20.db'), 'utf8'), 'brain');
+  assert.deepEqual(readdirSync(outside), [], 'a linked images folder is never written through');
+  assert.deepEqual(readdirSync(s.second).filter((f) => f.endsWith('.partial')), []);
+});
+
+test('copyState and the first-steps / health rules around it', () => {
+  const day = 86400_000;
+  const ok = (ago: number) => ({ ok: true as const, at: new Date(NOW.getTime() - ago).toISOString() });
+  assert.equal(copyState(null, null, NOW).kind, 'off');
+  assert.equal(copyState('/x', null, NOW).kind, 'first');
+  assert.equal(copyState('/x', ok(day), NOW).kind, 'ok');
+  assert.equal(copyState('/x', ok((COPY_MAX_DAYS + 1) * day), NOW).kind, 'old');
+  assert.deepEqual(copyState('/x', { ok: false, at: NOW.toISOString(), folder: '/x', reason: 'Disk full', why: 'write' }, NOW), { kind: 'failed', reason: 'Disk full', why: 'write', at: NOW.toISOString() });
+  const nightly = { at: NOW.toISOString(), ok: true };
+  assert.equal(backupHealth({ nightly }, NOW, { offsite: false, copy: copyState('/x', ok(day), NOW) }).ok, true);
+  assert.equal(backupHealth({ nightly }, NOW, { offsite: false, copy: copyState('/x', null, NOW) }).ok, true);
+  const bad = backupHealth({ nightly }, NOW, { offsite: false, copy: copyState('/x', { ok: false, at: NOW.toISOString(), folder: '/x', reason: 'Disk full', why: 'write' }, NOW) });
+  assert.equal(bad.ok, false);
+  assert.match(bad.problems[0]!, /second folder failed: The copy could not be written\.$/);
+  assert.deepEqual(bad.say[0], { key: 'backup.p.copyFailed', params: { reason: 'write' } }, 'the screen gets the code, not the message');
+  const old = backupHealth({ nightly }, NOW, { offsite: false, copy: copyState('/x', ok(9 * day), NOW) });
+  assert.match(old.problems[0]!, /more than 8 days/);
+});
+
+test('a failure records its code, and the first success is kept through later failures', (t) => {
+  const s = withPictures(t, [], []);
+  assert.equal(s.copy.everCopied(), false);
+  s.copy.run(s.finished, 14, NOW);
+  assert.equal(s.copy.everCopied(), true);
+  rmSync(s.second, { recursive: true });
+  s.copy.run(s.finished, 14, NOW);
+  const r = s.copy.lastResult();
+  assert.ok(r && !r.ok && r.why === 'folder');
+  assert.equal(s.copy.everCopied(), true, 'a later failure does not undo it');
+  s.copy.set(s.second);
+  assert.equal(s.copy.everCopied(), true, 'the same folder keeps it');
+  s.copy.set(join(s.root, 'other'));
+  assert.equal(s.copy.everCopied(), false, 'a new folder starts again');
+});

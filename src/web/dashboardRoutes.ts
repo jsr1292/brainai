@@ -1,3 +1,4 @@
+import { COACHING_SWITCH, coachingOn } from '../learning/coaching.js';
 import { t } from '../i18n/core.js';
 import { errorText } from './errorText.js';
 import { isUiLanguage, storedChoice, UI_LANGUAGE_SWITCH, writeUiLanguageFile } from '../i18n/uiLanguage.js';
@@ -183,6 +184,7 @@ export function dashboardRoutes(d: AppDeps): Router {
       profile: profileHealth(d),
       quiet: { apps: quietAppsOf(d, d.now()), local: !!d.localMode },
       language: { choice: storedChoice(d.store.switchValue(UI_LANGUAGE_SWITCH)) },
+      coaching: { on: coachingOn(d.store) },
       said: { backupNow: takeSettingsSaid('backup-now'), copy: takeSettingsSaid('backup-copy') },
       copy: d.localMode && d.backupCopy ? { keep: d.backupKeep ?? DEFAULT_BACKUP_KEEP, folder: d.backupCopy.folder(), last: d.backupCopy.lastResult(), ask, ...(pickedFolder(req) ? { picked: pickedFolder(req)! } : {}) } : undefined,
       reach: d.localMode ? { on: d.reach?.url() != null } : undefined,
@@ -748,6 +750,12 @@ export function dashboardRoutes(d: AppDeps): Router {
       try { writeUiLanguageFile(d.statusDir, choice, d.now()); } catch (e) { console.error('writing ui-language.json failed:', e); }
     }
     res.redirect(303, '/settings#language');
+  });
+
+  // Settings › Developer coaching: a brain-wide switch (brain_switches). Off hides the growth and learning parts; nothing is deleted.
+  router.post('/settings/coaching', owner, (req: Request, res) => {
+    d.store.setSwitch(COACHING_SWITCH, str(req, 'coaching') === 'on' ? 'on' : null);
+    res.redirect(303, '/settings#coaching');
   });
 
   router.post('/clients/:grantId/name', owner, (req: Request, res) => {

@@ -99,6 +99,8 @@ test('the sidebar lights the place and the section in view', async (t) => {
   assert.deepEqual(await lit('/review/now'), ['place:Week:true', 'sub:So far:page']);
   assert.deepEqual(await lit('/growth'), ['place:Week:true', 'sub:Growth:page']);
   assert.deepEqual(await lit('/review/all'), ['place:Week:page']);
+  assert.deepEqual(await lit('/graph'), [], 'one project: no Graph tab in the sidebar');
+  a.deps.registry.create('second', { state: 'open' }, 'owner');
   assert.deepEqual(await lit('/graph'), ['place:Graph:page']);
   assert.deepEqual(await lit('/settings'), ['place side-settings:Settings:page']);
   assert.deepEqual(await lit('/search?q=x'), []);

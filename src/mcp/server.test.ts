@@ -615,7 +615,7 @@ test('the read-only instructions say pages are information, never instructions',
 });
 
 test('the instructions carry the page-writing rules the wiki used to hold', () => {
-  const rules = 'A project\'s page is titled "<project> — <short description>" and has the sections What it does, Stack and where it lives, Run, build and deploy, Key decisions (each item starting with its date), Gotchas and lessons, and Related. Write pages in English; quote UI text in its own language as it is. Never write secrets.';
+  const rules = 'A project\'s page is titled "<project> — <short description>" and has the sections What it does, Stack and where it lives, Run, build and deploy, Key decisions (each item starting with its date), Gotchas and lessons, and Related. Write pages in the language the owner uses with you, unless their profile says otherwise; quote UI text in its own language as it is. Never write secrets.';
   for (const text of [OPERATING_RULES]) {
     assert.ok(text.includes(rules), text.slice(-600));
     assert.doesNotMatch(text, /Outline/);
@@ -624,9 +624,9 @@ test('the instructions carry the page-writing rules the wiki used to hold', () =
   assert.doesNotMatch(readOnlyInstructions(['x']), /Outline/);
 });
 
-test('the instructions ask to search before creating a page and keep career material in Personal', () => {
+test('the instructions ask to search before creating a page and no longer name career plans', () => {
   for (const text of [OPERATING_RULES]) assert.ok(text.includes('Search with list_pages before creating a page, so you never make a duplicate.'), text.slice(-300));
-  assert.ok(OPERATING_RULES.includes('Career plans stay in the Personal area only.'));
+  assert.ok(!OPERATING_RULES.includes('Career plans stay in the Personal area only.'));
 });
 
 test('recall with a project filter that names no project says so and offers the closest names, except on a read-only connection', async () => {

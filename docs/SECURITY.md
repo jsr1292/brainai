@@ -177,7 +177,7 @@ projects, observations, lessons or disagreements; pages are marked; proposals an
 
 ### Known gaps
 
-- The check is a **heuristic** pattern list (English and a little Spanish). It does not understand meaning: a differently-worded hostile sentence, or other languages, passes. The real defences are the data envelope and the operating rules
+- The check is a **heuristic** pattern list (English and Spanish, with the same cases in both: ignoring the rules, speaking to the assistant, keeping things from the owner, skipping confirmation, sending data to an address, standing rules for assistants; tú and usted forms, accents optional). It does not understand meaning: a differently-worded hostile sentence, or other languages, passes. The real defences are the data envelope and the operating rules
   told to assistants. Do not treat the hold as a security guarantee.
 - Pages are saved live and only **marked**; an assistant that ignores the marker can still be steered by a page.
 - `resolve_note` replies are not instruction-checked (they are read by the owner on the page). Discussion replies, opening questions and attached files are marked, not held (see the tool table).

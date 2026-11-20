@@ -7,7 +7,9 @@ import { join } from 'node:path';
 import { appOfGrant } from '../setup/texts.js';
 import type { GrantInfo } from '../auth/provider.js';
 import { html, type SafeHtml } from './html.js';
+import { COPY_MAX_DAYS } from '../desktop/backupCopy.js';
 import { t } from '../i18n/index.js';
+import { copyWhyText } from './errorText.js';
 
 const HIDDEN_FILE = 'first-steps-hidden';
 export const firstStepsHidden = (dataDir: string | undefined): boolean => dataDir !== undefined && existsSync(join(dataDir, HIDDEN_FILE));
@@ -23,6 +25,10 @@ export interface FirstStepsInput {
   hasMemory: boolean;
   /** The same check as the Home off-site card: a second backup folder, an off-site run or a git copy. */
   backupElsewhere: boolean;
+  /** Local mode, a second folder chosen but not (yet) a current copy: what to say instead of ticking the step. */
+  backupCopy?: import('../desktop/backupCopy.js').CopyState;
+  /** A copy to the chosen folder has worked at least once: the step stays done, later failures and a stale copy show only in Brain health. */
+  backupCopyEverWorked?: boolean;
   /** Where "Hide these steps" is remembered; without one the link is left out. */
   canHide: boolean;
 }
@@ -32,6 +38,13 @@ export interface Step { key: string; label: string; hint?: string; done: boolean
 /** The live grants' distinct apps: one per assistant, however many times it signed in. */
 const appKey = (g: GrantInfo): string => appOfGrant(g.clientName) ?? g.clientName.trim().toLowerCase();
 
+function backupHint(c: import('../desktop/backupCopy.js').CopyState | undefined): { hint?: string } {
+  if (c?.kind === 'first') return { hint: t('projects.first.backupFirst') };
+  if (c?.kind === 'failed') return { hint: t('projects.first.backupFailed', { reason: copyWhyText(c.why) }) };
+  if (c?.kind === 'old') return { hint: t('projects.first.backupOld', { days: COPY_MAX_DAYS }) };
+  return {};
+}
+
 export function firstSteps(i: FirstStepsInput): Step[] {
   const live = i.grants.filter((g) => !g.revokedAt);
   const names = [...new Set(live.map((g) => g.clientName))].slice(0, 2).join(', ');
@@ -39,7 +52,8 @@ export function firstSteps(i: FirstStepsInput): Step[] {
   const memory: Step = { key: 'memory', label: t('projects.first.memory'), hint: t('projects.first.memoryHint'), copy: t('projects.first.memoryCopy'), done: i.hasMemory };
   const bring: Step = { key: 'import', label: t('projects.first.import'), hint: t('projects.first.importHint'), done: i.hasMemory, href: '/import', link: t('projects.first.importLink') };
   const second: Step = { key: 'second', label: t('projects.first.second'), done: apps.size >= 2, href: '/settings#setup', link: t('projects.first.secondLink') };
-  const backup: Step = { key: 'backup', label: i.localMode ? t('projects.first.backupLocal') : t('projects.first.backupServer'), done: i.backupElsewhere, href: i.localMode ? '/settings#backup-copy' : '/settings#health', link: t('projects.first.backupLink') };
+  const backupDone = i.backupElsewhere || (i.backupCopyEverWorked === true && i.backupCopy !== undefined && i.backupCopy.kind !== 'off');
+  const backup: Step = { key: 'backup', label: i.localMode ? t('projects.first.backupLocal') : t('projects.first.backupServer'), done: backupDone, href: i.localMode ? '/settings#backup-copy' : '/settings#health', link: t('projects.first.backupLink'), ...(backupDone ? {} : backupHint(i.backupCopy)) };
   if (!i.localMode) {
     return [{ key: 'connect', label: t('projects.first.connect'), hint: t('projects.first.connectHint'), done: live.length > 0, doneNote: names, href: '/settings#setup', link: t('projects.first.connectLink') }, memory, bring, second, backup];
   }

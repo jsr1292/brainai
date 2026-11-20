@@ -77,3 +77,20 @@ test('the checklist is only on the plain home, never in the desktop list pane', 
   const f = await loggedIn(app);
   assert.doesNotMatch(await (await f('/?pane=projects')).text(), /First steps/);
 });
+
+test('the backup step is ticked only by a current second copy, and says why otherwise', () => {
+  const step = (backupCopy: Parameters<typeof firstSteps>[0]['backupCopy'], backupElsewhere = false) => firstSteps({ ...base, backupElsewhere, backupCopy }).at(-1)!;
+  assert.equal(step({ kind: 'first' }).done, false);
+  assert.equal(step({ kind: 'first' }).hint, 'Copied with the next backup, or press Back up now in Settings');
+  assert.equal(step({ kind: 'failed', reason: 'Disk full /Volumes/Spare/x', why: 'write', at: 'x' }).hint, 'Last copy failed: The copy could not be written.');
+  assert.equal(step({ kind: 'failed', reason: 'Disk full', why: 'write', at: 'x' }).href, '/settings#backup-copy');
+  assert.match(step({ kind: 'old', at: 'x' }).hint!, /more than 8 days/);
+  assert.equal(step({ kind: 'ok', at: 'x' }, true).done, true);
+  assert.equal(step({ kind: 'ok', at: 'x' }, true).hint, undefined);
+  // Once a copy has worked, later failures and staleness do not un-tick the step.
+  const ever = (backupCopy: Parameters<typeof firstSteps>[0]['backupCopy']) => firstSteps({ ...base, backupElsewhere: false, backupCopy, backupCopyEverWorked: true }).at(-1)!;
+  assert.equal(ever({ kind: 'failed', reason: 'x', why: 'folder', at: 'x' }).done, true);
+  assert.equal(ever({ kind: 'old', at: 'x' }).done, true);
+  assert.equal(ever({ kind: 'old', at: 'x' }).hint, undefined);
+  assert.equal(ever({ kind: 'off' }).done, false);
+});

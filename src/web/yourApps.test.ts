@@ -11,6 +11,8 @@ import { assertNoEnglishLeft } from '../testing/noEnglish.js';
 import { decodeEntities, withoutClientCatalog } from '../testing/entities.js';
 import { enablePseudoLocale } from '../i18n/core.js';
 import { readAnswer, saveAnswer, YOUR_APPS_SWITCH } from '../desktop/yourApps.js';
+import { en } from '../i18n/en/index.js';
+import { es } from '../i18n/es/index.js';
 
 const CLAUDE_CONFIG = 'Library/Application Support/Claude/claude_desktop_config.json';
 
@@ -443,4 +445,30 @@ test('the next-step card and its dismiss never show through the public door', as
   const dismiss = await call('POST', '/welcome/next/dismiss', { Cookie: cookie, Origin: `https://${host}`, 'Content-Type': 'application/x-www-form-urlencoded' }, '');
   assert.equal(dismiss.status, 404);
   assert.equal(readAnswer(app.deps.store)!.dismissed, false);
+});
+
+test('the Gemini CLI tile says it has not been tested yet, and no other tile does', async (t) => {
+  const { get } = await start(t);
+  const body = (await get('/welcome?step=2')).body;
+  assert.match(body, /value="gemini"[^]*?<span class="app-sb">In the terminal · Not tested yet<\/span>/);
+  assert.equal((body.match(/Not tested yet/g) ?? []).length, 1);
+});
+
+test('the Try it step names the one step left in the connected app, and shows it instead of the generic line', async (t) => {
+  const { get, post, answer } = await start(t, { tools: ['claude', 'codex'] });
+  answer(['codex']);
+  assert.equal((await post('/settings/tools/claude-code/connect')).status, 303);
+  assert.equal((await post('/settings/tools/codex/connect')).status, 303);
+  const body = (await get('/welcome?step=5')).body;
+  const flat = text(body);
+  assert.match(flat, /One thing left in Codex: /);
+  assert.doesNotMatch(flat, /One thing left in Claude Code/, 'only the app that was chosen');
+  assert.match(body, /data-nothing-yet hidden>One thing left in Codex: /);
+  assert.doesNotMatch(body, /Nothing yet\? Check that the tool signed in/);
+});
+
+test("the Try it step's Cursor text does not point at the rules the Connect step shows", () => {
+  assert.doesNotMatch(String(en['tools.tryIt.cursor']), /below/i);
+  assert.doesNotMatch(String(es['tools.tryIt.cursor']), /abajo/i);
+  assert.match(String(en['tools.signIn.cursor']), /below/, 'the Connect text keeps its rules');
 });

@@ -1024,7 +1024,7 @@ test('the Tools page keeps its lede true for the new rows, and ChatGPT points at
 
 // ---- The off-site nudge on Home ----
 
-const NUDGE = /Your backups are only on this computer\. Keep a copy in OneDrive, Dropbox or another folder that syncs\./;
+const NUDGE = /Your backups are only on this computer\. You can also copy them to a second folder\. The copy is not encrypted: if the folder syncs \(OneDrive, Dropbox, iCloud\), that service stores your memories in readable form\./;
 async function startNudge(t: TestContext, opts: { localMode?: boolean; ageDays?: number; checklist?: boolean } = {}) {
   const r = await startUpdate(t, { localMode: opts.localMode ?? true });
   // The first-steps checklist replaces the nudge while it shows (see firstSteps.test.ts); these tests are about the nudge.
@@ -1128,6 +1128,21 @@ test('welcome step 4 has a Copy button, a hidden sign-in hint for the added tool
   await post(app.baseUrl, '/settings/tools/claude-code/connect', home.cookie, { back: 'welcome' });
   const four = (await openPage(app.baseUrl, '/welcome?step=5', home.cookie)).body;
   assert.match(four, /data-copy="Save a note in BrainAI that I set it up today\."/);
-  assert.match(four, /data-nothing-yet hidden>Nothing yet\? Check that the tool signed in\. In Claude Code: \/mcp › brainai › Authenticate\./);
+  // The one step left in the connected app, up front and again when nothing arrives (instead of the generic line).
+  assert.match(four, /<p class="notice" role="status">One thing left in Claude Code: In Claude Code, type \/mcp, choose brainai and Authenticate; then approve the sign-in in BrainAI\.<\/p>/);
+  assert.match(four, /data-nothing-yet hidden>One thing left in Claude Code: In Claude Code, type \/mcp/);
+  assert.doesNotMatch(four, /Nothing yet\? Check that the tool signed in/);
   assert.match(four, /data-setup-status="\/welcome\/first"/);
+});
+
+test("the Try it step for Claude's desktop app says to quit it and open it again, in Spanish too", async (t) => {
+  const { app } = await startWith(t, { claude: true });
+  const s = await openPage(app.baseUrl, '/settings');
+  assert.equal((await post(app.baseUrl, '/settings/tools/claude-desktop/connect', s.cookie)).status, 303);
+  const flat = (b: string) => b.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  const en = (await openPage(app.baseUrl, '/welcome?step=5', s.cookie)).body;
+  assert.match(flat(en), /One thing left in Claude \(desktop app\): Quit Claude completely/);
+  app.deps.store.setSwitch('ui_language', 'es');
+  const es = (await openPage(app.baseUrl, '/welcome?step=5', s.cookie)).body;
+  assert.match(flat(es), /Te queda una cosa en Claude \(app de escritorio\): Cierra Claude del todo/);
 });

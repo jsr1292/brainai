@@ -122,3 +122,12 @@ test('the old Growth address and form path still work', async (t) => {
   assert.deepEqual([reaction.status, reaction.headers.get('location')], [303, `/growth#o-${observation.id}`]);
   assert.equal(app.deps.growth.list()[0]!.observation.reaction, 'agree');
 });
+
+test('with coaching off a reaction changes nothing and goes to the switch', async (t) => {
+  const { app, f } = await start(t);
+  const { observation } = await app.deps.growth.note(strength, 'Claude Code');
+  app.deps.store.setSwitch('developer_coaching', 'off');
+  const r = await f(`/growth/${observation.id}/react`, form({ reaction: 'agree' }));
+  assert.deepEqual([r.status, r.headers.get('location')], [303, '/settings#coaching']);
+  assert.equal(app.deps.growth.list()[0]!.observation.reaction, null);
+});

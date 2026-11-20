@@ -27,12 +27,13 @@ test("the app's Settings: This computer, Assistants, Search, Backups and copies,
   const { f } = await local(t, { nightly: true });
   const body = await (await f('/settings')).text();
   // Search needs the model manager, which this app does not have: the shelf is left out (settingsSearch.test covers it).
-  assert.deepEqual(ids(body), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'language', 'remove']);
+  assert.deepEqual(ids(body), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'language', 'coaching', 'remove']);
   const rows = index(body);
-  assert.deepEqual(rows.map((r) => r[0]), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'language', 'remove']);
+  assert.deepEqual(rows.map((r) => r[0]), ['this-device', 'connections', 'health', 'version', 'devices', 'login', 'language', 'coaching', 'remove']);
   assert.deepEqual(rows.slice(1, 6).map((r) => r[1]), ['Assistants', 'Backups and copies', 'Version', 'Other computers', 'Your login']);
   assert.equal(rows[6]![1], 'Language');
-  assert.match(rows[7]![1]!, /^Remove BrainAI from this /);
+  assert.equal(rows[7]![1], 'Developer coaching');
+  assert.match(rows[8]![1]!, /^Remove BrainAI from this /);
   assert.equal(rows[2]![2], '● Backups: all fine · 14:30');
   assert.equal(rows[5]![2], '1 browser signed in');
   assert.match(body, /<section id="remove" class="panel danger-zone">[\s\S]*href="\/settings\/remove"/);
@@ -56,7 +57,7 @@ test('Backups and copies in the app: daily backup, Back up now, second folder wi
   const b = backups(await (await f('/settings')).text());
   assert.match(b, /Daily backup:<\/span> <time[^>]*>[^<]*<\/time> <span class="place">✓/);
   assert.match(b, /<form method="post" action="\/settings\/backup-now"><button type="submit">Back up now<\/button>/);
-  assert.match(b, /Right now every backup is on this (Mac|computer)\. If the disk fails, they go with it\. Pick a folder that syncs elsewhere \(OneDrive, Dropbox\) or an external drive\./);
+  assert.match(b, /Right now every backup is on this (Mac|computer)\. If the disk fails, they go with it\. Pick an external drive or another folder\./);
   assert.match(b, /href="\/settings\/save"/);
   assert.match(b, /href="\/settings\/move"/);
   assert.match(b, /To get a backup back: install BrainAI, choose <em>I have a saved BrainAI folder<\/em> on the welcome, and pick the file\./);

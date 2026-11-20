@@ -3,6 +3,7 @@ import { sideUpdate, readUpdate, type SideUpdate } from '../desktop/updateState.
 import { BRAIN_VERSION } from '../version.js';
 import { backupHealth, readBackupStatus } from '../backupStatus.js';
 import type { AppDeps } from './app.js';
+import { coachingOn } from '../learning/coaching.js';
 import { inboxCount } from './inboxModel.js';
 
 /**
@@ -10,13 +11,13 @@ import { inboxCount } from './inboxModel.js';
  * Projects), and is the backup late (the amber line on Settings). Each is worked out at most once per `ttlMs`, and an
  * approve, reject or decide clears the cache, so the owner's own answer shows at once.
  */
-export interface SideStatus { needsYouCount(): number; backupLate(): boolean; update(): SideUpdate | null; invalidate(): void; prime(count: number): void }
+export interface SideStatus { needsYouCount(): number; backupLate(): boolean; update(): SideUpdate | null; /** Developer coaching is on (read each time: a switch, not cached). */ coaching(): boolean; /** The brain has more than one live project (the Graph is worth a tab). */ manyProjects(): boolean; invalidate(): void; prime(count: number): void }
 
 /** Whether a request came in through the public door (true) or locally (false): the sidebar says nothing about the app's own update unless it is marked local; a render outside a request says nothing. Set by createApp. */
 const doorRequest = new AsyncLocalStorage<boolean>();
 export const runWithDoorFlag = <T>(viaDoor: boolean, fn: () => T): T => doorRequest.run(viaDoor, fn);
 
-export function createSideStatus(d: Pick<AppDeps, 'service' | 'discussions' | 'statusDir' | 'now' | 'localMode'> & Partial<Pick<AppDeps, 'skills' | 'tidy'>>, ttlMs = 30_000): SideStatus {
+export function createSideStatus(d: Pick<AppDeps, 'service' | 'discussions' | 'statusDir' | 'now' | 'localMode' | 'store' | 'registry'> & Partial<Pick<AppDeps, 'skills' | 'tidy'>>, ttlMs = 30_000): SideStatus {
   let needs: { at: number; value: number } | null = null;
   let late: { at: number; value: boolean } | null = null;
   const stale = (c: { at: number } | null, t: number) => c === null || t > c.at + ttlMs;
@@ -41,6 +42,8 @@ export function createSideStatus(d: Pick<AppDeps, 'service' | 'discussions' | 's
       if (!d.localMode || d.statusDir === undefined || doorRequest.getStore() !== false) return null; // fail closed: only a request marked as local sees it
       return sideUpdate(readUpdate(d.statusDir, BRAIN_VERSION));
     },
+    coaching() { try { return coachingOn(d.store); } catch { return true; } /* a closed brain (a finished test) reads as on */ },
+    manyProjects() { try { return d.registry.list().filter((p) => p.state !== 'archived').length > 1; } catch { return true; } },
     invalidate() {
       needs = null;
       late = null;
@@ -69,3 +72,8 @@ export function primeSideStatus(count: number): void {
 export function invalidateSideStatus(): void {
   current?.invalidate();
 }
+
+/** Whether developer coaching is on for the page being drawn. Without an app (tests that draw a view alone) it is on, as it was before the switch. */
+export const coachingShown = (): boolean => current === null || current.coaching();
+/** Whether the Graph tab is shown in the sidebar: only once there is more than one project. Without an app, shown. */
+export const graphTabShown = (): boolean => current === null || current.manyProjects();

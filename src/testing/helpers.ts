@@ -1,3 +1,4 @@
+import { COACHING_SWITCH } from '../learning/coaching.js';
 import { LearningService } from '../learning/service.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -92,6 +93,7 @@ const noNetwork = (async () => { throw new Error('no network in tests'); }) as u
  */
 export async function startTestApp(opts: { publicUrl?: string; trustCfConnectingIp?: boolean; statusDir?: string; startAt?: Date; sectionMatch?: number | null; setupOverlay?: SetupOverlay; localMode?: boolean; appSecret?: string | null; backupDir?: string | null; noPassword?: boolean; tools?: AppDeps['tools']; models?: AppDeps['models']; hardware?: AppDeps['hardware']; reachRetry?: AppDeps['reachRetry'];
   /** A data folder to keep the brain in (memory.db and images/), left in place on close; without it the brain lives in memory. */
+  /** Developer coaching switch of the test brain: on unless false (a new brain has it off, so most tests turn it on). */ coaching?: boolean;
   dataDir?: string; embedder?: Embedder; serviceOpts?: ConstructorParameters<typeof MemoryService>[2] } = {}): Promise<{
   baseUrl: string;
   deps: AppDeps;
@@ -108,6 +110,7 @@ export async function startTestApp(opts: { publicUrl?: string; trustCfConnecting
   const publicUrl = new URL(opts.publicUrl ?? baseUrl);
 
   const { db, store, service } = makeService({ now, dbPath: opts.dataDir ? join(opts.dataDir, 'memory.db') : undefined, embedder: opts.embedder, serviceOpts: opts.serviceOpts });
+  if (opts.coaching !== false) store.setSwitch(COACHING_SWITCH, 'on');
   const registry = new ProjectStore(db, now);
   const allowlist = new RedirectAllowlist(db);
   const clients = new ClientsStore(db, allowlist, now, noNetwork);

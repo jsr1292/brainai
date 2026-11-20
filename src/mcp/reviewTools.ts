@@ -21,7 +21,7 @@ const all = <T>(c: { shown: T[]; folded: T[] }): T[] => [...c.shown, ...c.folded
 const some = <T>(key: string, xs: T[]): Record<string, T[]> => (xs.length > 0 ? { [key]: xs } : {});
 
 /** The review as data for an assistant: every capped list whole (folding is for the page), empty parts left out. */
-export function reviewJson(v: ReviewView): Record<string, unknown> {
+export function reviewJson(v: ReviewView, coaching = true): Record<string, unknown> {
   const cards = new Set(v.moved.map((m) => m.project));
   const moved = [
     ...v.moved.map((m) => ({
@@ -37,7 +37,7 @@ export function reviewJson(v: ReviewView): Record<string, unknown> {
     ...[...new Set(v.chips.filter((c) => !cards.has(c.project)).map((c) => c.project))]
       .map((project) => ({ project, done: [], chips: v.chips.filter((c) => c.project === project).map((c) => c.chip) })),
   ];
-  const g = v.growth;
+  const g = coaching ? v.growth : null;
   return {
     week: v.monday,
     ...(v.kind === 'now' ? { so_far: true } : {}),
@@ -81,7 +81,7 @@ function healthParts(health: (() => Health) | undefined): { sentence: string; da
   };
 }
 
-export function registerReviewTools(server: McpServer, reviews: ReviewService, o: { actorName: string; scope: Scope; health?: () => Health; /** Whether this call may store a newly built week: false while saving is paused. */ canStore?: () => boolean }, guard: Guard): void {
+export function registerReviewTools(server: McpServer, reviews: ReviewService, o: { actorName: string; scope: Scope; health?: () => Health; /** Whether this call may store a newly built week: false while saving is paused. */ canStore?: () => boolean; /** Developer coaching: off leaves the growth part out. Left out, on. */ coaching?: boolean }, guard: Guard): void {
   server.registerTool('weekly_review', {
     title: 'Weekly review',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -96,7 +96,7 @@ export function registerReviewTools(server: McpServer, reviews: ReviewService, o
     if (at.to === 'now') {
       const view = reviews.present(reviews.soFar(), 'now', o.scope);
       const h = healthParts(o.scope.kind === 'full' ? o.health : undefined);
-      return withData(`This week so far, made just now from what is stored${limited}.${h.sentence}`, { ...reviewJson(view), ...h.data });
+      return withData(`This week so far, made just now from what is stored${limited}.${h.sentence}`, { ...reviewJson(view, o.coaching ?? true), ...h.data });
     }
     const stored = at.to === 'week' ? (o.canStore?.() ?? true ? reviews.ensure(at.monday, o.actorName) : reviews.preview(at.monday, o.actorName)) : undefined;
     if (!stored) {
@@ -107,6 +107,6 @@ export function registerReviewTools(server: McpServer, reviews: ReviewService, o
     }
     const view = reviews.present(stored, stored.monday === reviews.lastMonday() ? 'last' : 'older', o.scope);
     const h = healthParts(o.scope.kind === 'full' ? o.health : undefined);
-    return withData(`The weekly review for ${weekRangeWithYear(stored.monday)}, built ${builtAt(stored.builtAt)} from what was stored at the end of Sunday${limited}.${h.sentence}`, { ...reviewJson(view), ...h.data });
+    return withData(`The weekly review for ${weekRangeWithYear(stored.monday)}, built ${builtAt(stored.builtAt)} from what was stored at the end of Sunday${limited}.${h.sentence}`, { ...reviewJson(view, o.coaching ?? true), ...h.data });
   }));
 }

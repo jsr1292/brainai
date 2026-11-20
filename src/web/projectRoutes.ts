@@ -18,6 +18,8 @@ import { needsWelcome, nextCardFor } from './desktopRoutes.js';
 import { noteDecision, takeStatusLine } from './inboxUndo.js';
 import { makeInbox } from './inboxPage.js';
 import { healthOf } from './healthData.js';
+import { coachingOn } from '../learning/coaching.js';
+import { copyState } from '../desktop/backupCopy.js';
 import { justUpdatedLine, modelsLine, offsiteCard, updateCard } from './desktopViews.js';
 import { laterVersion, offsiteNudgeDue, offsiteNudgeHidden, readJustUpdated, readUpdate } from '../desktop/updateState.js';
 import { viaDoor } from '../desktop/publicDoor.js';
@@ -118,9 +120,12 @@ export function projectRoutes(d: AppDeps): Router {
       firstSteps: (() => {
         if (req && viaDoor(req)) return undefined;
         const status = d.statusDir ? readBackupStatus(d.statusDir) : undefined;
+        const copy = d.backupCopy ? copyState(d.backupCopy.folder(), d.backupCopy.lastResult(), d.now()) : undefined;
         const steps = firstSteps({
           localMode: d.localMode === true, grants: d.provider.listGrants(), hasMemory: d.store.countCurrent() > 0,
-          backupElsewhere: (d.backupCopy?.folder() ?? null) !== null || status?.offsite !== undefined || status?.git !== undefined,
+          backupCopy: copy,
+          backupCopyEverWorked: d.backupCopy?.everCopied() === true,
+          backupElsewhere: copy?.kind === 'ok' || status?.offsite !== undefined || status?.git !== undefined,
           canHide: d.statusDir !== undefined,
         });
         return firstStepsDue(steps, firstStepsHidden(d.statusDir)) ? firstStepsView(steps, d.statusDir !== undefined, d.localMode === true) : undefined;
@@ -258,6 +263,7 @@ export function projectRoutes(d: AppDeps): Router {
 
   // The owner sets one of a project's five areas from its panel (spec 2026-11-11).
   router.post('/projects/:name/areas/:area', owner, (req: Request, res) => {
+    if (!coachingOn(d.store)) return res.redirect(303, '/settings#coaching');
     const area = req.params.area as string;
     const status = str(req, 'status');
     if (!(CHECK_AREAS as readonly string[]).includes(area)) return home(req, res, 400, t('projects.err.areaOneOf', { list: CHECK_AREAS.join(', ') }));

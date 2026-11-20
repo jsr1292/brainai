@@ -547,6 +547,8 @@ esac
  * and the CI test fails.
  */
 const DOWNGRADES: Record<number, { down(db: Database.Database): void; breakNext(db: Database.Database): void }> = {
+  // Migration 44 only may add the developer_coaching switch: deleting it is the old schema; a view in place of brain_switches makes migration 44 throw.
+  44: { down: (db) => { db.exec("DELETE FROM brain_switches WHERE name = 'developer_coaching'"); }, breakNext: (db) => { db.exec('DROP TABLE brain_switches; CREATE VIEW brain_switches AS SELECT 1 AS name'); } },
   // Migration 43 only adds page_file_imports: dropping it is the old schema, and creating it first makes migration 43 throw.
   43: { down: (db) => { db.exec('DROP TABLE page_file_imports'); }, breakNext: (db) => { db.exec('CREATE TABLE page_file_imports(blocker TEXT)'); } },
 };

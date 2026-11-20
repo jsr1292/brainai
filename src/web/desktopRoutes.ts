@@ -215,7 +215,7 @@ export function desktopRoutes(d: AppDeps): Router {
         ? { screen: 'result', ticked: answer.apps, outcome: outcome(answer.apps, { found, reachOn, windows: windows(env) }), way: answer.way, windows: windows(env) }
         : { screen: 'pick', ticked: answer ? answer.apps : LOCAL_APPS.filter((id) => found.has(id)), found };
     res.type('html').send(page(t('setup.welcome.title'), welcomePage({
-      step, apps, yours: step === 4 ? { answer, found, reachOn } : undefined,
+      step, apps, chosen: step === 5 ? answer?.apps : undefined, yours: step === 4 ? { answer, found, reachOn } : undefined,
       nextCard: step === 5 ? nextCardFor(d, true) : undefined,
       tools: step >= 4 ? withSignIn(await cachedToolStates(d, env), d.provider.listGrants()) : [], windows: windows(env), said, cursorRules: env.rules('claude-code'), restore, restored,
       models: step === 3 && d.models ? { hardware: await (d.hardware ?? (() => readHardware(dataDir ?? process.cwd())))(), installed: await d.models.installedIds() } : undefined,

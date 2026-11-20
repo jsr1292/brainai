@@ -1,3 +1,5 @@
+import { COPY_MAX_DAYS, type CopyState } from './desktop/backupCopy.js';
+import { en } from './i18n/en/index.js';
 import type { Say } from './i18n/errors.js';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -57,7 +59,15 @@ export function readBackupStatus(dir: string): BackupStatus {
 
 /** Each problem as a sentence for the owner; none means the backups are fine. */
 /** `jobs`: also check the git copy and the Markdown export (the nightly scripts on the server). */
-export function backupHealth(s: BackupStatus, now: Date, opts: { offsite?: boolean; jobs?: boolean } = {}): { ok: boolean; problems: string[]; say: Say[] } {
+export function backupHealth(s: BackupStatus, now: Date, opts: { offsite?: boolean; jobs?: boolean; /** The desktop's second folder: a failed or stale copy is a problem. */ copy?: CopyState } = {}): { ok: boolean; problems: string[]; say: Say[] } {
+  const h = backupHealthMain(s, now, opts);
+  const c = opts.copy;
+  if (c?.kind === 'failed') { h.problems.push(`The copy to the second folder failed: ${en[`backup.why.${c.why}`]}`); h.say.push({ key: 'backup.p.copyFailed', params: { reason: c.why } }); }
+  else if (c?.kind === 'old') { h.problems.push(`The last copy to the second folder is more than ${COPY_MAX_DAYS} days old.`); h.say.push({ key: 'backup.p.copyOld', params: { days: COPY_MAX_DAYS } }); }
+  return { ...h, ok: h.problems.length === 0 };
+}
+
+function backupHealthMain(s: BackupStatus, now: Date, opts: { offsite?: boolean; jobs?: boolean }): { ok: boolean; problems: string[]; say: Say[] } {
   const problems: string[] = [];
   /** The same problems as catalog keys, one for one, for a screen to word in the owner's language. */
   const say: Say[] = [];

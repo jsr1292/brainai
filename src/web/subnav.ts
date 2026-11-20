@@ -1,3 +1,4 @@
+import { coachingShown } from './sideStatus.js';
 import { t } from '../i18n/core.js';
 import { html, type SafeHtml } from './html.js';
 
@@ -7,6 +8,6 @@ export function subnav(label: string, items: { href: string; text: string }[], c
 }
 
 export function weekNav(current: 'last' | 'now' | 'growth' | 'activity' | null, extra?: SafeHtml): SafeHtml {
-  const items = [{ href: '/review', text: t('shell.nav.lastWeek') }, { href: '/review/now', text: t('shell.nav.soFar') }, { href: '/growth', text: t('shell.nav.growth') }, { href: '/activity', text: t('shell.nav.activity') }];
+  const items = [{ href: '/review', text: t('shell.nav.lastWeek') }, { href: '/review/now', text: t('shell.nav.soFar') }, ...(coachingShown() ? [{ href: '/growth', text: t('shell.nav.growth') }] : []), { href: '/activity', text: t('shell.nav.activity') }];
   return subnav(t('shell.nav.week'), items, current === 'last' ? '/review' : current === 'now' ? '/review/now' : current === 'growth' ? '/growth' : current === 'activity' ? '/activity' : null, extra);
 }

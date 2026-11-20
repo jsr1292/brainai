@@ -1,3 +1,4 @@
+import { coachingShown } from './sideStatus.js';
 import { type GrowthArea, type Observation } from '../growth/types.js';
 import { pseudoWrap } from '../i18n/core.js';
 import { currentLanguage, t, tKey, tHtml, type PlainKey } from '../i18n/index.js';
@@ -294,7 +295,7 @@ function signals(finished: number, started: number): string {
 
 function growth(v: ReviewView, o: ReviewPageOptions): SafeHtml {
   const g = v.growth;
-  if (g === null) return html``;
+  if (g === null || !coachingShown()) return html``;
   const line = signals(g.finished, g.started);
   return html`<section class="panel growth">
   <div class="panel-head"><h2>${t('review.growth.title')}</h2><a class="hint" href="/growth">${t('review.growth.all')}</a></div>

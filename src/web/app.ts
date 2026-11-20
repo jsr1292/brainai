@@ -70,7 +70,7 @@ import { dashboardRoutes } from './dashboardRoutes.js';
 import { discussionRoutes } from './discussionRoutes.js';
 import { rateLimitKey, TRUST_CF_SETTING } from './clientIp.js';
 import { html, page, setConsentPoller, setGoTo, setMovedBanner, setPausedBanner, setServerMode } from './html.js';
-import { createSideStatus, invalidateSideStatus, runWithDoorFlag, setSideStatus } from './sideStatus.js';
+import { coachingShown, createSideStatus, invalidateSideStatus, runWithDoorFlag, setSideStatus } from './sideStatus.js';
 import { setViewClock } from './when.js';
 import { storedChoice, UI_LANGUAGE_SWITCH, writeUiLanguageFile } from '../i18n/uiLanguage.js';
 import { t } from '../i18n/core.js';
@@ -337,12 +337,13 @@ export function createApp(d: AppDeps): express.Express {
     const files = !!d.db && !!d.statusDir;
     // A function, so each row's label is worked out in the request's language when the page renders (keys, never text).
     setGoTo(() => [
-      { key: 'shell.goto.skills', href: '/skills' }, { key: 'shell.goto.import', href: '/import', alias: 'Bring in memory' }, { key: 'shell.goto.map', href: '/map', alias: 'Map' }, { key: 'shell.goto.discussions', href: '/discussions' },
+      { key: 'shell.goto.skills', href: '/skills' }, { key: 'shell.goto.import', href: '/import', alias: 'Bring in memory' }, ...(coachingShown() ? [{ key: 'shell.goto.map' as const, href: '/map', alias: 'Map' }] : []), { key: 'shell.goto.discussions', href: '/discussions' },
       { key: 'shell.goto.disagree', href: '/disagreements', alias: 'disagreements' }, { key: 'shell.goto.tidy', href: '/facts/tidy' },
       ...(app && d.tools ? [{ key: 'shell.goto.tools' as const, params: { computer: computerName() }, href: '/settings/tools' }] : []),
       ...(app ? [{ key: 'shell.goto.reach' as const, href: '/settings/reach', alias: 'Reach' }] : []),
       ...(app && d.models ? [{ key: 'shell.goto.search' as const, href: '/settings#search' }] : []),
       { key: 'lang.goto', href: '/settings#language', alias: 'Language Idioma' },
+      { key: 'coaching.goto', href: '/settings#coaching', alias: 'Developer coaching Aprendizaje' },
       { key: 'shell.goto.backups', href: '/settings#health' },
       { key: 'shell.goto.version', href: '/settings#version', alias: 'Check for updates' },
       ...(files ? [{ key: 'shell.goto.save' as const, href: '/settings/save' }] : []),

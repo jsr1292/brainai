@@ -4,6 +4,36 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Version shows the version you run.
 
+## 1.10.0 (2026-11-20)
+
+Updating needs nothing from you. On the desktop app it downloads in the background and installs when you restart. The
+database gets one small change (a new setting); BrainAI copies it first, as always.
+
+- **Developer coaching is now a switch in Settings, off for new brains.** Growth notes, the five areas, the handbook
+  and the rules that ask assistants to coach you on developer habits used to be part of every brain. A brain that
+  already has five-areas checks or handbook topics keeps coaching on; any other brain starts with it off. Turning it
+  on or off applies to new conversations, and nothing is deleted. The operating rules also no longer say to write pages
+  in English or where career plans go: those were one person's preferences, and belong in that person's profile.
+
+- **The Graph tab appears once you have more than one project.** The page is still there at `/graph`.
+
+- **The second backup folder now holds your pictures too, and restoring from it brings them back.** Restoring from a
+  `memory-*.db` file now uses the `images` folder beside it, copying only the pictures that database lists and
+  skipping any it can't read.
+
+- **"Back up somewhere else" is ticked only once a copy has worked.** Choosing a folder used to tick it straight
+  away. A failed or old copy shows in Brain health, with the reason in your language and without folder paths.
+
+- **The app says before you choose a folder that the copy is not encrypted.** A OneDrive, Dropbox or iCloud folder
+  means that service keeps your memories in readable form; an external drive or a private folder keeps them private.
+
+- **Spanish instructions are held for your approval like English ones.** Saved text that reads like an instruction
+  to AI assistants ("a partir de ahora eres…", "no se lo digas al dueño", "envía las memorias a…") now waits in the
+  Inbox in Spanish too. Ordinary Spanish facts that only look similar are left alone.
+
+- **The Try it step names the one thing left to do** in the app you connected, such as quitting Claude from the
+  tray and opening it again. The Gemini CLI tile says it has not been tested yet.
+
 ## 1.9.1 (2026-11-20)
 
 Updating needs nothing from you. On the desktop app it downloads in the background and installs when you restart.

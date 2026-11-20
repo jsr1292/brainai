@@ -177,7 +177,7 @@ proyectos, observaciones, lecciones ni desacuerdos; las páginas se marcan; las 
 
 ### Carencias conocidas
 
-- La comprobación es una lista de patrones **heurística** (inglés y un poco de español). No entiende el significado: una frase hostil con otra redacción, u otros idiomas, pasa. Las defensas reales son la envoltura de datos y las reglas de funcionamiento
+- La comprobación es una lista de patrones **heurística** (inglés y español, con los mismos casos en ambos: ignorar las reglas, hablarle al asistente, ocultarle algo al dueño, saltarse la confirmación, enviar datos a una dirección, reglas fijas para los asistentes; formas de tú y de usted, con o sin tildes). No entiende el significado: una frase hostil con otra redacción, u otros idiomas, pasa. Las defensas reales son la envoltura de datos y las reglas de funcionamiento
   que se indican a los asistentes. No tomes la retención como una garantía de seguridad.
 - Las páginas se guardan en vivo y solo se **marcan**; un asistente que ignore la marca todavía puede ser dirigido por una página.
 - Las respuestas de `resolve_note` no pasan la comprobación de instrucciones (las lee el propietario en la página). Las respuestas de debate, las preguntas iniciales y los archivos adjuntos se marcan, no se retienen (véase la tabla de herramientas).

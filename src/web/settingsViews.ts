@@ -21,7 +21,7 @@ import { metaLine } from './metaLine.js';
 import { needsLook, type ConnStatus } from './connStatus.js';
 import { setupApps } from '../setup/texts.js';
 import { computerName } from '../desktop/computer.js';
-import { backupProblems } from './errorText.js';
+import { backupProblems, copyWhyText } from './errorText.js';
 import { tHtml } from '../i18n/tHtml.js';
 import { spaceBlock, spaceTotalText } from './spaceViews.js';
 import type { SpaceBreakdown } from '../diskSpace.js';
@@ -94,6 +94,8 @@ export function settingsView(v: {
   said?: { backupNow: string | null; copy: string | null };
   /** Settings › Language: the owner's stored choice (auto, English or Español). */
   language?: { choice: UiLanguage };
+  /** Settings › Developer coaching: whether the brain-wide switch is on. */
+  coaching?: { on: boolean };
 }): SafeHtml {
   const here = computerName();
   const device = thisDevice(v.device);
@@ -101,8 +103,8 @@ export function settingsView(v: {
   // "this device", Search or Remove: Assistants, Backups and copies, Other computers, Your login. The ids stay as
   // other pages link them (#connections, #health, #setup, #devices, #search, #login).
   const sections: [string, string][] = v.localMode
-    ? [['this-device', device], ['connections', t('settings.sec.assistants')], ...(v.search ? [['search', t('settings.sec.search')] as [string, string]] : []), ['health', t('settings.sec.backups')], ...(v.versionPanel ? [['version', t('settings.sec.version')] as [string, string]] : []), ['devices', t('settings.sec.devices')], ['login', t('settings.sec.login')], ['language', t('lang.title')], ['remove', t('settings.sec.remove', { here })]]
-    : [['connections', t('settings.sec.assistants')], ['health', t('settings.sec.backups')], ...(v.versionPanel ? [['version', t('settings.sec.version')] as [string, string]] : []), ['devices', t('settings.sec.devices')], ['login', t('settings.sec.login')], ['language', t('lang.title')], ['this-device', t('settings.thisBrowser')]];
+    ? [['this-device', device], ['connections', t('settings.sec.assistants')], ...(v.search ? [['search', t('settings.sec.search')] as [string, string]] : []), ['health', t('settings.sec.backups')], ...(v.versionPanel ? [['version', t('settings.sec.version')] as [string, string]] : []), ['devices', t('settings.sec.devices')], ['login', t('settings.sec.login')], ['language', t('lang.title')], ['coaching', t('coaching.title')], ['remove', t('settings.sec.remove', { here })]]
+    : [['connections', t('settings.sec.assistants')], ['health', t('settings.sec.backups')], ...(v.versionPanel ? [['version', t('settings.sec.version')] as [string, string]] : []), ['devices', t('settings.sec.devices')], ['login', t('settings.sec.login')], ['language', t('lang.title')], ['coaching', t('coaching.title')], ['this-device', t('settings.thisBrowser')]];
   const assistants = v.grants.filter((g) => !g.revokedAt).length;
   const liveDevices = v.devices.filter((x) => x.revokedAt === null).length;
   // Backups only: a dot and the nightly's time when all is well; a dot that needs a look otherwise; nothing set up yet.
@@ -124,6 +126,7 @@ export function settingsView(v: {
     version: html`${v.version ? `BrainAI ${v.version.brain}` : ''}`,
     login: html`${t('settings.n.browsers', { count: v.sessions.length })}`,
     language: html`${v.language ? languageName(v.language.choice) : ''}`,
+    coaching: html`${v.coaching?.on ? t('coaching.status.on') : t('coaching.status.off')}`,
     remove: html``,
   };
    const indexRow = ([id, label]: [string, string]) =>
@@ -145,7 +148,7 @@ export function settingsView(v: {
   const saidLine = (text: string | null | undefined): SafeHtml => (text ? html`<p class="notice" role="status">${text}</p>` : html``);
   const copyLast = !v.copy?.last ? ''
     : v.copy.last.ok ? html`<p class="meta"><span>${tHtml('settings.copy.last', { when: when(v.copy.last.at) })}</span></p>`
-    : html`<p class="error" role="alert">${tHtml('settings.copy.failed', { folder: basename(v.copy.last.folder) || v.copy.last.folder, when: when(v.copy.last.at), reason: v.copy.last.reason })}</p>`;
+    : html`<p class="error" role="alert">${tHtml('settings.copy.failed', { folder: basename(v.copy.last.folder) || v.copy.last.folder, when: when(v.copy.last.at), reason: copyWhyText(v.copy.last.why) })}</p>`;
   const copySection = !v.copy ? '' : v.copy.ask
     ? html`<h3 id="backup-copy">${t('settings.copy.title')}</h3>
 <p class="error" role="alert">${t('settings.copy.cloud', { cloud: v.copy.ask.cloud })}</p>
@@ -156,6 +159,7 @@ export function settingsView(v: {
 </form>`
     : html`<h3 id="backup-copy">${t('settings.copy.title')}</h3>
 ${saidLine(v.said?.copy)}
+<p class="meta">${t('settings.copy.clear')}</p>
 ${v.copy.folder
     ? html`<p class="meta">${t('settings.copy.about', { keep: v.copy.keep })}</p>`
     : html`<p class="meta">${t('settings.copy.aboutNone', { here, keep: v.copy.keep })}</p>`}
@@ -262,6 +266,7 @@ ${devicesSection(v.devices, v.created, v.now, v.brainUrl)}
   ${sessionCards({ sessions: v.sessions, currentSessionId: v.currentSessionId })}
 </section>
 ${languagePanel(v.language?.choice ?? 'auto')}
+${coachingPanel(v.coaching?.on ?? false)}
 ${v.localMode ? '' : thisDeviceSection}
 ${removeSection}
 </div>
@@ -313,6 +318,18 @@ function languagePanel(choice: UiLanguage): SafeHtml {
     ${UI_LANGUAGES.map((c) => html`<p><label class="choice"><input type="radio" name="language" value="${c}"${c === choice ? raw(' checked') : ''}> ${languageName(c)}${c === 'auto' ? html`<span class="sub"> · ${t('lang.autoSub')}</span>` : ''}</label></p>`)}
     </fieldset>
     <p><button type="submit" class="secondary">${t('lang.save')}</button></p>
+  </form>
+</section>`;
+}
+
+/** Settings › Developer coaching: one brain-wide switch, owner-only POST /settings/coaching. Off leaves the data alone. */
+function coachingPanel(on: boolean): SafeHtml {
+  return html`<section id="coaching" class="panel">
+  <div class="panel-head"><h2>${t('coaching.title')}</h2></div>
+  <p class="meta">${t('coaching.lede')}</p>
+  <form method="post" action="/settings/coaching" class="stack">
+    <p><label class="choice"><input type="checkbox" name="coaching" value="on"${on ? raw(' checked') : ''}> ${t('coaching.label')}</label></p>
+    <p><button type="submit" class="secondary">${t('coaching.save')}</button></p>
   </form>
 </section>`;
 }

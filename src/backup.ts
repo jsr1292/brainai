@@ -1,4 +1,4 @@
-import { chmodSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -25,18 +25,43 @@ export const PICTURE_KEEP_DAYS = 30;
  * Copies the picture files `<dataDir>/images/<2 hex>/` that `dir/images` doesn't have yet (files never change), each
  * to a .partial name and renamed, then removes from `dir/images` the ones deleted for good more than 30 days ago.
  * `<dataDir>/images` itself is never changed, and its tmp folder is the store's own.
+ *
+ * `careful` is for a folder the owner chose (the second backup folder, maybe a synced one): `dir/images` and its
+ * sub-folders must be real folders (never links), a source that is not a regular file is skipped, a name there that
+ * is not a regular file is refused (never followed or overwritten), the new files are narrowed to the owner (0600),
+ * and only regular files with one name that this user owns are ever deleted.
  */
-function copyPictures(db: DB, dataDir: string, dir: string, now: Date): void {
+export function syncPictures(db: DB, dataDir: string, dir: string, now: Date, careful = false): void {
   const src = join(dataDir, 'images');
   if (!existsSync(src)) return;
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  const realDir = (path: string): boolean => {
+    try { return lstatSync(path).isDirectory(); } catch { return false; }
+  };
+  const refuse = (path: string): never => { throw new Error(`Pictures could not be copied: ${path} is not an ordinary folder or file.`); };
   for (const sub of readdirSync(src).filter((d) => /^[0-9a-f]{2}$/.test(d))) {
+    const subDir = join(dir, 'images', sub);
     for (const file of readdirSync(join(src, sub))) {
-      const target = join(dir, 'images', sub, file);
-      if (existsSync(target)) continue;
-      mkdirSync(join(dir, 'images', sub), { recursive: true });
+      const target = join(subDir, file);
+      if (careful) {
+        try { if (!lstatSync(join(src, sub, file)).isFile()) continue; } catch { continue; }
+        let seen = null;
+        try { seen = lstatSync(target); } catch { /* not there yet */ }
+        if (seen !== null) { if (seen.isFile()) continue; refuse(target); }
+      } else if (existsSync(target)) continue;
+      if (careful) {
+        for (const d of [join(dir, 'images'), subDir]) {
+          let there = true;
+          try { lstatSync(d); } catch { there = false; }
+          if (!there) mkdirSync(d, { mode: 0o700 });
+          else if (!realDir(d)) refuse(d);
+        }
+      } else mkdirSync(subDir, { recursive: true });
       const partial = `${target}.partial`;
       try {
-        copyFileSync(join(src, sub, file), partial);
+        if (careful) rmSync(partial, { force: true });
+        copyFileSync(join(src, sub, file), partial, careful ? constants.COPYFILE_EXCL : 0);
+        if (careful) chmodSync(partial, 0o600);
         renameSync(partial, target);
       } catch (e) {
         rmSync(partial, { force: true });
@@ -46,7 +71,16 @@ function copyPictures(db: DB, dataDir: string, dir: string, now: Date): void {
   }
   const before = new Date(now.getTime() - PICTURE_KEEP_DAYS * 86400_000).toISOString();
   const gone = db.prepare("SELECT id, type FROM images WHERE removed_at IS NOT NULL AND removed_at < ?").all(before) as { id: string; type: string }[];
-  for (const g of gone) rmSync(join(dir, 'images', g.id.slice(0, 2), `${g.id}.${g.type === 'jpeg' ? 'jpg' : g.type}`), { force: true });
+  for (const g of gone) {
+    const path = join(dir, 'images', g.id.slice(0, 2), `${g.id}.${g.type === 'jpeg' ? 'jpg' : g.type}`);
+    if (careful) {
+      try {
+        const st = lstatSync(path);
+        if (!st.isFile() || st.nlink !== 1 || (uid !== null && st.uid !== uid) || !realDir(join(dir, 'images')) || !realDir(join(dir, 'images', g.id.slice(0, 2)))) continue;
+      } catch { continue; }
+    }
+    rmSync(path, { force: true });
+  }
 }
 
 /**
@@ -100,7 +134,7 @@ export async function backupNow(db: DB, dir: string, keep: number, now: Date, da
   }
   const snapshots = readdirSync(dir).filter((f) => NAME.test(f)).sort().reverse();
   for (const old of snapshots.slice(keep)) rmSync(join(dir, old));
-  if (dataDir !== undefined) copyPictures(db, dataDir, dir, now);
+  if (dataDir !== undefined) syncPictures(db, dataDir, dir, now);
   return path;
 }
 
@@ -124,7 +158,7 @@ export async function runBackup(db: DB, dir: string, keep: number, now: Date, st
     const path = await backupNow(db, dir, keep, now, statusDir);
     console.log(`Backup written to ${path}`);
     // The second folder gets this finished file; its failure is recorded by the copy itself and never touches this run.
-    try { copy?.run(path, keep, now); } catch (e) { console.error('Backup copy failed:', e); }
+    try { copy?.run(path, keep, now, { db, dataDir: statusDir }); } catch (e) { console.error('Backup copy failed:', e); }
     run = { at: now.toISOString(), ok: true, copies: [{ where: dir, result: 'copied' }] };
     const missing = missingPictures(db, statusDir);
     if (missing !== null) run.pictures = { missing, stray: 0 };

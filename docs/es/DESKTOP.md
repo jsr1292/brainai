@@ -250,7 +250,7 @@ de memoria o más (y al menos 1 GB de disco libre), Equilibrado y Estándar; en 
 bge-reranker-v2-m3, y no se adoptó (`docs/superpowers/notes/2026-11-13-strong-reranker-trial.md`).
 
 Los modelos viven en la carpeta de datos de la app, en `models/` (mira «Dónde está cada cosa»). Las descargas vienen de Hugging Face; una
-versión de GitHub es la fuente de reserva (aún no publicada, así que hoy solo funciona Hugging Face). Usan los ajustes de proxy
+versión de GitHub (`models-v1`) es la fuente de reserva. Las dos funcionan: se prueba primero Hugging Face y después GitHub. Usan los ajustes de proxy
 del ordenador. Cada archivo se comprueba contra una huella fija (SHA-256); un archivo que no coincide se
 borra y se avisa.
 

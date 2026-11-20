@@ -12,6 +12,7 @@ import { forYouCard, forYouRows, type ApprovalSummary } from './forYou.js';
 import { disagreeGroup } from './disagreeViews.js';
 import { staleChip } from './freshnessViews.js';
 import { metaLine } from './metaLine.js';
+import { coachingShown } from './sideStatus.js';
 import { stripProjectPrefix } from './stripProject.js';
 import { dueChip, pastLabel, timeAgo } from './when.js';
 
@@ -53,7 +54,7 @@ const dotLabel = (dot: ProjectCard['dot']): string => tKey(`projects.dot.${dot}`
 const stateDot = (c: ProjectCard): SafeHtml => html`<span class="pdot d-${c.dot}" role="img" aria-label="${dotLabel(c.dot)}" title="${dotLabel(c.dot)}"></span>`;
 /** The one learning mark on the home page: work that exists only on the Mac (spec 2026-11-11). */
 const safeMark = (c: ProjectCard): SafeHtml => {
-  if (!c.safeWarning) return html``;
+  if (!c.safeWarning || !coachingShown()) return html``;
   const why = c.notPushed ? t('projects.notSafe.notPushed') : t('projects.notSafe.notGit');
   return html`<span class="pwarn" role="img" aria-label="${why}" title="${why}">!</span>`;
 };
@@ -168,7 +169,7 @@ const dotKey = (): SafeHtml => html`<p class="key dot-key" aria-label="${t('proj
  * away, and a small form for the owner; then the handbook topics applied on the project.
  */
 function fiveAreas(name: string, d: ProjectDetail, now: Date): SafeHtml {
-  if (d.areas === null) return html``;
+  if (d.areas === null || !coachingShown()) return html``;
   // No status is preselected: one Save without choosing must never mark an area done.
   const option = (v: CheckStatus) => html`<option value="${v}">${statusWord(v)}</option>`;
   return html`<h3 id="p-areas">${t('projects.areas.title')}</h3>
@@ -347,7 +348,7 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   const notIn = notInBrain(home.folders, v.ignored ?? [], plain);
   const pextra = plain
     ? (notIn.value.trim() === '' ? html`` : html`<ul class="group pfolds pextra">${notIn}</ul>`)
-    : html`<ul class="group pfolds pextra"><li><a class="row nolead map-link" href="/map"><span class="txt">${tHtml('projects.mapRow', { areas: html`<b>${t('projects.areas.title')}</b>` })}</span><span class="chev"></span></a></li>${notIn}${allDiscussions(v.discussions ?? [], mode)}</ul>`;
+    : html`<ul class="group pfolds pextra">${coachingShown() ? html`<li><a class="row nolead map-link" href="/map"><span class="txt">${tHtml('projects.mapRow', { areas: html`<b>${t('projects.areas.title')}</b>` })}</span><span class="chev"></span></a></li>` : ''}${notIn}${allDiscussions(v.discussions ?? [], mode)}</ul>`;
   return html`<div class="plist">
   <h1>${t('projects.title')}${plain ? html`<span class="phome-date" hidden>${longDate(now)}</span>` : ''}</h1>
   ${errorBlock(v.error)}
@@ -357,6 +358,6 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   ${!empty ? '' : html`<p class="quiet empty">${t('projects.empty')}</p>`}
   ${home.sections.length > 0 ? html`<div class="pareas">${dotKey()}${home.sections.map((sec) => areaSection(sec, now, sel, mode))}</div>` : ''}
   ${pextra}
-  <p class="home-links">${empty ? '' : html`<a href="/map">${t('projects.areas.title')}</a>`}<a href="/graph">${t('projects.link.graph')}</a><a href="/discussions">${t('projects.link.discussions')}</a></p>
+  <p class="home-links">${empty || !coachingShown() ? '' : html`<a href="/map">${t('projects.areas.title')}</a>`}<a href="/graph">${t('projects.link.graph')}</a><a href="/discussions">${t('projects.link.discussions')}</a></p>
 </div>`;
 }

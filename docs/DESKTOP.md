@@ -209,8 +209,14 @@ It only brings a copy into an empty brain. If BrainAI already holds memories, it
 signing in comes back: your apps sign in again. A copy from a newer BrainAI than yours is refused; update the app first.
 
 The same choice also takes a backup file, `memory-<date>.db`, from a backups folder (the app's own, or a server's
-`backups/`). It brings back the memories and pages; pictures are not in a backup file, so their pages keep their text (the welcome says
-how many). Sign-in is always removed, so sign in again where asked.
+`backups/`). It brings back the memories and pages. A lone backup file has no pictures, so their pages keep their text (the welcome says
+how many); but when an `images` folder sits beside the file, its pictures come back too. Sign-in is always removed, so sign in again where asked.
+
+**The second folder** (Settings › Backups › Also keep the daily backups in) gets the finished backup file and also the
+pictures, in `images/` next to the `memory-<date>.db` files, copied once each. Pictures deleted for good more than 30 days ago leave it, as in the main
+backups. The copy is not encrypted: a folder that syncs (OneDrive, Dropbox, iCloud) means that service stores your memories in readable form;
+an external drive or a private folder is the private option. If copying the pictures fails, the copy shows as failed in Settings, Home and Brain
+health. To restore from it, choose **I have a saved BrainAI folder**, then the newest `memory-<date>.db` in that folder: the `images` folder beside it comes back with it.
 
 ## Moving from the Windows zip
 
@@ -251,7 +257,7 @@ of memory or more (and at least 1 GB of free disk), Balanced and Standard; other
 reranker, bge-reranker-v2-m3, was tried and not adopted (`docs/superpowers/notes/2026-11-13-strong-reranker-trial.md`).
 
 The models live in the app's data folder, in `models/` (see "Where things are"). Downloads come from Hugging Face; a
-GitHub release is the fallback source (not published yet, so Hugging Face is the one that works today). They use the
+GitHub release (`models-v1`) is the fallback source. Both work: Hugging Face is tried first, GitHub second. They use the
 computer's proxy settings. Every file is checked against a fixed fingerprint (SHA-256); a file that does not match is
 deleted and reported.
 

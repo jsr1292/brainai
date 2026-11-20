@@ -5,8 +5,8 @@
  */
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { plain } from './shown.js';
 import Database from 'better-sqlite3';
 import { checkArchive, listLines } from './archive.js';
@@ -87,15 +87,48 @@ async function unpack(file: string, kind: 'archive' | 'database', into: string):
   const problem = restoredRowsProblem(join(into, 'memory.db'));
   if (problem) throw new Error(`This saved copy holds names BrainAI would never write (${problem}), so it is not brought back.`);
   if (kind === 'archive') return 0;
-  // A backup file holds no pictures: count the live ones (not deleted for good), then mark them removed on the staged
-  // copy, so the restored brain does not list pictures it cannot have and the backup check has nothing to flag.
+  // A backup file holds no pictures itself. The pictures that sit beside it (an `images` folder, as the second backup
+  // folder keeps them) are brought along; the live pictures still without a file are counted, then marked removed on the
+  // staged copy, so the restored brain does not list pictures it cannot have and the backup check has nothing to flag.
+  copyBesidePictures(dirname(file), into);
   const db = new Database(join(into, 'memory.db'));
   try {
-    const n = pictureRows(db);
-    if (n > 0 && picturesCanBeRemoved(db)) db.prepare("UPDATE images SET removed_at = ?, removed_by = 'restore' WHERE removed_at IS NULL").run(new Date().toISOString());
+    let n = 0;
+    if (pictureRows(db) > 0 && picturesCanBeRemoved(db)) {
+      const rows = db.prepare('SELECT id, type FROM images WHERE removed_at IS NULL').all() as { id: string; type: string }[];
+      const gone = rows.filter((r) => !/^[0-9a-f]{3,}$/.test(r.id) || !/^[a-z0-9]{1,8}$/.test(r.type) || !existsSync(join(into, 'images', r.id.slice(0, 2), `${r.id}.${r.type === 'jpeg' ? 'jpg' : r.type}`)));
+      const mark = db.prepare("UPDATE images SET removed_at = ?, removed_by = 'restore' WHERE id = ?");
+      const at = new Date().toISOString();
+      for (const r of gone) mark.run(at, r.id);
+      n = gone.length;
+    } else n = pictureRows(db);
     writeFileSync(join(into, FROM_DATABASE), String(n));
     return n;
   } finally { db.close(); }
+}
+
+/**
+ * Copies the pictures the staged database lists as live (`<from>/images/<2 hex>/<id>.<ext>`) into `<into>/images`: real folders
+ * and regular files only, never a link, a half-written .partial or a stray file the database does not know. A file that cannot
+ * be copied is skipped, so it counts as a missing picture.
+ */
+function copyBesidePictures(from: string, into: string): void {
+  const root = join(from, 'images');
+  const real = (path: string) => { try { return lstatSync(path).isDirectory(); } catch { return false; } };
+  if (!real(root)) return;
+  let rows: { id: string; type: string }[] = [];
+  const db = new Database(join(into, 'memory.db'), { readonly: true });
+  try { rows = db.prepare('SELECT id, type FROM images WHERE removed_at IS NULL').all() as { id: string; type: string }[]; } catch { rows = []; } finally { db.close(); }
+  for (const r of rows) {
+    if (!/^[0-9a-f]{3,}$/.test(r.id) || !/^[a-z0-9]{1,8}$/.test(r.type)) continue;
+    const sub = r.id.slice(0, 2);
+    const file = `${r.id}.${r.type === 'jpeg' ? 'jpg' : r.type}`;
+    try {
+      if (!real(join(root, sub)) || !lstatSync(join(root, sub, file)).isFile()) continue;
+      mkdirSync(join(into, 'images', sub), { recursive: true, mode: 0o700 });
+      copyFileSync(join(root, sub, file), join(into, 'images', sub, file));
+    } catch { /* unreadable: counted as a missing picture */ }
+  }
 }
 
 /** The picture count a database restore left in its staged folder; 0 for an archive (no note) or an unreadable one. */

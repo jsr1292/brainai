@@ -27,7 +27,7 @@ export function appsPick(v: { ticked: readonly AppId[]; found: ReadonlySet<ToolI
   const tile = (id: AppId) => {
     const found = !isInternetApp(id) && v.found.has(id);
     return html`<label class="app-tile"><input type="checkbox" name="app" value="${id}"${v.ticked.includes(id) ? raw(' checked') : raw('')}>
-    ${mono(id)}<span class="app-nm">${appName(id)}</span><span class="app-sb">${tKey(`setup.apps.sub.${id}` as Key)}</span>
+    ${mono(id)}<span class="app-nm">${appName(id)}</span><span class="app-sb">${tKey(`setup.apps.sub.${id}` as Key)}${id === 'gemini' ? html` · ${t('setup.apps.untested')}` : ''}</span>
     ${isInternetApp(id) ? html`<span class="app-need">${t('setup.apps.extra')}</span>` : found ? html`<span class="app-found">${t('setup.apps.found')}</span>` : ''}
     <span class="app-tick" aria-hidden="true">✓</span></label>`;
   };

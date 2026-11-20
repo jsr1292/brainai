@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { backLabel, type Back, type BackTarget, type Tab } from './back.js';
-import { sideStatus } from './sideStatus.js';
+import { coachingShown, graphTabShown, sideStatus } from './sideStatus.js';
 import { t, tKey, currentLanguage, type Key } from '../i18n/core.js';
 import { tHtml } from '../i18n/tHtml.js';
 import { clientJson } from '../i18n/client.js';
@@ -85,9 +85,11 @@ const PLACES: { href: string; label: Key; tab: Tab; subs: { href: string; label:
 function sidebar(opts: { tab?: Tab | null; section?: Section; query?: string }): SafeHtml {
   const status = sideStatus();
   const section = opts.section;
+  const coaching = coachingShown();
+  const places = PLACES.filter((p) => p.tab !== 'graph' || graphTabShown());
   const place = (p: (typeof PLACES)[number]) => {
     const here = opts.tab === p.tab;
-    const subs = p.subs;
+    const subs = p.subs.filter((x) => x.section !== 'growth' || coaching);
     const lit = here ? subs.find((x) => x.section === section) : undefined;
     const count = p.tab === 'inbox' && status.needsYouCount > 0 ? html`<span class="side-count" aria-label="${t('shell.waiting', { count: status.needsYouCount })}">${status.needsYouCount}</span>` : '';
     return html`<li><a class="side-place" href="${p.href}"${here ? raw(` aria-current="${lit ? 'true' : 'page'}"`) : ''}>${tKey(p.label)}${count}</a>${subs.length > 0 ? html`<ul class="side-subs">${subs.map((x) => html`<li><a class="side-sub" href="${x.href}"${x === lit ? raw(' aria-current="page"') : ''}>${tKey(x.label)}</a></li>`)}</ul>` : ''}</li>`;
@@ -104,7 +106,7 @@ function sidebar(opts: { tab?: Tab | null; section?: Section; query?: string }):
   return html`<nav class="side" hidden aria-label="${t('shell.nav.main')}">
 <a class="brand" href="/"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></a>
 <form class="side-find" method="get" action="/search" role="search"><svg class="side-find-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input name="q" type="search" placeholder="${t('shell.search.placeholder')}" aria-label="${t('shell.search.label')}" aria-keyshortcuts="Meta+K Control+K" value="${opts.query ?? ''}"><kbd><span class="k-mac">⌘K</span><span class="k-pc">Ctrl K</span></kbd></form>
-<ul class="side-places">${PLACES.map(place)}</ul>
+<ul class="side-places">${places.map(place)}</ul>
 ${updateLine}<a class="side-place side-settings" href="/settings"${opts.tab === 'settings' ? raw(' aria-current="page"') : ''}>${t('shell.nav.settings')}${warn}</a>
 </nav>
 `;

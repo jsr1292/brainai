@@ -1,3 +1,5 @@
+import { coachingOn } from '../learning/coaching.js';
+import { coachingOffView } from './coachingOff.js';
 /** GET /map: every project against the five areas (spec 2026-11-11), owner only; viewing it records this week's counts. */
 import { Router } from 'express';
 import { CHECK_AREAS, type CheckArea } from '../learning/types.js';
@@ -15,6 +17,7 @@ export function mapRoutes(d: AppDeps): Router {
   const router = Router();
   const owner = requireOwner(d.sessions);
   router.get('/map', owner, (_req, res) => {
+    if (!coachingOn(d.store)) return void res.type('html').send(page(t('map.title'), coachingOffView(), { nav: true, tab: 'projects', back: { href: '/', labelKey: 'shell.nav.projects' } }));
     const now = d.now();
     // One read of the Mac's folder report for the whole page, not one per project.
     const folders = d.folders.match();

@@ -726,6 +726,18 @@ CREATE TABLE page_file_imports(
 `;
 
 /**
+ * Developer coaching is opt-in (brain_switches 'developer_coaching' = 'on'). A brain that already uses the learning
+ * layer (areas, history, snoozes, handbook) keeps it: it gets the switch on. One growth observation alone means nothing: the
+ * old operating rule 13 asked every brain to note them. A new brain has no row, so the switch is off.
+ */
+const MIGRATION_44 = `
+INSERT OR IGNORE INTO brain_switches(name, value, set_at)
+  SELECT 'developer_coaching', 'on', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  WHERE EXISTS (SELECT 1 FROM project_checks) OR EXISTS (SELECT 1 FROM project_check_history)
+    OR EXISTS (SELECT 1 FROM check_snoozes) OR EXISTS (SELECT 1 FROM handbook_topics);
+`;
+
+/**
  * A new migration needs a downgrade recipe in `DOWNGRADES` (src/scripts/restoreDrill.ts), or the restore drill's test fails:
  * the drill restores a brain one schema back and forward again. Add the recipe in the same commit.
  */
@@ -774,6 +786,7 @@ const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] 
   { version: 41, sql: MIGRATION_41 },
   { version: 42, sql: MIGRATION_42 },
   { version: 43, sql: MIGRATION_43 },
+  { version: 44, sql: MIGRATION_44 },
 ];
 
 /**

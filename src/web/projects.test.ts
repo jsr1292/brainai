@@ -1,3 +1,4 @@
+import { COACHING_SWITCH } from '../learning/coaching.js';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -640,6 +641,15 @@ test('the owner sets an area from the panel and it shows at once; not needed wit
   assert.equal(bad.status, 400);
   assert.match(await bad.text(), /reason/);
   assert.equal((await post(f, '/projects/gpx/areas/nonsense', { status: 'done' })).status, 400);
+});
+
+test('with coaching off, setting an area changes nothing and goes to the switch', async (t) => {
+  const { app, f } = await start(t);
+  app.deps.registry.create('gpx', { state: 'open', area: 'apps' }, 'owner');
+  app.deps.store.setSwitch(COACHING_SWITCH, 'off');
+  const r = await post(f, '/projects/gpx/areas/finish', { status: 'done', note: 'x' });
+  assert.deepEqual([r.status, r.headers.get('location')], [303, '/settings#coaching']);
+  assert.equal(app.deps.learning.areas('gpx')!.find((x) => x.area === 'finish')!.setBy === 'owner', false);
 });
 
 test('an idea\'s panel has no five areas section', async (t) => {

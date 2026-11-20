@@ -50,14 +50,14 @@ test("A server's Settings holds four things, in order", async (t) => {
   assert.match(body, /<title>Settings<\/title>/);
   assert.match(body, /<a class="settings-link" href="\/settings" aria-current="page"/);
   const ids = [...body.matchAll(/<section id="([a-z-]+)"/g)].map((m) => m[1]!);
-  assert.deepEqual(ids, ['connections', 'health', 'version', 'devices', 'login', 'language', 'this-device']);
+  assert.deepEqual(ids, ['connections', 'health', 'version', 'devices', 'login', 'language', 'coaching', 'this-device']);
   for (const gone of ['approvals', 'activity', 'growth', 'tidy', 'moved', 'facts']) assert.ok(!ids.includes(gone), gone);
   assert.doesNotMatch(body, /href="\/discussions"/, 'the Discussions link left with the moved sections');
   // The phone's index: one row per section, each with a one-line status.
   const rows = [...body.matchAll(/<a class="row" href="#([a-z-]+)"><span class="txt">([^<]+)<\/span><span class="st">([\s\S]*?)<\/span><span class="chev"><\/span><\/a>/g)]
     .map((m) => [m[1]!, m[2]!, m[3]!.replace(/<[^>]+>/g, '').trim()] as const);
-  assert.deepEqual(rows.map((r) => r[0]), ['connections', 'health', 'version', 'devices', 'login', 'language', 'this-device']);
-  assert.deepEqual(rows.map((r) => r[1]), ['Assistants', 'Backups and copies', 'Version', 'Other computers', 'Your login', 'Language', 'This browser']);
+  assert.deepEqual(rows.map((r) => r[0]), ['connections', 'health', 'version', 'devices', 'login', 'language', 'coaching', 'this-device']);
+  assert.deepEqual(rows.map((r) => r[1]), ['Assistants', 'Backups and copies', 'Version', 'Other computers', 'Your login', 'Language', 'Developer coaching', 'This browser']);
   assert.equal(rows[0]![2], '1 assistant');
   assert.equal(rows[1]![2], '● Backups: all fine · 03:10');
   assert.match(rows[2]![2], /^BrainAI \d+\.\d+\.\d+$/);
@@ -65,7 +65,8 @@ test("A server's Settings holds four things, in order", async (t) => {
   assert.equal(rows[4]![2], '1 browser signed in');
   // A server keeps a minimal "This browser" for desk.js's two switches: no version line, no iPhone/Mac naming.
   assert.equal(rows[5]![2], 'Automatic');
-  assert.equal(rows[6]![2], '');
+  assert.equal(rows[6]![2], 'On');
+  assert.equal(rows[7]![2], '');
   const mine = body.slice(body.indexOf('<section id="this-device"'), body.indexOf('</section>', body.indexOf('<section id="this-device"')));
   assert.match(mine, /<h2>This browser<\/h2>/);
   assert.doesNotMatch(mine, /BrainAI \d|database \d/);
@@ -375,7 +376,8 @@ test('Backups offers a second folder in the app only', async (t) => {
   const local = await startApp(t, { localMode: true });
   const page = await (await local.f('/settings')).text();
   assert.match(page, /Also keep the daily backups in/);
-  assert.match(page, /It keeps the newest 14 memory-….db files there and removes older ones; nothing else in the folder is touched\./);
+  assert.match(page, /The copy is not encrypted\. If the folder syncs \(OneDrive, Dropbox, iCloud\), that service stores your memories in readable form\./);
+  assert.match(page, /It keeps the newest 14 memory-….db files there and removes older ones, and removes pictures deleted for good over 30 days ago; nothing else in the folder is touched\./);
   const server = await startApp(t, { localMode: false });
   assert.doesNotMatch(await (await server.f('/settings')).text(), /Also keep the daily backups in/);
   assert.equal((await server.f('/settings/backup-copy', form({ action: 'save', folder: '/tmp' }))).status, 404);
@@ -421,8 +423,11 @@ test('a failed copy shows the folder name, a good one shows when', async (t) => 
   const folder = join(home, 'Spare Drive');
   mkdirSync(folder);
   await f('/settings/backup-copy', { ...form({ action: 'save', folder }), redirect: 'manual' });
-  writeFileSync(join(dir, 'backup-copy.json'), JSON.stringify({ folder, last: { ok: false, at: '2026-11-04T02:10:00Z', folder, reason: 'The folder is not there.' } }));
-  assert.match(await (await f('/settings')).text(), /Last copy failed: Spare Drive/);
+  writeFileSync(join(dir, 'backup-copy.json'), JSON.stringify({ folder, last: { ok: false, at: '2026-11-04T02:10:00Z', folder, reason: 'The folder is not there.', why: 'folder' } }));
+  const failed = await (await f('/settings')).text();
+  assert.match(failed, /Last copy failed: Spare Drive/);
+  assert.match(failed, /The folder is missing or is not a folder\./);
+  assert.doesNotMatch(failed, /The folder is not there/);
   writeFileSync(join(dir, 'backup-copy.json'), JSON.stringify({ folder, last: { ok: true, at: '2026-11-04T02:10:00Z' } }));
   assert.match(await (await f('/settings')).text(), /Last copy: <time/);
 });
