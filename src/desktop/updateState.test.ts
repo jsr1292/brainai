@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { laterVersion, offsiteNudgeDue, offsiteNudgeHidden, readUpdate, readUpdateCheck, setLater, setOffsiteLater, updateCheckProblem, updateLine, type UpdateFile } from './updateState.js';
+import { clearJustUpdated, laterVersion, readJustUpdated, sideUpdate, offsiteNudgeDue, offsiteNudgeHidden, readUpdate, readUpdateCheck, setLater, setOffsiteLater, updateCheckProblem, updateLine, type UpdateFile } from './updateState.js';
 
 const dir = () => mkdtempSync(join(tmpdir(), 'brainai-update-'));
 const write = (d: string, v: unknown) => writeFileSync(join(d, 'update.json'), typeof v === 'string' ? v : JSON.stringify(v));
@@ -128,4 +128,48 @@ test('Later hides the off-site nudge for 30 days', () => {
   assert.equal(offsiteNudgeHidden(d, new Date(NOW.getTime() + 30 * DAY * 1000)), false);
   writeFileSync(join(d, 'offsite-later'), 'junk');
   assert.equal(offsiteNudgeHidden(d, NOW), false);
+});
+
+test('readUpdate reads the ready state (downloaded, waiting for a restart)', () => {
+  const d = dir();
+  write(d, file({ state: 'ready' }));
+  assert.equal(readUpdate(d, '1.3.0')?.state, 'ready');
+});
+
+test('the ready line tells the owner to restart to finish, and is not busy', () => {
+  const l = updateLine(file({ state: 'ready' }));
+  assert.equal(l.text, 'Restart to finish. It takes a few seconds.');
+  assert.equal(l.busy, false);
+  assert.equal(l.failed, false);
+});
+
+test('the sidebar says something only while downloading or ready', () => {
+  assert.deepEqual(sideUpdate(file({ state: 'downloading', percent: 42 })), { state: 'downloading', percent: 42 });
+  assert.deepEqual(sideUpdate(file({ state: 'downloading' })), { state: 'downloading' }, 'no percent known yet');
+  assert.deepEqual(sideUpdate(file({ state: 'ready' })), { state: 'ready' });
+  for (const state of ['available', 'backing-up', 'installing', 'failed', 'blocked'] as const) assert.equal(sideUpdate(file({ state })), null, state);
+  assert.equal(sideUpdate(null), null);
+});
+
+test('just-updated.json reads its version and notes, ignores a broken or newer one, and is cleared by clearJustUpdated', () => {
+  const d = dir();
+  assert.equal(readJustUpdated(d, '1.7.2'), null, 'absent');
+  const put = (v: unknown) => writeFileSync(join(d, 'just-updated.json'), typeof v === 'string' ? v : JSON.stringify(v));
+  put('{nope');
+  assert.equal(readJustUpdated(d, '1.7.2'), null, 'broken');
+  put({ version: '1.7.2' });
+  assert.equal(readJustUpdated(d, '1.7.2'), null, 'no notes field');
+  put({ version: '1.7.3', notes: '- x' });
+  assert.equal(readJustUpdated(d, '1.7.2'), null, 'newer than the running server: not this update');
+  assert.equal(existsSync(join(d, 'just-updated.json')), false, 'a file of another version is deleted');
+  put({ version: '1.7.1', notes: '- x' });
+  assert.equal(readJustUpdated(d, '1.7.2'), null, 'an older one is stale too');
+  assert.equal(existsSync(join(d, 'just-updated.json')), false);
+  put({ version: '1.7.2', notes: '- Faster search' });
+  assert.deepEqual(readJustUpdated(d, '1.7.2'), { version: '1.7.2', notes: '- Faster search' });
+  put({ version: '1.7.2', notes: 'x'.repeat(5000) });
+  assert.equal(readJustUpdated(d, '1.7.2')?.notes.length, 1500);
+  clearJustUpdated(d);
+  assert.equal(readJustUpdated(d, '1.7.2'), null);
+  clearJustUpdated(d); // nothing there: no error
 });

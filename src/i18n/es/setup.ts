@@ -151,6 +151,10 @@ export const setup_es: Record<keyof typeof setup, Entry> = {
   'setup.update.download': 'Descargar BrainAI {version}',
   'setup.update.again': 'Reintentar',
   'setup.update.restart': 'Actualizar y reiniciar',
+  'setup.update.restartNow': 'Reiniciar ahora',
+  'setup.update.justUpdated': 'Actualizado a {version}',
+  'setup.update.whatsNew': 'Novedades',
+  'setup.update.dismiss': 'Cerrar',
   'setup.offsite.text': 'Tus copias de seguridad están solo en este ordenador. Guarda una copia en OneDrive, Dropbox u otra carpeta que se sincronice.',
   'setup.offsite.choose': 'Elegir una carpeta',
 

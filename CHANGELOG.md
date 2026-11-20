@@ -4,6 +4,12 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Version shows the version you run.
 
+## 1.8.0 (2026-11-20)
+
+Updating needs nothing from you.
+
+- **Updates download in the background and install in seconds.** BrainAI fetches a new version by itself when it finds one, while you work, and checks its signature. A thin line above Settings shows "Downloading update · 42%", then "Update ready · Restart". Restart (or Restart to update in the tray menu, or Quit BrainAI) saves a backup and installs it. On Windows the installer no longer shows a window. After the update, Home says "Updated to 1.8.1 · What's new" until you dismiss it. This update itself still installs the old way (you press Update and restart, and Windows shows the installer); the quiet way starts with the next one.
+
 ## 1.7.1 (2026-11-19)
 
 Updating needs nothing from you.

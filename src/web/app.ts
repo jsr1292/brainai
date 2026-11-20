@@ -70,7 +70,7 @@ import { dashboardRoutes } from './dashboardRoutes.js';
 import { discussionRoutes } from './discussionRoutes.js';
 import { rateLimitKey, TRUST_CF_SETTING } from './clientIp.js';
 import { html, page, setConsentPoller, setGoTo, setMovedBanner, setPausedBanner, setServerMode } from './html.js';
-import { createSideStatus, invalidateSideStatus, setSideStatus } from './sideStatus.js';
+import { createSideStatus, invalidateSideStatus, runWithDoorFlag, setSideStatus } from './sideStatus.js';
 import { setViewClock } from './when.js';
 import { storedChoice, UI_LANGUAGE_SWITCH, writeUiLanguageFile } from '../i18n/uiLanguage.js';
 import { t } from '../i18n/core.js';
@@ -353,6 +353,7 @@ export function createApp(d: AppDeps): express.Express {
 
   // 1. Security headers.
   app.use(securityHeaders);
+  app.use((req, _res, next) => runWithDoorFlag(viaDoor(req), next));
   app.use(localeMiddleware((name) => d.store.switchValue(name), { localMode: d.localMode === true, systemLocale: () => process.env.BRAINAI_SYSTEM_LOCALE }));
   // Local mode: the desktop shell reads the choice at start, so write it once now (a change in Settings rewrites it).
   if (d.localMode && d.statusDir) {

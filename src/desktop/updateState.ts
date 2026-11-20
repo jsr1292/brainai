@@ -1,6 +1,6 @@
 import { t } from '../i18n/core.js';
 /** The update the desktop app has found, as it tells the server (src-tauri writes update.json; the server only reads it). */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** <dataDir>/update.json, written only by the desktop app (atomic: temp file + rename). Absent = no update known. */
@@ -8,12 +8,12 @@ export interface UpdateFile {
   current: string;            // the running app's version, e.g. "1.3.0"
   version: string;            // the newer version, e.g. "1.3.1"
   notes: string;              // the release's notes, plain text with "- " lines; untrusted
-  state: 'available' | 'backing-up' | 'downloading' | 'installing' | 'failed' | 'blocked';
+  state: 'available' | 'downloading' | 'ready' | 'backing-up' | 'installing' | 'failed' | 'blocked';
   percent?: number;           // 0–100 while downloading
   problem?: string;           // a plain sentence, for failed and blocked
 }
 
-const STATES: readonly string[] = ['available', 'backing-up', 'downloading', 'installing', 'failed', 'blocked'];
+const STATES: readonly string[] = ['available', 'downloading', 'ready', 'backing-up', 'installing', 'failed', 'blocked'];
 const MAX_NOTES = 1500;
 const LATER_FILE = 'update-later';
 
@@ -43,6 +43,38 @@ export function readUpdate(dataDir: string, serverVersion: string): UpdateFile |
   return u;
 }
 
+/**
+ * What the desktop sidebar says about an update: only while one downloads (with its percent, when known) or waits for a
+ * restart. Available, failed and blocked belong to Home and Settings.
+ */
+export type SideUpdate = { state: 'downloading'; percent?: number } | { state: 'ready' };
+export function sideUpdate(u: UpdateFile | null): SideUpdate | null {
+  if (u === null) return null;
+  if (u.state === 'downloading') return u.percent === undefined ? { state: 'downloading' } : { state: 'downloading', percent: u.percent };
+  return u.state === 'ready' ? { state: 'ready' } : null;
+}
+
+/**
+ * <dataDir>/just-updated.json, written by the app at the first start after an update (update.json is cleared then): the
+ * version it updated to and the release notes (untrusted plain text). Home shows the line until it is dismissed (which
+ * deletes the file) or the next version arrives. null: absent, invalid, or not the running version: a file of any other
+ * version is stale (a later update, or a downgrade) and is deleted here.
+ */
+export interface JustUpdated { version: string; notes: string }
+export function readJustUpdated(dataDir: string, serverVersion: string): JustUpdated | null {
+  let raw: unknown;
+  try { raw = JSON.parse(readFileSync(join(dataDir, 'just-updated.json'), 'utf8')); } catch { return null; }
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.version !== 'string' || typeof r.notes !== 'string' || r.version === '') return null;
+  if (r.version !== serverVersion) { clearJustUpdated(dataDir); return null; }
+  return { version: r.version, notes: r.notes.slice(0, MAX_NOTES) };
+}
+
+export function clearJustUpdated(dataDir: string): void {
+  try { rmSync(join(dataDir, 'just-updated.json'), { force: true }); } catch { /* nothing to remove */ }
+}
+
 /** The version the owner chose "Later" for. */
 export function laterVersion(dataDir: string): string | null {
   try { return readFileSync(join(dataDir, LATER_FILE), 'utf8').trim() || null; } catch { return null; }
@@ -58,6 +90,7 @@ export function updateLine(u: UpdateFile): { title: string; text: string; busy: 
   switch (u.state) {
     case 'backing-up': return { title, text: t('update.backingUp'), busy: true, failed: false };
     case 'downloading': return { title, text: t('update.downloading', { version: u.version, percent: u.percent === undefined ? '' : ` ${u.percent}%` }), busy: true, failed: false };
+    case 'ready': return { title, text: t('update.ready'), busy: false, failed: false };
     case 'installing': return { title, text: t('update.installing'), busy: true, failed: false };
     case 'failed': return { title, text: t('update.failed', { problem: u.problem ?? t('update.failedDefault'), current: u.current }), busy: false, failed: true };
     case 'blocked': return { title, text: u.problem ?? t('update.blockedDefault'), busy: false, failed: false };

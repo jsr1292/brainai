@@ -8,7 +8,7 @@ import { request } from 'node:http';
 import { toolEnv } from './desktopRoutes.js';
 import { cachedAskCommands } from '../desktop/askCommands.js';
 import { fakeHome } from '../testing/fakeTools.js';
-import { appSession, loggedIn, makePages, makeService, startTestApp } from '../testing/helpers.js';
+import { appSession, loggedIn, makePages, makeService, startTestApp, TEST_PASSWORD } from '../testing/helpers.js';
 import { openDb } from '../db.js';
 import { packArchive } from '../saved/archive.js';
 import { backupNow } from '../backup.js';
@@ -17,6 +17,7 @@ import type { ModelChoice } from '../models/choice.js';
 import type { ModelStatus } from '../models/manager.js';
 import type { Hardware } from '../models/hardware.js';
 import { createHash } from 'node:crypto';
+import { BRAIN_VERSION } from '../version.js';
 import { ModelManager as RealManager } from '../models/manager.js';
 import { SwitchableEmbedder, SwitchableReranker } from '../models/switchable.js';
 import { GEMMA_PROFILE } from '../memory/embeddingProfile.js';
@@ -676,6 +677,163 @@ test('Later hides the card for that version, and a newer version shows it again'
   assert.ok(!(await openPage(app.baseUrl, '/', first.cookie)).body.includes('is ready (you have'));
   putUpdate(statusDir, { version: '99.2.0' });
   assert.match((await openPage(app.baseUrl, '/', first.cookie)).body, /BrainAI 99\.2\.0 is ready/);
+});
+
+test('Home shows a ready update as ready to restart, with Restart now and Later', async (t) => {
+  const { app, statusDir } = await startUpdate(t);
+  putUpdate(statusDir, { state: 'ready' });
+  const home = await openPage(app.baseUrl, '/');
+  assert.match(home.body, /Restart to finish\. It takes a few seconds\./);
+  assert.match(home.body, /<a[^>]*href="\/app\/update"[^>]*>Restart now<\/a>/);
+  assert.doesNotMatch(home.body, /Update and restart/);
+  assert.match(home.body, /<form[^>]*action="\/app\/update\/later"/);
+  assert.doesNotMatch(home.body, /data-busy/, 'a ready card does not poll');
+  const r = await post(app.baseUrl, '/app/update/later', home.cookie);
+  assert.equal(r.status, 303);
+  assert.ok(!withoutClientCatalog((await openPage(app.baseUrl, '/', home.cookie)).body).includes('Restart now'), 'Later hides the ready card for that version');
+});
+
+test('the state route also says the state, the percent and the version', async (t) => {
+  const { app, statusDir } = await startUpdate(t);
+  putUpdate(statusDir, { state: 'downloading', percent: 42 });
+  const home = await openPage(app.baseUrl, '/');
+  const j = await (await fetch(app.baseUrl + '/app/update/state', { headers: { Cookie: home.cookie } })).json() as { state: string; percent: number; version: string; busy: boolean };
+  assert.deepEqual({ state: j.state, percent: j.percent, version: j.version, busy: j.busy }, { state: 'downloading', percent: 42, version: '99.1.0', busy: true });
+});
+
+const sideLine = (body: string) => withoutClientCatalog(body).match(/<div class="side-update"[\s\S]*?<\/progress><\/div>/)?.[0] ?? null;
+
+test('the sidebar shows a muted line and a thin progress bar while an update downloads', async (t) => {
+  const { app, statusDir } = await startUpdate(t);
+  putUpdate(statusDir, { state: 'downloading', percent: 42 });
+  const line = sideLine((await openPage(app.baseUrl, '/')).body);
+  assert.ok(line, 'the line is there');
+  assert.match(line!, /Downloading update · 42%/);
+  assert.match(line!, /<progress class="side-update-bar" max="100" value="42"/);
+  assert.match(line!, /data-side-update="\/app\/update\/state" data-update="downloading"/);
+});
+
+test('the sidebar shows an indeterminate bar while the download has no percent yet', async (t) => {
+  const { app, statusDir } = await startUpdate(t);
+  putUpdate(statusDir, { state: 'downloading' });
+  const line = sideLine((await openPage(app.baseUrl, '/')).body)!;
+  assert.match(line, /Downloading update…/);
+  assert.doesNotMatch(line, /<progress[^>]*value=/);
+});
+
+test('the sidebar says Update ready with a plain Restart link, not a button, once the update is ready', async (t) => {
+  const { app, statusDir } = await startUpdate(t);
+  putUpdate(statusDir, { state: 'ready' });
+  const line = sideLine((await openPage(app.baseUrl, '/')).body)!;
+  assert.match(line, /Update ready/);
+  assert.match(line, /<a class="side-update-restart" href="\/app\/update">Restart<\/a>/);
+  assert.doesNotMatch(line, /class="[^"]*\b(button|primary)\b/, 'never a primary button');
+  assert.match(line, /<progress[^>]* hidden/);
+});
+
+test('the sidebar says nothing for an update that is available, failed, blocked, busy, or absent', async (t) => {
+  const { app, statusDir } = await startUpdate(t);
+  assert.equal(sideLine((await openPage(app.baseUrl, '/')).body), null, 'no update file');
+  for (const state of ['available', 'failed', 'blocked', 'backing-up', 'installing']) {
+    putUpdate(statusDir, { state, problem: 'x' });
+    assert.equal(sideLine((await openPage(app.baseUrl, '/')).body), null, state);
+  }
+});
+
+test('the sidebar never shows an update on a server', async (t) => {
+  const server = await startUpdate(t, { localMode: false });
+  putUpdate(server.statusDir, { state: 'ready' });
+  assert.equal(sideLine((await openPage(server.app.baseUrl, '/')).body), null);
+});
+
+test('the sidebar shows an update in the app window but not to a signed-in request that comes through the public door', async (t) => {
+  const statusDir = mkdtempSync(join(tmpdir(), 'brainai-door-'));
+  writeFileSync(join(statusDir, 'welcome-done'), '');
+  putUpdate(statusDir, { state: 'ready' });
+  const app = await startTestApp({ localMode: true, statusDir, appSecret: KEY });
+  t.after(() => app.close());
+  const host = 'brainai-mac.tail1234.ts.net';
+  const port = await app.deps.door!.open();
+  app.deps.reach!.set(new URL(`https://${host}`), port);
+  const call = (method: string, path: string, headers: Record<string, string>, body?: string) => new Promise<{ status: number; body: string; setCookie: string[] }>((resolve, reject) => {
+    const r = request({ host: '127.0.0.1', port, path, method, setHost: false, headers: { Host: host, ...headers } }, (res) => {
+      let b = '';
+      res.on('data', (c) => { b += c; });
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: b, setCookie: (res.headers['set-cookie'] ?? []).map((c) => c.split(';')[0]!) }));
+    });
+    r.on('error', reject);
+    if (body) r.write(body);
+    r.end();
+  });
+  const login = await call('POST', '/login', { Origin: `https://${host}`, 'Content-Type': 'application/x-www-form-urlencoded' }, new URLSearchParams({ password: TEST_PASSWORD, code: app.nextTotp() }).toString());
+  assert.equal(login.status, 302, 'signed in through the door');
+  const viaDoor = await call('GET', '/', { Cookie: login.setCookie.join('; '), 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Site': 'none' });
+  assert.equal(viaDoor.status, 200);
+  assert.match(viaDoor.body, /<nav class="side"/, 'the page does have its sidebar');
+  assert.equal(sideLine(viaDoor.body), null, 'but nothing about the update');
+  assert.ok(sideLine((await openPage(app.baseUrl, '/')).body), 'the app window, same app, same file: shown');
+});
+
+test('a sidebar render outside any request says nothing about an update (it fails closed)', async (t) => {
+  const { statusDir } = await startUpdate(t);
+  putUpdate(statusDir, { state: 'ready' });
+  const { runWithDoorFlag, sideStatus } = await import('./sideStatus.js');
+  assert.equal(sideStatus().update, null, 'no flag: nothing');
+  assert.equal(runWithDoorFlag(true, () => sideStatus().update), null);
+  assert.deepEqual(runWithDoorFlag(false, () => sideStatus().update), { state: 'ready' });
+});
+
+test('Settings › Version shows the download under way with its percent, which is what Check for updates answers with meanwhile', async (t) => {
+  const { app, statusDir } = await startUpdate(t);
+  putUpdate(statusDir, { state: 'downloading', percent: 42 });
+  const body = withoutClientCatalog((await openPage(app.baseUrl, '/settings')).body);
+  assert.match(body, /BrainAI 99\.1\.0 is available/);
+  assert.match(body, /Downloading BrainAI 99\.1\.0… 42%/);
+});
+
+test('the sidebar line is in Spanish when the page is', async (t) => {
+  const { app, statusDir } = await startUpdate(t);
+  putUpdate(statusDir, { state: 'downloading', percent: 7 });
+  const first = await openPage(app.baseUrl, '/');
+  const r = await fetch(app.baseUrl + '/', { headers: { 'Accept-Language': 'es-ES,es;q=0.9', Cookie: first.cookie } });
+  const body = await r.text();
+  assert.match(sideLine(body) ?? '', /Descargando actualización · 7 %/);
+});
+
+test('Home says "Updated to x" on every visit until it is dismissed, with its notes escaped as list items', async (t) => {
+  const { app, statusDir } = await startUpdate(t);
+  assert.ok(!(await openPage(app.baseUrl, '/')).body.includes('just-updated-line'), 'nothing before an update');
+  writeFileSync(join(statusDir, 'just-updated.json'), JSON.stringify({ version: BRAIN_VERSION, notes: '- Faster search\n- <script>alert(1)</script>' }));
+  const home = await openPage(app.baseUrl, '/');
+  assert.match(home.body, new RegExp(`Updated to ${BRAIN_VERSION.replaceAll('.', '\\.')}</strong> · <span class="just-updated-more">What&#39;s new</span>`));
+  assert.match(home.body, /<li>Faster search<\/li>/);
+  assert.ok(!home.body.includes('<script>alert(1)'));
+  assert.match(home.body, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match((await openPage(app.baseUrl, '/', home.cookie)).body, /just-updated-line/, 'still there on the next visit');
+  const r = await post(app.baseUrl, '/app/update/dismiss', home.cookie);
+  assert.equal(r.status, 303);
+  assert.equal(existsSync(join(statusDir, 'just-updated.json')), false);
+  assert.ok(!(await openPage(app.baseUrl, '/', home.cookie)).body.includes('just-updated-line'));
+});
+
+test('a just-updated file of another version than the one running is not shown and is deleted', async (t) => {
+  const { app, statusDir } = await startUpdate(t);
+  for (const version of ['0.0.1', '999.0.0']) {
+    writeFileSync(join(statusDir, 'just-updated.json'), JSON.stringify({ version, notes: '- x' }));
+    assert.ok(!(await openPage(app.baseUrl, '/')).body.includes('just-updated-line'), version);
+    assert.equal(existsSync(join(statusDir, 'just-updated.json')), false, `${version}: deleted`);
+  }
+});
+
+test('the just-updated line is only for the app, and has no What\'s new when there are no notes', async (t) => {
+  const server = await startUpdate(t, { localMode: false });
+  writeFileSync(join(server.statusDir, 'just-updated.json'), JSON.stringify({ version: BRAIN_VERSION, notes: '- x' }));
+  assert.ok(!(await openPage(server.app.baseUrl, '/')).body.includes('just-updated-line'));
+  const { app, statusDir } = await startUpdate(t);
+  writeFileSync(join(statusDir, 'just-updated.json'), JSON.stringify({ version: BRAIN_VERSION, notes: '' }));
+  const body = (await openPage(app.baseUrl, '/')).body;
+  assert.match(body, /Updated to \d/);
+  assert.ok(!body.includes('just-updated-more'));
 });
 
 test('a failed update shows Try again, and the state route says the line', async (t) => {

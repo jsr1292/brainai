@@ -15,12 +15,23 @@ If you run version 1.2, it has no updater: install this version over it by hand 
 
 ## Updating
 
-The app checks once a day. When a new version is out, a dot appears on the menu bar or tray icon, and a card on Home
-says what is new.
+The app checks once a day (and Settings › Version › Check for updates checks now). When a newer signed release is out, the
+app downloads it by itself in the background and checks its signature; you keep working. A thin line above Settings in
+the sidebar shows "Downloading update · 42%", and the tray tooltip says the same.
 
-- **Update and restart** downloads the update, checks its signature, saves a backup of your memories, installs it and
-  reopens the app. Your memories, settings and connected tools stay.
-- **Later** hides the card for that version. The dot stays, and a newer version brings the card back.
+- When the download is done the update is **ready**: the sidebar says "Update ready · Restart", the tray menu has
+  **Restart to update**, and a card on Home says what is new, with **Restart now**. Restarting saves a backup of your
+  memories, installs the update and reopens the app, in a few seconds. Your memories, settings and connected tools stay.
+  On Windows the installer runs silently (no window, no permission question: it installs for your user only).
+- **Quit BrainAI** from the tray while an update is ready backs up and installs it without reopening, so the next time
+  you open BrainAI it is the new version. If the backup or the install fails, BrainAI quits anyway (it waits for the backup one minute at most) and says why in
+  `logs/update.log`. Meanwhile the window hides and the tray icon's tooltip says "Installing update…".
+- **Later** hides the Home card for that version. The dot and the sidebar line stay, and a newer version brings the card back.
+- The downloaded update lives in memory only. If BrainAI stops before installing it, the next check downloads it again.
+- A failed download shows the reason on the card with **Try again**, and is tried again after 6 hours, then every 24. A download that fails its signature check is not fetched again by itself for that version; a newer version clears it. Nothing pops up.
+- After an update, the first time the app opens, Home says "Updated to 1.7.2 · What's new" (**What's new** shows the
+  release notes). It stays until you press **Dismiss** or the next update arrives.
+- On Windows the app disappears for a few seconds while it updates (it closes, the installer runs without a window, and the app opens again). If the old version cannot be closed, the update stops before anything is replaced.
 - If anything fails on the way, the version you are running stays as it was.
 
 ## What it does

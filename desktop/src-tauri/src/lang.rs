@@ -27,6 +27,9 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("tray.login", "Start at login", "Iniciar al arrancar"),
     ("tray.quit", "Quit BrainAI", "Salir de BrainAI"),
     ("tray.update", "BrainAI is ready…", "BrainAI está listo…"),
+    ("tray.restart_update", "Restart to update", "Reiniciar para actualizar"),
+    ("tray.installing", "Installing update…", "Instalando la actualización…"),
+    ("tray.downloading", "Downloading update… {percent}%", "Descargando la actualización… {percent} %"),
     ("tray.update_version", "BrainAI {version} is ready…", "BrainAI {version} está listo…"),
     // The two words for "this computer".
     ("computer.mac", "Mac", "Mac"),

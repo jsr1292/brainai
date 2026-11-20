@@ -452,8 +452,13 @@ pub fn removal_ready(port: u16, secret: &str) -> Option<String> {
 /// hence the long wait. Err carries the server's own plain sentence, or a fixed one when it did not answer. Only called
 /// once the server proved it is ours.
 pub fn backup_now(port: u16, secret: &str) -> Result<(), String> {
+    backup_now_within(port, secret, Duration::from_secs(180))
+}
+
+/// `backup_now` with its own limit (a quit does not wait for a large brain).
+pub fn backup_now_within(port: u16, secret: &str, limit: Duration) -> Result<(), String> {
     const NO_ANSWER: &str = "BrainAI's server did not answer.";
-    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(180)).redirects(0).build();
+    let agent = ureq::AgentBuilder::new().timeout(limit).redirects(0).build();
     match agent.post(&format!("http://localhost:{port}/app/backup-now")).set("X-App-Key", secret).call() {
         Ok(_) => Ok(()),
         Err(ureq::Error::Status(_, resp)) => {

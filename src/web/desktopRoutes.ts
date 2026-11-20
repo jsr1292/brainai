@@ -15,7 +15,7 @@ import { viaDoor } from '../desktop/publicDoor.js';
 import { isEmptyBrain, stageRestore } from '../saved/restore.js';
 import { kindOfFile } from '../saved/backupFile.js';
 import { addedToolsLine } from './dashboardViews.js';
-import { firstLine, modelLabelPlain, modelsLine, modelsProgress, toolsPage, welcomePage } from './desktopViews.js';
+import { firstLine, modelLabelPlain, noteItems, modelsLine, modelsProgress, toolsPage, welcomePage } from './desktopViews.js';
 import { readHardware, suggest } from '../models/hardware.js';
 import type { ModelChoice } from '../models/choice.js';
 import { CATALOGUE, ONLINE_MODELS } from '../models/catalogue.js';
@@ -23,7 +23,7 @@ import { deleteKey, isKeyShaped, readKey, writeKey } from '../models/onlineKey.j
 import { saySearch } from './searchSaid.js';
 import { currentLanguage, t } from '../i18n/core.js';
 import { computerName } from '../desktop/computer.js';
-import { readUpdate, setLater, setOffsiteLater, updateLine } from '../desktop/updateState.js';
+import { clearJustUpdated, readUpdate, setLater, setOffsiteLater, updateLine } from '../desktop/updateState.js';
 import { runBackup } from '../backup.js';
 import { BRAIN_VERSION } from '../version.js';
 
@@ -284,6 +284,12 @@ export function desktopRoutes(d: AppDeps): Router {
     res.redirect(303, '/');
   });
 
+  /** Dismisses the "Updated to x" line on Home: its file goes. */
+  router.post('/app/update/dismiss', here, owner, (_req, res) => {
+    if (dataDir) clearJustUpdated(dataDir);
+    res.redirect(303, '/');
+  });
+
   router.post('/app/offsite/later', here, owner, (_req, res) => {
     if (dataDir) setOffsiteLater(dataDir, d.now());
     res.redirect(303, '/');
@@ -293,7 +299,7 @@ export function desktopRoutes(d: AppDeps): Router {
     const u = dataDir ? readUpdate(dataDir, BRAIN_VERSION) : null;
     if (!u) return res.status(404).end();
     const l = updateLine(u);
-    res.set('Cache-Control', 'no-store').json({ title: l.title, text: clean(l.text), busy: l.busy, failed: l.failed });
+    res.set('Cache-Control', 'no-store').json({ title: l.title, text: clean(l.text), busy: l.busy, failed: l.failed, items: noteItems(u.notes), state: u.state, ...(u.percent !== undefined ? { percent: u.percent } : {}), version: u.version });
   });
 
   /** "Choose for me" or the owner's own pair; Online is set up later in Settings › Search, so it is refused here. */

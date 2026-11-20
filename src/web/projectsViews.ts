@@ -310,6 +310,8 @@ export interface HomeViewInput {
   modelsLine?: SafeHtml;
   /** The update card (the app only), above the models line. */
   updateCard?: SafeHtml;
+  /** "Updated to x · What's new", once, at the first start after an update (the app only). */
+  justUpdated?: SafeHtml;
   /** The off-site backup nudge (the app only), under the update card; the first-steps checklist replaces it while it shows. */
   offsiteCard?: SafeHtml;
   /** The first-steps checklist, on the plain home, until every step is done or the owner hides it. */
@@ -347,7 +349,7 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   return html`<div class="plist">
   <h1>${t('projects.title')}${plain ? html`<span class="phome-date" hidden>${longDate(now)}</span>` : ''}</h1>
   ${errorBlock(v.error)}
-  ${banner}${v.updateCard ?? ''}${plain && v.firstSteps ? v.firstSteps : v.offsiteCard ?? ''}${v.modelsLine ?? ''}
+  ${banner}${v.justUpdated ?? ''}${v.updateCard ?? ''}${plain && v.firstSteps ? v.firstSteps : v.offsiteCard ?? ''}${v.modelsLine ?? ''}
   <form method="post" action="/projects/ideas" class="idea"><label class="visually-hidden" for="idea-text">${t('projects.idea.label')}</label><input id="idea-text" name="text" maxlength="140" placeholder="${t('projects.idea.placeholder')}" autocomplete="off"><button type="submit" class="primary">${t('projects.idea.add')}</button></form>
   ${forYou.value === '' ? '' : html`<h2 class="fy-h" id="foryou" hidden>${t('projects.forYou')}</h2>`}${forYou}
   ${!empty ? '' : html`<p class="quiet empty">${t('projects.empty')}</p>`}

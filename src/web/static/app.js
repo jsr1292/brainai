@@ -443,6 +443,39 @@ for (const line of document.querySelectorAll('[data-models-progress]')) {
 for (const card of document.querySelectorAll('[data-update-state]')) {
   if (!card.hasAttribute('data-busy')) continue;
   const text = card.querySelector('.update-text');
+  // A background download that ends (ready, or failed) changes the card where it stands: the page is never reloaded for it.
+  const settle = (a) => {
+    if (a.state !== 'ready' && a.state !== 'failed') return false;
+    card.removeAttribute('data-busy');
+    const title = card.querySelector('.update-title');
+    if (title && a.title) title.textContent = a.title;
+    if (card.querySelector('.update-actions')) return true;
+    if (a.state === 'ready' && Array.isArray(a.items) && a.items.length > 0) {
+      const ul = document.createElement('ul');
+      for (const item of a.items) { const li = document.createElement('li'); li.textContent = String(item); ul.append(li); }
+      card.append(ul);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'update-actions';
+    const go = document.createElement('a');
+    go.className = 'button';
+    go.setAttribute('href', '/app/update');
+    go.textContent = a.state === 'failed' ? T('client.update.tryAgain', 'Try again') : T('client.update.restartNow', 'Restart now');
+    actions.append(go);
+    if (a.state === 'ready') {
+      const form = document.createElement('form');
+      form.setAttribute('method', 'post');
+      form.setAttribute('action', '/app/update/later');
+      form.className = 'inline';
+      const later = document.createElement('button');
+      later.setAttribute('type', 'submit');
+      later.textContent = T('client.update.later', 'Later');
+      form.append(later);
+      actions.append(form);
+    }
+    card.append(actions);
+    return true;
+  };
   let errors = 0;
   const tick = async () => {
     try {
@@ -452,9 +485,96 @@ for (const card of document.querySelectorAll('[data-update-state]')) {
         errors = 0;
         const a = await r.json();
         if (text) { text.textContent = a.text; text.hidden = a.text === ''; }
-        if (!a.busy) { location.replace(location.href); return; }
+        if (!a.busy) { if (!settle(a)) location.replace(location.href); return; }
       } else if (r.status === 404) { location.replace(location.href); return; } else errors++;
     } catch { errors++; /* the app may be restarting */ }
+    if (errors >= 60) return;
+    setTimeout(tick, 1000);
+  };
+  setTimeout(tick, 1000);
+}
+
+// The desktop sidebar's update line: while the update downloads, asks /app/update/state every second and swaps the text and
+// the thin bar; when it is ready the line says so with Restart, and when it fails or goes away the line is hidden. It asks
+// only while downloading: a line that starts as "ready" never polls. Restart is the Home card's own action (the app's
+// window takes /app/update itself); the line says "Restarting…" until the app restarts.
+for (const box of document.querySelectorAll('[data-side-update]')) {
+  const text = box.querySelector('.side-update-text');
+  const bar = box.querySelector('.side-update-bar');
+  // After Restart is pressed (the app's window takes the link itself, so the page stays where it is): says "Restarting…" and
+  // asks the state each second until the restart is through. A failure shows its plain line; the app itself reopening
+  // ends the page. Ready for a while with nothing started means the press did not take: the line goes back to ready.
+  const follow = () => {
+    let sawBusy = false, quiet = 0, errors = 0, total = 0;
+    const tick = async () => {
+      try {
+        const r = await fetch(box.dataset.sideUpdate, { headers: { accept: 'application/json' }, credentials: 'same-origin', redirect: 'manual' });
+        // Signed out (a redirect, or an opaque answer): nothing more to ask.
+        if (r.type === 'opaqueredirect' || r.redirected || r.status === 0 || r.status === 401 || r.status === 403 || (r.status >= 300 && r.status < 400)) return;
+        if (r.ok) {
+          errors = 0;
+          const a = await r.json();
+          if (a.state === 'backing-up' || a.state === 'installing' || a.state === 'downloading') sawBusy = true;
+          else if (a.state === 'failed') {
+            if (text) text.textContent = a.text;
+            if (bar) bar.hidden = true;
+            return;
+          } else if (!sawBusy && a.state === 'ready' && ++quiet <= 20) { /* the app has not started yet */ }
+          else if (a.state === 'ready') { showReady(); return; } // the press did not take: back to "Update ready · Restart"
+          else { box.hidden = true; return; } // blocked, or offered again: Home's card says what happened
+        } else if (r.status === 404) { box.hidden = true; return; } else errors++;
+      } catch { errors++; /* the server stops while the app is replaced */ }
+      if (++total < 300 && errors < 120) setTimeout(tick, 1000);
+    };
+    setTimeout(tick, 1000);
+  };
+  const wireRestart = (link) => link.addEventListener('click', () => {
+    if (text) text.textContent = T('client.update.sideRestarting', 'Restarting…');
+    const act = box.querySelector('.side-update-act');
+    if (act) act.hidden = true;
+    follow();
+  });
+  const existing = box.querySelector('.side-update-restart');
+  if (existing) wireRestart(existing);
+  const showReady = () => {
+    if (text) text.textContent = T('client.update.sideReady', 'Update ready');
+    if (bar) bar.hidden = true;
+    const had = box.querySelector('.side-update-act');
+    if (had) { had.hidden = false; return; }
+    const act = document.createElement('span');
+    act.className = 'side-update-act';
+    act.append(' · ');
+    const link = document.createElement('a');
+    link.className = 'side-update-restart';
+    link.setAttribute('href', '/app/update');
+    link.textContent = T('client.update.sideRestart', 'Restart');
+    wireRestart(link);
+    act.append(link);
+    box.append(act);
+  };
+  // true: still downloading, keep asking.
+  const show = (a) => {
+    if (a.state === 'downloading') {
+      const has = typeof a.percent === 'number';
+      if (text) text.textContent = has ? T('client.update.sideDownloading', 'Downloading update · {percent}%', { percent: a.percent }) : T('client.update.sideDownloadingNoPercent', 'Downloading update…');
+      if (bar) { bar.hidden = false; if (has) bar.value = a.percent; else bar.removeAttribute('value'); }
+      return true;
+    }
+    if (a.state === 'ready') showReady();
+    else box.hidden = true;
+    return false;
+  };
+  if (box.dataset.update !== 'downloading') continue;
+  let errors = 0;
+  const tick = async () => {
+    try {
+      const r = await fetch(box.dataset.sideUpdate, { headers: { accept: 'application/json' }, credentials: 'same-origin', redirect: 'manual' });
+      if (r.type === 'opaqueredirect' || r.redirected || r.status === 401 || r.status === 403 || (r.status >= 300 && r.status < 400)) return;
+      if (r.ok) {
+        errors = 0;
+        if (!show(await r.json())) return;
+      } else if (r.status === 404) { box.hidden = true; return; } else errors++;
+    } catch { errors++; /* the app may be busy for a moment */ }
     if (errors >= 60) return;
     setTimeout(tick, 1000);
   };

@@ -15,12 +15,23 @@ Si usas la versión 1.2, no tiene actualizador: instala esta versión encima a m
 
 ## Actualizar
 
-La app comprueba una vez al día. Cuando hay una versión nueva, aparece un punto en el icono de la barra de menús o de la bandeja del sistema, y una tarjeta
-en Inicio cuenta qué hay de nuevo.
+La app comprueba una vez al día (y Ajustes › Versión › Buscar actualizaciones comprueba ahora). Cuando hay una versión nueva firmada, la
+app la descarga sola en segundo plano y comprueba su firma; tú sigues trabajando. Una línea fina sobre Ajustes, en
+la barra lateral, muestra «Descargando actualización · 42 %», y la información del icono de la bandeja dice lo mismo.
 
-- **Actualizar y reiniciar** descarga la actualización, comprueba su firma, guarda una copia de seguridad de tu memoria, la instala y
-  vuelve a abrir la app. Tu memoria, tus ajustes y tus herramientas conectadas se quedan como estaban.
-- **Más tarde** oculta la tarjeta para esa versión. El punto se queda, y una versión más nueva hace volver la tarjeta.
+- Cuando termina la descarga, la actualización está **lista**: la barra lateral dice «Actualización lista · Reiniciar», el menú de la
+  bandeja tiene **Reiniciar para actualizar**, y una tarjeta en Inicio cuenta qué hay de nuevo, con **Reiniciar ahora**. Reiniciar guarda una copia de seguridad de tu
+  memoria, instala la actualización y vuelve a abrir la app, en unos segundos. Tu memoria, tus ajustes y tus herramientas conectadas se quedan como estaban.
+  En Windows el instalador se ejecuta en silencio (sin ventana ni preguntas de permiso: instala solo para tu usuario).
+- **Salir de BrainAI** desde la bandeja con una actualización lista hace la copia y la instala sin volver a abrir, así que la próxima vez
+  que abras BrainAI ya será la versión nueva. Si falla la copia o la instalación, BrainAI sale igualmente (espera la copia hasta un minuto como máximo) y explica el motivo en
+  `logs/update.log`. Mientras tanto la ventana se oculta y el icono de la bandeja dice «Instalando la actualización…».
+- **Más tarde** oculta la tarjeta de Inicio para esa versión. El punto y la línea de la barra lateral se quedan, y una versión más nueva hace volver la tarjeta.
+- La actualización descargada vive solo en memoria. Si BrainAI se detiene antes de instalarla, la próxima comprobación la descarga de nuevo.
+- Si falla la descarga, la tarjeta muestra el motivo con **Reintentar**, y se vuelve a intentar pasadas 6 horas y luego cada 24. Una descarga que no supera la comprobación de la firma no se repite sola para esa versión; una versión más nueva lo borra. No aparece ninguna ventana.
+- Después de una actualización, la primera vez que se abre la app, Inicio dice «Actualizado a 1.7.2 · Novedades» (**Novedades** muestra las
+  notas de la versión). Se queda hasta que pulses **Cerrar** o llegue la siguiente actualización.
+- En Windows la app desaparece unos segundos mientras se actualiza (se cierra, el instalador se ejecuta sin ventana y la app se vuelve a abrir). Si no se puede cerrar la versión anterior, la actualización se detiene antes de sustituir nada.
 - Si algo falla por el camino, la versión que usas se queda como estaba.
 
 ## Qué hace

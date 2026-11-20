@@ -153,6 +153,10 @@ export const setup = {
   'setup.update.download': 'Download BrainAI {version}',
   'setup.update.again': 'Try again',
   'setup.update.restart': 'Update and restart',
+  'setup.update.restartNow': 'Restart now',
+  'setup.update.justUpdated': 'Updated to {version}',
+  'setup.update.whatsNew': "What's new",
+  'setup.update.dismiss': 'Dismiss',
   'setup.offsite.text': 'Your backups are only on this computer. Keep a copy in OneDrive, Dropbox or another folder that syncs.',
   'setup.offsite.choose': 'Choose a folder',
 

@@ -1,5 +1,6 @@
 //! Updates (plan 2): the daily check for a signed release, the state the server shows on Home (update.json), the tray
-//! dot, and Update and restart (download, signature check, backup, install, reopen).
+//! dot, the quiet download of a newer release in the background, and Restart (backup, install, reopen) or install when
+//! the owner quits.
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -80,16 +81,124 @@ pub fn download_stage(e: &tauri_plugin_updater::Error) -> Stage {
     }
 }
 
-/// The percentage to write after `done` of `total` bytes, when it moved at least two points since `last_written` (or
-/// reached 100); None otherwise, or when the size is unknown.
-pub fn progress(done: u64, total: Option<u64>, last_written: Option<u8>) -> Option<u8> {
+/// The least time between two progress writes while downloading.
+pub const PROGRESS_EVERY_MS: u64 = 300;
+
+/// The percentage to write after `done` of `total` bytes: the first one; then one when the whole percent changed and at
+/// least PROGRESS_EVERY_MS passed since the last write (`ms_since_last`), and always the final 100; None otherwise, or
+/// when the size is unknown.
+pub fn progress(done: u64, total: Option<u64>, last_written: Option<u8>, ms_since_last: Option<u64>) -> Option<u8> {
     let total = total.filter(|t| *t > 0)?;
     let p = (done.saturating_mul(100) / total).min(100) as u8;
     match last_written {
         None => Some(p),
-        Some(last) if p >= last.saturating_add(2) || (p == 100 && last < 100) => Some(p),
+        Some(last) if p == 100 && last < 100 => Some(p),
+        Some(last) if p > last && ms_since_last.is_none_or(|ms| ms >= PROGRESS_EVERY_MS) => Some(p),
         Some(_) => None,
     }
+}
+
+/// What a check that found a newer release does next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Next {
+    /// The app cannot replace itself here: only say so.
+    Blocked,
+    /// This version is already downloaded and verified (kept in memory): nothing to fetch.
+    Ready,
+    /// Fetch it quietly now.
+    Download,
+    /// A download of this version failed lately: wait for the back-off before fetching it again.
+    Wait,
+    /// This version's download failed its signature check: never fetched again by itself (a newer release clears it).
+    Refuse,
+}
+
+pub fn next_step(blocked: bool, have_this_version: bool, retry: Retry) -> Next {
+    if blocked {
+        Next::Blocked
+    } else if have_this_version {
+        Next::Ready
+    } else {
+        match retry {
+            Retry::Go => Next::Download,
+            Retry::Wait => Next::Wait,
+            Retry::Never => Next::Refuse,
+        }
+    }
+}
+
+/// Whether a failed download of a version may be fetched again by itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Retry {
+    Go,
+    Wait,
+    Never,
+}
+
+/// `<app data>/.update-download-trouble`, next to `.update-checked`: how the downloads of one version have gone wrong.
+/// A different (newer) version starts afresh.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DownloadTrouble {
+    pub version: String,
+    /// The last failure was a signature failure: that file is never fetched again by itself.
+    pub signature: bool,
+    pub failures: u32,
+    /// Unix seconds of the last failure.
+    pub at: u64,
+}
+
+/// After the first failed download the next try waits 6 hours, after later ones 24 hours.
+pub const FIRST_BACKOFF: Duration = Duration::from_secs(6 * 3600);
+pub const LATER_BACKOFF: Duration = Duration::from_secs(24 * 3600);
+
+pub fn retry_policy(trouble: Option<&DownloadTrouble>, version: &str, now_unix: u64) -> Retry {
+    let Some(t) = trouble.filter(|t| t.version == version) else { return Retry::Go };
+    if t.signature {
+        return Retry::Never;
+    }
+    let wait = if t.failures <= 1 { FIRST_BACKOFF } else { LATER_BACKOFF };
+    if t.at > now_unix || now_unix - t.at >= wait.as_secs() {
+        Retry::Go
+    } else {
+        Retry::Wait
+    }
+}
+
+pub fn record_trouble(prev: Option<DownloadTrouble>, version: &str, stage: &Stage, now_unix: u64) -> DownloadTrouble {
+    let failures = prev.filter(|p| p.version == version).map_or(1, |p| p.failures.saturating_add(1));
+    DownloadTrouble { version: version.to_string(), signature: matches!(stage, Stage::Signature), failures, at: now_unix }
+}
+
+/// What a press of Check for updates does while the update lock is taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManualAction {
+    /// Run the check (waiting for the lock if a check holds it).
+    Check,
+    /// A download is under way: answer at once; Settings shows its progress.
+    AnswerNow,
+}
+
+pub fn manual_action(lock_taken: bool, downloading: bool) -> ManualAction {
+    if lock_taken && downloading { ManualAction::AnswerNow } else { ManualAction::Check }
+}
+
+/// `<data>/just-updated.json`: kept at the first start after an update, so Home can say "Updated to 1.7.2" with the
+/// notes (update.json itself is cleared then). The server reads it; its dismiss route deletes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JustUpdated {
+    pub version: String,
+    pub notes: String,
+}
+
+const JUST_UPDATED_FILE: &str = "just-updated.json";
+
+pub fn write_just_updated(data: &Path, f: &UpdateFile) -> io::Result<()> {
+    std::fs::create_dir_all(data)?;
+    let tmp = data.join(format!("{JUST_UPDATED_FILE}.tmp"));
+    std::fs::write(&tmp, serde_json::to_vec(&JustUpdated { version: f.version.clone(), notes: f.notes.clone() })?)?;
+    std::fs::rename(&tmp, data.join(JUST_UPDATED_FILE)).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 /// The update's state as the server reads it (`src/desktop/updateState.ts`).
@@ -99,6 +208,8 @@ pub enum State {
     Available,
     BackingUp,
     Downloading,
+    /// Downloaded and verified, waiting for a restart (or for the owner to quit).
+    Ready,
     Installing,
     Failed,
     Blocked,
@@ -106,7 +217,7 @@ pub enum State {
 
 impl State {
     fn busy(self) -> bool {
-        matches!(self, State::BackingUp | State::Downloading | State::Installing)
+        matches!(self, State::BackingUp | State::Downloading | State::Ready | State::Installing)
     }
 }
 
@@ -274,7 +385,8 @@ pub enum Leftover {
     /// The update that just ran (its version is this app's now): the card goes away, and the window shows even when
     /// the app was started hidden at login (the restart keeps `--hidden`).
     JustUpdated,
-    /// An update stopped half way: offered again rather than left showing progress that will never move.
+    /// An update stopped half way, or one that was `ready` (its bytes lived only in the run that ended): offered again
+    /// (and downloaded again) rather than left showing progress that will never move.
     Reset(UpdateFile),
 }
 
@@ -400,22 +512,143 @@ fn file_for(update: &Update, state: State, problem: Option<String>) -> UpdateFil
 }
 
 /// A newer release: kept for Update and restart, shown on Home (or `blocked` with why), and the dot in the tray.
-fn offer(app: &AppHandle, update: Update) {
-    let state = match self_update_check() {
-        Ok(()) => file_for(&update, State::Available, None),
-        Err(why) => file_for(&update, State::Blocked, Some(why.into())),
+const TROUBLE_FILE: &str = ".update-download-trouble";
+
+fn read_trouble(app: &AppHandle) -> Option<DownloadTrouble> {
+    serde_json::from_slice(&std::fs::read(app_data(app).join(TROUBLE_FILE)).ok()?).ok()
+}
+
+fn note_download_failure(app: &AppHandle, version: &str, stage: &Stage) {
+    let t = record_trouble(read_trouble(app), version, stage, now_unix());
+    if let Ok(bytes) = serde_json::to_vec(&t) {
+        let _ = std::fs::write(app_data(app).join(TROUBLE_FILE), bytes);
+    }
+}
+
+fn clear_trouble(app: &AppHandle) {
+    let _ = std::fs::remove_file(app_data(app).join(TROUBLE_FILE));
+}
+
+/// Returns false when the quiet download failed (the check is then not marked as made, so the next look retries).
+fn offer(app: &AppHandle, update: Update) -> bool {
+    let running = app.state::<Running>();
+    let have = running.downloaded.lock().unwrap().as_ref().is_some_and(|(v, _)| *v == update.version);
+    let blocked = self_update_check();
+    let retry = retry_policy(read_trouble(app).as_ref(), &update.version, now_unix());
+    let next = next_step(blocked.is_err(), have, retry);
+    if next != Next::Ready {
+        *running.downloaded.lock().unwrap() = None; // an older download is no use
+    }
+    let file = match (next, blocked) {
+        (Next::Blocked, Err(why)) => file_for(&update, State::Blocked, Some(why)),
+        (Next::Ready, _) => file_for(&update, State::Ready, None),
+        // A download that failed lately stays `failed` with its reason until the back-off is over (or for good, for a
+        // signature failure); Try again on the card is the owner's own choice and always fetches.
+        (Next::Wait, _) => file_for(&update, State::Failed, Some(problem_text(Stage::Download, &update.current_version))),
+        (Next::Refuse, _) => file_for(&update, State::Failed, Some(problem_text(Stage::Signature, &update.current_version))),
+        _ => file_for(&update, State::Available, None),
     };
-    if let Err(e) = write_state(&state_dir(app), &state) {
+    if let Err(e) = write_state(&state_dir(app), &file) {
         log(app, &format!("update.json could not be written: {e}"));
     }
-    crate::show_update_dot(app, Some(&update.version));
-    *app.state::<Running>().update.lock().unwrap() = Some(update);
+    crate::show_update_dot(app, Some(&update.version), next == Next::Ready);
+    match next {
+        Next::Wait | Next::Refuse => {
+            *running.update.lock().unwrap() = None;
+            // A refused one is done with (no hourly looks); a waiting one is looked at again hourly until its time.
+            return next == Next::Refuse;
+        }
+        _ => *running.update.lock().unwrap() = Some(update.clone()),
+    }
+    if next == Next::Download {
+        return download_in_background(app, &update);
+    }
+    true
+}
+
+/// Fetches and verifies the release on the check's own (background) thread, which holds `update_lock`; a click on Restart
+/// meanwhile waits for it. A failure is the `failed` state with its plain reason, never a dialog.
+fn download_in_background(app: &AppHandle, update: &Update) -> bool {
+    let running = app.state::<Running>();
+    // A restart of the server is under way: leave the offer as it is; the next check downloads.
+    if running.restarting.load(Ordering::SeqCst) {
+        return true;
+    }
+    let dir = state_dir(app);
+    match download_verified(app, update, &dir) {
+        Ok(bytes) => {
+            *running.downloaded.lock().unwrap() = Some((update.version.clone(), bytes));
+            clear_trouble(app);
+            let _ = write_state(&dir, &file_for(update, State::Ready, None));
+            crate::show_update_dot(app, Some(&update.version), true);
+            true
+        }
+        Err(stage) => {
+            note_download_failure(app, &update.version, &stage);
+            *running.update.lock().unwrap() = None;
+            let _ = write_state(&dir, &file_for(update, State::Failed, Some(problem_text(stage, &update.current_version))));
+            false
+        }
+    }
+}
+
+/// Downloads the release (the plugin checks the signature as it finishes; `verify` is a second look), writing the
+/// `downloading` state with its percent as it goes.
+fn download_verified(app: &AppHandle, update: &Update, dir: &Path) -> Result<Vec<u8>, Stage> {
+    /// While a download runs, a press of Check for updates answers at once instead of waiting behind it.
+    struct Downloading<'a>(&'a std::sync::atomic::AtomicBool);
+    impl Drop for Downloading<'_> {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::SeqCst);
+        }
+    }
+    let running = app.state::<Running>();
+    running.downloading.store(true, Ordering::SeqCst);
+    let _flag = Downloading(&running.downloading);
+    let write = |percent: Option<u8>| {
+        let _ = write_state(dir, &UpdateFile { percent, ..file_for(update, State::Downloading, None) });
+    };
+    write(None);
+    let mut download = update.clone();
+    download.timeout = None; // the 30 s were for the check; a stalled download still stops (STALLED)
+    let (mut done, mut last): (u64, Option<(u8, std::time::Instant)>) = (0, None);
+    let result = tauri::async_runtime::block_on(download.download(
+        |n, total| {
+            done += n as u64;
+            let since = last.map(|(_, at)| at.elapsed().as_millis() as u64);
+            if let Some(p) = progress(done, total, last.map(|(p, _)| p), since) {
+                last = Some((p, std::time::Instant::now()));
+                write(Some(p));
+                crate::set_tray_tooltip(app, Some(tr_with("tray.downloading", &[("percent", &p.to_string())])));
+            }
+        },
+        || {},
+    ));
+    crate::set_tray_tooltip(app, None);
+    let bytes = match result {
+        Ok(b) => b,
+        Err(e) => {
+            log(app, &format!("The update download failed: {e}"));
+            return Err(download_stage(&e));
+        }
+    };
+    if let Err(e) = update.verify(&bytes) {
+        log(app, &format!("The update did not pass its signature check: {e}"));
+        return Err(Stage::Signature);
+    }
+    Ok(bytes)
+}
+
+/// Whether a verified download is waiting for a restart.
+pub fn is_ready(app: &AppHandle) -> bool {
+    app.state::<Running>().downloaded.lock().unwrap().is_some()
 }
 
 fn no_update(app: &AppHandle) {
     *app.state::<Running>().update.lock().unwrap() = None;
+    *app.state::<Running>().downloaded.lock().unwrap() = None;
     clear_state(&state_dir(app));
-    crate::show_update_dot(app, None);
+    crate::show_update_dot(app, None, false);
 }
 
 /// One check, then the time it was made. An error is logged with its causes and recorded in update-check.json (Settings
@@ -426,8 +659,9 @@ fn check_now(app: &AppHandle) {
     if app.state::<Running>().updating.load(Ordering::SeqCst) {
         return;
     }
+    let mut downloaded_fine = true;
     match check(app) {
-        Ok(Some(update)) => offer(app, update),
+        Ok(Some(update)) => downloaded_fine = offer(app, update),
         Ok(None) => no_update(app),
         Err(e) => {
             let mut chain = error_chain(&e);
@@ -448,7 +682,10 @@ fn check_now(app: &AppHandle) {
     if let Err(w) = write_check(&dir, &record_ok(read_check(&dir), now_unix())) {
         log(app, &format!("update-check.json could not be written: {w}"));
     }
-    let _ = std::fs::write(checked_file(app), now_unix().to_string());
+    // A failed download leaves the check unmarked, so the hourly look tries the download again.
+    if downloaded_fine {
+        let _ = std::fs::write(checked_file(app), now_unix().to_string());
+    }
 }
 
 /// When the last manual check began (unix seconds; 0 = none yet).
@@ -468,6 +705,16 @@ pub fn check_now_manual(app: &AppHandle) {
     {
         return;
     }
+    // A download is under way and holds the update lock for minutes: answer at once. Settings shows "Downloading
+    // 1.7.2 · 42%" from update.json; the page is told something answered (a good check is on record: this very download
+    // is its result), so it loads Settings again instead of waiting out its 70 seconds.
+    let state = app.state::<Running>();
+    let taken = state.update_lock.try_lock().is_err();
+    if manual_action(taken, state.downloading.load(Ordering::SeqCst)) == ManualAction::AnswerNow {
+        let dir = state_dir(app);
+        let _ = write_check(&dir, &record_ok(read_check(&dir), now_unix().max(read_check(&dir).last_ok_at.map_or(0, |t| t + 1))));
+        return;
+    }
     check_now(app);
 }
 
@@ -483,6 +730,8 @@ pub fn settle_at_start(app: &AppHandle) -> bool {
             return false;
         }
         Leftover::JustUpdated => {
+            // Home says "Updated to x" once, with these notes (dismissed with its own route).
+            let _ = write_just_updated(&dir, &f);
             clear_state(&dir);
             return true;
         }
@@ -492,7 +741,7 @@ pub fn settle_at_start(app: &AppHandle) -> bool {
             f
         }
     };
-    crate::show_update_dot(app, Some(&kept.version));
+    crate::show_update_dot(app, Some(&kept.version), false);
     false
 }
 
@@ -507,7 +756,9 @@ pub fn start_checker(app: AppHandle) {
             }
             let last = std::fs::read_to_string(checked_file(&app)).ok().and_then(|s| s.trim().parse().ok());
             // check_now also waits for a running Update and restart, and then leaves its state alone.
-            if due(last, now_unix()) && !state.updating.load(Ordering::SeqCst) {
+            // An offer left over from a run that ended before it was installed (`available`) is fetched at once.
+            let pending = read_state(&state_dir(&app)).is_some_and(|f| f.state == State::Available);
+            if (due(last, now_unix()) || pending) && !state.updating.load(Ordering::SeqCst) {
                 check_now(&app);
             }
             std::thread::sleep(LOOK_EVERY);
@@ -525,7 +776,8 @@ fn reload_home(app: &AppHandle, port: u16) {
     }
 }
 
-/// Update and restart, from the card on Home: download, check the signature, back up, install, reopen. Only for a
+/// Restart now (the card on Home, the sidebar, the tray): back up, install, reopen. When the download is not done yet
+/// (still running, or failed and Try again) it is waited for or made first. Only for a
 /// server that proves it is ours, one at a time, and never during a restart.
 pub fn update_and_restart(app: &AppHandle) {
     let state = app.state::<Running>();
@@ -548,6 +800,61 @@ pub fn update_and_restart(app: &AppHandle) {
         run_update(app, port, &secret);
     }
     state.updating.store(false, Ordering::SeqCst);
+}
+
+/// How long a backup before installing at quit may take; a quit never waits longer (the update waits for the next start).
+const QUIT_BACKUP_WAIT: Duration = Duration::from_secs(60);
+
+/// The owner quits from the tray while an update is `ready`: back it up and install it without reopening, so the next
+/// start is the new version. Runs on a background thread, before the server is stopped. Whatever goes wrong is logged
+/// to logs/update.log and the quit goes ahead: it never hangs and never shows a dialog. A backup that fails or takes
+/// longer than QUIT_BACKUP_WAIT means no install this time (the update is `available` again for the next start); the
+/// server is never killed here: the quit that follows closes it the graceful way, and a backup it was still writing is
+/// a temporary file that is renamed only when finished, so a stop never leaves a half-written backup.
+pub fn install_on_quit(app: &AppHandle) {
+    let state = app.state::<Running>();
+    if !is_ready(app) {
+        return;
+    }
+    // Never next to a Restart now, a server restart, or a download still running (it holds the update lock).
+    if state.updating.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return;
+    }
+    if state.restarting.load(Ordering::SeqCst) {
+        return;
+    }
+    let Ok(_job) = state.update_lock.try_lock() else { return };
+    let Some(update) = state.update.lock().unwrap().clone() else { return };
+    // Only the bytes of this very version are ever installed.
+    let Some((version, bytes)) = state.downloaded.lock().unwrap().take() else { return };
+    if version != update.version {
+        log(app, "Not installing at quit: the downloaded update is not the one on offer.");
+        return;
+    }
+    let dir = state_dir(app);
+    let port = state.port.load(Ordering::SeqCst);
+    let secret = state.secret.lock().unwrap().clone();
+    if port == 0 || secret.is_empty() || !matches!(server::check_once(port, &secret), Ok(true)) {
+        log(app, "Not installing at quit: the server did not answer.");
+        return;
+    }
+    if let Err(said) = server::backup_now_within(port, &secret, QUIT_BACKUP_WAIT) {
+        log(app, &format!("Not installing at quit, the backup did not finish: {said}"));
+        let _ = write_state(&dir, &file_for(&update, State::Available, None));
+        return;
+    }
+    let _ = write_state(&dir, &file_for(&update, State::Installing, None));
+    state.restarting.store(true, Ordering::SeqCst);
+    state.epoch.fetch_add(1, Ordering::SeqCst);
+    state.quitting.store(true, Ordering::SeqCst);
+    crate::stop_server(app);
+    // Windows: the installer is told not to reopen the app (the plugin's /R is left out) and exits this process.
+    // The Mac: the new app is in place; the quit that follows is the end. The next start is the new version.
+    if let Err(e) = update.clone().restart_after_install(false).install(&bytes) {
+        log(app, &format!("The update could not be installed at quit: {e}"));
+        // Not installed: the offer stays for the next start, which downloads it again.
+        let _ = write_state(&dir, &file_for(&update, State::Available, None));
+    }
 }
 
 fn run_update(app: &AppHandle, port: u16, secret: &str) {
@@ -580,8 +887,14 @@ fn run_update(app: &AppHandle, port: u16, secret: &str) {
     };
     // After a failure the kept release is dropped: Try again asks the endpoint afresh (a release may have been fixed).
     let failed = |stage: Stage| {
-        *state.update.lock().unwrap() = None;
+        // Kept while the verified bytes are held (backup or install failed): Quit can still install it, and the tray's
+        // "Restart to update" is true. After a failed download the release is dropped.
+        if state.downloaded.lock().unwrap().is_none() {
+            *state.update.lock().unwrap() = None;
+        }
         write(State::Failed, None, Some(problem_text(stage, &current)));
+        // The tray follows: "Restart to update" only while a verified download is really still held.
+        crate::show_update_dot(app, Some(&update.version), is_ready(app));
     };
 
     if let Err(why) = self_update_check() {
@@ -589,37 +902,38 @@ fn run_update(app: &AppHandle, port: u16, secret: &str) {
         return reload_home(app, port);
     }
 
-    write(State::Downloading, None, None);
-    reload_home(app, port);
-    let mut download = update.clone();
-    download.timeout = None; // the 30 s were for the check; a stalled download still stops (STALLED)
-    let (mut done, mut last) = (0u64, None);
-    let bytes = tauri::async_runtime::block_on(download.download(
-        |n, total| {
-            done += n as u64;
-            if let Some(p) = progress(done, total, last) {
-                last = Some(p);
-                write(State::Downloading, Some(p), None);
+    // Restart now finds the release already downloaded and verified; only after a failure (Try again) or a restart of
+    // the app does it still have to fetch it.
+    let have = state.downloaded.lock().unwrap().take().filter(|(v, _)| *v == update.version);
+    let was_ready = have.is_some();
+    let bytes = match have {
+        Some((_, b)) => b,
+        None => {
+            write(State::Downloading, None, None);
+            reload_home(app, port);
+            match download_verified(app, &update, &dir) {
+                Ok(b) => {
+                    clear_trouble(app);
+                    b
+                }
+                Err(stage) => {
+                    note_download_failure(app, &update.version, &stage);
+                    return failed(stage);
+                }
             }
-        },
-        || {},
-    ));
-    let bytes = match bytes {
-        Ok(b) => b,
-        Err(e) => {
-            log(app, &format!("The update download failed: {e}"));
-            return failed(download_stage(&e));
         }
     };
-    if let Err(e) = update.verify(&bytes) {
-        log(app, &format!("The update did not pass its signature check: {e}"));
-        return failed(Stage::Signature);
-    }
 
     // After the download and its check, so a failed download never costs a backup.
     write(State::BackingUp, None, None);
+    if was_ready {
+        // The click came from a card or the sidebar that is not polling: Home again, where the card follows the steps.
+        reload_home(app, port);
+    }
     if let Err(said) = server::backup_now(port, secret) {
         log(app, &format!("The backup before the update failed: {said}"));
+        // The download is good: kept, so Try again does not fetch it a second time.
+        *state.downloaded.lock().unwrap() = Some((update.version.clone(), bytes));
         return failed(Stage::Backup(said));
     }
 
@@ -628,7 +942,7 @@ fn run_update(app: &AppHandle, port: u16, secret: &str) {
     state.restarting.store(true, Ordering::SeqCst);
     state.epoch.fetch_add(1, Ordering::SeqCst);
     crate::stop_server(app);
-    // Windows: install runs the installer (passive, with its own progress window) and exits the app; its NSIS hooks
+    // Windows: install runs the installer (quiet: no window) and exits the app; the installer reopens it; its NSIS hooks
     // stop any node.exe left. The Mac: the new app is in place, and the restart opens it on Home, where the button was.
     match update.install(&bytes) {
         Ok(()) => {
@@ -637,6 +951,7 @@ fn run_update(app: &AppHandle, port: u16, secret: &str) {
         }
         Err(e) => {
             log(app, &format!("The update could not be installed: {e}"));
+            *state.downloaded.lock().unwrap() = Some((update.version.clone(), bytes));
             failed(Stage::Install);
             // The running version stays: its server starts again and the window shows the failed card.
             state.restarts.store(0, Ordering::SeqCst);
@@ -705,13 +1020,89 @@ mod tests {
     }
 
     #[test]
-    fn the_percentage_is_written_at_most_every_two_points() {
-        assert_eq!(progress(0, Some(1000), None), Some(0), "the first one");
-        assert_eq!(progress(10, Some(1000), Some(0)), None, "1%");
-        assert_eq!(progress(20, Some(1000), Some(0)), Some(2));
-        assert_eq!(progress(1000, Some(1000), Some(99)), Some(100), "the end always counts");
-        assert_eq!(progress(500, None, None), None, "no size known");
-        assert_eq!(progress(2000, Some(1000), Some(98)), Some(100), "never over 100");
+    fn the_percentage_is_written_when_the_whole_percent_changes_and_not_more_often_than_every_300_ms() {
+        assert_eq!(progress(0, Some(1000), None, None), Some(0), "the first one");
+        assert_eq!(progress(10, Some(1000), Some(0), Some(299)), None, "1% but only 299 ms since the last write");
+        assert_eq!(progress(10, Some(1000), Some(0), Some(300)), Some(1), "1% after 300 ms");
+        assert_eq!(progress(11, Some(1000), Some(1), Some(5000)), None, "the same whole percent is never written again");
+        assert_eq!(progress(1000, Some(1000), Some(99), Some(1)), Some(100), "the end always counts, however soon");
+        assert_eq!(progress(1000, Some(1000), Some(100), Some(1000)), None, "100 is written once");
+        assert_eq!(progress(500, None, None, None), None, "no size known");
+        assert_eq!(progress(2000, Some(1000), Some(98), Some(1000)), Some(100), "never over 100");
+    }
+
+    #[test]
+    fn a_check_downloads_unless_the_app_cannot_update_itself_or_already_holds_this_version() {
+        assert_eq!(next_step(false, false, Retry::Go), Next::Download);
+        assert_eq!(next_step(false, true, Retry::Go), Next::Ready);
+        assert_eq!(next_step(true, false, Retry::Go), Next::Blocked);
+        assert_eq!(next_step(true, true, Retry::Go), Next::Blocked, "a blocked copy never installs, whatever it holds");
+    }
+
+    #[test]
+    fn a_check_does_not_download_again_while_the_back_off_runs_or_after_a_bad_signature() {
+        assert_eq!(next_step(false, false, Retry::Wait), Next::Wait);
+        assert_eq!(next_step(false, false, Retry::Never), Next::Refuse);
+        assert_eq!(next_step(false, true, Retry::Wait), Next::Ready, "bytes already held are no download");
+        assert_eq!(next_step(true, false, Retry::Never), Next::Blocked);
+    }
+
+    fn trouble(version: &str, signature: bool, failures: u32, at: u64) -> DownloadTrouble {
+        DownloadTrouble { version: version.into(), signature, failures, at }
+    }
+
+    #[test]
+    fn a_failed_download_is_retried_after_6_hours_then_every_24() {
+        let now = 1_800_000_000;
+        assert_eq!(retry_policy(None, "1.7.2", now), Retry::Go, "nothing went wrong before");
+        let first = trouble("1.7.2", false, 1, now);
+        assert_eq!(retry_policy(Some(&first), "1.7.2", now + 6 * 3600 - 1), Retry::Wait);
+        assert_eq!(retry_policy(Some(&first), "1.7.2", now + 6 * 3600), Retry::Go);
+        let second = trouble("1.7.2", false, 2, now);
+        assert_eq!(retry_policy(Some(&second), "1.7.2", now + 23 * 3600), Retry::Wait);
+        assert_eq!(retry_policy(Some(&second), "1.7.2", now + 24 * 3600), Retry::Go);
+        assert_eq!(retry_policy(Some(&first), "1.7.2", now - 5), Retry::Go, "the clock moved backwards");
+    }
+
+    #[test]
+    fn a_bad_signature_is_never_retried_for_that_version_and_a_newer_release_clears_it() {
+        let now = 1_800_000_000;
+        let bad = trouble("1.7.2", true, 1, now);
+        assert_eq!(retry_policy(Some(&bad), "1.7.2", now + 30 * 24 * 3600), Retry::Never);
+        assert_eq!(retry_policy(Some(&bad), "1.7.3", now), Retry::Go, "another version starts afresh");
+        assert_eq!(retry_policy(Some(&trouble("1.7.2", false, 3, now)), "1.7.3", now), Retry::Go);
+    }
+
+    #[test]
+    fn failures_of_one_version_are_counted_and_a_new_version_starts_at_one() {
+        let one = record_trouble(None, "1.7.2", &Stage::Download, 100);
+        assert_eq!(one, trouble("1.7.2", false, 1, 100));
+        let two = record_trouble(Some(one.clone()), "1.7.2", &Stage::Download, 200);
+        assert_eq!((two.failures, two.at), (2, 200));
+        let sig = record_trouble(Some(two.clone()), "1.7.2", &Stage::Signature, 300);
+        assert!(sig.signature);
+        assert_eq!(record_trouble(Some(two), "1.7.3", &Stage::Download, 400), trouble("1.7.3", false, 1, 400));
+        let json = serde_json::to_string(&one).unwrap();
+        assert_eq!(serde_json::from_str::<DownloadTrouble>(&json).unwrap(), one);
+    }
+
+    #[test]
+    fn a_press_of_check_for_updates_answers_at_once_only_while_a_download_holds_the_lock() {
+        assert_eq!(manual_action(true, true), ManualAction::AnswerNow);
+        assert_eq!(manual_action(true, false), ManualAction::Check, "a check in flight: wait for it as before");
+        assert_eq!(manual_action(false, true), ManualAction::Check);
+        assert_eq!(manual_action(false, false), ManualAction::Check);
+    }
+
+    #[test]
+    fn the_just_updated_file_keeps_the_version_and_its_notes() {
+        let d = scratch("just-updated");
+        let f = UpdateFile { current: "1.7.1".into(), version: "1.7.2".into(), notes: "- Faster search".into(), state: State::Installing, percent: None, problem: None };
+        write_just_updated(&d, &f).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join("just-updated.json")).unwrap()).unwrap();
+        assert_eq!(v, serde_json::json!({ "version": "1.7.2", "notes": "- Faster search" }));
+        assert!(!d.join("just-updated.json.tmp").exists());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     fn scratch(name: &str) -> PathBuf {
@@ -736,7 +1127,7 @@ mod tests {
         assert!(v.get("percent").is_none());
         assert!(!d.join("update.json.tmp").exists(), "no temporary file left");
         assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1);
-        for (s, name) in [(State::Available, "available"), (State::BackingUp, "backing-up"), (State::Installing, "installing"), (State::Blocked, "blocked")] {
+        for (s, name) in [(State::Available, "available"), (State::Ready, "ready"), (State::BackingUp, "backing-up"), (State::Installing, "installing"), (State::Blocked, "blocked")] {
             assert_eq!(serde_json::to_value(s).unwrap(), name);
         }
         assert_eq!(read_state(&d), Some(failed));
@@ -757,9 +1148,12 @@ mod tests {
         assert_eq!(left_over(&f("1.2.10", State::Available), "1.2.9"), Leftover::Keep, "compared as numbers");
         assert_eq!(left_over(&f("1.3.0", State::Failed), "1.2.0"), Leftover::Keep);
         assert_eq!(left_over(&f("1.3.0", State::Blocked), "1.2.0"), Leftover::Keep);
+        assert_eq!(left_over(&f("1.2.1", State::Ready), "1.2.1"), Leftover::Remove, "ready, but the app was updated another way");
+        let again = UpdateFile { state: State::Available, percent: None, ..f("1.3.0", State::Ready) };
+        assert_eq!(left_over(&f("1.3.0", State::Ready), "1.2.0"), Leftover::Reset(again), "ready in an earlier run: its bytes are gone, so it is offered (and downloaded) again");
         // An update stopped half way (the app was quit or crashed): still on offer, not stuck "busy".
         let reset = UpdateFile { state: State::Available, percent: None, ..f("1.3.0", State::Available) };
-        for busy in [State::BackingUp, State::Downloading, State::Installing] {
+        for busy in [State::BackingUp, State::Downloading, State::Ready, State::Installing] {
             assert_eq!(left_over(&f("1.3.0", busy), "1.2.0"), Leftover::Reset(reset.clone()));
         }
     }

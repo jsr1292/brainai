@@ -71,6 +71,7 @@ export const common = {
   'update.backingUp': 'Making a backup of your brain first…',
   'update.downloading': 'Downloading BrainAI {version}…{percent}',
   'update.installing': 'Installing… BrainAI reopens by itself in a moment.',
+  'update.ready': 'Restart to finish. It takes a few seconds.',
   'update.failed': 'The update did not finish: {problem} BrainAI {current} is still running.',
   'update.failedDefault': 'something went wrong.',
   'update.blockedDefault': 'The update cannot start right now.',

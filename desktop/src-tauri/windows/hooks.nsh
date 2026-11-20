@@ -2,11 +2,30 @@
 ; its files open after the app itself is closed. Stop only that one, never another node.exe on this computer, then
 ; clear the old server folder so no file from an older version stays behind. The data folder is elsewhere
 ; (%LOCALAPPDATA%\io.github.jsr1292.brainai) and is never touched.
+; The installer now runs silently for updates (installMode "quiet": /S /UPDATE /R). Nothing in these hooks may show a
+; dialog or wait for input: no MessageBox (it would need an /SD default); only hidden nsExec commands and a silent Abort.
 !macro NSIS_HOOK_PREINSTALL
-  nsExec::Exec `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -eq '$INSTDIR\node.exe' } | Stop-Process -Force"`
+  ; This hook runs before the template's own CheckIfAppIsRunning, so it does the same first: brainai.exe is shut down
+  ; with the Restart Manager (forced when silent), and the install is aborted, before anything is deleted, if it
+  ; cannot be stopped. Silent: no dialog, no MessageBox.
+  !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+  ; Then this folder's own node.exe (the server) and only that one: stopped, and waited for up to 5 seconds until it is
+  ; really gone (exit code 0). If it is still there, abort: the server folder is not removed under a running server.
+  ; The folder goes to PowerShell in an environment variable, never inside the command text: a path with an apostrophe
+  ; (C:\Users\O'Brien\...) would break a quoted string. Exit code 1 is the one definite answer "still running".
+  System::Call 'kernel32::SetEnvironmentVariableW(w "BRAINAI_NODE", w "$INSTDIR\node.exe")'
+  nsExec::Exec `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$mine = { Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -eq $$env:BRAINAI_NODE } }; & $$mine | Stop-Process -Force -ErrorAction SilentlyContinue; for ($$i = 0; $$i -lt 20; $$i++) { if (-not (& $$mine)) { exit 0 }; Start-Sleep -Milliseconds 250 }; exit 1"`
   Pop $0
-  Sleep 1000
-  RMDir /r "$INSTDIR\server"
+  ; Abort only on that definite answer. Any other result ("error" when powershell.exe is blocked or missing, "timeout", a
+  ; parse error) means we could not tell: skip clearing the server folder but go on with the install, whose own
+  ; CheckIfAppIsRunning (above) has already made sure the app is gone. Aborting there would leave a silent update half
+  ; done with the app closed and /R never run: BrainAI would just vanish, on every update.
+  ${If} $0 == "1"
+    Abort
+  ${ElseIf} $0 == "0"
+    ; Clear the old server folder so no file from an older version stays behind.
+    RMDir /r "$INSTDIR\server"
+  ${EndIf}
 !macroend
 
 ; Uninstalling for good: take BrainAI's entries out of the owner's AI tools first, with the server's own command, which

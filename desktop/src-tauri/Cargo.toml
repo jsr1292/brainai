@@ -1,6 +1,6 @@
 [package]
 name = "brainai"
-version = "1.7.1"
+version = "1.8.0"
 description = "BrainAI: a shared brain for your AI assistants, on this Mac"
 edition = "2021"
 license = "MIT"

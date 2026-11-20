@@ -54,6 +54,13 @@ struct Running {
     restarting: AtomicBool,
     /// The newer release the last check found, kept for Update and restart.
     update: Mutex<Option<tauri_plugin_updater::Update>>,
+    /// The release the last check found, downloaded and signature-checked, with its version: kept in memory only (a
+    /// restart of the app downloads it again). Set means the update is `ready`.
+    downloaded: Mutex<Option<(String, Vec<u8>)>>,
+    /// Quit from the tray is installing an update first: another Quit click does nothing meanwhile.
+    quitting_with_update: AtomicBool,
+    /// A download is running (on the check's thread, holding `update_lock`): Check for updates answers at once.
+    downloading: AtomicBool,
     /// Update and restart is under way: a second one is ignored, and so is /app/restart.
     updating: AtomicBool,
     /// Held by the update check (with its write) and by the whole Update and restart, on background threads only.
@@ -68,6 +75,8 @@ struct Tray {
     quit_item: MenuItem<Wry>,
     update_item: MenuItem<Wry>,
     shown: AtomicBool,
+    /// The update is downloaded: the item reads "Restart to update" and restarts instead of opening Home.
+    ready: AtomicBool,
     /// The version the update item names while it is shown, kept to write it again when the language changes.
     version: Mutex<Option<String>>,
 }
@@ -77,24 +86,38 @@ const TRAY_ID: &str = "brainai";
 const TRAY_UPDATE_ICON: &[u8] = include_bytes!("../icons/tray-update.png");
 
 /// The tray's dot and its menu item for an update to `version`; the plain icon and no item for None.
-fn show_update_dot(app: &AppHandle, version: Option<&str>) {
+/// With `ready`, the menu item restarts into the new version ("Restart to update").
+fn show_update_dot(app: &AppHandle, version: Option<&str>, ready: bool) {
     let (Some(tray), Some(icon)) = (app.try_state::<Tray>(), app.tray_by_id(TRAY_ID)) else { return };
     match version {
         Some(v) => {
             let _ = icon.set_icon(tauri::image::Image::from_bytes(TRAY_UPDATE_ICON).ok());
             *tray.version.lock().unwrap() = Some(v.to_string());
-            let _ = tray.update_item.set_text(tr_with("tray.update_version", &[("version", v)]));
+            tray.ready.store(ready, Ordering::SeqCst);
+            let _ = tray.update_item.set_text(update_item_text(v, ready));
             if !tray.shown.swap(true, Ordering::SeqCst) {
                 let _ = tray.menu.insert(&tray.update_item, 0);
             }
         }
         None => {
             *tray.version.lock().unwrap() = None;
+            tray.ready.store(false, Ordering::SeqCst);
             let _ = icon.set_icon(app.default_window_icon().cloned());
             if tray.shown.swap(false, Ordering::SeqCst) {
                 let _ = tray.menu.remove(&tray.update_item);
             }
         }
+    }
+}
+
+fn update_item_text(version: &str, ready: bool) -> String {
+    if ready { tr("tray.restart_update") } else { tr_with("tray.update_version", &[("version", version)]) }
+}
+
+/// The tray's tooltip: a line like "Downloading update… 42%" while one runs, plain "BrainAI" for None.
+fn set_tray_tooltip(app: &AppHandle, text: Option<String>) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_tooltip(Some(text.unwrap_or_else(|| "BrainAI".into())));
     }
 }
 
@@ -105,7 +128,7 @@ fn retitle_tray(app: &AppHandle) {
     let _ = tray.login_item.set_text(tr("tray.login"));
     let _ = tray.quit_item.set_text(tr("tray.quit"));
     let text = match tray.version.lock().unwrap().as_deref() {
-        Some(v) => tr_with("tray.update_version", &[("version", v)]),
+        Some(v) => update_item_text(v, tray.ready.load(Ordering::SeqCst)),
         None => tr("tray.update"),
     };
     let _ = tray.update_item.set_text(text);
@@ -207,6 +230,31 @@ fn quit(app: &AppHandle) {
     app.state::<Running>().quitting.store(true, Ordering::SeqCst);
     stop_server(app);
     app.exit(0);
+}
+
+/// Quit from the tray menu: an update that is `ready` is backed up and installed first (the next start is the new
+/// version), on its own thread so the menu never freezes; if that fails it is logged and the quit goes ahead.
+fn quit_from_tray(app: &AppHandle) {
+    // First of all: while the install runs (it takes the downloaded bytes at once, so `is_ready` is already false) a
+    // further Quit does nothing, and never cuts the backup or the unpack short.
+    if app.state::<Running>().quitting_with_update.load(Ordering::SeqCst) {
+        return;
+    }
+    if !update::is_ready(app) {
+        return quit(app);
+    }
+    if app.state::<Running>().quitting_with_update.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if let Some(w) = app.get_webview_window(MAIN) {
+        let _ = w.hide();
+    }
+    set_tray_tooltip(app, Some(tr("tray.installing")));
+    let app = app.clone();
+    std::thread::spawn(move || {
+        update::install_on_quit(&app);
+        quit(&app);
+    });
 }
 
 /// After an import was staged (Task 7's /app/restart): stops the server and starts it again, which swaps the staged
@@ -360,6 +408,10 @@ fn show_home(app: &AppHandle) {
 }
 
 fn show_window(app: &AppHandle, home: bool) {
+    // The window was hidden because an update is installing on quit: Open and the Dock icon leave it hidden.
+    if app.state::<Running>().quitting_with_update.load(Ordering::SeqCst) {
+        return;
+    }
     let Some(w) = app.get_webview_window(MAIN) else { return };
     let was_visible = w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false);
     let _ = w.show();
@@ -672,7 +724,7 @@ pub fn run() {
             let quit_item = MenuItem::with_id(app, "quit", tr("tray.quit"), true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &login, &PredefinedMenuItem::separator(app)?, &quit_item])?;
             let update_item = MenuItem::with_id(app, "update", tr("tray.update"), true, None::<&str>)?;
-            app.manage(Tray { menu: menu.clone(), open_item: open.clone(), login_item: login.clone(), quit_item: quit_item.clone(), update_item, shown: AtomicBool::new(false), version: Mutex::new(None) });
+            app.manage(Tray { menu: menu.clone(), open_item: open.clone(), login_item: login.clone(), quit_item: quit_item.clone(), update_item, shown: AtomicBool::new(false), ready: AtomicBool::new(false), version: Mutex::new(None) });
             let login_item = login.clone();
             TrayIconBuilder::with_id(TRAY_ID)
                 .icon(app.default_window_icon().expect("the app icon").clone())
@@ -681,13 +733,21 @@ pub fn run() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "open" => show_main(app),
+                    "update" if update::is_ready(app) => {
+                        // Home first, so the card shows the steps of the restart.
+                        let app = app.clone();
+                        std::thread::spawn(move || {
+                            show_home(&app);
+                            update::update_and_restart(&app);
+                        });
+                    }
                     "update" => show_home(app),
                     "login" => {
                         let on = login_item.is_checked().unwrap_or(false);
                         let _ = if on { app.autolaunch().enable() } else { app.autolaunch().disable() };
                         remember_login_choice(app, on);
                     }
-                    "quit" => quit(app),
+                    "quit" => quit_from_tray(app),
                     _ => {}
                 })
                 .build(app)?;

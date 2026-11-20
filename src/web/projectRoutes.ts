@@ -18,8 +18,8 @@ import { needsWelcome } from './desktopRoutes.js';
 import { noteDecision, takeStatusLine } from './inboxUndo.js';
 import { makeInbox } from './inboxPage.js';
 import { healthOf } from './healthData.js';
-import { modelsLine, offsiteCard, updateCard } from './desktopViews.js';
-import { laterVersion, offsiteNudgeDue, offsiteNudgeHidden, readUpdate } from '../desktop/updateState.js';
+import { justUpdatedLine, modelsLine, offsiteCard, updateCard } from './desktopViews.js';
+import { laterVersion, offsiteNudgeDue, offsiteNudgeHidden, readJustUpdated, readUpdate } from '../desktop/updateState.js';
 import { viaDoor } from '../desktop/publicDoor.js';
 import { BRAIN_VERSION } from '../version.js';
 import { firstSteps, firstStepsDue, firstStepsHidden, firstStepsView, hideFirstSteps } from './firstSteps.js';
@@ -108,6 +108,11 @@ export function projectRoutes(d: AppDeps): Router {
         if (!d.localMode || !d.statusDir || (req && viaDoor(req))) return undefined;
         const u = readUpdate(d.statusDir, BRAIN_VERSION);
         return u ? updateCard(u, laterVersion(d.statusDir)) : undefined;
+      })(),
+      justUpdated: (() => {
+        if (!d.localMode || !d.statusDir || (req && viaDoor(req))) return undefined;
+        const j = readJustUpdated(d.statusDir, BRAIN_VERSION);
+        return j ? justUpdatedLine(j) : undefined;
       })(),
       firstSteps: (() => {
         if (req && viaDoor(req)) return undefined;

@@ -133,22 +133,28 @@ export function modelsLine(s: ModelStatus, o: { onlyWhenBusy?: boolean; dataDir?
   return html`<div class="conn-setup models-line" role="status" data-models-progress="/models/progress"${p.busy ? raw(' data-busy') : raw('')}>${p.ready ? html`<span class="ok models-ok">✓</span>` : ''}<span class="models-text">${p.text}</span>${p.failed ? html` <a href="/settings#search">${t('setup.models.look')}</a>` : ''}${bar}</div>`;
 }
 
+/** The "- " lines of a release's notes, as plain strings (untrusted: only ever interpolated through `html`). */
+export function noteItems(notes: string): string[] {
+  // An indented line after a "- " line continues that item (manifests published before the notes were unwrapped).
+  const joined: string[] = [];
+  let inItem = false;
+  for (const raw of notes.split('\n')) {
+    if (raw.trimStart().startsWith('- ') && !/^\s{2,}/.test(raw)) { joined.push(raw.trim()); inItem = true; }
+    else if (inItem && /^\s+\S/.test(raw)) joined[joined.length - 1] += ` ${raw.trim()}`;
+    else { joined.push(raw.trim()); inItem = false; }
+  }
+  return joined.filter((l) => l.startsWith('- ')).map((l) => l.slice(2).trim()).filter((l) => l !== '');
+}
+
 /**
  * The update card on Home (the app only): the notes are untrusted plain text, shown only as list items from their
  * "- " lines (the html tag escapes them). While busy, app.js asks /app/update/state every second and swaps the text.
  */
 export function updateCard(u: UpdateFile, later: string | null): SafeHtml {
   const line = updateLine(u);
-  if (u.state === 'available' && later === u.version) return html``;
-  // An indented line after a "- " line continues that item (manifests published before the notes were unwrapped).
-  const joined: string[] = [];
-  let inItem = false;
-  for (const raw of u.notes.split('\n')) {
-    if (raw.trimStart().startsWith('- ') && !/^\s{2,}/.test(raw)) { joined.push(raw.trim()); inItem = true; }
-    else if (inItem && /^\s+\S/.test(raw)) joined[joined.length - 1] += ` ${raw.trim()}`;
-    else { joined.push(raw.trim()); inItem = false; }
-  }
-  const items = joined.filter((l) => l.startsWith('- ')).map((l) => l.slice(2).trim()).filter((l) => l !== '');
+  const offered = u.state === 'available' || u.state === 'ready';
+  if (offered && later === u.version) return html``;
+  const items = noteItems(u.notes);
   return html`<div class="conn-setup update-card" role="status"${line.busy ? raw(' data-busy') : raw('')} data-update-state="/app/update/state">
   <p><strong class="update-title">${line.title}</strong></p>
   <p class="update-text"${line.text === '' ? raw(' hidden') : raw('')}>${line.text}</p>
@@ -156,8 +162,23 @@ export function updateCard(u: UpdateFile, later: string | null): SafeHtml {
   ${line.busy ? '' : html`<div class="update-actions">${u.state === 'blocked'
     // The app cannot replace itself where it runs: the release page (outside links open in the browser).
     ? html`<a class="button" href="https://github.com/jsr1292/brainai/releases/latest">${t('setup.update.download', { version: u.version })}</a>`
-    : html`<a class="button" href="/app/update">${u.state === 'failed' ? t('setup.update.again') : t('setup.update.restart')}</a>`}
-  ${u.state === 'available' ? html`<form method="post" action="/app/update/later" class="inline"><button type="submit">${t('setup.later')}</button></form>` : ''}</div>`}
+    : html`<a class="button" href="/app/update">${u.state === 'failed' ? t('setup.update.again') : u.state === 'ready' ? t('setup.update.restartNow') : t('setup.update.restart')}</a>`}
+  ${offered ? html`<form method="post" action="/app/update/later" class="inline"><button type="submit">${t('setup.later')}</button></form>` : ''}</div>`}
+</div>`;
+}
+
+/**
+ * The small line on Home at the first start after an update (the app only): "Updated to 1.7.2 · What's new". What's new
+ * opens the notes in place (untrusted plain text, list items escaped by `html`); Dismiss deletes just-updated.json.
+ */
+export function justUpdatedLine(j: { version: string; notes: string }): SafeHtml {
+  const items = noteItems(j.notes);
+  const said = html`<strong>${t('setup.update.justUpdated', { version: j.version })}</strong>`;
+  return html`<div class="conn-setup just-updated" role="status">
+  <div class="just-updated-line">${items.length > 0
+    ? html`<details class="just-updated-notes"><summary>${said} · <span class="just-updated-more">${t('setup.update.whatsNew')}</span></summary><ul>${items.map((i) => html`<li>${i}</li>`)}</ul></details>`
+    : html`<span>${said}</span>`}
+  <form method="post" action="/app/update/dismiss" class="inline"><button type="submit">${t('setup.update.dismiss')}</button></form></div>
 </div>`;
 }
 

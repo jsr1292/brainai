@@ -73,6 +73,7 @@ export const common_es: Record<keyof typeof common, Entry> = {
   'update.backingUp': 'Primero se hace una copia de seguridad de tu memoria…',
   'update.downloading': 'Descargando BrainAI {version}…{percent}',
   'update.installing': 'Instalando… BrainAI se vuelve a abrir solo en un momento.',
+  'update.ready': 'Reinicia para terminar. Solo lleva unos segundos.',
   'update.failed': 'La actualización no ha terminado: {problem} BrainAI {current} sigue en marcha.',
   'update.failedDefault': 'algo ha ido mal.',
   'update.blockedDefault': 'La actualización no puede empezar ahora.',

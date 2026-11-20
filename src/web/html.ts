@@ -92,12 +92,20 @@ function sidebar(opts: { tab?: Tab | null; section?: Section; query?: string }):
     const count = p.tab === 'inbox' && status.needsYouCount > 0 ? html`<span class="side-count" aria-label="${t('shell.waiting', { count: status.needsYouCount })}">${status.needsYouCount}</span>` : '';
     return html`<li><a class="side-place" href="${p.href}"${here ? raw(` aria-current="${lit ? 'true' : 'page'}"`) : ''}>${tKey(p.label)}${count}</a>${subs.length > 0 ? html`<ul class="side-subs">${subs.map((x) => html`<li><a class="side-sub" href="${x.href}"${x === lit ? raw(' aria-current="page"') : ''}>${tKey(x.label)}</a></li>`)}</ul>` : ''}</li>`;
   };
+  const up = status.update;
+  const upText = up === null ? '' : up.state === 'ready' ? t('client.update.sideReady')
+    : up.percent === undefined ? t('client.update.sideDownloadingNoPercent') : t('client.update.sideDownloading', { percent: up.percent });
+  // The app's update, only while there is something to say (app.js asks /app/update/state each second while it downloads).
+  const updateLine = up === null ? '' : html`<div class="side-update" role="status" data-side-update="/app/update/state" data-update="${up.state}">
+<span class="side-update-text">${upText}</span>${up.state === 'ready' ? html`<span class="side-update-act"> · <a class="side-update-restart" href="/app/update">${t('client.update.sideRestart')}</a></span>` : ''}
+<progress class="side-update-bar" max="100"${up.state === 'downloading' ? (up.percent === undefined ? raw('') : raw(` value="${up.percent}"`)) : raw(' hidden')} aria-hidden="true"></progress></div>
+`;
   const warn = status.backupLate ? html`<span class="side-warn"><span class="dot attention" aria-hidden="true"></span>${t('shell.backupLate')}</span>` : '';
   return html`<nav class="side" hidden aria-label="${t('shell.nav.main')}">
 <a class="brand" href="/"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></a>
 <form class="side-find" method="get" action="/search" role="search"><svg class="side-find-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input name="q" type="search" placeholder="${t('shell.search.placeholder')}" aria-label="${t('shell.search.label')}" aria-keyshortcuts="Meta+K Control+K" value="${opts.query ?? ''}"><kbd><span class="k-mac">⌘K</span><span class="k-pc">Ctrl K</span></kbd></form>
 <ul class="side-places">${PLACES.map(place)}</ul>
-<a class="side-place side-settings" href="/settings"${opts.tab === 'settings' ? raw(' aria-current="page"') : ''}>${t('shell.nav.settings')}${warn}</a>
+${updateLine}<a class="side-place side-settings" href="/settings"${opts.tab === 'settings' ? raw(' aria-current="page"') : ''}>${t('shell.nav.settings')}${warn}</a>
 </nav>
 `;
 }

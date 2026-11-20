@@ -529,3 +529,190 @@ test('the setup check line ignores a redirect (an expired login) instead of show
   assert.match(poller, /redirect: 'manual'/);
   assert.match(poller, /r\.ok && !r\.redirected|r\.status === 200/);
 });
+
+// ---- The desktop sidebar's update line ----
+
+/** Runs app.js against one sidebar update line; `answers` are what /app/update/state says, one per request. */
+async function sideUpdateRun(state: string, answers: Array<{ status?: number; body?: unknown }>, withRestart = false) {
+  const script = readFileSync(new URL('./static/app.js', import.meta.url), 'utf8');
+  const box = new FakeElement('div') as FakeElement & { hidden: boolean };
+  box.hidden = false;
+  box.dataset = { sideUpdate: '/app/update/state', update: state };
+  const text = new FakeElement('span'), bar = new FakeElement('progress') as FakeElement & { hidden: boolean; value: number };
+  bar.hidden = false;
+  const kids: Record<string, FakeElement | null> = { '.side-update-text': text, '.side-update-bar': bar, '.side-update-restart': null, '.side-update-act': null };
+  type Clickable = FakeElement & { hidden: boolean; clicks: Array<() => void>; addEventListener: (t: string, fn: () => void) => void };
+  const link = new FakeElement('a') as Clickable, act = new FakeElement('span') as Clickable;
+  link.clicks = [];
+  link.addEventListener = (_t, fn) => { link.clicks.push(fn); };
+  act.hidden = false;
+  if (withRestart) { kids['.side-update-restart'] = link; kids['.side-update-act'] = act; }
+  (box as unknown as { querySelector: (s: string) => FakeElement | null }).querySelector = (s) => kids[s] ?? null;
+  const timers: Array<() => unknown> = [];
+  const asked: string[] = [];
+  const document = {
+    body: new FakeElement('body'),
+    querySelectorAll: (s: string) => (s === '[data-side-update]' ? [box] : []),
+    querySelector: () => null, getElementById: () => null, createElement: (tag: string) => { const el = new FakeElement(tag) as FakeElement & { addEventListener: () => void }; el.addEventListener = () => {}; return el; }, addEventListener: () => {},
+  };
+  const fetch = async (url: string) => {
+    asked.push(url);
+    const a = answers.shift() ?? { status: 500 };
+    return { ok: (a.status ?? 200) < 300, status: a.status ?? 200, type: 'basic', redirected: false, json: async () => a.body };
+  };
+  runInNewContext(script, { document, fetch, navigator: {}, Element: FakeElement, Intl, Date, Number, String, setTimeout: (fn: () => unknown) => timers.push(fn), clearTimeout: () => {}, addEventListener: () => {}, matchMedia: () => ({ matches: false }), location: { href: '/', replace: () => {} } });
+  const tick = async () => { const fn = timers.shift(); if (fn) await fn(); };
+  return { box, text, bar, kids, timers, asked, tick, link, act };
+}
+
+test('the sidebar update line asks every second while downloading, swapping the percent and the bar, and stops at ready', async () => {
+  const r = await sideUpdateRun('downloading', [{ body: { state: 'downloading', percent: 42 } }, { body: { state: 'downloading', percent: 43 } }, { body: { state: 'ready' } }]);
+  assert.equal(r.timers.length, 1, 'one request is scheduled');
+  await r.tick();
+  assert.equal(r.text.textContent, 'Downloading update · 42%');
+  assert.equal(r.bar.value, 42);
+  assert.equal(r.timers.length, 1);
+  await r.tick();
+  assert.equal(r.text.textContent, 'Downloading update · 43%');
+  await r.tick();
+  assert.equal(r.text.textContent, 'Update ready');
+  assert.equal(r.bar.hidden, true, 'no bar once it is ready');
+  assert.equal(r.timers.length, 0, 'no more polling once ready');
+  assert.deepEqual(r.asked, ['/app/update/state', '/app/update/state', '/app/update/state']);
+  assert.equal(r.box.children.length, 1, 'a Restart link was added');
+  assert.equal((r.box.children[0]!.children[1] as FakeElement).attrs.href, '/app/update');
+});
+
+test('the sidebar update line hides itself when the download fails or the update goes away, and stops asking', async () => {
+  const failed = await sideUpdateRun('downloading', [{ body: { state: 'failed' } }]);
+  await failed.tick();
+  assert.equal(failed.box.hidden, true);
+  assert.equal(failed.timers.length, 0);
+  const gone = await sideUpdateRun('downloading', [{ status: 404 }]);
+  await gone.tick();
+  assert.equal(gone.box.hidden, true);
+  assert.equal(gone.timers.length, 0);
+});
+
+test('a sidebar update line that starts as ready never asks the server anything', async () => {
+  const r = await sideUpdateRun('ready', []);
+  assert.equal(r.timers.length, 0);
+  assert.deepEqual(r.asked, []);
+});
+
+test('the sidebar update line keeps asking after a failed request, and gives up after a minute of them', async () => {
+  const r = await sideUpdateRun('downloading', Array.from({ length: 70 }, () => ({ status: 500 })));
+  let n = 0;
+  while (r.timers.length > 0 && n < 100) { await r.tick(); n++; }
+  assert.equal(n, 60);
+});
+
+test('the sidebar bar eases only when motion is welcome', () => {
+  const css = readFileSync(new URL('./static/desk.css', import.meta.url), 'utf8');
+  assert.match(css, /prefers-reduced-motion: no-preference\)\s*\{[^}]*side-update-bar::-webkit-progress-value\s*\{\s*transition: width/);
+  assert.doesNotMatch(css.replace(/@media \(prefers-reduced-motion: no-preference\)[^\n]*\n/, ''), /side-update-bar[^{]*\{[^}]*transition/);
+});
+
+/** Runs app.js against the Home update card; `answers` are what /app/update/state says, one per request. */
+async function cardRun(answers: Array<{ status?: number; body?: unknown }>) {
+  const script = readFileSync(new URL('./static/app.js', import.meta.url), 'utf8');
+  type El = FakeElement & { hidden: boolean; addEventListener: () => void; removeAttribute: (n: string) => void };
+  const make = (tag: string): El => { const el = new FakeElement(tag) as El; el.hidden = false; el.addEventListener = () => {}; return el; };
+  const card = make('div') as El & { hasAttribute: (n: string) => boolean };
+  card.hasAttribute = (n) => n in card.attrs;
+  card.dataset = { updateState: '/app/update/state' };
+  card.attrs['data-busy'] = '';
+  const text = make('p'), title = make('strong');
+  const kids: Record<string, El | null> = { '.update-text': text, '.update-title': title };
+  (card as unknown as { querySelector: (s: string) => El | null }).querySelector = (s) => (s === '.update-actions' ? (card.children.find((c) => c.className === 'update-actions') as El | undefined) ?? null : kids[s] ?? null);
+  const timers: Array<() => unknown> = [];
+  const replaced: string[] = [];
+  const document = { body: new FakeElement('body'), querySelectorAll: (s: string) => (s === '[data-update-state]' ? [card] : []), querySelector: () => null, getElementById: () => null, createElement: make, addEventListener: () => {} };
+  const fetch = async () => { const a = answers.shift() ?? { status: 500 }; return { ok: (a.status ?? 200) < 300, status: a.status ?? 200, type: 'basic', redirected: false, json: async () => a.body }; };
+  runInNewContext(script, { document, fetch, navigator: {}, Element: FakeElement, Intl, Date, Number, String, setTimeout: (fn: () => unknown) => timers.push(fn), clearTimeout: () => {}, addEventListener: () => {}, matchMedia: () => ({ matches: false }), location: { href: '/x', replace: (u: string) => replaced.push(u) } });
+  const tick = async () => { const fn = timers.shift(); if (fn) await fn(); };
+  return { card, text, title, timers, replaced, tick };
+}
+
+test('when a background download turns ready the Home card changes in place and the page is not reloaded', async () => {
+  const r = await cardRun([{ body: { state: 'downloading', busy: true, text: 'Downloading BrainAI 1.7.2… 50%' } }, { body: { state: 'ready', busy: false, title: 'BrainAI 1.7.2 is ready (you have 1.7.1)', text: 'Restart to finish. It takes a few seconds.', items: ['Faster search', '<b>x</b>'] } }]);
+  await r.tick();
+  assert.equal(r.text.textContent, 'Downloading BrainAI 1.7.2… 50%');
+  await r.tick();
+  assert.deepEqual(r.replaced, [], 'no reload');
+  assert.equal(r.text.textContent, 'Restart to finish. It takes a few seconds.');
+  assert.equal(r.card.getAttribute('data-busy'), null, 'no longer busy');
+  assert.equal(r.title.textContent, 'BrainAI 1.7.2 is ready (you have 1.7.1)');
+  const [ul, actions] = r.card.children;
+  assert.deepEqual(ul!.children.map((li) => li.textContent), ['Faster search', '<b>x</b>'], 'the notes are text, never markup');
+  assert.equal(actions!.className, 'update-actions');
+  const [go, form] = actions!.children;
+  assert.equal(go!.attrs.href, '/app/update');
+  assert.equal(go!.textContent, 'Restart now');
+  assert.equal(form!.attrs.action, '/app/update/later');
+  assert.equal(form!.children[0]!.textContent, 'Later');
+  assert.equal(r.timers.length, 0, 'it stops asking');
+});
+
+test('when a background download fails the Home card shows the reason and Try again in place', async () => {
+  const r = await cardRun([{ body: { state: 'failed', busy: false, title: 'BrainAI 1.7.2 is ready (you have 1.7.1)', text: 'The update did not finish: x' } }]);
+  await r.tick();
+  assert.deepEqual(r.replaced, []);
+  assert.equal(r.text.textContent, 'The update did not finish: x');
+  assert.equal(r.card.children[0]!.children[0]!.textContent, 'Try again');
+  assert.equal(r.card.children[0]!.children.length, 1, 'no Later on a failed card');
+});
+
+test('the Home card still reloads when an update ends some other way (the update went away)', async () => {
+  const r = await cardRun([{ body: { state: 'available', busy: false, text: '' } }]);
+  await r.tick();
+  assert.deepEqual(r.replaced, ['/x']);
+});
+
+test('pressing Restart in the sidebar says Restarting… and follows the restart until the app is replaced', async () => {
+  const r = await sideUpdateRun('ready', [{ body: { state: 'ready' } }, { body: { state: 'backing-up' } }, { body: { state: 'installing' } }, { status: 404 }], true);
+  assert.equal(r.timers.length, 0, 'nothing is asked before the press');
+  r.link.clicks[0]!();
+  assert.equal(r.text.textContent, 'Restarting…');
+  assert.equal(r.act.hidden, true, 'the Restart link is gone while it works');
+  await r.tick();
+  await r.tick();
+  await r.tick();
+  assert.equal(r.text.textContent, 'Restarting…');
+  assert.equal(r.box.hidden, false);
+  assert.equal(r.timers.length, 1, 'still following');
+  await r.tick();
+  assert.equal(r.timers.length, 0, 'the state went away: done');
+  assert.equal(r.asked.length, 4);
+});
+
+test('when the restart fails after Restart was pressed in the sidebar, its line shows the failure', async () => {
+  const r = await sideUpdateRun('ready', [{ body: { state: 'backing-up' } }, { body: { state: 'failed', text: 'The update did not finish: A backup could not be made.' } }], true);
+  r.link.clicks[0]!();
+  await r.tick();
+  await r.tick();
+  assert.equal(r.text.textContent, 'The update did not finish: A backup could not be made.');
+  assert.equal(r.bar.hidden, true);
+  assert.equal(r.timers.length, 0, 'it stops asking');
+});
+
+test('a Restart press that never starts goes back to "Update ready" with its Restart link after 20 seconds, never polling for ever', async () => {
+  const r = await sideUpdateRun('ready', Array.from({ length: 40 }, () => ({ body: { state: 'ready' } })), true);
+  r.link.clicks[0]!();
+  assert.equal(r.text.textContent, 'Restarting…');
+  let n = 0;
+  while (r.timers.length > 0 && n < 100) { await r.tick(); n++; }
+  assert.equal(n, 21);
+  assert.equal(r.box.hidden, false, 'the line stays');
+  assert.equal(r.text.textContent, 'Update ready');
+  assert.equal(r.act.hidden, false, 'with Restart again');
+});
+
+test('following a restart stops at once on a redirect (signed out) or an opaque answer', async () => {
+  for (const status of [302, 0, 401]) {
+    const r = await sideUpdateRun('ready', [{ status, body: {} }], true);
+    r.link.clicks[0]!();
+    await r.tick();
+    assert.equal(r.timers.length, 0, `status ${status}`);
+  }
+});
