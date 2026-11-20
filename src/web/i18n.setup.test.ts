@@ -17,6 +17,7 @@ import { setupApps, SETUP_VERSION } from '../setup/texts.js';
 import { setupPage, setupStatusLine } from './setupViews.js';
 import { reachPage, reachSwitch, tailscaleBox } from './reachViews.js';
 import { describeComputer, firstLine, modelGroups, modelsLine, offsiteCard, searchSection, toolsPage, updateCard, welcomePage, modelsProgress } from './desktopViews.js';
+import { outcome } from '../desktop/yourApps.js';
 import { updateLine, type UpdateFile } from '../desktop/updateState.js';
 import { CATALOGUE } from '../models/catalogue.js';
 import type { ModelStatus } from '../models/manager.js';
@@ -70,7 +71,7 @@ test('the welcome and Settings › Tools, rendered for real, have no English lef
   app.deps.store.setSwitch('ui_language', 'xx');
   enablePseudoLocale(true);
   try {
-    for (const p of ['/welcome', '/welcome?restore=1', '/welcome?step=2', '/welcome?step=3', '/welcome?step=4', '/settings/tools', '/app/restart', '/app/update']) {
+    for (const p of ['/welcome', '/welcome?restore=1', '/welcome?step=2', '/welcome?step=3', '/welcome?step=4', '/welcome?step=5', '/settings/tools', '/app/restart', '/app/update']) {
       assertNoEnglishLeft(await get(p), p, { allow });
     }
   } finally { enablePseudoLocale(false); }
@@ -79,7 +80,7 @@ test('the welcome and Settings › Tools, rendered for real, have no English lef
 test('in Spanish: the welcome and Settings › Tools read in Spanish, with the same lit tab and back link', async (t) => {
   const { app, get, post } = await local(t);
   assert.equal((await post('/settings/tools/claude-code/connect')).status, 303);
-  const paths = ['/welcome', '/welcome?step=3', '/welcome?step=4', '/settings/tools'];
+  const paths = ['/welcome', '/welcome?step=4', '/welcome?step=5', '/settings/tools'];
   const en: Record<string, string> = {};
   for (const p of paths) en[p] = await get(p, { 'Accept-Language': 'en-US' });
   app.deps.store.setSwitch('ui_language', 'es');
@@ -87,13 +88,13 @@ test('in Spanish: the welcome and Settings › Tools read in Spanish, with the s
   for (const p of paths) es[p] = await get(p);
   assert.match(es['/welcome']!, /<html lang="es">/);
   assert.match(es['/welcome']!, /Tu memoria está en marcha/);
-  assert.match(es['/welcome']!, /Paso 1 de 4/);
+  assert.match(es['/welcome']!, /Paso 1 de 5/);
   assert.match(es['/welcome']!, /<title>Te damos la bienvenida a BrainAI<\/title>/);
-  assert.match(es['/welcome?step=3']!, /Conecta tus asistentes/);
-  assert.match(es['/welcome?step=3']!, /Añadida · falta un paso:/);
-  assert.match(es['/welcome?step=3']!, /Desconectar/);
-  assert.match(es['/welcome?step=4']!, /Pruébalo/);
-  assert.match(es['/welcome?step=4']!, /Guarda una nota en BrainAI diciendo que hoy lo he configurado\./);
+  assert.match(es['/welcome?step=4']!, /Conecta tus asistentes/);
+  assert.match(es['/welcome?step=4']!, /Añadida · falta un paso:/);
+  assert.match(es['/welcome?step=4']!, /Desconectar/);
+  assert.match(es['/welcome?step=5']!, /Pruébalo/);
+  assert.match(es['/welcome?step=5']!, /Guarda una nota en BrainAI diciendo que hoy lo he configurado\./);
   assert.match(es['/settings/tools']!, /<title>Herramientas en este Mac<\/title>/);
   assert.match(es['/settings/tools']!, /<h1>Herramientas en este Mac<\/h1>/);
   assert.match(es['/settings/tools']!, /Con cada herramienta de programación/);
@@ -257,13 +258,19 @@ test('the views: the welcome steps, the tool lists, the search models and the up
     welcomePage({ ...base, step: 1, restore: 'offer' }),
     welcomePage({ ...base, step: 1, restore: 'choose' }),
     welcomePage({ ...base, step: 2 }),
-    welcomePage({ ...base, step: 2, models: { hardware, installed: [] } }),
-    welcomePage({ ...base, step: 2, models: { hardware: { ...hardware, arch: 'x64', memoryBytes: 4 * 1024 ** 3 }, installed: ['e5', 'mminilm'] } }),
-    welcomePage({ ...base, step: 3, said: 'Fixture note', restored: { facts: 3, pages: 1, pictures_missing: 2 } }),
-    welcomePage({ ...base, step: 3, restored: { refused: 'Fixture refusal' }, windows: true }),
-    welcomePage({ ...base, step: 3, tools: tools.map((x) => ({ ...x, installed: false })) }),
-    welcomePage({ ...base, step: 4 }),
-    welcomePage({ ...base, step: 4, tools: tools.map((x) => ({ ...x, state: 'not-connected' as const })) }),
+    welcomePage({ ...base, step: 2, apps: { screen: 'pick', ticked: ['claude-code', 'chatgpt'], found: new Set(['claude-code'] as const) } }),
+    welcomePage({ ...base, step: 2, apps: { screen: 'result', ticked: ['claude-code', 'cursor', 'chatgpt', 'claude-web'], outcome: outcome(['claude-code', 'cursor', 'chatgpt', 'claude-web'], { found: new Set(['claude-code'] as const), reachOn: false, windows: false }), way: 'server', windows: false } }),
+    welcomePage({ ...base, step: 2, apps: { screen: 'result', ticked: ['chatgpt', 'grok'], outcome: outcome(['chatgpt', 'grok'], { found: new Set(), reachOn: false, windows: true }), way: null, windows: true } }),
+    welcomePage({ ...base, step: 2, apps: { screen: 'result', ticked: ['codex', 'chatgpt'], outcome: outcome(['codex', 'chatgpt'], { found: new Set(['codex'] as const), reachOn: true, windows: false }), way: null, windows: false } }),
+    welcomePage({ ...base, step: 2, apps: { screen: 'result', ticked: ['codex'], outcome: outcome(['codex'], { found: new Set(['codex'] as const), reachOn: false, windows: false }), way: null, windows: false } }),
+    welcomePage({ ...base, step: 3 }),
+    welcomePage({ ...base, step: 3, models: { hardware, installed: [] } }),
+    welcomePage({ ...base, step: 3, models: { hardware: { ...hardware, arch: 'x64', memoryBytes: 4 * 1024 ** 3 }, installed: ['e5', 'mminilm'] } }),
+    welcomePage({ ...base, step: 4, said: 'Fixture note', restored: { facts: 3, pages: 1, pictures_missing: 2 } }),
+    welcomePage({ ...base, step: 4, restored: { refused: 'Fixture refusal' }, windows: true }),
+    welcomePage({ ...base, step: 4, tools: tools.map((x) => ({ ...x, installed: false })) }),
+    welcomePage({ ...base, step: 5 }),
+    welcomePage({ ...base, step: 5, tools: tools.map((x) => ({ ...x, state: 'not-connected' as const })) }),
     toolsPage({ ...base }),
     toolsPage({ ...base, windows: true, said: 'Fixture note' }),
     firstLine({ memory: { by: 'Claude Code', content: 'Fixture note' }, suggestion: null }),

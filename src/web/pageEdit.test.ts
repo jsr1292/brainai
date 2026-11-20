@@ -1,6 +1,7 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
+import { fakeGithubToken } from '../testing/fakeSecrets.js';
 
 const owner = { type: 'owner' } as const;
 const BODY = 'The cellar app.\n\n## Stack\nSwiftUI.\n\n## Gotchas\nNone yet.';
@@ -79,7 +80,7 @@ test('a save based on an old version answers 409 with both texts and saves nothi
 
 test('a secret or a duplicate title answers 400 with the text kept', async (t) => {
   const { app, f, page } = await start(t);
-  const secret = await f(`/pages/${page.id}`, post({ base: '1', section: 'stack', body: '## Stack\nkey ghp_abcdefghijklmnopqrstuvwxyz0123456789AB', intent: 'save' }));
+  const secret = await f(`/pages/${page.id}`, post({ base: '1', section: 'stack', body: '## Stack\nkey ' + fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789AB'), intent: 'save' }));
   assert.equal(secret.status, 400);
   const sb = await secret.text();
   assert.match(sb, /looks like it contains a secret/);

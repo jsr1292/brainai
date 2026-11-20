@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { looksLikeSecret } from './secrets.js';
+import { fakeAnthropicKey, fakeAwsKey, fakeGithubToken, fakePrivateKeyHeader, fakeJwt } from '../testing/fakeSecrets.js';
 
 test('detects common secrets and ignores normal text', () => {
-  for (const s of ['-----BEGIN OPENSSH PRIVATE KEY-----', 'key sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345',
-    'ghp_abcdefghijklmnopqrstuvwxyz0123456789', 'AKIAABCDEFGHIJKLMNOP', 'password: hunter2hunter2',
-    'contraseña = Sup3rS3creta!', 'TUNNEL_TOKEN=eyJhIjoiYWJjZGVmZ2hpams.eyJzdWIiOiJ4eHh4eHh4eHh4.abc']) {
+  for (const s of [fakePrivateKeyHeader('OPENSSH'), 'key ' + fakeAnthropicKey('api03-abcdefghijklmnopqrstuvwxyz012345'),
+    fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789'), fakeAwsKey('ABCDEFGHIJKLMNOP'), 'password: hunter2hunter2',
+    'contraseña = Sup3rS3creta!', 'TUNNEL_TOKEN=' + fakeJwt()]) {
     assert.ok(looksLikeSecret(s), s);
   }
   for (const s of ['Uses OAuth tokens for auth', 'Password manager is Bitwarden', 'Mini PC IP is 192.0.2.20']) {
@@ -17,8 +18,8 @@ test('looksLikeKey ignores credential assignments but catches keys', async () =>
   const { looksLikeKey } = await import('./secrets.js');
   assert.equal(looksLikeKey('const token = randomToken()'), null);
   assert.equal(looksLikeKey('password: hunter2hunter2'), null);
-  assert.equal(looksLikeKey('-----BEGIN RSA PRIVATE KEY-----'), 'private key');
-  assert.equal(looksLikeKey('key sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345'), 'API key');
+  assert.equal(looksLikeKey(fakePrivateKeyHeader('RSA')), 'private key');
+  assert.equal(looksLikeKey('key ' + fakeAnthropicKey('api03-abcdefghijklmnopqrstuvwxyz012345')), 'API key');
 });
 
 test('prose and code that only mention a token or secret are not refused', () => {
@@ -42,7 +43,7 @@ test('findSecret says on which line the secret is, without repeating it', async 
   const { findSecret } = await import('./secrets.js');
   const found = findSecret('# Setup\n\nThe device token: Bearer <token>\nThe TOTP secret: base32, stored in the owner table.');
   assert.deepEqual(found, { reason: 'credential assignment', line: 4, excerpt: 'secret: ba…' });
-  const key = findSecret('one\ntwo ghp_abcdefghijklmnopqrstuvwxyz0123456789AB');
+  const key = findSecret('one\ntwo ' + fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789AB'));
   assert.deepEqual(key, { reason: 'GitHub token', line: 2, excerpt: 'ghp_…' });
   assert.equal(findSecret('nothing here'), null);
 });

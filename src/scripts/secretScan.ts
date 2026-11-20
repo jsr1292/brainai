@@ -8,19 +8,6 @@ import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findSecret, looksLikeKey } from '../memory/secrets.js';
 
-/**
- * The made-up keys the detector's own tests use. A key counts as synthetic by its shape, not by the file it is in,
- * so a real key pasted into one of those test files is still found.
- */
-const SYNTHETIC: RegExp[] = [
-  /\b(?:sk|rk|pk|gh[pousr]|github_pat)[-_][\w-]*?abcdefghij[\w-]*/g, // an alphabet run: ghp_abcdefghij…, sk-ant-api03-abcdefghij…
-  /\bghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\b/g,
-  /\bAKIAABCDEFGHIJKLMNOP\b/g,
-  /\beyJhIjoiYWJjZGVmZ2hpams\.[\w.-]*/g, // a JWT whose payload is {"a":"abcdefghijk…
-  // A header alone inside a string literal in code; not when a key body follows it (a key inside JSON).
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----(?=['"`]|\\n(?![A-Za-z0-9+/=]{20}))/g,
-];
-
 const TUNNEL_TOKEN = /\beyJhIjoi[A-Za-z0-9+/=]{60,}/;
 
 /** Docs and settings files, where a written-out credential ("password: x") is a leak, not test data. */
@@ -29,14 +16,13 @@ export const isProse = (path: string): boolean => /(^|\/)\.env[^/]*$|\.(md|ya?ml
 export interface Found { line: number; reason: string }
 
 /**
- * Every line of the text that holds a key-shaped string once the known synthetic fixtures are taken out; in prose,
- * also a written-out credential.
+ * Every line of the text that holds a key-shaped string; in prose, also a written-out credential. Nothing is
+ * allowed through: the tests build their made-up keys at run time (src/testing/fakeSecrets.ts), so none sits in a file.
  */
 export function scanText(text: string, prose = false): Found[] {
   const found: Found[] = [];
   text.split('\n').forEach((raw, i) => {
-    const line = SYNTHETIC.reduce((s, re) => s.replace(re, ' '), raw);
-    const reason = TUNNEL_TOKEN.test(line) ? 'tunnel token' : prose ? findSecret(line)?.reason ?? null : looksLikeKey(line);
+    const reason = TUNNEL_TOKEN.test(raw) ? 'tunnel token' : prose ? findSecret(raw)?.reason ?? null : looksLikeKey(raw);
     if (reason) found.push({ line: i + 1, reason });
   });
   return found;

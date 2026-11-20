@@ -1,6 +1,7 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
+import { fakeGithubToken } from '../testing/fakeSecrets.js';
 
 const owner = { type: 'owner' } as const;
 
@@ -61,7 +62,7 @@ test('an empty note or one with a secret answers 400 and keeps the page', async 
   const eb = await empty.text();
   assert.match(eb, /A note is 1 to 500 characters/);
   assert.match(eb, /<h1>wildlog — wine cellar<\/h1>/);
-  const secret = await f(`/pages/${page.id}/notes`, post({ text: 'use ghp_abcdefghijklmnopqrstuvwxyz0123456789AB', section: '' }));
+  const secret = await f(`/pages/${page.id}/notes`, post({ text: 'use ' + fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789AB'), section: '' }));
   assert.equal(secret.status, 400);
   assert.match(await secret.text(), /looks like it contains a secret/);
   assert.deepEqual(app.deps.notes.forPage(page.id), []);
@@ -97,13 +98,13 @@ test('a page with its own "Notes" heading still lands on the notes panel, and no
 
 test('a refused note keeps the form open with the typed text, the chosen section and the reason', async (t) => {
   const { app, f, page } = await start(t);
-  const res = await f(`/pages/${page.id}/notes`, post({ text: 'Deploy key is ghp_abcdefghijklmnopqrstuvwxyz0123456789AB now', section: 'deploy' }));
+  const res = await f(`/pages/${page.id}/notes`, post({ text: 'Deploy key is ' + fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789AB') + ' now', section: 'deploy' }));
   assert.equal(res.status, 400);
   const body = await res.text();
   const form = body.slice(body.indexOf('<details class="asknote"'), body.indexOf('</details>', body.indexOf('<details class="asknote"')));
   assert.match(form, /^<details class="asknote" id="ask_ai" open>/);
   assert.match(form, /<option value="deploy" selected>Deploy<\/option>/);
-  assert.match(form, /<textarea name="text"[^>]*>Deploy key is ghp_abcdefghijklmnopqrstuvwxyz0123456789AB now<\/textarea>/);
+  assert.match(form, new RegExp('<textarea name="text"[^>]*>Deploy key is ' + fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789AB') + ' now</textarea>'));
   assert.match(form, /<p class="error" id="note_error" role="alert">[^<]*looks like it contains a secret/);
   assert.match(form, /<textarea name="text"[^>]*aria-describedby="note_error"/);
   assert.equal(body.match(/looks like it contains a secret/g)?.length, 1, 'the reason is shown once, beside the form');
@@ -118,7 +119,7 @@ test('a refused note opens the page at the note form, and the reason is announce
   const { f, page } = await start(t);
   const form = await (await f(`/pages/${page.id}`)).text();
   assert.match(form, new RegExp(`<details class="asknote" id="ask_ai">[\\s\\S]*<form method="post" action="/pages/${page.id}/notes#ask_ai"`));
-  const res = await f(`/pages/${page.id}/notes`, post({ text: 'Deploy key is ghp_abcdefghijklmnopqrstuvwxyz0123456789AB now', section: '' }));
+  const res = await f(`/pages/${page.id}/notes`, post({ text: 'Deploy key is ' + fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789AB') + ' now', section: '' }));
   assert.equal(res.status, 400);
   const body = await res.text();
   assert.match(body, /<details class="asknote" id="ask_ai" open>/);

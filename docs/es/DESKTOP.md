@@ -47,9 +47,16 @@ la barra lateral, muestra «Descargando actualización · 42 %», y la informaci
 
 ## Conectar tus herramientas
 
-La primera vez, la app se abre con una breve bienvenida: tu nombre (opcional), luego las herramientas de programación que encuentra en este Mac,
-cada una con **Conectar**, y después «Pruébalo», que muestra el primer dato que guarda un asistente. Los mismos botones están en
-Ajustes › Herramientas en este Mac, con **Desconectar**.
+La primera vez, la app se abre con una breve bienvenida de cinco pasos: tu nombre (opcional); **Tus apps**; la búsqueda; las
+herramientas de programación que encuentra en este Mac, cada una con **Conectar**; y después «Pruébalo», que muestra el primer
+dato que guarda un asistente. Los mismos botones están en Ajustes › Herramientas en este Mac, con **Desconectar**.
+
+**Tus apps** pregunta qué apps de IA usas y te dice enseguida cuáles funcionan en este ordenador (las herramientas de
+programación y la app de Claude: sin contraseña, nada sale del ordenador) y cuáles necesitan un paso extra (ChatGPT, Claude
+en la web y Grok funcionan en los ordenadores de sus creadores, así que BrainAI necesita su propia dirección de internet).
+Para esas eliges entre hacer este ordenador accesible (solo en un Mac, mira Ajustes › Acceso desde el móvil y la web),
+poner BrainAI en un servidor, o «Ahora no»; la configuración sigue en cualquier caso, y una tarjeta en Inicio te recuerda el
+siguiente paso hasta que la descartes. Las apps que marques salen primero en Conectar. Si no marcas nada, o pulsas Saltar, la configuración sigue con la búsqueda y sustituye una respuesta anterior por ninguna.
 
 | Herramienta | Qué hace Conectar | Después |
 |---|---|---|

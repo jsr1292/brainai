@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { ProjectStore } from '../projects/store.js';
 import { makePages, makeService } from '../testing/helpers.js';
 import { NoteError, NoteService } from './notes.js';
+import { fakeGithubToken } from '../testing/fakeSecrets.js';
 
 const owner = { type: 'owner' } as const;
 
@@ -34,7 +35,7 @@ test('a note on an unknown section, an empty or 501-character note, or one with 
   assert.throws(() => notes.add(page.id, { text: 'x', anchor: 'nope' }), code('invalid', /^No section nope on this page$/));
   assert.throws(() => notes.add(page.id, { text: '   ' }), code('invalid', /^A note is 1 to 500 characters$/));
   assert.throws(() => notes.add(page.id, { text: 'x'.repeat(501) }), code('invalid', /1 to 500/));
-  assert.throws(() => notes.add(page.id, { text: 'use ghp_abcdefghijklmnopqrstuvwxyz0123456789AB' }), code('invalid', /^The note looks like it contains a secret \(GitHub token\)\. Secrets are never stored\.$/));
+  assert.throws(() => notes.add(page.id, { text: 'use ' + fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789AB') }), code('invalid', /^The note looks like it contains a secret \(GitHub token\)\. Secrets are never stored\.$/));
   assert.throws(() => notes.add('missing', { text: 'x' }), code('not_found'));
   pages.remove(page.id, 'owner');
   assert.throws(() => notes.add(page.id, { text: 'x' }), code('not_found'));

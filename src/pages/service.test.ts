@@ -7,6 +7,7 @@ import { freshnessWorld } from '../testing/freshnessWorld.js';
 import { PageService } from './service.js';
 import { PageStore } from './store.js';
 import { PageError } from './types.js';
+import { fakeAnthropicKey, fakeGithubToken } from '../testing/fakeSecrets.js';
 
 const owner = { type: 'owner' } as const;
 
@@ -85,11 +86,11 @@ test('a page whose project later becomes an alias still shows under the real pro
 
 test('a secret in the title or body is refused and nothing is written', async () => {
   const { pages, db } = await setup();
-  await assert.rejects(pages.create({ title: 'Keys', area: 'start', body: 'token ghp_abcdefghijklmnopqrstuvwxyz0123456789AB' }, 'owner'),
+  await assert.rejects(pages.create({ title: 'Keys', area: 'start', body: 'token ' + fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789AB') }, 'owner'),
     code('secret', /^The page looks like it contains a secret \(GitHub token\)\. Secrets are never stored\.$/));
-  await assert.rejects(pages.create({ title: 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789', area: 'start', body: 'x' }, 'owner'), code('secret'));
+  await assert.rejects(pages.create({ title: fakeAnthropicKey('api03-abcdefghijklmnopqrstuvwxyz0123456789'), area: 'start', body: 'x' }, 'owner'), code('secret'));
   const p = await pages.create({ title: 'Fine', area: 'start', body: 'ok' }, 'owner');
-  await assert.rejects(pages.save(p.id, { base: 1, body: 'now ghp_abcdefghijklmnopqrstuvwxyz0123456789AB' }, 'owner'), code('secret'));
+  await assert.rejects(pages.save(p.id, { base: 1, body: 'now ' + fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789AB') }, 'owner'), code('secret'));
   assert.equal(count(db, 'pages'), 1);
   assert.equal(count(db, 'page_versions'), 1);
 });

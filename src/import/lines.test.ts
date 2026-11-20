@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MAX_PASTE_LINES, guessKind, splitCandidates } from './lines.js';
+import { fakeGithubToken } from '../testing/fakeSecrets.js';
 
 test('bullets, numbering and dates are stripped and each line becomes a candidate', () => {
   const c = splitCandidates('- Prefers short answers in meetings\n* Lives in Valencia, Spain\n1. Works as a nurse on night shifts\n2) Has two cats called Pip and Moss\n[2025-03-02] Likes dark roast coffee\n• Uses a Mac mini as a home server');
@@ -14,7 +15,7 @@ test('empty lines, very short lines, headings and repeats are dropped and counte
 });
 
 test('a line with a secret is refused and counted, the rest go on', () => {
-  const c = splitCandidates('Likes hiking in the mountains\nMy password: hunter2hunter2\nGitHub token ghp_abcdefghijklmnopqrstuvwxyz0123456789');
+  const c = splitCandidates('Likes hiking in the mountains\nMy password: hunter2hunter2\nGitHub token ' + fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789'));
   assert.deepEqual(c.lines, ['Likes hiking in the mountains']);
   assert.equal(c.secrets, 2);
 });

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanText } from './secretScan.js';
+import { fakeAnthropicKey } from '../testing/fakeSecrets.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const gate = join(repoRoot, 'scripts', 'publish', 'check-public-tree.sh');
@@ -70,9 +71,9 @@ test('a denylisted word in a file name fails the gate too', { skip: !haveGit }, 
   assert.ok(!r.out.toLowerCase().includes(WORD.toLowerCase()), r.out);
 });
 
-test('a key-shaped string fails the gate without printing it, while the known synthetic fixtures pass', { skip: !haveGit }, (t) => {
+test('a key-shaped string fails the gate without printing it, and a tree without one passes', { skip: !haveGit }, (t) => {
   const key = realLookingKey();
-  const w = world(t, { ...CLEAN, 'src/b.test.ts': `const k = '${key}';\n`, 'src/c.test.ts': "const k = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789AB';\n" });
+  const w = world(t, { ...CLEAN, 'src/b.test.ts': `const k = '${key}';\n`, 'src/c.test.ts': "const k = 'not a key';\n" });
   const r = w.run('--no-tests');
   assert.equal(r.status, 1, r.out);
   assert.match(r.out, /src\/b\.test\.ts:1: a key-shaped string/);
@@ -116,8 +117,9 @@ test('the gate refuses an output folder that already holds something, and never 
 test('scanText reports the line and the kind of key, never the key', () => {
   const key = realLookingKey();
   assert.deepEqual(scanText(`ok\nuse ${key} here\n`), [{ line: 2, reason: 'GitHub token' }]);
-  assert.deepEqual(scanText("const s = 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345';"), []);
   assert.deepEqual(scanText(`fixture abcdefghijklmnopqrstuvwxyz and ${key}`), [{ line: 1, reason: 'GitHub token' }]);
+  assert.deepEqual(scanText(`const s = '${fakeAnthropicKey('api03-abcdefghijklmnopqrstuvwxyz012345')}';`), [{ line: 1, reason: 'API key' }]);
+  assert.deepEqual(scanText('const s = fakeAnthropicKey(\'api03-abc\');'), []);
 });
 
 /** A Cloudflare tunnel token's shape (base64 JSON, no dots), built at run time. */

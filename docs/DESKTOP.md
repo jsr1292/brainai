@@ -48,9 +48,16 @@ the sidebar shows "Downloading update · 42%", and the tray tooltip says the sam
 
 ## Connecting your tools
 
-The first time, the app opens on a short welcome: your name (optional), then the coding tools it finds on this Mac,
-each with **Connect**, then "Try it", which shows the first memory an assistant saves. The same buttons are in
-Settings › Tools on this Mac, with **Disconnect**.
+The first time, the app opens on a short welcome of five steps: your name (optional); **Your apps**; search; the coding
+tools it finds on this Mac, each with **Connect**; then "Try it", which shows the first memory an assistant saves. The
+same buttons are in Settings › Tools on this Mac, with **Disconnect**.
+
+**Your apps** asks which AI apps you use and says straight away which of them work on this computer (the coding tools
+and the Claude app: no password, nothing leaves the computer) and which need an extra step (ChatGPT, Claude on the web
+and Grok run on their makers' computers, so they need BrainAI to have its own internet address). For those you choose
+to make this computer reachable (a Mac only, see Settings › Reach from phone and web), to put BrainAI on a server, or
+"Not now"; setup carries on either way, and a card on Home reminds you of the next step until you dismiss it. Apps you
+tick come first in Connect. Ticking nothing, or Skip, carries on to search and replaces an earlier answer with none.
 
 | Tool | What Connect does | Then |
 |---|---|---|

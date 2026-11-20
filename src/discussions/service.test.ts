@@ -4,6 +4,7 @@ import { MemoryError } from '../memory/service.js';
 import { makeService } from '../testing/helpers.js';
 import { DiscussionService, FILE_PART_CHARS, type Caller, type Connection } from './service.js';
 import { DiscussionStore } from './store.js';
+import { fakeAnthropicKey, fakePrivateKeyHeader } from '../testing/fakeSecrets.js';
 
 const setup = (conns: Connection[] = []) => {
   const { db, store: memStore, service: memory } = makeService();
@@ -152,11 +153,11 @@ test('limits: long text, too many files, oversized and binary files are refused 
 test('secrets: a question with an API key is refused; a file containing "const token = randomToken()" is accepted; a file with a private key is refused naming the file', () => {
   const { svc } = setup();
   const me = who('Claude Code', 'Opus');
-  assert.throws(() => svc.open(me, { ...A, question: 'use sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345' }), code('secret_detected'));
+  assert.throws(() => svc.open(me, { ...A, question: 'use ' + fakeAnthropicKey('api03-abcdefghijklmnopqrstuvwxyz012345') }), code('secret_detected'));
   assert.throws(() => svc.open(me, { ...A, title: 'password: hunter2hunter2' }), code('secret_detected'));
   const d = svc.open(me, { ...A, files: [{ name: 'a.ts', content: 'const token = randomToken()' }] });
   assert.equal(svc.read(me, d.id).files.length, 1);
-  assert.throws(() => svc.reply(me, d.id, { text: 'x', files: [{ name: 'id_rsa', content: '-----BEGIN RSA PRIVATE KEY-----\nabc' }] }),
+  assert.throws(() => svc.reply(me, d.id, { text: 'x', files: [{ name: 'id_rsa', content: fakePrivateKeyHeader('RSA') + '\nabc' }] }),
     code('secret_detected', /id_rsa/));
   assert.throws(() => svc.reply(me, d.id, { text: 'token = abcdefghijk' }), code('secret_detected'));
 });

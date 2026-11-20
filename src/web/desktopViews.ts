@@ -12,6 +12,9 @@ import type { Hardware } from '../models/hardware.js';
 import { suggest } from '../models/hardware.js';
 import type { ModelStatus } from '../models/manager.js';
 import { RERANK_POOL } from '../memory/reranker.js';
+import { appsPick, appsResult, internetRow } from './yourAppsViews.js';
+import { isInternetApp, type Answer, type AppId, type Outcome, type Way } from '../desktop/yourApps.js';
+import type { ToolId } from '../desktop/tools.js';
 
 /** The catalogue's English model names and sentences, in the request's language (the catalogue itself stays English). */
 export const modelLabel = (m: Pick<CatalogueModel, 'label'>): string => tKey(`setup.model.label.${m.label}` as Key);
@@ -123,7 +126,7 @@ export function modelsProgress(s: ModelStatus, dataDir?: string): ModelsProgress
   return under(t('setup.models.getting'), { value: null });
 }
 
-/** The progress line on steps 3 and 4 and Home: filled in by app.js every 2 s while anything is under way. */
+/** The progress line on steps 4 and 5 and Home: filled in by app.js every 2 s while anything is under way. */
 export function modelsLine(s: ModelStatus, o: { onlyWhenBusy?: boolean; dataDir?: string } = {}): SafeHtml {
   const p = modelsProgress(s, o.dataDir);
   if (p.text === '' || (o.onlyWhenBusy && !p.busy && !p.failed)) return html``;
@@ -255,7 +258,7 @@ function modelsStep(v: ModelsStepInput): SafeHtml {
   <p><strong>${t('setup.models.recommended')}</strong> ${pick.rerank ? t('setup.models.pairBoth', { search: nameOf(pick.search), rerank: nameOf(pick.rerank) }) : t('setup.models.pairNone', { search: nameOf(pick.search) })}</p>
   <p><button type="submit" class="primary">${downloadLabel(pick.search, pick.rerank, v.installed)}</button> <span class="meta">${t('setup.models.changeAny')}</span></p>
 </form>
-<p class="meta skip-models"><a href="/welcome?step=3">${t('setup.models.skip')}</a></p>
+<p class="meta skip-models"><a href="/welcome?step=4">${t('setup.models.skip')}</a></p>
 <details class="models-all">
   <summary>${t('setup.models.choose')}<span class="chev"></span></summary>
   <form method="post" action="/welcome/models" class="stack" data-models-form>
@@ -266,12 +269,12 @@ function modelsStep(v: ModelsStepInput): SafeHtml {
 </details>`;
 }
 
-/** The welcome for a new Mac install (D3), four steps as in the approved mockup. */
-const SETUP_STEPS = ['setup.step1', 'setup.step2', 'setup.step3', 'setup.step4'] as const;
+/** The welcome for a new Mac install (D3), five steps as in the approved mockup. */
+const SETUP_STEPS = ['setup.step1', 'setup.step2', 'setup.step3', 'setup.step4', 'setup.step5'] as const;
 const CHECK = raw('<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>');
 
-/** The setup's frame on a desktop window: the brand and the four steps on the left (done, current, to come), the step on the right. */
-function setupFrame(step: 1 | 2 | 3 | 4, body: SafeHtml): SafeHtml {
+/** The setup's frame on a desktop window: the brand and the five steps on the left (done, current, to come), the step on the right. `back` overrides where Back goes (the result of Your apps goes back to its ticks). */
+function setupFrame(step: 1 | 2 | 3 | 4 | 5, body: SafeHtml, back = `/welcome?step=${step - 1}`): SafeHtml {
   const item = (label: PlainKey, i: number) => {
     const n = i + 1;
     const state = n < step ? 'done' : n === step ? 'current' : 'todo';
@@ -284,7 +287,7 @@ function setupFrame(step: 1 | 2 | 3 | 4, body: SafeHtml): SafeHtml {
 </aside>
 <div class="setup-main welcome">
 <p class="meta step-count">${t('setup.stepCount', { step })}</p>
-${step > 1 ? html`<p class="step-back"><a href="/welcome?step=${step - 1}">${t('setup.back')}</a></p>` : ''}
+${step > 1 ? html`<p class="step-back"><a href="${back}">${t('setup.back')}</a></p>` : ''}
 ${body}
 </div>
 </div>`;
@@ -300,15 +303,42 @@ const SIGN_IN_HINT: Record<ToolState['id'], PlainKey> = {
   'claude-desktop': 'setup.hint.claude-desktop',
 };
 
+/** Step 2, Your apps: the ticks (screen 1) or what the answer means (screen 2). */
+export type AppsStep = { screen: 'pick'; ticked: AppId[]; found: ReadonlySet<ToolId> } | { screen: 'result'; ticked: AppId[]; outcome: Outcome; way: Way | null; windows: boolean };
+
+/** Connect's rows follow the stored answer: the ticked apps first, the others under a heading, the missing ones greyed, one internet row. */
+function connectList(v: { tools: ToolState[]; windows: boolean; yours?: { answer: Answer | null; found: ReadonlySet<ToolId>; reachOn: boolean } }): SafeHtml {
+  const a = v.yours?.answer && v.yours.answer.apps.length > 0 ? v.yours.answer : null;
+  const installed = v.tools.filter((x) => x.installed);
+  if (!a || !v.yours) return html`<ul class="group tools">${installed.map((x) => toolRow(x, 'welcome'))}${chatgptRow(v.windows)}</ul>`;
+  const found = v.yours.found;
+  const first = v.tools.filter((x) => a.apps.includes(x.id) && found.has(x.id));
+  const missing = v.tools.filter((x) => a.apps.includes(x.id) && !found.has(x.id));
+  const others = installed.filter((x) => !a.apps.includes(x.id));
+  const internet = a.apps.filter(isInternetApp);
+  const net = internet.length > 0 ? internetRow(internet, a.way, v.windows, v.yours.reachOn) : '';
+  const off = (x: ToolState) => html`<li class="tool tool-off"><div><strong>${toolName(x)}</strong><br><span class="meta">${t('setup.apps.notFoundRow')}</span></div><div></div></li>`;
+  const head = first.length + missing.length > 0 && others.length > 0;
+  // The ticked apps, their missing ones and the internet row come first; the other found tools follow under their own heading.
+  return html`<ul class="group tools">${first.map((x) => toolRow(x, 'welcome'))}${missing.map(off)}${net}${head ? '' : others.map((x) => toolRow(x, 'welcome'))}</ul>
+${head ? html`<h2 class="apps-group">${t('setup.apps.also')}</h2><ul class="group tools">${others.map((x) => toolRow(x, 'welcome'))}</ul>` : ''}`;
+}
+
 export function welcomePage(v: {
-  step: 1 | 2 | 3 | 4;
-  /** Step 2's facts: this computer and what is already installed. */
+  step: 1 | 2 | 3 | 4 | 5;
+  /** Connect: what the Your apps step stored, which of those apps are on this computer, and whether Reach is on. */
+  yours?: { answer: Answer | null; found: ReadonlySet<ToolId>; reachOn: boolean };
+  /** The last screen: the Home card for the internet apps, above Done. */
+  nextCard?: SafeHtml;
+  /** Step 2: Your apps. */
+  apps?: AppsStep;
+  /** Step 3's facts: this computer and what is already installed. */
   models?: ModelsStepInput;
-  /** The search models' progress line (steps 3 and 4). */
+  /** The search models' progress line (steps 4 and 5). */
   modelsLine?: SafeHtml; tools: ToolState[]; windows: boolean; said: string | null; cursorRules: string;
   /** Only an empty brain can take a saved copy: 'offer' shows the link on step 1, 'choose' the file step. */
   restore?: 'offer' | 'choose' | null;
-  /** What the restart found, shown once on step 2. */
+  /** What the restart found, shown once on step 4. */
   restored?: { facts: number; pages: number; pictures_missing?: number } | { refused: string } | null;
 }): SafeHtml {
   if (v.step === 1 && v.restore === 'choose') {
@@ -333,39 +363,45 @@ export function welcomePage(v: {
 </form>`);
   }
   if (v.step === 2) {
-    return setupFrame(2, v.models ? modelsStep(v.models) : html`<h1>${t('setup.models.title')}</h1><p>${t('setup.models.keywordsOnly')}</p><p class="setup-actions"><a class="button primary" href="/welcome?step=3">${t('setup.next')}</a></p>`);
+    if (!v.apps) return setupFrame(2, html`<h1>${t('setup.apps.title')}</h1><p class="setup-actions"><a class="button primary" href="/welcome?step=3">${t('setup.next')}</a></p>`);
+    return v.apps.screen === 'pick' ? setupFrame(2, appsPick(v.apps)) : setupFrame(2, appsResult(v.apps), '/welcome?step=2');
   }
   if (v.step === 3) {
+    return setupFrame(3, v.models ? modelsStep(v.models) : html`<h1>${t('setup.models.title')}</h1><p>${t('setup.models.keywordsOnly')}</p><p class="setup-actions"><a class="button primary" href="/welcome?step=4">${t('setup.next')}</a></p>`);
+  }
+  if (v.step === 4) {
     const any = v.tools.some((x) => x.installed);
-    return setupFrame(3, html`<h1>${t('setup.connect.title')}</h1>
+    return setupFrame(4, html`<h1>${t('setup.connect.title')}</h1>
 ${v.restored ? ('refused' in v.restored
     ? html`<p class="notice error" role="alert">${v.restored.refused}</p>`
     : html`<p class="notice" role="status">${tHtml('setup.restore.back', { summary: factsAndPagesText(v.restored.facts, v.restored.pages) })}</p>${(v.restored.pictures_missing ?? 0) > 0
       ? html`<p class="notice" role="status">${t('setup.restore.pictures', { count: v.restored.pictures_missing ?? 0 })}</p>` : ''}`) : ''}
 ${v.said ? html`<p class="notice" role="status">${v.said}</p>` : ''}
 ${any ? html`<p>${t('setup.connect.found', { computer: computerName() })}</p>` : html`<p>${t('setup.connect.none', { computer: computerName() })}</p>`}
-<ul class="group tools">${v.tools.filter((x) => x.installed).map((x) => toolRow(x, 'welcome'))}${chatgptRow(v.windows)}</ul>
+${connectList(v)}
 <p class="meta">${t('setup.connect.note')}</p>
 ${v.modelsLine ?? ''}
-<p class="setup-actions"><a class="button primary" href="/welcome?step=4">${t('setup.next')}</a></p>`);
+<p class="setup-actions"><a class="button primary" href="/welcome?step=5">${t('setup.next')}</a></p>`);
   }
   const added = v.tools.filter((x) => x.installed && x.state === 'connected');
   const sentence = t('setup.try.sentence');
   if (added.length === 0) {
-    return setupFrame(4, html`<h1>${t('setup.try.title')}</h1>
-<p class="notice" role="status">${tHtml('setup.try.none', { link: html`<a href="/welcome?step=3">${t('setup.try.goBack')}</a>` })}</p>
+    return setupFrame(5, html`<h1>${t('setup.try.title')}</h1>
+<p class="notice" role="status">${tHtml('setup.try.none', { link: html`<a href="/welcome?step=4">${t('setup.try.goBack')}</a>` })}</p>
 ${v.modelsLine ?? ''}
+${v.nextCard ?? ''}
 <form method="post" action="/welcome/done" class="setup-actions"><button type="submit" class="primary">${t('setup.try.open')}</button></form>`);
   }
   // Only the tools that have not signed in yet need a hint; when all have, the list is the whole set.
   const hintFor = (added.some((x) => x.signedIn === false) ? added.filter((x) => x.signedIn === false) : added).map((x) => tKey(SIGN_IN_HINT[x.id]));
-  return setupFrame(4, html`<h1>${t('setup.try.title')}</h1>
+  return setupFrame(5, html`<h1>${t('setup.try.title')}</h1>
 <p>${t('setup.try.open1')}</p>
 ${copyBox(sentence, 'setup.copy.sentence')}
 <p class="conn-setup" data-setup-status="/welcome/first"><span data-state="waiting">${t('setup.try.waiting')}</span></p>
 <p class="meta" data-nothing-yet hidden>${t('setup.try.nothing')} ${hintFor.join(' ')}</p>
 <p>${tHtml('setup.try.then', { phrase: html`<em>${t('setup.try.knowPhrase')}</em>` })}</p>
 ${v.modelsLine ?? ''}
+${v.nextCard ?? ''}
 <form method="post" action="/welcome/done" class="setup-actions"><button type="submit" class="primary">${t('setup.try.open')}</button></form>`);
 }
 

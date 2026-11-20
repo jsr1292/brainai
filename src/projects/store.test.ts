@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { openDb } from '../db.js';
 import { ProjectStore } from './store.js';
 import { MAX_PINNED, ProjectError } from './types.js';
+import { fakeAnthropicKey, fakeGithubToken, fakeSkKey } from '../testing/fakeSecrets.js';
 
 const setup = () => {
   const db = openDb(':memory:');
@@ -82,8 +83,8 @@ test('setInfo refuses folder names a shell would run as commands, and keeps real
 test('setInfo refuses a secret in the one-liner or the URL', () => {
   const { registry } = setup();
   registry.create('vpn', { state: 'open' }, 'owner');
-  assert.throws(() => registry.setInfo('vpn', { url: 'https://user:ghp_abcdefghijklmnopqrstuvwxyz0123456789@github.com/x' }, 'Claude'), code('invalid'));
-  assert.throws(() => registry.setInfo('vpn', { oneLiner: 'key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789' }, 'Claude'), code('invalid'));
+  assert.throws(() => registry.setInfo('vpn', { url: 'https://user:' + fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789') + '@github.com/x' }, 'Claude'), code('invalid'));
+  assert.throws(() => registry.setInfo('vpn', { oneLiner: 'key ' + fakeAnthropicKey('api03-abcdefghijklmnopqrstuvwxyz0123456789') }, 'Claude'), code('invalid'));
 });
 
 test('runs on is stored normalised and placesInUse lists each name once', () => {
@@ -102,7 +103,7 @@ test('runs on is stored normalised and placesInUse lists each name once', () => 
 test('a place that looks like a secret is refused', () => {
   const { registry } = setup();
   registry.create('wildlog', { state: 'open' }, 'owner');
-  assert.throws(() => registry.setInfo('wildlog', { runsOn: ['sk-abcdefghij0123456789'] }, 'owner'), /looks like it contains a secret/);
+  assert.throws(() => registry.setInfo('wildlog', { runsOn: [fakeSkKey('abcdefghij0123456789')] }, 'owner'), /looks like it contains a secret/);
   assert.deepEqual(registry.get('wildlog')!.runsOn, []);
 });
 

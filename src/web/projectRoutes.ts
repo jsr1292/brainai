@@ -14,7 +14,7 @@ import { requireOwner } from './authRoutes.js';
 import { nextHref, safeBack, withBackError } from './back.js';
 import { html, page } from './html.js';
 import type { ApprovalSummary } from './forYou.js';
-import { needsWelcome } from './desktopRoutes.js';
+import { needsWelcome, nextCardFor } from './desktopRoutes.js';
 import { noteDecision, takeStatusLine } from './inboxUndo.js';
 import { makeInbox } from './inboxPage.js';
 import { healthOf } from './healthData.js';
@@ -114,6 +114,7 @@ export function projectRoutes(d: AppDeps): Router {
         const j = readJustUpdated(d.statusDir, BRAIN_VERSION);
         return j ? justUpdatedLine(j) : undefined;
       })(),
+      nextStep: req && viaDoor(req) ? undefined : nextCardFor(d),
       firstSteps: (() => {
         if (req && viaDoor(req)) return undefined;
         const status = d.statusDir ? readBackupStatus(d.statusDir) : undefined;

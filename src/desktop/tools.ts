@@ -465,6 +465,15 @@ export function samePath(a: string, b: string, platform: string): boolean {
   return norm(x) === norm(y);
 }
 
+/** Whether the Claude app itself is installed (its bundle on the Mac, its install folder on Windows), not just its config folder. */
+export function claudeAppPresent(env: ToolEnv): boolean {
+  if (platformOf(env) === 'win32') {
+    const local = (env.system ?? process.env).LOCALAPPDATA || join(env.home, 'AppData', 'Local');
+    return existsSync(join(local, 'AnthropicClaude', 'claude.exe'));
+  }
+  return existsSync(join(env.apps ?? '/Applications', 'Claude.app'));
+}
+
 const claudeDesktop: Tool = {
   id: 'claude-desktop', name: 'Claude (desktop app)', slug: 'claude-code',
   installed: (env) => existsSync(join(env.apps ?? '/Applications', 'Claude.app')) || existsSync(dirname(claudeConfigPath(env))),
@@ -572,6 +581,11 @@ export const detailText = (s: Pick<ToolState, 'detail' | 'detailSay'>): string =
 
 /** A tool's name on a screen: the desktop app's own name is translated, the others are product names. Stored and assistant-bound text keeps `tool.name`. */
 export const toolName = (tool: { id: string; name: string }): string => (tool.id === 'claude-desktop' ? t('tools.name.claude-desktop') : tool.name);
+
+/** The tools BrainAI finds on this computer, without starting any of them (the Claude app counts only when the app itself is there). */
+export function foundToolIds(env: ToolEnv): ToolId[] {
+  return TOOLS.filter((tool) => (tool.id === 'claude-desktop' ? claudeAppPresent(env) : tool.installed(env))).map((tool) => tool.id);
+}
 
 /** Each look starts a CLI (slow on Windows), so the tools are looked at together; the list keeps the order of TOOLS. `tools` is a seam for tests. */
 export async function toolStates(env: ToolEnv, tools: Tool[] = TOOLS): Promise<ToolState[]> {

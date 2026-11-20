@@ -33,8 +33,10 @@ test('not installed, not signed in, signed in', async (t) => {
 
 test('sign in shows Cloudflare\'s page address and gives up after the limit', async (t) => {
   const { env } = world(t, { hang: true });
-  const run = startSignIn(env, 500);
-  await until(() => run.url() !== null);
+  // The limit must outlast the fake cloudflared's start-up on a busy machine (the whole suite runs in parallel), or the
+  // run gives up before it prints the address.
+  const run = startSignIn(env, 4000);
+  await until(() => run.url() !== null, 8000);
   assert.match(run.url()!, /^https:\/\/dash\.cloudflare\.com\/argotunnel\?/);
   const r = await run.done;
   assert.equal(r.ok, false);

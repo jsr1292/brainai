@@ -8,6 +8,7 @@ import { makeGrowth, makePages, makeService } from '../testing/helpers.js';
 import { buildMcpServer } from '../mcp/server.js';
 import { heldMetaLines, heldView } from '../web/factMetaViews.js';
 import { metaOf, resolveAiMeta, NO_META } from './factMeta.js';
+import { fakeSkLiveKey } from '../testing/fakeSecrets.js';
 
 /*
  * A held save reports what approving it will store (heldOutcome), never the claim on the row: MCP replies, the harvest
@@ -134,7 +135,7 @@ test('R2 a held roadmap add with new text on an owner_said roadmap says the sour
 test('R3 a held row whose note no longer validates: the card helper gets no source line, not a throw', async () => {
   const given = setup();
   await given.service.remember({ kind: 'decision', content: 'Harbor uses B2', project: 'harbor', newProject: true } as never, owner);
-  const s = given.store.addSuggestion({ action: 'add', memoryId: null, content: 'Harbor note', tags: [], keys: null, kind: 'decision', project: 'harbor', reason: 'x', suggestedBy: 'Codex', source: 'inferred', sourceNote: 'AKIA' + 'IOSFODNN7EXAMPLE sk-live-abcdefghijklmnopqrstuvwxyz0123456789', sourceBy: 'Codex' });
+  const s = given.store.addSuggestion({ action: 'add', memoryId: null, content: 'Harbor note', tags: [], keys: null, kind: 'decision', project: 'harbor', reason: 'x', suggestedBy: 'Codex', source: 'inferred', sourceNote: 'AKIA' + 'IOSFODNN7EXAMPLE ' + fakeSkLiveKey('abcdefghijklmnopqrstuvwxyz0123456789'), sourceBy: 'Codex' });
   assert.throws(() => given.service.heldOutcome(s), /./);
   assert.deepEqual(heldView(given.service, s), { currentMeta: undefined, heldOutcome: undefined });
 });

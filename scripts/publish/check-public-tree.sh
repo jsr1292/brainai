@@ -96,7 +96,7 @@ if [ "$FOUND" = 0 ] && [ "$TESTS" = 1 ]; then
   TEST_TREE="$WORK/test-tree"
   mkdir "$TEST_TREE" && (cd "$OUT" && tar -cf - .) | (cd "$TEST_TREE" && tar -xf -) || finding "Could not make the scratch copy for the tests"
   if [ "$FOUND" = 0 ] && ! (cd "$TEST_TREE" && npm ci --no-audit --no-fund > "$WORK/npm-ci.log" 2>&1); then tail -20 "$WORK/npm-ci.log"; finding "npm ci failed"; fi
-  if [ "$FOUND" = 0 ] && ! (cd "$TEST_TREE" && npm test > "$WORK/npm-test.log" 2>&1); then grep -E '^not ok|ℹ (pass|fail)' "$WORK/npm-test.log" | tail -20; finding "npm test failed"; fi
+  if [ "$FOUND" = 0 ] && ! (cd "$TEST_TREE" && npm test > "$WORK/npm-test.log" 2>&1); then grep -E '^not ok|^✖|ℹ (pass|fail)' "$WORK/npm-test.log" | tail -20; finding "npm test failed"; fi
 fi
 
 if [ "$FOUND" = 0 ]; then

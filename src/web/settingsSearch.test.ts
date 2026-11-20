@@ -167,7 +167,7 @@ test('the key is saved mode 600 and appears nowhere: not the page, /models/progr
   assert.match(sec, /Replace/);
   assert.match(sec, /action="\/settings\/search\/key\/remove"/);
   assert.doesNotMatch(sec, /type="password"[^>]*value=/);
-  for (const page of [await settings(s), (await open(s.app.baseUrl, '/welcome?step=3', s.cookie)).body, await (await fetch(s.app.baseUrl + '/models/progress', { headers: { Cookie: s.cookie } })).text()]) {
+  for (const page of [await settings(s), (await open(s.app.baseUrl, '/welcome?step=4', s.cookie)).body, await (await fetch(s.app.baseUrl + '/models/progress', { headers: { Cookie: s.cookie } })).text()]) {
     assert.ok(!page.includes(KEY), 'no key in a page');
   }
   // The database and a saved copy of everything.
@@ -256,7 +256,7 @@ test('Replace and Load model files are openable details with the house chevron, 
 
 test('the welcome offers no online reranker of its own and points to Settings › Search for it', async (t) => {
   const s = await setup(t, { installed: [] });
-  const body = (await open(s.app.baseUrl, '/welcome?step=2', s.cookie)).body;
+  const body = (await open(s.app.baseUrl, '/welcome?step=3', s.cookie)).body;
   assert.doesNotMatch(body, /your best matches are sent|sends your best matches|best matches are sent to this service/);
   assert.match(body, /Prefer an online reranker\? Set it up later in Settings › Search\./);
 });

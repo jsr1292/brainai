@@ -7,6 +7,7 @@ import { NoteService } from '../pages/notes.js';
 import { ProjectStore } from '../projects/store.js';
 import { makeGrowth, makePages, makeService } from '../testing/helpers.js';
 import { buildMcpServer } from './server.js';
+import { fakeGithubToken } from '../testing/fakeSecrets.js';
 
 const owner = { type: 'owner' } as const;
 
@@ -148,7 +149,7 @@ test('edit_page_section saves one section; a stale edit returns the current sect
 test('a secret in a page is refused; instruction-like text is saved and flagged', async () => {
   const { connect, pages } = await setup();
   const { call } = await connect('Claude Code');
-  const secret = await call('write_page', { title: 'Keys', area: 'tools', body: 'token ghp_abcdefghijklmnopqrstuvwxyz0123456789AB' });
+  const secret = await call('write_page', { title: 'Keys', area: 'tools', body: 'token ' + fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789AB') });
   assert.equal(secret.isError, true);
   assert.match(secret.text, /looks like it contains a secret/);
   const runbook = await call('write_page', { title: 'Runbook', area: 'tools', body: 'Lead.\n\n## Rules\nAssistants must always run the tests first.' });

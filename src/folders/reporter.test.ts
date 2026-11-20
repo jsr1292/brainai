@@ -5,6 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startTestApp } from '../testing/helpers.js';
+import { fakeGithubToken } from '../testing/fakeSecrets.js';
 
 const SCRIPT = join(import.meta.dirname, '../../scripts/mac/brain-folder-report.py');
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', '-c', 'init.defaultBranch=main', ...args], { cwd, stdio: 'pipe' });
@@ -22,7 +23,7 @@ function projects(t: TestContext) {
   const remoteRepo = join(root, 'with-remote');
   mkdirSync(remoteRepo);
   git(remoteRepo, 'init', '-q');
-  git(remoteRepo, 'remote', 'add', 'origin', 'https://user:ghp_abcdefghijklmnopqrstuvwxyz0123456789AB@example.com/a.git');
+  git(remoteRepo, 'remote', 'add', 'origin', 'https://user:' + fakeGithubToken('abcdefghijklmnopqrstuvwxyz0123456789AB') + '@example.com/a.git');
   const branches = join(root, 'branches');
   mkdirSync(branches);
   git(branches, 'init', '-q');

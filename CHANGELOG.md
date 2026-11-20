@@ -4,6 +4,15 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Version shows the version you run.
 
+## 1.9.0 (2026-11-20)
+
+Updating needs nothing from you. On the desktop app this is the first quiet update: if you run 1.8.0, it downloads in
+the background and installs when you restart, with no installer window.
+
+- **A "Your apps" step in the first-run welcome.** New installs now ask which AI apps you use and say, in plain words, which work on this computer right away and what ChatGPT, Claude on the web and Grok need (a reachable address or a server). The welcome has five steps, Connect lists your apps first, and Home keeps one "Next" card until you dismiss it. It only affects new installs: if you already finished the welcome, nothing changes.
+
+- **No more "committed secret" warnings from code scanners.** The tests that check BrainAI refuses to store keys used made-up keys written out in the code, and public scanners read them as leaked secrets. They are now built while the tests run, so the source holds none, and the release check no longer makes exceptions for them.
+
 ## 1.8.0 (2026-11-20)
 
 Updating needs nothing from you.

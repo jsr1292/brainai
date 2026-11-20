@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fakeHome, type FakeHome } from '../testing/fakeTools.js';
 import { setupText } from '../setup/texts.js';
-import { backupFiles, brainPluginInstalled, tracesOfThisBrain, childEnv, commandLine, connect, disconnect, findCommand, toolStates, withCodexApproval, type Tool, type ToolEnv } from './tools.js';
+import { backupFiles, brainPluginInstalled, tracesOfThisBrain, childEnv, commandLine, claudeAppPresent, connect, disconnect, findCommand, toolStates, withCodexApproval, type Tool, type ToolEnv } from './tools.js';
 import { findBlock } from './rulesBlock.js';
 
 const URL_ = 'http://localhost:3100/mcp';
@@ -619,4 +619,23 @@ test('toolStates looks at the tools at the same time and keeps the order of the 
   assert.deepEqual(states.map((s) => s.id), ['claude-code', 'codex', 'opencode', 'cursor']);
   assert.deepEqual(states.map((s) => s.installed), [true, true, false, true]);
   assert.equal(peak, 3, 'the three installed tools were looked at together');
+});
+
+test('claudeAppPresent is false when only Claude\'s config folder exists', async (t) => {
+  const { f, env } = world(t, []);
+  f.write('Library/Application Support/Claude/claude_desktop_config.json', '{}');
+  assert.equal(claudeAppPresent(env), false);
+  const win: ToolEnv = { ...env, platform: 'win32', system: { LOCALAPPDATA: join(f.home, 'AppData', 'Local') }, claudeConfig: join(f.home, 'AppData', 'Roaming', 'Claude', 'claude_desktop_config.json') };
+  mkdirSync(dirname(win.claudeConfig!), { recursive: true });
+  assert.equal(claudeAppPresent(win), false);
+});
+
+test('claudeAppPresent is true when the Claude app is installed', async (t) => {
+  const { f, env } = world(t, []);
+  mkdirSync(join(env.apps!, 'Claude.app'), { recursive: true });
+  assert.equal(claudeAppPresent(env), true);
+  const local = join(f.home, 'AppData', 'Local');
+  mkdirSync(join(local, 'AnthropicClaude'), { recursive: true });
+  writeFileSync(join(local, 'AnthropicClaude', 'claude.exe'), '');
+  assert.equal(claudeAppPresent({ ...env, platform: 'win32', system: { LOCALAPPDATA: local } }), true);
 });

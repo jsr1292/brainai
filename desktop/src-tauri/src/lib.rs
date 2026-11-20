@@ -258,7 +258,7 @@ fn quit_from_tray(app: &AppHandle) {
 }
 
 /// After an import was staged (Task 7's /app/restart): stops the server and starts it again, which swaps the staged
-/// copy in, and lands on the welcome page's second step. Not a crash: the watcher of the old start stands down and
+/// copy in, and lands on the welcome page's Search step (the third). Not a crash: the watcher of the old start stands down and
 /// the restart counter starts again from zero.
 fn restart_server(app: &AppHandle) {
     let state = app.state::<Running>();
@@ -275,7 +275,7 @@ fn restart_server(app: &AppHandle) {
     state.epoch.fetch_add(1, Ordering::SeqCst);
     stop_server(app);
     state.restarts.store(0, Ordering::SeqCst);
-    launch_to(app.clone(), "/welcome?step=2");
+    launch_to(app.clone(), "/welcome?step=3");
 }
 
 /// The running app's `.app` folder, only when this is a real install (the same rule as the login item), so a copy run

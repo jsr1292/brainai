@@ -6,15 +6,18 @@ import { pipeline } from 'node:stream/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { addedNotSignedIn, withSignIn } from './toolSignIn.js';
-import { addReminders, connect, disconnect, toolStates, type ToolEnv, type ToolId } from '../desktop/tools.js';
+import { addReminders, connect, disconnect, foundToolIds, toolStates, type ToolEnv, type ToolId } from '../desktop/tools.js';
 import { setupText } from '../setup/texts.js';
 import type { AppDeps } from './app.js';
 import { appKeyCheck, requireOwner } from './authRoutes.js';
-import { html, page } from './html.js';
+import { html, page, type SafeHtml } from './html.js';
 import { viaDoor } from '../desktop/publicDoor.js';
 import { isEmptyBrain, stageRestore } from '../saved/restore.js';
 import { kindOfFile } from '../saved/backupFile.js';
 import { addedToolsLine } from './dashboardViews.js';
+import type { AppsStep } from './desktopViews.js';
+import { nextStepCard } from './yourAppsViews.js';
+import { movedTo } from '../desktop/move.js';
 import { firstLine, modelLabelPlain, noteItems, modelsLine, modelsProgress, toolsPage, welcomePage } from './desktopViews.js';
 import { readHardware, suggest } from '../models/hardware.js';
 import type { ModelChoice } from '../models/choice.js';
@@ -26,6 +29,7 @@ import { computerName } from '../desktop/computer.js';
 import { clearJustUpdated, readUpdate, setLater, setOffsiteLater, updateLine } from '../desktop/updateState.js';
 import { runBackup } from '../backup.js';
 import { BRAIN_VERSION } from '../version.js';
+import { INTERNET_APPS, LOCAL_APPS, dismissNext, isInternetApp, isWay, nextCard, outcome, readAnswer, saveAnswer, type AppId } from '../desktop/yourApps.js';
 
 const OWNER = { type: 'owner' } as const;
 const DONE_FILE = 'welcome-done';
@@ -63,6 +67,18 @@ function customChoice(body: Record<string, unknown>, o: { online: false } | { on
 
 const IDS: readonly ToolId[] = ['claude-code', 'codex', 'opencode', 'cursor', 'gemini', 'claude-desktop'];
 const isId = (s: string): s is ToolId => (IDS as readonly string[]).includes(s);
+
+/** Home and the welcome's last screen: the one next step for the ticked internet apps, or nothing. */
+export function nextCardFor(d: AppDeps, inWelcome = false): SafeHtml | undefined {
+  if (!d.localMode) return undefined;
+  const a = readAnswer(d.store);
+  const internet = a ? a.apps.filter(isInternetApp) : [];
+  if (!a || internet.length === 0) return undefined;
+  const env = toolEnv(d);
+  // Reach is not offered on Windows, so an answer of 'reach' never makes a card there.
+  const card = nextCard(a.way === 'reach' && env && windows(env) ? { ...a, way: null } : a, { reachOn: (d.reach?.url() ?? null) !== null, moved: !!d.statusDir && movedTo(d.statusDir) !== null });
+  return card ? nextStepCard(card, internet, inWelcome) : undefined;
+}
 
 const windows = (env: ToolEnv) => (env.platform ?? process.platform) === 'win32';
 
@@ -154,7 +170,7 @@ export function desktopRoutes(d: AppDeps): Router {
       const hooks = r.ok && r.hooksNote ? ` ${r.hooksNote}` : '';
       const said = r.ok ? ((what === 'connect' ? t('setup.said.added', { signIn: r.signIn }) : (id === 'claude-desktop' ? t('setup.said.disKey') : r.ended ? t('setup.said.disEnded') : t('setup.said.disRevoke'))) + hooks) : r.reason;
       results.set(id, { text: said, at: Date.now() });
-      const back = (req.body as Record<string, unknown> | undefined)?.back === 'welcome' ? '/welcome?step=3&tool=' : '/settings/tools?tool=';
+      const back = (req.body as Record<string, unknown> | undefined)?.back === 'welcome' ? '/welcome?step=4&tool=' : '/settings/tools?tool=';
       res.redirect(303, back + id);
     });
   }
@@ -187,14 +203,23 @@ export function desktopRoutes(d: AppDeps): Router {
   };
 
   router.get('/welcome', here, owner, async (req, res) => {
-    const step = req.query.step === '2' ? 2 : req.query.step === '3' ? 3 : req.query.step === '4' ? 4 : 1;
+    const step = (['2', '3', '4', '5'] as const).map(Number).find((n) => String(n) === req.query.step) as 2 | 3 | 4 | 5 | undefined ?? 1;
     const said = resultFor(req.query.tool);
     const restore = step === 1 && canRestore() ? (req.query.restore === '1' ? 'choose' as const : 'offer' as const) : null;
-    const restored = step === 3 ? takeRestored() : null;
+    const restored = step === 4 ? takeRestored() : null;
+    const answer = readAnswer(d.store);
+    const reachOn = (d.reach?.url() ?? null) !== null;
+    const found = new Set<ToolId>(foundToolIds(env));
+    const apps: AppsStep | undefined = step !== 2 ? undefined
+      : req.query.see === '1' && answer && answer.apps.length > 0
+        ? { screen: 'result', ticked: answer.apps, outcome: outcome(answer.apps, { found, reachOn, windows: windows(env) }), way: answer.way, windows: windows(env) }
+        : { screen: 'pick', ticked: answer ? answer.apps : LOCAL_APPS.filter((id) => found.has(id)), found };
     res.type('html').send(page(t('setup.welcome.title'), welcomePage({
-      step, tools: step >= 3 ? withSignIn(await cachedToolStates(d, env), d.provider.listGrants()) : [], windows: windows(env), said, cursorRules: env.rules('claude-code'), restore, restored,
-      models: step === 2 && d.models ? { hardware: await (d.hardware ?? (() => readHardware(dataDir ?? process.cwd())))(), installed: await d.models.installedIds() } : undefined,
-      modelsLine: step >= 3 && d.models ? modelsLine(d.models.status(), { dataDir }) : undefined,
+      step, apps, yours: step === 4 ? { answer, found, reachOn } : undefined,
+      nextCard: step === 5 ? nextCardFor(d, true) : undefined,
+      tools: step >= 4 ? withSignIn(await cachedToolStates(d, env), d.provider.listGrants()) : [], windows: windows(env), said, cursorRules: env.rules('claude-code'), restore, restored,
+      models: step === 3 && d.models ? { hardware: await (d.hardware ?? (() => readHardware(dataDir ?? process.cwd())))(), installed: await d.models.installedIds() } : undefined,
+      modelsLine: step >= 4 && d.models ? modelsLine(d.models.status(), { dataDir }) : undefined,
     }),
       { nav: false, tab: null, shell: 'setup' }));
   });
@@ -242,6 +267,33 @@ export function desktopRoutes(d: AppDeps): Router {
     const name = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
     if (name !== '') await d.service.remember({ kind: 'profile', content: `The owner is called ${name}.` }, OWNER);
     res.redirect(303, '/welcome?step=2');
+  });
+
+  /** Your apps, screen 1: the ticks are stored (replacing any earlier answer). No tick, or Skip, is an empty answer and carries on to Search. */
+  router.post('/welcome/apps', here, owner, (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const given = body.skip === '1' ? [] : ([] as unknown[]).concat(body.app ?? []);
+    const known = [...LOCAL_APPS, ...INTERNET_APPS] as readonly AppId[];
+    const apps = known.filter((id) => given.includes(id));
+    saveAnswer(d.store, apps, null);
+    res.redirect(303, apps.length === 0 ? '/welcome?step=3' : '/welcome?step=2&see=1');
+  });
+
+  /** Dismisses the Home card for the internet apps: for good, until the answer is given again. */
+  router.post('/welcome/next/dismiss', here, owner, (req, res) => {
+    dismissNext(d.store);
+    // From the welcome's last screen the person stays in the welcome.
+    res.redirect(303, (req.body as Record<string, unknown> | undefined)?.back === 'welcome' ? '/welcome?step=5' : '/');
+  });
+
+  /** Your apps, screen 2: how the internet apps will reach BrainAI. Stored with the ticks; setup carries on to Search either way. */
+  router.post('/welcome/apps/way', here, owner, (req, res) => {
+    const answer = readAnswer(d.store);
+    const way = (req.body as Record<string, unknown> | undefined)?.way;
+    // Only a way this computer offers counts; with a choice shown, anything else is "not now".
+    const offered = answer ? outcome(answer.apps, { found: new Set(), reachOn: (d.reach?.url() ?? null) !== null, windows: windows(env) }).ways : [];
+    if (answer) saveAnswer(d.store, answer.apps, isWay(way) && offered.includes(way) ? way : offered.length > 0 ? 'later' : null);
+    res.redirect(303, '/welcome?step=3');
   });
 
   /** The search models' state for the progress line: no data folder path, and nothing of any key. */
@@ -312,10 +364,10 @@ export function desktopRoutes(d: AppDeps): Router {
     } else if (body.mode === 'custom') {
       choice = customChoice(body, { online: false });
     }
-    if (!choice) return res.status(400).type('html').send(page(t('setup.welcome.title'), html`<div class="narrow"><h1>${t('setup.again.title')}</h1><p>${t('setup.again.text')} <a href="/welcome?step=2">${t('setup.again.back')}</a></p></div>`, { nav: false, tab: null }));
+    if (!choice) return res.status(400).type('html').send(page(t('setup.welcome.title'), html`<div class="narrow"><h1>${t('setup.again.title')}</h1><p>${t('setup.again.text')} <a href="/welcome?step=3">${t('setup.again.back')}</a></p></div>`, { nav: false, tab: null }));
     // Downloads run in the background while the welcome goes on; a failure shows in the progress line.
     d.models?.choose(choice).catch(() => {});
-    res.redirect(303, '/welcome?step=3');
+    res.redirect(303, '/welcome?step=4');
   });
 
   // ---- Settings › Search (the section itself is drawn with Settings) ----

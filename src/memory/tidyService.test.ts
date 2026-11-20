@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { makePages, makeService, makeTidy } from '../testing/helpers.js';
 import { CHANGED_SINCE, MAX_PENDING_TIDY, TidyError } from './tidyService.js';
 import type { Memory } from './types.js';
+import { fakeSkKey } from '../testing/fakeSecrets.js';
 
 const owner = { type: 'owner' as const };
 
@@ -91,7 +92,7 @@ test('propose: validation of every kind', async () => {
   refuses(prop({ merge: { ids: [a.id, b.id], content: '', kind: 'decision' } }), /merge.content/);
   refuses(prop({ merge: { ids: [a.id, b.id], content: 'y'.repeat(1001), kind: 'decision' } }), /1000/);
   refuses(prop({ merge: { ids: [a.id, b.id], content: 'ok', kind: 'summary' } }), /kind/);
-  refuses(prop({ merge: { ids: [a.id, b.id], content: 'password is hunter2 and token sk-abcdefghijklmnopqrstuvwxyz123456', kind: 'decision' } }), /secret/i);
+  refuses(prop({ merge: { ids: [a.id, b.id], content: 'password is hunter2 and token ' + fakeSkKey('abcdefghijklmnopqrstuvwxyz123456'), kind: 'decision' } }), /secret/i);
   refuses(prop({ move_to_page: { ids: [a.id], page_id: 'nope' } }), /No page/);
   const pg = await w.page('## What it does\nx\n\n## Key decisions\n- 2026-01-01 — old\n');
   refuses(prop({ move_to_page: { ids: [a.id], page_id: pg.id, section: 'missing' } }), /no section missing/);

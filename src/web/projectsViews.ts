@@ -308,6 +308,8 @@ export interface HomeViewInput {
   health?: Health;
   /** The search models' progress line (the app only), shown while they download or when a download failed. */
   modelsLine?: SafeHtml;
+  /** "Next: make this computer reachable for ChatGPT" (the app only), after the updated line. */
+  nextStep?: SafeHtml;
   /** The update card (the app only), above the models line. */
   updateCard?: SafeHtml;
   /** "Updated to x · What's new", once, at the first start after an update (the app only). */
@@ -349,7 +351,7 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   return html`<div class="plist">
   <h1>${t('projects.title')}${plain ? html`<span class="phome-date" hidden>${longDate(now)}</span>` : ''}</h1>
   ${errorBlock(v.error)}
-  ${banner}${v.justUpdated ?? ''}${v.updateCard ?? ''}${plain && v.firstSteps ? v.firstSteps : v.offsiteCard ?? ''}${v.modelsLine ?? ''}
+  ${banner}${v.justUpdated ?? ''}${v.nextStep ?? ''}${v.updateCard ?? ''}${plain && v.firstSteps ? v.firstSteps : v.offsiteCard ?? ''}${v.modelsLine ?? ''}
   <form method="post" action="/projects/ideas" class="idea"><label class="visually-hidden" for="idea-text">${t('projects.idea.label')}</label><input id="idea-text" name="text" maxlength="140" placeholder="${t('projects.idea.placeholder')}" autocomplete="off"><button type="submit" class="primary">${t('projects.idea.add')}</button></form>
   ${forYou.value === '' ? '' : html`<h2 class="fy-h" id="foryou" hidden>${t('projects.forYou')}</h2>`}${forYou}
   ${!empty ? '' : html`<p class="quiet empty">${t('projects.empty')}</p>`}
