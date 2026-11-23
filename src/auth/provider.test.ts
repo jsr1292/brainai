@@ -6,7 +6,8 @@ import { openDb } from '../db.js';
 import { COMMANDS } from '../cli.js';
 import { OwnerAuth } from './owner.js';
 import { RedirectAllowlist } from './redirects.js';
-import { ClientsStore } from './clientsStore.js';
+import { ClientsStore, InvalidNameError } from './clientsStore.js';
+import { runWithLocale } from '../i18n/core.js';
 import { MemoryOAuthProvider, REFRESH_REUSE_GRACE_SEC } from './provider.js';
 
 const CALLBACK = 'https://claude.ai/api/mcp/auth_callback';
@@ -452,7 +453,12 @@ test('activeConnections lists names used in the last 30 days, once each', async 
   const c2 = await clients.registerClient!({ redirect_uris: [CALLBACK], client_name: 'Grok', token_endpoint_auth_method: 'none' } as any);
   const c3 = await clients.registerClient!({ redirect_uris: [CALLBACK], client_name: 'Old', token_endpoint_auth_method: 'none' } as any);
   await p.approvePending(await startAuthorize(p, client), { access: 'discussions' });
-  await p.approvePending(await startAuthorize(p, client), { access: 'full' });
+  // A second connection with the same name at another level is refused now (security review #12); older brains can
+  // still hold one, which is made here by renaming straight in the table.
+  await assert.rejects(p.approvePending(await startAuthorize(p, client), { access: 'full' }), InvalidNameError);
+  const other = await p.approvePending(await startAuthorize(p, client), { access: 'full', name: 'Claude two' });
+  assert.ok(other);
+  db.prepare("UPDATE oauth_grants SET name = 'Claude' WHERE name = 'Claude two'").run();
   await p.approvePending(await startAuthorize(p, c2), { access: 'discussions' });
   await p.approvePending(await startAuthorize(p, c3));
   advance(40 * 86400);
@@ -567,4 +573,36 @@ test('issueLocalGrant: years sets the lifetime; a bad name is refused before any
   const before = (db.prepare('SELECT COUNT(*) AS n FROM oauth_grants').get() as { n: number }).n;
   assert.throws(() => p.issueLocalGrant({ name: '  ', clientName: 'Made-up helper' }));
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM oauth_grants').get() as { n: number }).n, before);
+});
+
+
+test('a name used by a live connection at another access level is refused, in English and Spanish; the same level, a revoked one and another name are fine', async () => {
+  const { p, client, clients } = await setup();
+  const c2 = await clients.registerClient!({ redirect_uris: [CALLBACK], client_name: 'Claude', token_endpoint_auth_method: 'none' } as any);
+  await p.approvePending(await startAuthorize(p, client), { access: 'full' });
+  // Another connection of the same app and level shares the name (several installs); a different level does not.
+  await p.approvePending(await startAuthorize(p, client), { access: 'full' });
+  await assert.rejects(p.approvePending(await startAuthorize(p, c2), { access: 'discussions' }), (e: Error) => e instanceof InvalidNameError && /different access level/.test(e.message));
+  await assert.rejects(runWithLocale('es', async () => p.approvePending(await startAuthorize(p, c2), { access: 'discussions', name: 'claude' })), (e: Error) => e instanceof InvalidNameError && /otro nivel de acceso/.test(e.message));
+  // Another name works, and then a rename onto the Full one's name is refused too.
+  await p.approvePending(await startAuthorize(p, c2), { access: 'discussions', name: 'Claude chat' });
+  const chat = p.listGrants().find((g) => p.grantName(g.id) === 'Claude chat')!;
+  assert.throws(() => p.setGrantName(chat.id, 'Claude'), InvalidNameError);
+  // A revoked connection no longer holds its name.
+  for (const g of p.listGrants().filter((x) => p.grantName(x.id) === 'Claude' && !x.revokedAt)) p.revokeGrant(g.id);
+  p.setGrantName(chat.id, 'Claude');
+  assert.equal(p.grantName(chat.id), 'Claude');
+});
+
+
+test('a name held only by an abandoned connection, or spelled with lookalike letters, is judged by what is live', async () => {
+  const { db, p, client, clients, advance } = await setup();
+  const c2 = await clients.registerClient!({ redirect_uris: [CALLBACK], client_name: 'Claude', token_endpoint_auth_method: 'none' } as any);
+  await p.approvePending(await startAuthorize(p, client), { access: 'full' });
+  // A Cyrillic "С" and "а" do not make another name.
+  await assert.rejects(p.approvePending(await startAuthorize(p, c2), { access: 'discussions', name: 'Cl\u0430ude' }), InvalidNameError);
+  // Forty days on, with no token alive and no use, the old connection no longer holds the name.
+  advance(40 * 86400);
+  db.prepare('UPDATE oauth_tokens SET revoked_at = ?').run(new Date(0).toISOString());
+  assert.ok(await p.approvePending(await startAuthorize(p, c2), { access: 'discussions' }));
 });

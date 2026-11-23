@@ -147,3 +147,17 @@ test('a nickname too generic to name one project, a comma, or letters that whole
   assert.throws(() => registry.setInfo('orchard', { nicknames: ['cellar, the'] }, 'owner'), /comma/);
   assert.deepEqual(registry.setInfo('orchard', { nicknames: ['the house', 'Casa Ña'] }, 'owner').nicknames, ['the house', 'Casa Ña']);
 });
+
+test('a project URL cannot point at the brain\'s own sign-in or app actions', async () => {
+  const { setOwnOrigins } = await import('../pages/markdown.js');
+  setOwnOrigins(() => ['https://brain.example.net']);
+  try {
+    const { registry } = setup();
+    registry.create('vpn', { state: 'open' }, 'owner');
+    for (const bad of ['https://brain.example.net/authorize?client_id=x', 'http://localhost:3000/app/update', 'http://127.0.0.1/consent/abc', 'https://brain.example.net/APP/restart']) {
+      assert.throws(() => registry.setInfo('vpn', { url: bad }, 'Claude Code'), code('invalid'), bad);
+    }
+    assert.equal(registry.setInfo('vpn', { url: 'https://brain.example.net/notes' }, 'owner').url, 'https://brain.example.net/notes');
+    assert.equal(registry.setInfo('vpn', { url: 'https://vpn.example/app/' }, 'owner').url, 'https://vpn.example/app/');
+  } finally { setOwnOrigins(() => []); }
+});

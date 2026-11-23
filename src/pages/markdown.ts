@@ -140,9 +140,31 @@ function unsafeChars(s: string): boolean {
 }
 const sameSite = (u: string) => u.startsWith('/') && !u.startsWith('//');
 
+/**
+ * Paths that act on the signed-in owner's window or sign-in (the desktop shell's /app/ triggers, OAuth consent): stored
+ * text must never link to them. Checked on the resolved, percent-decoded, lower-cased path, so /./app/, /x/../app/,
+ * /%61pp/ and /APP/ are caught, for same-site links and for links to this machine.
+ */
+let ownHosts: () => string[] = () => [];
+/** The server tells the renderer which addresses are the brain itself (its public address, Reach): links there are the app too. */
+export function setOwnOrigins(origins: () => string[]): void { ownHosts = origins; }
+
+export function actsOnTheApp(u: string): boolean {
+  let path: string;
+  try {
+    const url = new URL(u, 'http://brain.invalid');
+    if (url.host !== 'brain.invalid' && !/^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/i.test(url.hostname) && !ownHosts().some((o) => { try { return new URL(o).host === url.host; } catch { return false; } })) return false;
+    path = url.pathname;
+  } catch { return true; }
+  for (let i = 0; i < 3; i++) { try { path = decodeURIComponent(path); } catch { break; } }
+  path = path.replace(/\\/g, '/').toLowerCase();
+  return /^\/(app(\/|$)|authorize|consent(\/|$))/.test(path);
+}
+
 function safeHref(href: string): string | null {
   const u = decodeEntities(href);
   if (unsafeChars(u)) return null;
+  if (actsOnTheApp(u)) return null;
   if (/^https?:\/\//i.test(u) || u.startsWith('#') || sameSite(u)) return u;
   return null;
 }

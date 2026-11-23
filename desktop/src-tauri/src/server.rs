@@ -438,6 +438,37 @@ pub fn check_once(port: u16, secret: &str) -> Result<bool, StartError> {
     }
 }
 
+/// What holds BrainAI's usual port when this run had to use another one.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Holder {
+    /// It answers GET /app/hello the way a BrainAI does (a 64-hex proof): an older copy still shutting down, or another BrainAI.
+    LooksLikeBrainAi,
+    /// It does not: some other program, which the tools' tokens must not be sent through (security review, finding 2).
+    Foreign,
+}
+
+/// The pure part: is this answer from a BrainAI's /app/hello? A 200 with `{"proof": <64 lowercase hex>}`.
+pub fn is_hello_answer(status: u16, body: &serde_json::Value) -> bool {
+    status == 200 && body.get("proof").and_then(|v| v.as_str()).is_some_and(|p| p.len() == 64 && p.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+}
+
+/// Looks at the program on `port` (busy, and not ours: the server of this run is on another port), only to tell the owner. Its key
+/// is not known to us, so only the answer's shape is checked and a deliberate squatter passes: nothing relies on this for
+/// security (the server accepts a usual-address token on a temporary port only from the Claude bridge's own key).
+pub fn usual_holder(port: u16) -> Holder {
+    let url = format!("http://localhost:{port}/app/hello?challenge={}", proof::random_hex());
+    match agent().get(&url).call() {
+        Ok(resp) => {
+            let status = resp.status();
+            match resp.into_json::<serde_json::Value>() {
+                Ok(body) if is_hello_answer(status, &body) => Holder::LooksLikeBrainAi,
+                _ => Holder::Foreign,
+            }
+        }
+        Err(_) => Holder::Foreign,
+    }
+}
+
 /// Polls until our server answers (the first start loads the search model), giving up after `timeout` or as soon as
 /// `alive()` says the server stopped.
 pub fn wait_until_ours(port: u16, secret: &str, timeout: Duration, alive: impl Fn() -> bool) -> Result<(), StartError> {
@@ -741,6 +772,26 @@ mod tests {
         for bad in ["", "short", &"A".repeat(44), "abc&next=//evil.example/abcdefghijklmnopqrst", "abcdefghijklmnopqrstuvwxyz/_0123456789ABCDE"] {
             assert!(!valid_ticket(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn the_program_on_the_usual_port_is_told_apart_by_how_it_answers_hello() {
+        let proof = "ab".repeat(32);
+        assert!(is_hello_answer(200, &serde_json::json!({ "proof": proof })));
+        for bad in [serde_json::json!({}), serde_json::json!({ "proof": "0000" }), serde_json::json!({ "proof": "AB".repeat(32) }), serde_json::json!({ "proof": 5 })] {
+            assert!(!is_hello_answer(200, &bad), "{bad}");
+        }
+        assert!(!is_hello_answer(404, &serde_json::json!({ "proof": proof })));
+        let ours: &'static str = Box::leak(format!(r#"{{"proof":"{}"}}"#, "cd".repeat(32)).into_boxed_str());
+        assert_eq!(usual_holder(answer_once("200 OK", ours)), Holder::LooksLikeBrainAi);
+        assert_eq!(usual_holder(answer_once("200 OK", r#"{"proof":"0000"}"#)), Holder::Foreign);
+        assert_eq!(usual_holder(answer_once("404 Not Found", "{}")), Holder::Foreign);
+        assert_eq!(usual_holder(answer_once("200 OK", "<html>hi</html>")), Holder::Foreign);
+        // Something bound that never answers HTTP (here: closed straight away) is foreign too.
+        let l = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || { let _ = l.accept(); });
+        assert_eq!(usual_holder(port), Holder::Foreign);
     }
 
     #[test]

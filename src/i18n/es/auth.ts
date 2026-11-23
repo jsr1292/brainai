@@ -41,4 +41,5 @@ export const auth_es: Record<keyof typeof auth, Entry> = {
   'auth.sign.approvedText': 'Aprobado: {client} termina de conectarse en tu navegador.',
   'auth.sign.deniedText': 'Denegado: a {client} se le ha dicho que no. Su página en tu navegador vuelve a la herramienta.',
   'auth.sign.backHome': 'Volver a BrainAI',
+  'auth.name.taken': 'Ya hay otra conexión activa llamada «{name}» con otro nivel de acceso. Elige otro nombre, para que no se puedan confundir, o quita la conexión antigua en Ajustes › Conexiones.',
 };

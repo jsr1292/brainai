@@ -33,7 +33,7 @@ for (const [label, insert] of [
     const db = openDb(path);
     db.exec(insert);
     // Back to schema 43 with the switch undone, then migrate again.
-    db.exec("DELETE FROM brain_switches WHERE name = 'developer_coaching'; UPDATE schema_version SET version = 43");
+    db.exec("DELETE FROM brain_switches WHERE name = 'developer_coaching'; ALTER TABLE discussions DROP COLUMN opened_grant; ALTER TABLE discussion_posts DROP COLUMN grant_id; UPDATE schema_version SET version = 43");
     db.close();
     const again = openDb(path);
     assert.equal(switchOf(again), 'on');
@@ -47,7 +47,7 @@ test('migration 44: a brain with only growth observations stays off', (t) => {
   const path = join(dir, 'memory.db');
   const db = openDb(path);
   db.exec("INSERT INTO observations(id, kind, area, summary, embedding, created_at, created_by, last_evidence_at) VALUES ('o1','strength','testing','x', zeroblob(4), '2026-01-01', 'Claude', '2026-01-01')");
-  db.exec("DELETE FROM brain_switches WHERE name = 'developer_coaching'; UPDATE schema_version SET version = 43");
+  db.exec("DELETE FROM brain_switches WHERE name = 'developer_coaching'; ALTER TABLE discussions DROP COLUMN opened_grant; ALTER TABLE discussion_posts DROP COLUMN grant_id; UPDATE schema_version SET version = 43");
   db.close();
   const again = openDb(path);
   assert.equal(switchOf(again), null);

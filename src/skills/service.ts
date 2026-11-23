@@ -1,6 +1,6 @@
 /**
  * Shared skills (round 2 §17c): the owner's how-tos, written once in the brain and loaded by every assistant. Skills
- * have their own tables, not pages, so they reach assistants only through list_skills and load_skill, and only when the
+ * have their own tables, not pages, so they reach assistants only through load_profile (names and short descriptions), list_skills and load_skill, and only when the
  * owner turned them on. Assistants propose; the owner adds or applies.
  */
 import { randomUUID } from 'node:crypto';

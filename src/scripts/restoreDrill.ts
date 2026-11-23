@@ -355,6 +355,8 @@ async function signInAttempt(app: App, ahead: number): Promise<{ session: boolea
 async function signInChecks(r: Report, path: string, app: App, fp: Fingerprint, src: Source, signIn: 'stripped' | 'kept'): Promise<void> {
   const db = app.deps.db!;
   const count = (t: string) => (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
+  // Restoring a saved copy (security review #11) also drops registered apps and their connections and resets the allowlist.
+  const resets = signIn === 'stripped' && (path === PATHS.b1 || path === PATHS.b2);
   if (signIn === 'stripped') {
     const left = SIGN_IN.filter((t) => count(t) > 0);
     r.add(path, 'no sign-in data comes back (owner, sessions, devices, tokens, codes)', left.length === 0, left.length ? `still holding rows: ${left.join(', ')}` : SIGN_IN.map((t) => `${t} ${fp.tables[t]?.count ?? 0}→0`).join(', '));
@@ -368,7 +370,8 @@ async function signInChecks(r: Report, path: string, app: App, fp: Fingerprint, 
     const login = await signInAttempt(app, 0);
     r.add(path, 'the old password and a valid authenticator code do not sign in', !login.session, `HTTP ${login.status}`);
     const secret = db.prepare("SELECT metadata FROM oauth_clients WHERE client_id = 'c1'").get() as { metadata: string } | undefined;
-    r.add(path, 'a client secret is replaced, not kept', !!secret && !secret.metadata.includes('CLIENTSECRETMARKER'));
+    // A saved copy (b1, b2) drops registered apps altogether; a backup file keeps them with a fresh secret.
+    r.add(path, resets ? 'no client or its secret comes back' : 'a client secret is replaced, not kept', resets ? !secret : !!secret && !secret.metadata.includes('CLIENTSECRETMARKER'));
   } else {
     const equal = SIGN_IN.filter((t) => fp.tables[t] && (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n !== fp.tables[t]!.count);
     r.add(path, 'a full copy keeps the sign-in data (it is a private copy of the whole file)', equal.length === 0, equal.length ? `differs: ${equal.join(', ')}` : `owner ${fp.tables.owner?.count}, tokens ${fp.tables.oauth_tokens?.count}`);
@@ -378,6 +381,10 @@ async function signInChecks(r: Report, path: string, app: App, fp: Fingerprint, 
   }
   // Registrations and grants: step 9 says they are kept (the app only signs in again).
   // By row hash, not count (the client secret is left out of the hash: it is replaced on purpose, checked above).
+  if (resets) {
+    r.add(path, 'registered apps and connections are dropped, the allowlist is back to the defaults', count('oauth_clients') === 0 && count('oauth_grants') === 0 && count('redirect_allowlist') === 3, CLIENTS.map((t) => `${t} ${fp.tables[t]?.count}→${count(t)}`).join(', '));
+    return;
+  }
   const bad = CLIENTS.filter((t) => fp.tables[t] && tableFp(db, t)?.hash !== fp.tables[t]!.hash);
   r.add(path, 'registered apps and their access levels are kept', bad.length === 0, CLIENTS.map((t) => `${t} ${fp.tables[t]?.count}→${count(t)}`).join(', '));
 }
@@ -547,6 +554,8 @@ esac
  * and the CI test fails.
  */
 const DOWNGRADES: Record<number, { down(db: Database.Database): void; breakNext(db: Database.Database): void }> = {
+  // Migration 45 only adds discussions.opened_grant and discussion_posts.grant_id: dropping them is the old schema, and adding the first one back makes migration 45 throw.
+  45: { down: (db) => { db.exec('ALTER TABLE discussions DROP COLUMN opened_grant; ALTER TABLE discussion_posts DROP COLUMN grant_id'); }, breakNext: (db) => { db.exec('ALTER TABLE discussions ADD COLUMN opened_grant TEXT'); } },
   // Migration 44 only may add the developer_coaching switch: deleting it is the old schema; a view in place of brain_switches makes migration 44 throw.
   44: { down: (db) => { db.exec("DELETE FROM brain_switches WHERE name = 'developer_coaching'"); }, breakNext: (db) => { db.exec('DROP TABLE brain_switches; CREATE VIEW brain_switches AS SELECT 1 AS name'); } },
   // Migration 43 only adds page_file_imports: dropping it is the old schema, and creating it first makes migration 43 throw.
@@ -585,11 +594,13 @@ async function pathD(r: Report, root: string, source: App, appDir: string, fp: F
     const db = new Database(file, { readonly: true });
     try { return Object.fromEntries(Object.values(CONTENT).flat().map((t) => [t, tableFp(db, t)?.hash ?? ''])); } finally { db.close(); }
   };
-  const before = hashesOf(join(m1.dataDir, 'memory.db'));
+  // Taken once the blocker is in place (a recipe may alter a content table to block): what the failed migration must leave as it found it.
+  let before: Record<string, string> = {};
   let threw = '';
   await r.step(p1, 'the next migration is made to fail', () => {
     const blocker = new Database(join(m1.dataDir, 'memory.db'));
     try { recipe.breakNext(blocker); } finally { blocker.close(); }
+    before = hashesOf(join(m1.dataDir, 'memory.db'));
     try { openDb(join(m1.dataDir, 'memory.db')).close(); } catch (e) { threw = (e as Error).message; }
     return 'set up';
   });

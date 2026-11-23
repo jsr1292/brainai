@@ -5,11 +5,12 @@ import { checkProject, MAX_CONTENT, MemoryError, type MemoryService } from '../m
 import { looksLikeInstruction } from '../memory/instructionLike.js';
 import { looksLikeKey, looksLikeSecret } from '../memory/secrets.js';
 import type { DiscussionStore, StoredFile } from './store.js';
-import { nameKey, voiceKey } from './types.js';
-import type { Access, Discussion, DiscussionFile, Post, Voice } from './types.js';
+import { isSameVoice, mayTakeOver, nameKey, publicPost, type GrantState } from './types.js';
+import type { Access, Discussion, DiscussionFile, Post, StoredPost, Voice } from './types.js';
 
 /** Who is acting. The model may be '' only for reads (dashboard, or an assistant that has not said). */
-export interface Caller { name: string; model: string; access: Access }
+/** `grantId`: the connection (absent for the owner and for callers that have none); identity is by it, never by the name. */
+export interface Caller { name: string; model: string; access: Access; grantId?: string }
 /** An active connection (used in the last 30 days). */
 export interface Connection { name: string; access: Access }
 
@@ -29,6 +30,8 @@ export const markInstructions = (posts: Post[]): MarkedPost[] => posts.map((p) =
 export interface DiscussionView extends DiscussionSummary {
   question: string; question_contains_instructions?: true; openedBy: Voice; files: (DiscussionFile & { contains_instructions?: true })[]; notes: Post[]; replies: MarkedPost[];
   hidden: number; decision: string | null; stage: 'blind' | 'respond' | 'replied' | 'closed';
+  /** The caller is the connection that opened it (by grant; by name for old discussions). False for the owner. */
+  callerIsOpener: boolean;
 }
 
 /** What only the owner's dashboard needs on top of the assistant view. */
@@ -163,6 +166,8 @@ export class DiscussionService {
     private memory: MemoryService,
     private connections: () => Connection[],
     private now: Clock,
+    /** What became of a connection (grant); a gone opener or writer that was Full, or whose row is missing, is matched by name for a Full caller. */
+    private grantState: (grantId: string) => GrantState = () => 'live',
   ) {}
 
   open(caller: Caller, a: { title: string; question: string; project?: string; ask?: string[]; includeLimited?: boolean; files?: NewFile[] }): Discussion {
@@ -183,7 +188,7 @@ export class DiscussionService {
     const ask = this.askList(caller, given, includeLimited);
     const opener = caller.name;
     return this.store.transaction(() => {
-      const d = this.store.create({ title, question, project, openedBy: { name: opener, model }, ask, includeLimited });
+      const d = this.store.create({ title, question, project, openedBy: { name: opener, model }, openedGrant: caller.grantId ?? null, ask, includeLimited });
       for (const f of files) this.store.addFile(d.id, f.name, f.content, opener);
       return d;
     });
@@ -220,7 +225,7 @@ export class DiscussionService {
       .map((d) => this.summary(caller, d, this.store.posts(d.id)));
   }
 
-  private summary(caller: Caller, d: Discussion, posts: Post[]): DiscussionSummary {
+  private summary(caller: Caller, d: Discussion, posts: StoredPost[]): DiscussionSummary {
     const current = posts.filter((p) => p.kind === 'reply' && p.round === d.round);
     const names = new Set(current.map((p) => nameKey(p.author)));
     const waitingFor = d.ask.filter((n) => !names.has(nameKey(n)));
@@ -232,24 +237,32 @@ export class DiscussionService {
     };
   }
 
+  /** Whether the caller opened this discussion: by grant when both are known, by name for older discussions. Never true for a caller without a grant against one opened with a grant. */
+  private isOpener(caller: Caller, d: Discussion): boolean {
+    if (d.openedGrant !== null) {
+      if (caller.grantId !== undefined && caller.grantId === d.openedGrant) return true;
+      // The opener's connection is gone (revoked or restored away): a Full caller of the same name takes over its steps.
+      return mayTakeOver(caller, () => this.grantState(d.openedGrant!)) && nameKey(d.openedBy.name) === nameKey(caller.name);
+    }
+    return nameKey(d.openedBy.name) === nameKey(caller.name);
+  }
+
   /** Whether the caller's voice (name + stated model) has a reply in `round`; never true without a model. */
-  private repliedIn(caller: Caller, posts: Post[], round: number): boolean {
+  private repliedIn(caller: Caller, posts: StoredPost[], round: number): boolean {
     if (!caller.model.trim()) return false;
-    const key = voiceKey(caller.name, caller.model);
-    return posts.some((p) => p.kind === 'reply' && p.round === round && voiceKey(p.author, p.model) === key);
+    return posts.some((p) => p.kind === 'reply' && p.round === round && isSameVoice(caller, caller.model, p, this.grantState));
   }
 
   /** Round 1 is blind until the caller has replied in it. */
-  private isBlind(caller: Caller, d: Discussion, posts: Post[]): boolean {
+  private isBlind(caller: Caller, d: Discussion, posts: StoredPost[]): boolean {
     return d.closedAt === null && d.round === 1 && !this.repliedIn(caller, posts, 1);
   }
 
   /** The files the caller may see: while blind, only those attached when opening and those of its own replies. */
-  private filesFor(caller: Caller, d: Discussion, posts: Post[]): StoredFile[] {
+  private filesFor(caller: Caller, d: Discussion, posts: StoredPost[]): StoredFile[] {
     const files = this.store.files(d.id);
     if (!this.isBlind(caller, d, posts)) return files;
-    const key = caller.model.trim() ? voiceKey(caller.name, caller.model) : null;
-    const own = new Set(posts.filter((p) => p.kind === 'reply' && voiceKey(p.author, p.model) === key).map((p) => p.id));
+    const own = new Set(posts.filter((p) => p.kind === 'reply' && caller.model.trim() !== '' && isSameVoice(caller, caller.model, p, this.grantState)).map((p) => p.id));
     return files.filter((f) => f.postId === null || own.has(f.postId));
   }
 
@@ -264,8 +277,8 @@ export class DiscussionService {
     const stage = closed ? 'closed' : this.repliedIn(caller, posts, d.round) ? 'replied' : d.round === 1 ? 'blind' : 'respond';
     return {
       ...base, question: d.question, openedBy: d.openedBy, files: this.filesFor(caller, d, posts).map((f) => markedFile(this.store, id, f)), ...questionMark(d.question),
-      notes: posts.filter((p) => p.kind === 'note'), replies: markInstructions(shown), hidden: replies.length - shown.length,
-      decision: d.decision, stage,
+      notes: posts.filter((p) => p.kind === 'note').map(publicPost), replies: markInstructions(shown.map(publicPost)), hidden: replies.length - shown.length,
+      decision: d.decision, stage, callerIsOpener: this.isOpener(caller, d),
     };
   }
 
@@ -290,13 +303,12 @@ export class DiscussionService {
     return this.store.transaction(() => {
       const d = this.store.get(id);
       if (!d || d.closedAt) throw new MemoryError('invalid', 'This discussion is closed.', undefined, { key: 'err.disc.closed' });
-      const key = voiceKey(caller.name, model);
       const posts = this.store.posts(id);
-      if (posts.some((p) => p.kind === 'reply' && p.round === d.round && voiceKey(p.author, p.model) === key)) {
+      if (posts.some((p) => p.kind === 'reply' && p.round === d.round && isSameVoice(caller, model, p, this.grantState))) {
         throw new MemoryError('invalid', `You already replied in round ${d.round}; wait for the owner to start the next round.`, undefined, { key: 'err.disc.alreadyReplied', params: { round: d.round } });
       }
       checkFiles(files, this.store.files(id));
-      const post = this.store.addPost({ discussionId: id, round: d.round, kind: 'reply', author: caller.name, model, text });
+      const post = this.store.addPost({ discussionId: id, round: d.round, kind: 'reply', author: caller.name, model, text, grantId: caller.grantId ?? null });
       for (const f of files) this.store.addFile(id, f.name, f.content, caller.name, post.id);
       let ask = d.ask;
       if (!ask.some((n) => nameKey(n) === nameKey(caller.name))) {
@@ -312,7 +324,7 @@ export class DiscussionService {
           roundEnded = true;
         }
       }
-      return { post, round: roundEnded ? 2 : d.round, roundEnded };
+      return { post: publicPost(post), round: roundEnded ? 2 : d.round, roundEnded };
     });
   }
 
@@ -402,7 +414,7 @@ export class DiscussionService {
   /** Owner note in the current round; every caller sees it. */
   addNote(id: string, text: string): Post {
     const d = this.openOne(id);
-    return this.store.addPost({ discussionId: id, round: d.round, kind: 'note', author: 'owner', model: '', text: checkText('note', text, MAX_TEXT) });
+    return this.store.addPost({ discussionId: id, round: d.round, kind: 'note', author: 'owner', model: '', text: checkText('note', text, MAX_TEXT), grantId: null });
   }
 
   nextRound(id: string): number {
@@ -438,7 +450,7 @@ export class DiscussionService {
     const closed = d.closedAt !== null;
     return {
       ...this.summary(DiscussionService.OWNER, d, posts), question: d.question, openedBy: d.openedBy, files: this.store.files(id).map((f) => markedFile(this.store, id, f)), ...questionMark(d.question),
-      notes: posts.filter((p) => p.kind === 'note'), replies: markInstructions(replies), hidden: 0, decision: d.decision,
+      notes: posts.filter((p) => p.kind === 'note').map(publicPost), replies: markInstructions(replies.map(publicPost)), hidden: 0, decision: d.decision, callerIsOpener: false,
       stage: closed ? 'closed' : d.round === 1 ? 'blind' : 'respond',
       ask: d.ask, includeLimited: d.includeLimited, openedAt: d.openedAt, closedAt: d.closedAt, decisionMemoryId: d.decisionMemoryId,
     };

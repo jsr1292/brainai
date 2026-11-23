@@ -76,3 +76,59 @@ test('a lowercase password at the end of a sentence, or a dotted one ending in "
     assert.equal(looksLikeSecret(s), null, s);
   }
 });
+
+test('a labelled bare key is refused; ids, hashes, commits and UUIDs are not', () => {
+  for (const s of [
+    'Weather service API key is 7f3a9c2e41b84d06a5e1c9f27d3b6a80',
+    'Here is the token: Zk3Qp9Lm2Xv8Rt5Wy1Nb7Hc4Jd6Fs0Ga',
+    'clave de la API: 9f86d081884c7d659a2feaa0c55ad015',
+    'contraseña = Xk29QmLp0Vb7Tn3Rw8Yc5Hd1Jf4Gs6A',
+    'secret 0123456789abcdef0123456789abcdef0123456789abcdef',
+    'The webhook secret is "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY"',
+  ]) assert.ok(looksLikeSecret(s), s);
+  assert.equal(looksLikeSecret('Weather service API key is 7f3a9c2e41b84d06a5e1c9f27d3b6a80'), 'labelled key');
+  for (const s of [
+    'Decision recorded in fact 7f3a9c2e41b84d06a5e1c9f27d3b6a80 about the key rotation.',
+    'The key commit is 3b18e512ba79d4c8e1c9f27d3b6a80f1c2d3e4f5, merged on Monday.',
+    'primary key id: 550e8400-e29b-41d4-a716-446655440000',
+    'Refers to [[fact:7f3a9c2e41b84d06a5e1c9f27d3b6a80]] for the token design.',
+    'Token hash stored: 9f86d081884c7d659a2feaa0c55ad015',
+    'The key is garden-sensor-calibration-notes-2026',
+    'Token expiry is 24 hours; the secret lives in the keychain.',
+    'Clave del wifi guardada en el router.',
+    'key: https://example.com/docs/7f3a9c2e41b84d06a5e1c9f27d3b6a80',
+    'Session key rotation runs nightly at 03:00 on the mini PC.',
+    'Page 2026-11-23-keyrotationnotesabcdef is the write-up.',
+  ]) assert.equal(looksLikeSecret(s), null, s);
+});
+
+test('labelled key: public keys, fingerprints and git SHAs in sentences are fine; snake_case labels are caught', () => {
+  const sha = '9fceb02d7a1c4e8b53f06a2d91c7e4b83a5d0f16';
+  for (const s of [
+    `Fixed the token refresh bug in ${sha}`,
+    `The key change is in ${sha}`,
+    'Deploy key (public): ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl',
+    'minisign public key: RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3',
+    `GPG key fingerprint: ${sha}`,
+    'ssh public key AAAAB3NzaC1yc2EAAAADAQABAAABgQC7vbqajDhA9eXz0f1',
+  ]) assert.equal(looksLikeSecret(s), null, s);
+  for (const s of [
+    'client_secret is Zk3Qp9Lm2Xv8Rt5Wy1Nb7Hc4Jd6Fs0Ga',
+    'access_token 7f3a9c2e41b84d06a5e1c9f27d3b6a80',
+    'OPENAI_API_KEY 9f86d081884c7d659a2feaa0c55ad015',
+    'The api key: "7f3a9c2e41b84d06a5e1c9f27d3b6a80"',
+  ]) assert.ok(looksLikeSecret(s), s);
+});
+
+test('labelled key: secrets near public-key words are still refused; qualifiers and JSON are understood', () => {
+  const hex = '7f3a9c2e41b84d06a5e1c9f27d3b6a80';
+  for (const s of [
+    'GPG passphrase is Zk3Qp9Lm2Xv8Rt5Wy1Nb7Hc4Jd6Fs0Ga',
+    'GPG key passphrase: Zk3Qp9Lm2Xv8Rt5Wy1Nb7Hc4Jd6Fs0Ga',
+    'minisign secret key password is Zk3Qp9Lm2Xv8Rt5Wy1Nb7Hc4Jd6Fs0Ga',
+    'Supabase public anon key fine, service key is Zk3Qp9Lm2Xv8Rt5Wy1Nb7Hc4Jd6Fs0Ga',
+    `API key (weather service): ${hex}`,
+    `clave API del tiempo: ${hex}`,
+    '{"password": "Zk3Qp9Lm2Xv8Rt5Wy1Nb7Hc4Jd6Fs0Ga"}',
+  ]) assert.ok(looksLikeSecret(s), s);
+});

@@ -93,7 +93,7 @@ const registry = new ProjectStore(db, now);
 const allowlist = new RedirectAllowlist(db);
 const clients = new ClientsStore(db, allowlist, now);
 const provider = new MemoryOAuthProvider(db, clients, allowlist, now, new URL('/mcp', config.publicUrl));
-const discussions = new DiscussionService(new DiscussionStore(db, now), service, () => provider.activeConnections(), now);
+const discussions = new DiscussionService(new DiscussionStore(db, now), service, () => provider.activeConnections(), now, (id) => provider.grantState(id));
 const devices = new DeviceService(db, now);
 const folders = new FolderService(devices, registry, service, now);
 // The five areas and the owner's handbook (src/learning/); a merged project's rows follow it.

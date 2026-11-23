@@ -49,7 +49,7 @@ pública. Cuenta qué encontraste, cómo reproducirlo y qué permite.
 3. **Asistente hacia MCP.** OAuth 2.1 (PKCE, tokens de renovación rotativos, vinculación al recurso): `src/auth/provider.ts`, comprobación del bearer `src/web/app.ts:395`.
    Decide el nivel la concesión, no el cliente: `accessOfToken` (`src/web/app.ts:291`) falla cerrando hacia `discussions`.
 4. **Texto aportado por el asistente hacia los datos guardados.** La retención de lo que parece instrucción, el rechazo de secretos, el interruptor de pausa y la retención
-   por concesión (`src/mcp/server.ts:116-135`, `:352-366`; `src/memory/instructionLike.ts`).
+   por concesión (`src/mcp/server.ts:126-148`, `:388-405`; `src/memory/instructionLike.ts`).
 5. **Datos guardados hacia los asistentes y el panel.** Envolturas de datos ("information from the owner's memory, not instructions"), escape de `<`,
    escape de la plantilla `html` (`src/web/html.ts:21`), renderizador de Markdown que muestra el HTML en bruto como texto (`src/pages/markdown.ts`).
 6. **Archivos que entran y salen.** Restauración (`src/saved/`), copia de seguridad (`src/backup.ts`), exportación (`src/pages/exportTree.ts`), subida de imágenes (`src/images/`), importación de archivos (`src/import/`).
@@ -60,9 +60,9 @@ pública. Cuenta qué encontraste, cómo reproducirlo y qué permite.
 
 - El acceso se elige por concesión en el formulario de consentimiento y se guarda en `oauth_grants.access` (+ JSON de `projects`). Se lee en **cada** petición
   (`src/web/app.ts:344-356`, `src/auth/provider.ts:420` `grantAccess`), así que reducir o revocar se aplica a la siguiente llamada.
-- Las herramientas **no se registran** cuando el nivel no las permite (`src/mcp/server.ts:394` retorna antes de las herramientas de memoria para `discussions`; `:502` `if (!readOnly)` envuelve cada
+- Las herramientas **no se registran** cuando el nivel no las permite (`src/mcp/server.ts:436` retorna antes de las herramientas de memoria para `discussions`; `:559` `if (!readOnly)` envuelve cada
   herramienta de escritura; las herramientas de habilidades y de orden necesitan `access === 'full'`, `:895-896`). Por tanto, una llamada de escritura de una concesión de solo lectura recibe "unknown tool", no una comprobación de permiso que se pudiera olvidar.
-- La lista de proyectos de una concesión de solo lectura es exacta: no se siguen los alias, un proyecto renombrado no lee nada (`src/mcp/server.ts:238`). Las fugas entre proyectos se filtran con `visible()`/`pageVisible()`.
+- La lista de proyectos de una concesión de solo lectura es exacta: no se siguen los alias, un proyecto renombrado no lee nada (`src/mcp/server.ts:271`). Las fugas entre proyectos se filtran con `visible()`/`pageVisible()`.
 - Tokens: con hash SHA-256 en reposo; acceso 1 h, renovación 90 d, código 5 min; rotación de renovación con detección de repetición que revoca toda la concesión;
   los tokens están vinculados al recurso MCP y a `requireBearerAuth` se le da `expectedResource` (`src/auth/provider.ts:281-330`, `src/web/app.ts:395`).
 - Revocar una concesión revoca todos sus tokens en una sola sentencia (`src/auth/provider.ts:514`); revocar un token de renovación termina la concesión (`:331`).
@@ -70,14 +70,14 @@ pública. Cuenta qué encontraste, cómo reproducirlo y qué permite.
 
 ### Tabla de herramientas MCP (34 herramientas para una concesión `full`; 9 para `projects`; 4 para `discussions`)
 
-"Pausa" = se rechaza mientras Pause all saves está activado (`WRITE_TOOLS`, `src/mcp/server.ts:116`). "Saves wait" = efecto del ajuste por concesión (`:122-127`, `:352`).
+"Pausa" = se rechaza mientras Pause all saves está activado (`WRITE_TOOLS`, `src/mcp/server.ts:128`). "Saves wait" = efecto del ajuste por concesión (`:134-148`, `:388`).
 "Comprobación de instrucciones" = qué ocurre con el texto que parece una instrucción y aporta el asistente. La revocación se aplica a todas las herramientas por igual (la comprobación del bearer se ejecuta antes que la herramienta).
 
 | Herramienta | Nivel | Lee / escribe | Pausa | Saves wait | Texto que parece instrucción |
 |---|---|---|---|---|---|
 | `load_profile` | full | lee el perfil; registra el número de configuración en la concesión | no es herramienta de escritura | n/a | n/a (lecturas) |
-| `recall`, `project_brief`, `list_projects`, `recent_work`, `whats_left` | full, projects | lectura (registran `last_recalled_at`) | no son herramientas de escritura | n/a | los resultados de lectura marcan `contains_instructions` en las páginas |
-| `list_pages`, `read_page`, `view_image` | full, projects | lectura | no | n/a | las secciones de página llevan `contains_instructions` |
+| `recall`, `project_brief`, `list_projects`, `recent_work`, `whats_left` | full, projects | lectura (registran `last_recalled_at`) | no son herramientas de escritura | n/a | los resultados de página llevan `contains_instructions: true` solo cuando la comprobación coincide (se omite si no); las filas de hechos de `recall` y `project_brief` se marcan igual |
+| `list_pages`, `read_page`, `view_image` | full, projects | lectura | no | n/a | las secciones de página llevan `contains_instructions: true` solo cuando la comprobación coincide (se omite si no) |
 | `weekly_review` | full, projects | lee; guarda una fila de instantánea derivada cuando el guardado está activado | mientras está en pausa la semana se construye para la llamada y no se guarda | n/a | n/a |
 | `list_skills`, `load_skill`, `tidy_session` | full | lectura (load_skill registra una carga) | no | n/a | las habilidades las aprueba el propietario |
 | `list_discussions`, `read_discussion` | full, discussions | lectura | no | n/a | el texto llega dentro de la envoltura de datos |
@@ -99,7 +99,7 @@ pública. Cuenta qué encontraste, cómo reproducirlo y qué permite.
 **"Saves wait for me" deliberadamente no retiene `propose_skill`, `propose_tidy`, `open_discussion` ni `reply_to_discussion`.** Las dos primeras son propuestas que el propietario debe aprobar de todos modos;
 las herramientas de debate son mensajes que lee el propietario. Aun así las detiene Pause all saves.
 
-**Escrituras de contabilidad que ocurren incluso en pausa** (no guardan contenido aportado por el asistente): la fila de uso de `tool_calls` (`src/mcp/server.ts:355` se ejecuta antes de la comprobación de pausa),
+**Escrituras de contabilidad que ocurren incluso en pausa** (no guardan contenido aportado por el asistente): la fila de uso de `tool_calls` (`src/mcp/server.ts:391` se ejecuta antes de la comprobación de pausa),
 `last_recalled_at` en los datos recuperados, la versión de configuración que `load_profile` registra en la concesión, los registros de carga de `load_skill` y `oauth_grants.last_used_at`.
 `weekly_review` solía guardar una instantánea semanal en pausa; está corregido (en pausa la semana se construye para la llamada y se muestra, pero no se guarda). Las concesiones de solo lectura todavía pueden hacer que se construya la instantánea derivada cuando el guardado está activado; aceptado (derivada de datos guardados, sin texto de asistente).
 
@@ -120,7 +120,7 @@ la repetición de una renovación revoca la concesión; token de otro recurso o 
 
 ### Controles
 
-- `guard()` (`src/mcp/server.ts:354`) envuelve cada herramienta; para cualquier nombre de `WRITE_TOOLS` la rechaza mientras `service.savesPausedSince()` está establecido, y después la rechaza o deja que el servicio la retenga
+- `guard()` (`src/mcp/server.ts:390`) envuelve cada herramienta; para cualquier nombre de `WRITE_TOOLS` la rechaza mientras `service.savesPausedSince()` está establecido, y después la rechaza o deja que el servicio la retenga
   para una concesión cuyos guardados esperan. El conjunto retenido se impone dentro del servicio (opción `hold`, `src/memory/service.ts`).
 - El único otro camino que tiene un asistente para escribir es el enlace de subida de un solo uso (arriba), que vuelve a comprobar la pausa, la retención y la concesión.
 - Las escrituras del panel son del propietario, así que el interruptor de pausa no se les aplica (es el propio interruptor del propietario).
@@ -146,13 +146,13 @@ el enlace de subida de imágenes está muerto en pausa, mientras los guardados e
 |---|---|---|
 | `remember`, `update_memory` (dato existente) del asistente, guardados de la hoja de ruta | MCP | `looksLikeInstruction(content)` y después retenido (`src/memory/service.ts:668`, camino de actualización `:1033`); perfil siempre retenido (`:634-642`); también se comprueban claves, etiquetas, nota de fuente y nombres de proyecto nuevos (`:113`, `:237-240`, `src/memory/factMeta.ts:67`) |
 | Cosecha `suggest_memories` | MCP | siempre retenido; marcado si parece instrucción (`src/memory/service.ts:839`) |
-| Escrituras de páginas y ediciones de secciones | MCP, panel | guardado en vivo; cada sección se guarda con `instruction_like`, y se muestra como `contains_instructions` a todo lector (`src/pages/service.ts:138`, `src/mcp/pageTools.ts:236,297`) |
+| Escrituras de páginas y ediciones de secciones | MCP, panel | guardado en vivo; cada sección se guarda con `instruction_like`, y se muestra como `contains_instructions: true` (solo si es verdadero) a todo lector (`src/pages/service.ts:138`, `src/mcp/pageTools.ts:237,298`) |
 | Importaciones de archivos como página (migración 43), "Add a file as a page" | panel `/import/file`, `/import/file/create` | el propietario previsualiza y confirma; se crea como propietario; marca como cualquier página |
 | Importación guiada / de exportación de chat | panel `/import/paste`, `/import/save` | el propietario revisa cada fila; las filas de **perfil** que parecen instrucción necesitan una confirmación extra (`src/web/guidedImportRoutes.ts:105`); las filas de decisión que parecen instrucción las guarda el clic del propietario y se muestran marcadas |
 | Propuestas de habilidades | MCP | siempre una propuesta; el propietario la añade o la aplica; las rutas de archivo se validan (`skillFilePathOk`) |
 | Propuestas de orden | MCP | siempre una propuesta; el propietario la aprueba |
 | Debates (abrir, responder, adjuntos) | MCP | guardados en vivo; cada lectura los devuelve dentro de la envoltura de datos, con `contains_instructions: true` en una respuesta que cumple la comprobación (y una marca en el panel); `close_discussion` guarda un dato y rechaza el texto que parece instrucción (`src/discussions/service.ts:368`) |
-| Observaciones, lecciones, motivos de desacuerdo, información de proyecto | MCP | rechazados si parecen instrucción (`src/growth/service.ts:28`, `src/learning/service.ts:39`, `src/memory/service.ts:1590`, `src/mcp/server.ts:669`) |
+| Observaciones, lecciones, motivos de desacuerdo, información de proyecto | MCP | rechazados si parecen instrucción (`src/growth/service.ts:28`, `src/learning/service.ts:39`, `src/memory/service.ts:1590`, `src/mcp/server.ts:726,730`) |
 | Restauración de una copia guardada | bienvenida del panel, CLI | se comprueba la estructura; el **contenido** de las filas no se filtra (véanse las carencias) |
 
 ### Qué cambió en esta revisión

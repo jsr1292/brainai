@@ -12,6 +12,7 @@ export const errProjects = {
   'err.project.oneLinerLong': 'The one-liner is {length} characters; the limit is {max}',
   'err.project.folderShape': 'The folder is a folder name inside ~/Projects: letters, digits, spaces, dots, hyphens and underscores, at most {max} characters',
   'err.project.urlShape': 'The URL must start with https:// or http://',
+  'err.project.urlApp': 'This address points at the brain itself, so it cannot be a project URL.',
   'err.project.remotesMax': 'At most {max} git remotes, each without spaces',
   'err.project.exists': 'A project named {name} already exists',
   'err.project.stateOneOf': 'state must be one of: {states}',

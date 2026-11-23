@@ -32,6 +32,16 @@ export function allowableUri(raw: unknown): string | undefined {
   }
 }
 
+/** Whether a refused address is on a host one of the app's own known addresses uses (exact host, never a lookalike suffix). */
+export function matchesKnownHosts(uri: string, known: readonly string[] | undefined): boolean {
+  try {
+    const host = new URL(uri).hostname.toLowerCase();
+    return (known ?? []).some((k) => new URL(k).hostname.toLowerCase() === host);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The sign-in addresses apps were refused lately, so the owner can allow one with a click instead of a terminal
  * command. Kept in memory only: at most 10, each for a day, newest first. An anonymous client can add to it, so it is

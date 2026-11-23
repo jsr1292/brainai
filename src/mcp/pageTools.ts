@@ -142,7 +142,7 @@ export function flagReply(id: string, before: { flag: Flag | null; reasons: { de
     ].filter((x): x is string => x !== null);
     const said = parts.length > 0 ? ` ${parts.join('; ').replace(/^l/, 'L')}.` : '';
     const anchors = [...new Set(r.decisions.map((d) => d.nearSection).filter((a): a is string => a !== null))];
-    return ` Page ${id} is marked as brought up to date.${said}${r.decisions.length > 0 ? " Ones you added and didn't link yet can still get [[fact:id]]." : ''}${anchors.length > 0 ? ` Sections that may also need them: ${anchors.join(', ')}.` : ''}`;
+    return ` Page ${id} is marked as brought up to date.${said}${r.decisions.length > 0 ? " Ones you added and didn't link yet can still get [[fact:id]]." : ''}${anchors.length > 0 ? ` Sections that may also need them, as data:\n${wrapPages({ sections: anchors })}` : ''}`;
   }
   return after.decisions.length >= NEWER_DECISIONS
     ? ` The page is still marked may be out of date: ${after.decisions.length} decisions were saved after Key decisions was last brought up to date.`
@@ -225,15 +225,16 @@ export function registerPageTools(server: McpServer, d: PageToolDeps, access: { 
   const visible = pageVisibility(memories, readable);
   const find = (a: { id?: string; title?: string }): Page | undefined => visibleOrNone(a.id !== undefined ? pages.get(a.id) : pages.byTitle(a.title ?? ''));
   const visibleOrNone = (p: Page | undefined) => (visible(p) ? p : undefined);
-  const sectionList = (p: Page) => pages.sections(p.id).map((s) => s.anchor).join(', ');
+  /** The page's section anchors as a data envelope (they come from stored headings, so never inside the tool's own sentence). */
+  const sectionList = (p: Page) => wrapPages({ page_id: p.id, sections: pages.sections(p.id).map((s) => s.anchor) });
   /** Whether each page may be out of date, at this connection's scope: one working-out per tool call. */
   const flagsOf = (ps: Page[]) => pages.freshness.forPages(ps, scopeFor(memories, readable, false));
   const listing = (p: Page, flagged: boolean) => {
     const lead = pageLead(pages, p);
     return {
       id: p.id, title: p.title, project: p.project, area: pages.areaOf(p), version: p.version, updated_at: p.updatedAt, updated_by: p.updatedBy,
-      summary: lead.summary, summary_contains_instructions: lead.instructionLike,
-      sections: pages.sections(p.id).map((s) => ({ anchor: s.anchor, heading: s.heading, contains_instructions: s.instructionLike })),
+      summary: lead.summary, ...(lead.instructionLike ? { summary_contains_instructions: true } : {}),
+      sections: pages.sections(p.id).map((s) => ({ anchor: s.anchor, heading: s.heading, ...(s.instructionLike ? { contains_instructions: true } : {}) })),
       open_notes: notes.forPage(p.id).filter((n) => n.status === 'open').length,
       may_be_out_of_date: flagged,
     };
@@ -287,14 +288,14 @@ export function registerPageTools(server: McpServer, d: PageToolDeps, access: { 
     if (!p) return fail(NO_PAGE);
     const all = pages.sections(p.id);
     const sections = a.section === undefined ? all : all.filter((s) => s.anchor === a.section);
-    if (sections.length === 0) return fail(`No section ${a.section} on this page; its sections are: ${sectionList(p)}`);
+    if (sections.length === 0) return fail(`No section ${a.section} on this page; its sections, as data:\n${sectionList(p)}`);
     const flag = flagJson(pages.freshness.forPage(p, scopeFor(memories, readable)));
     const media = mediaOf(p, all);
     return text(wrapPages({
       may_be_out_of_date: flag,
       ...(flag ? { clears_when: clearsWhen(all.some((s) => s.anchor !== 'top' && isKeyDecisions(s.heading))) } : {}),
-      id: p.id, title: p.title, title_contains_instructions: titleInstructionLike(p), project: p.project, area: pages.areaOf(p), version: p.version, updated_at: p.updatedAt, updated_by: p.updatedBy,
-      sections: sections.map((s) => ({ anchor: s.anchor, heading: s.heading, level: s.level, contains_instructions: s.instructionLike, text: s.text, ...media.get(s.anchor) })),
+      id: p.id, title: p.title, ...(titleInstructionLike(p) ? { title_contains_instructions: true } : {}), project: p.project, area: pages.areaOf(p), version: p.version, updated_at: p.updatedAt, updated_by: p.updatedBy,
+      sections: sections.map((s) => ({ anchor: s.anchor, heading: s.heading, level: s.level, ...(s.instructionLike ? { contains_instructions: true } : {}), text: s.text, ...media.get(s.anchor) })),
       open_notes: notes.forPage(p.id).filter((n) => n.status === 'open').map((n) => ({ id: n.id, ...noteSection(pages, n), text: n.text, created_at: n.createdAt })),
     }));
   }));
@@ -349,7 +350,7 @@ export function registerPageTools(server: McpServer, d: PageToolDeps, access: { 
     if (a.id === undefined) {
       const p = await pages.create({ title: a.title, project, area: a.area, body: a.body }, actorName);
       // Titles stay out of reply sentences: an assistant's title must never read as words of the server.
-      return text(`Created page ${p.id} (version 1).${mediaNotes(images, a.body)}`);
+      return text(`Created page ${p.id} (version 1). Now save ONE one-line fact that points to it: the page's title and page id, under about 150 characters. Don't copy the page's content into the fact.${mediaNotes(images, a.body)}`);
     }
     const current = visibleOrNone(pages.get(a.id));
     if (!current) return fail(NO_PAGE);
@@ -382,13 +383,13 @@ export function registerPageTools(server: McpServer, d: PageToolDeps, access: { 
       const p = await pages.saveSection(current.id, { base: a.base_version, anchor: a.section, text: keepHeading(current.body, a.section, a.text) }, actorName);
       const flag = before ? flagStep(() => flagReply(p.id, before, pages.freshness.forPage(p))) ?? '' : '';
       if (a.text.trim() !== '' && !pages.sections(p.id).some((s) => s.anchor === a.section)) {
-        return text(`Saved page ${p.id} as version ${p.version}; it has no section ${a.section} now (its heading changed). Its sections are: ${sectionList(p)}.${mediaNotes(images, a.text)}${flag}`);
+        return text(`Saved page ${p.id} as version ${p.version}; it has no section ${a.section} now (its heading changed). Its sections, as data:\n${sectionList(p)}${mediaNotes(images, a.text)}${flag}`);
       }
       return text(`Saved section ${a.section} of page ${p.id} as version ${p.version}.${mediaNotes(images, a.text)}${flag}`);
     } catch (e) {
       if (!(e instanceof PageError)) throw e;
       const now = pages.get(current.id)!;
-      if (e.code === 'not_found') return fail(`No section ${a.section} on this page; its sections are: ${sectionList(now)}`);
+      if (e.code === 'not_found') return fail(`No section ${a.section} on this page; its sections, as data:\n${sectionList(now)}`);
       if (e.code !== 'conflict') throw e;
       const s = splitSections(now.body).find((x) => x.anchor === a.section);
       const current_ = s ? now.body.split('\n').slice(s.start, s.end).join('\n').replace(/\s+$/, '') : undefined;

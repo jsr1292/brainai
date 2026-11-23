@@ -5,22 +5,36 @@ import { DEVICE_DAYS, SessionStore } from './sessions.js';
 
 const DAY = 86_400_000;
 
+test('a session made on this computer by password lasts 7 days; the window\'s and the public address\'s 30', () => {
+  let t = Date.UTC(2026, 0, 1);
+  const s = new SessionStore(openDb(':memory:'), () => new Date(t));
+  const local = s.create('Safari', 'local');
+  const app = s.create('window', 'app');
+  const door = s.create('phone', 'door');
+  t += 6 * DAY;
+  assert.deepEqual([s.isValid(local), s.isValid(app), s.isValid(door)], [true, true, true]);
+  t += 1 * DAY + 1000;
+  assert.deepEqual([s.isValid(local), s.isValid(app), s.isValid(door)], [false, true, true]);
+  t += 23 * DAY;
+  assert.deepEqual([s.isValid(local), s.isValid(app), s.isValid(door)], [false, false, false]);
+});
+
 test('sessions last 30 days and can be destroyed or revoked by id', () => {
   let t = Date.UTC(2026, 0, 1);
   const s = new SessionStore(openDb(':memory:'), () => new Date(t));
-  const tok = s.create('iPhone');
+  const tok = s.create('iPhone', 'door');
   assert.equal(s.isValid(tok), true);
   t += 29 * DAY;
   assert.equal(s.isValid(tok), true);
   t += 1 * DAY + 1000;
   assert.equal(s.isValid(tok), false);
 
-  const a = s.create(undefined);
+  const a = s.create(undefined, 'local');
   assert.equal(s.isValid(a), true);
   s.destroy(a);
   assert.equal(s.isValid(a), false);
 
-  const b = s.create('iPhone');
+  const b = s.create('iPhone', 'local');
   assert.equal(s.list()[0]!.userAgent, 'iPhone');
   assert.equal(s.list().length, 1); // expired one excluded
   assert.equal(s.idFor(b), s.list()[0]!.id);
@@ -35,7 +49,7 @@ test('stores only a hash of the token; last_seen_at updates at most once a minut
   let t = Date.UTC(2026, 0, 1);
   const db = openDb(':memory:');
   const s = new SessionStore(db, () => new Date(t));
-  const tok = s.create('ua');
+  const tok = s.create('ua', 'local');
   assert.equal((db.prepare('SELECT count(*) c FROM sessions WHERE token_hash = ?').get(tok) as any).c, 0);
   const seen = () => (s.list()[0]!.lastSeenAt);
   const first = seen();
@@ -71,11 +85,11 @@ test('resetting the password or the authenticator signs every browser out', asyn
   const now = () => new Date(Date.UTC(2026, 0, 1));
   const s = new SessionStore(db, now);
   const owner = new OwnerAuth(db, now);
-  const stolen = s.create('Laptop');
+  const stolen = s.create('Laptop', 'local');
   await owner.setPassword('a new long password');
   assert.equal(s.isValid(stolen), false);
   assert.equal(s.list().length, 0);
-  const again = s.create('Laptop');
+  const again = s.create('Laptop', 'local');
   owner.setTotpSecret('JBSWY3DPEHPK3PXP');
   assert.equal(s.isValid(again), false);
 });

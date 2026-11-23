@@ -107,6 +107,23 @@ test('a refused sign-in address is listed on the setup pages with Allow; only a 
   assert.ok(!list().includes('https://grok.com/connectors-oauth-exchange-code/'));
 });
 
+test('a refused address shows with its name only on the app whose hosts it uses; others are "unknown app" behind a warning; a cross-site Origin records nothing', async (t) => {
+  const { app, f } = await start(t);
+  const reg = (name: string, uri: string, origin?: string) => fetch(app.baseUrl + '/register', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(origin ? { Origin: origin } : {}) },
+    body: JSON.stringify({ client_name: name, redirect_uris: [uri], token_endpoint_auth_method: 'none', grant_types: ['authorization_code'], response_types: ['code'] }),
+  });
+  await reg('ChatGPT', 'https://chatgpt.com.connector-auth.example/cb');
+  await reg('Claude', 'https://planted.example/cb', 'https://evil.example');
+  for (const slug of ['chatgpt', 'claude']) {
+    const page = await (await f(`/settings/setup/${slug}`)).text();
+    assert.doesNotMatch(page, /calling itself/, slug);
+    assert.doesNotMatch(page, /planted\.example/, slug);
+    assert.match(page, /unknown app tried to sign in from <strong>chatgpt\.com\.connector-auth\.example<\/strong>/, slug);
+    assert.match(page, /<details class="refused">/, slug);
+  }
+});
+
 // Cloud apps (Claude, ChatGPT, Grok) are called from the vendors' servers, which cannot reach localhost.
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';

@@ -8,7 +8,29 @@ const PATTERNS: [RegExp, string][] = [
   [/\beyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]*/, 'JWT'],
 ];
 /** "token: <value>", or "token: Bearer <value>" with an auth scheme word before the value (group 2). */
-const CREDENTIAL = /(password|passwd|contraseña|contrasena|api[_-]?key|secret|token)\s*[:=]\s*((?:Bearer|Basic|Token|Digest)\s+)?(\S{6,})/gi;
+const CREDENTIAL = /(password|passphrase|passwd|contraseña|contrasena|api[_-]?key|secret|token)["']?\s*[:=]\s*((?:Bearer|Basic|Token|Digest)\s+)?(\S{6,})/gi;
+
+/**
+ * A label and then a long bare string: "Weather service API key is 7f3a9c2e41b84d06a5e1c9f27d3b6a80", "clave: Zk3…". The
+ * label (key, token, secret, password, api key, clave, contraseña, ...) must come within 30 characters before the value.
+ */
+const LABEL = '(?:api[ _-]?key|access[ _-]?key|secret[ _-]?key|private[ _-]?key|keys?|tokens?|secrets?|passwords?|passwd|passphrase|claves?|contrasenas?|contraseñas?|secretos?)';
+// The gap may not hold another label, so the label nearest the value is the one that counts ("public anon key fine, service key is X").
+const LABELLED_BARE = new RegExp(`(?<![A-Za-z0-9])(${LABEL})(?![A-Za-z0-9])((?:(?!(?<![A-Za-z0-9])${LABEL}(?![A-Za-z0-9]))[^\\n.]){0,30}?)(?<![A-Za-z0-9+/_=-])([A-Za-z0-9+/_-]{24,}={0,2})(?![A-Za-z0-9+/_=-])`, 'gi');
+/** Words between the label and the value that say it is an id, hash or the like, not a secret. */
+const NOT_SECRET_WORDS = /\b(commits?|sha\d*|hash(es)?|checksums?|digests?|uuids?|guids?|ids?|fact|page|project|image|picture|build|etag|version)\b/i;
+/** Kinds of key that are public or only identify something: SSH and minisign public keys, GPG fingerprints. Checked in the words around the label too. */
+const PUBLIC_KEY_WORDS = /\b(public|pub|fingerprints?|ssh-\w+|ecdsa|minisign|gpg|pgp)\b/i;
+/** A pure-hex value only counts right after the label: "key is 7f3a...", "token: 7f3a..." (a hash in a sentence is not a secret). */
+const BARE_SEPARATOR = /^\s*(?:\([^)\n]{1,30}\)\s*|(?:api\s+)?(?:de|del|of|for|para)\s+(?:la\s+|el\s+|the\s+)?[\w-]{1,20}\s*)?(is|es|=|:)?\s*["'`]?$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Whether a long string looks randomly generated (hex, or base64 / url-safe mixing cases and digits), not a slug or a word. */
+function randomLooking(v: string): boolean {
+  if (UUID.test(v) || !/\d/.test(v) || !/[A-Za-z]/.test(v)) return false;
+  if (/^[0-9a-f]+$/i.test(v)) return v.length >= 24;
+  return /[a-z]/.test(v) && /[A-Z]/.test(v);
+}
 
 /** A whole placeholder: <token>, $API_KEY, ${TOKEN}, %DB_PASSWORD%, [redacted], {{ secrets.X }}. Only the whole shape counts. */
 const PLACEHOLDER = /^(<[A-Za-z_-]+>|\$[A-Z_][A-Z0-9_]*|\$\{[A-Za-z_][\w.]*\}|%[A-Za-z_]+%|\[[A-Za-z _-]+\]|\{\{[^{}]*\}\})$/;
@@ -56,6 +78,20 @@ function find(text: string, credentials: boolean): SecretFound | null {
     const value = m[3]!;
     if (notAValue(value) || (m[2] === undefined && AUTH_SCHEME.test(value))) continue;
     return { reason: 'credential assignment', line: lineAt(text, m.index), excerpt: `${m[0].slice(0, m[0].length - value.length)}${value.slice(0, 2)}…` };
+  }
+  for (const m of text.matchAll(LABELLED_BARE)) {
+    const label = m[1]!;
+    const gap = m[2]!;
+    const value = m[3]!;
+    const valueStart = m.index + m[0].length - value.length;
+    // Inside a link to a fact or page ([[fact:…]]) or a URL path it is an address, not a value.
+    const before = text.slice(Math.max(0, valueStart - 8), valueStart);
+    // A public key only when the label is "key" and the word sits in the gap or just before it ("SSH public key AAAA...").
+    const near = text.slice(Math.max(0, m.index - 12), m.index) + gap;
+    const publicKey = /^keys?$/i.test(label) && PUBLIC_KEY_WORDS.test(near) && !/secret|private|passphrase|password|contrase/i.test(near);
+    if (NOT_SECRET_WORDS.test(gap) || publicKey || (/^[0-9a-f]+$/i.test(value) && !BARE_SEPARATOR.test(gap)) || /\[\[[^\]]*$/.test(text.slice(0, valueStart)) || /[/]$/.test(before)) continue;
+    if (!randomLooking(value)) continue;
+    return { reason: 'labelled key', line: lineAt(text, m.index), excerpt: `${m[0].slice(0, m[0].length - value.length)}${value.slice(0, 2)}…` };
   }
   return null;
 }

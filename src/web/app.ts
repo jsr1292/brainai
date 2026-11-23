@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { LearningService } from '../learning/service.js';
 import { dirname, join } from 'node:path';
 import { temporaryHomePort } from '../desktop/homePort.js';
@@ -13,11 +14,12 @@ import type { OwnerAuth } from '../auth/owner.js';
 import type { MemoryOAuthProvider } from '../auth/provider.js';
 import type { DB } from '../db.js';
 import type { RedirectAllowlist } from '../auth/redirects.js';
+import { setOwnOrigins } from '../pages/markdown.js';
 import { RefusedRedirects } from '../auth/refusedRedirects.js';
 import { fetchMetadataGuard, hostGuard } from './hostGuard.js';
 import { Reach } from '../desktop/reach.js';
 import { BackupCopy } from '../desktop/backupCopy.js';
-import { PublicDoor, viaDoor } from '../desktop/publicDoor.js';
+import { isAppPath, PublicDoor, viaDoor } from '../desktop/publicDoor.js';
 import { movedTo } from '../desktop/move.js';
 import { desktopRoutes } from './desktopRoutes.js';
 import { weekNoteRoutes } from './weekNote.js';
@@ -72,7 +74,7 @@ import type { ProjectStore } from '../projects/store.js';
 import { authRoutes, readCookie, SESSION_COOKIE } from './authRoutes.js';
 import { dashboardRoutes } from './dashboardRoutes.js';
 import { discussionRoutes } from './discussionRoutes.js';
-import { rateLimitKey, TRUST_CF_SETTING } from './clientIp.js';
+import { DOOR_VIA_SETTING, rateLimitKey, TRUST_CF_SETTING } from './clientIp.js';
 import { html, page, setConsentPoller, setGoTo, setMovedBanner, setPausedBanner, setServerMode } from './html.js';
 import { coachingShown, createSideStatus, invalidateSideStatus, runWithDoorFlag, setSideStatus } from './sideStatus.js';
 import { setViewClock } from './when.js';
@@ -227,6 +229,34 @@ function sameOrigin(expected: (req: express.Request) => URL): RequestHandler {
   };
 }
 
+/** The SDK's OAuth endpoints (its routers match any letter case, so this does too). */
+const OAUTH_PATH = /^\/(register|token|authorize|revoke)(\/|$)/i;
+/** An Origin header naming this computer: http(s) on localhost, 127.0.0.1 or [::1] (any port). */
+export function isLoopbackOrigin(origin: string): boolean {
+  try {
+    const u = new URL(origin);
+    return (u.protocol === 'http:' || u.protocol === 'https:') && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
+  } catch { return false; }
+}
+
+/**
+ * Limiter key on this computer's address for the endpoints a tool signs in and refreshes with: the hash of the refresh token or
+ * code it presents (else its client_id), not the one shared 127.0.0.1 key, so one tool (or a program hammering) cannot starve the others.
+ * Through the door, and with no client_id, the usual key.
+ */
+function perClientKey(local: boolean): (req: express.Request) => string {
+  return (req) => {
+    if (!local || viaDoor(req)) return rateLimitKey(req);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    // What the caller presents (a refresh token, a code, a token to revoke): its hash, so each login or refresh of each tool has
+    // its own count; then the client_id; then the usual key.
+    const secret = [body.refresh_token, body.code, body.token].find((v): v is string => typeof v === 'string' && v !== '');
+    if (secret) return `secret:${createHash('sha256').update(secret).digest('hex').slice(0, 32)}`;
+    const id = typeof body.client_id === 'string' ? body.client_id : typeof req.query.client_id === 'string' ? req.query.client_id : '';
+    return id ? `client:${id.slice(0, 300)}` : rateLimitKey(req);
+  };
+}
+
 const methodNotAllowed: RequestHandler = (_req, res) => {
   res.set('Allow', 'POST').status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null });
 };
@@ -258,6 +288,13 @@ const pageFormTooLarge: ErrorRequestHandler = (err, _req, res, next) => {
 <p>${t('common.tooLongBody', { max: fmt.number(MAX_BODY) })}</p>`, { nav: true, tab: null }));
 };
 
+/** True when the request carries an Origin whose host is not the one it was sent to. */
+function crossSiteOrigin(req: express.Request): boolean {
+  const o = req.headers.origin;
+  if (o === undefined) return false;
+  try { return new URL(o).host !== req.headers.host; } catch { return true; }
+}
+
 const MAX_LOG_CHARS = 2000;
 /** Rejected registrations logged per minute: enough to diagnose a failed hookup, too few to fill the disk. */
 const LOG_BUDGET_PER_MINUTE = 10;
@@ -278,7 +315,8 @@ function logRejectedRegistration(now: Clock, refused: RefusedRedirects, allowlis
       if (res.statusCode >= 400 && res.statusCode < 500 && res.statusCode !== 429) {
         const asked0 = (req.body ?? {}) as Record<string, unknown>;
         // Every refusal goes on the setup pages' short list (bounded), even when the log budget is spent.
-        refused.record(asked0.client_name, asked0.redirect_uris, (u) => allowlist.isAllowed(u));
+        // A browser page on another site (cross-site Origin) cannot plant an entry; apps register without an Origin.
+        if (!crossSiteOrigin(req)) refused.record(asked0.client_name, asked0.redirect_uris, (u) => allowlist.isAllowed(u));
         const t = now().getTime();
         if (t - windowStart >= 60_000) { windowStart = t; logged = 0; }
         logged++;
@@ -313,6 +351,8 @@ export function createApp(d: AppDeps): express.Express {
   if (d.localMode && d.statusDir && !d.backupCopy) d.backupCopy = new BackupCopy(d.statusDir);
   if (d.localMode && !d.reach) d.reach = new Reach(d.statusDir, () => d.owner.isConfigured());
   const reachUrl = () => d.reach?.url() ?? null;
+  // Links in stored text to the brain's own addresses count as the app (markdown.ts drops the ones that act on it).
+  setOwnOrigins(() => [d.publicUrl.origin, ...(reachUrl() ? [reachUrl()!.origin] : [])]);
   d.provider.setExtraResource(() => { const r = reachUrl(); return r ? new URL('/mcp', r) : null; });
   if (d.localMode && !d.door) d.door = new PublicDoor(app);
   // Reach turned off (or forgotten): the public door shuts at once.
@@ -324,11 +364,24 @@ export function createApp(d: AppDeps): express.Express {
     app.use((req, res, next) => {
       if (!viaDoor(req)) return localOnly(req, res, next);
       if (!reachUrl()) return res.status(421).type('text/plain').send('BrainAI is not reachable from the internet right now.');
-      if (req.path === '/app' || req.path.startsWith('/app/')) return res.status(404).type('text/plain').send('Not found');
+      if (isAppPath(req.path)) return res.status(404).type('text/plain').send('Not found');
       next();
+    });
+    // The sign-in endpoints answer any web page (the SDK sends Access-Control-Allow-Origin: *), and a page can reach localhost.
+    // Programs (Claude Code, Codex...) send no Origin; a browser always does on a cross-site fetch or form post. So on this
+    // address one with an Origin that is not this computer's is refused here, before any limiter counts it: a page cannot
+    // register clients, use up the limits or starve the tools' refreshes (security review 2026-11-23, finding 3).
+    app.use((req, res, next) => {
+      if (viaDoor(req) || !OAUTH_PATH.test(req.path)) return next();
+      const origin = req.get('origin');
+      // A browser also says what it is doing: a cross-site request that is not a page navigation is a page's script or form.
+      const crossScript = req.get('sec-fetch-site') === 'cross-site' && req.get('sec-fetch-mode') !== 'navigate';
+      if (!crossScript && (origin === undefined || isLoopbackOrigin(origin))) return next();
+      res.status(403).json({ error: 'access_denied', error_description: 'Web pages cannot use the sign-in endpoints of the BrainAI app.' });
     });
   }
   app.set(TRUST_CF_SETTING, d.trustCfConnectingIp ?? true);
+  app.set(DOOR_VIA_SETTING, () => (d.reach?.saved() ? d.reach.via() : null));
   setSideStatus(createSideStatus(d));
   setViewClock(d.now);
   setPausedBanner(() => d.service.savesPausedSince());
@@ -389,7 +442,7 @@ export function createApp(d: AppDeps): express.Express {
   });
 
   // 3. OAuth endpoints, each with its own per-IP rate limit; registration (it adds rows) gets a stricter one.
-  const rateLimit = { windowMs: 15 * 60_000, limit: 100, keyGenerator: rateLimitKey };
+  const rateLimit = { windowMs: 15 * 60_000, limit: 100, keyGenerator: perClientKey(d.localMode === true) };
   const registrationRateLimit = { windowMs: 60 * 60_000, limit: 20, keyGenerator: rateLimitKey };
   // Parsed here with a small limit (oversize → 413); the SDK's own JSON parser then skips the parsed body.
   const refused = new RefusedRedirects(d.now);
@@ -401,6 +454,12 @@ export function createApp(d: AppDeps): express.Express {
     // An app that names no resource gets this address's (the provider alone would give it localhost's).
     const provider = new Proxy(d.provider, {
       get(target, key) {
+        // A refresh is bound to the address it arrives at: a token made for another address (the usual one, seen on a temporary
+        // port through a relay) is refused, and an app that names no resource gets this address's.
+        if (key === 'exchangeRefreshToken') {
+          return (client: Parameters<MemoryOAuthProvider['exchangeRefreshToken']>[0], token: string, scopes?: string[], res?: URL) =>
+            target.exchangeRefreshToken(client, token, scopes, res ?? resource);
+        }
         if (key === 'authorize') {
           return (client: Parameters<MemoryOAuthProvider['authorize']>[0], params: Parameters<MemoryOAuthProvider['authorize']>[1], res: Parameters<MemoryOAuthProvider['authorize']>[2]) =>
             target.authorize(client, { ...params, resource: params.resource ?? resource }, res);
@@ -443,7 +502,10 @@ export function createApp(d: AppDeps): express.Express {
     verifyAccessToken: async (token: string) => {
       const info = await d.provider.verifyAccessToken(token);
       const home = usualResource();
-      return home && info.resource?.href === home ? { ...info, resource: new URL('/mcp', d.publicUrl) } : info;
+      // Only the Claude bridge's own key (a local grant: no redirect URIs, proves this server per socket before it sends it).
+      // A tool's token made for the usual address can reach a temporary port only through something relaying for it.
+      const grant = info.extra?.grantId;
+      return home && info.resource?.href === home && typeof grant === 'string' && d.provider.isLocalGrant(grant) ? { ...info, resource: new URL('/mcp', d.publicUrl) } : info;
     },
   };
   const localAuth = authFor(d.publicUrl, localVerifier);

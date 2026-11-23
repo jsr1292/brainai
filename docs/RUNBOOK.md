@@ -98,7 +98,7 @@ Only if `data/memory.db` is damaged or lost. **Done by hand by the owner; nothin
 6. Backups hold no sign-in data (no password, authenticator secret, sessions, tokens or client secrets), so set them again before starting: `docker compose run --rm app node dist/cli.js set-password`, then `docker compose run --rm app node dist/cli.js setup-totp` and scan the new code into the authenticator app (the old entry no longer works).
 7. `docker compose start app`
 8. What is lost: everything saved since that backup was taken (03:30 that night). Re-add those memories by hand.
-9. Every AI app has to sign in again, because no tokens are in a backup: reconnect each app when it reports the memory server as disconnected or asks to sign in, as described in `docs/CLIENTS.md`. Their registrations and access levels are kept, except for apps connected after the backup was taken and apps that had a client secret (theirs is replaced in a backup), which register again.
+9. Every AI app has to sign in again, because no tokens are in a backup: reconnect each app when it reports the memory server as disconnected or asks to sign in, as described in `docs/CLIENTS.md`. Their registrations and access levels are kept when you copy a backup file into place yourself, except for apps connected after the backup was taken and apps that had a client secret (theirs is replaced in a backup), which register again. Anything brought in through Settings or the `restore` command (a saved copy or a backup file) drops registered apps and connections and resets the sign-in address list to its defaults, so every app registers and is approved again.
 
 ## 4. Moving from the app
 For a brain that started in the BrainAI app on a computer and now moves to this server, keeping every memory, page and

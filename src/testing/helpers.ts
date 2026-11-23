@@ -115,7 +115,7 @@ export async function startTestApp(opts: { publicUrl?: string; trustCfConnecting
   const allowlist = new RedirectAllowlist(db);
   const clients = new ClientsStore(db, allowlist, now, noNetwork);
   const provider = new MemoryOAuthProvider(db, clients, allowlist, now, new URL('/mcp', publicUrl));
-  const discussions = new DiscussionService(new DiscussionStore(db, now), service, () => provider.activeConnections(), now);
+  const discussions = new DiscussionService(new DiscussionStore(db, now), service, () => provider.activeConnections(), now, (id) => provider.grantState(id));
   const owner = new OwnerAuth(db, now);
   // noPassword: a fresh desktop install, where the owner has set no password yet (D1).
   if (!opts.noPassword) {

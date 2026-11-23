@@ -11,6 +11,8 @@ import { appSession, makePages, makeService, startTestApp } from '../testing/hel
 import { openDb } from '../db.js';
 import { packArchive } from '../saved/archive.js';
 import { backupNow } from '../backup.js';
+import { cleanImage } from '../images/clean.js';
+import { pngWithText } from '../testing/imageFixtures.js';
 import { renameSync, symlinkSync } from 'node:fs';
 
 const KEY = 'a-made-up-app-key-for-find-0123456789';
@@ -50,6 +52,8 @@ async function backupFolder(t: TestContext, o: { days?: string[]; pictures?: num
   await given.service.remember({ kind: 'decision', project: 'garden-club-site', content: 'The site is plain HTML' }, { type: 'owner' });
   const p = await makePages(given, () => T).create({ title: 'Garden club setup', area: 'apps', body: 'Run it.' }, 'owner');
   const ids: string[] = [];
+  // A real PNG: restore runs pictures through the cleaning uploads get, which drops anything else.
+  const png = cleanImage(await pngWithText()).bytes;
   for (let i = 0; i < (o.pictures ?? 0); i++) {
     const id = `${i.toString(16)}`.repeat(24).slice(0, 24);
     ids.push(id);
@@ -59,7 +63,7 @@ async function backupFolder(t: TestContext, o: { days?: string[]; pictures?: num
   for (const day of o.days ?? ['2026-11-06']) copyFileSync(file, join(folder, `memory-${day}.db`));
   ids.slice(0, o.have ?? ids.length).forEach((id) => {
     mkdirSync(join(folder, 'images', id.slice(0, 2)), { recursive: true });
-    writeFileSync(join(folder, 'images', id.slice(0, 2), `${id}.png`), 'png');
+    writeFileSync(join(folder, 'images', id.slice(0, 2), `${id}.png`), png);
   });
   return folder;
 }

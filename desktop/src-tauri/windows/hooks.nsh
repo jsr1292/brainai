@@ -20,7 +20,7 @@
   ; The folder goes to PowerShell in an environment variable, never inside the command text: a path with an apostrophe
   ; (C:\Users\O'Brien\...) would break a quoted string. Exit code 1 is the one definite answer "still running".
   System::Call 'kernel32::SetEnvironmentVariableW(w "BRAINAI_NODE", w "$INSTDIR\node.exe")'
-  nsExec::Exec `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$mine = { Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -eq $$env:BRAINAI_NODE } }; & $$mine | Stop-Process -Force -ErrorAction SilentlyContinue; for ($$i = 0; $$i -lt 20; $$i++) { if (-not (& $$mine)) { exit 0 }; Start-Sleep -Milliseconds 250 }; exit 1"`
+  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$mine = { Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -eq $$env:BRAINAI_NODE } }; & $$mine | Stop-Process -Force -ErrorAction SilentlyContinue; for ($$i = 0; $$i -lt 20; $$i++) { if (-not (& $$mine)) { exit 0 }; Start-Sleep -Milliseconds 250 }; exit 1"`
   Pop $0
   ; Abort only on that definite answer. Any other result ("error" when powershell.exe is blocked or missing, "timeout", a
   ; parse error) means we could not tell: skip clearing the server folder but go on with the install, whose own
@@ -70,7 +70,7 @@
       ; Only this folder's node.exe, never another one on this computer. The answer is not needed: whatever it is, the
       ; uninstall goes on.
       System::Call 'kernel32::SetEnvironmentVariableW(w "BRAINAI_NODE", w "$INSTDIR\node.exe")'
-      nsExec::Exec `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$mine = { Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -eq $$env:BRAINAI_NODE } }; & $$mine | Stop-Process -Force -ErrorAction SilentlyContinue; for ($$i = 0; $$i -lt 20; $$i++) { if (-not (& $$mine)) { exit 0 }; Start-Sleep -Milliseconds 250 }; exit 1"`
+      nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$mine = { Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -eq $$env:BRAINAI_NODE } }; & $$mine | Stop-Process -Force -ErrorAction SilentlyContinue; for ($$i = 0; $$i -lt 20; $$i++) { if (-not (& $$mine)) { exit 0 }; Start-Sleep -Milliseconds 250 }; exit 1"`
       Pop $0
       System::Call 'kernel32::SetEnvironmentVariableW(w "DATA_DIR", w "$LOCALAPPDATA\io.github.jsr1292.brainai")'
       nsExec::Exec `"$INSTDIR\node.exe" "$INSTDIR\server\dist\cli.js" disconnect-tools`

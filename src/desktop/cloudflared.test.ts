@@ -94,6 +94,46 @@ test('the tunnel runs to the given door, comes back after it dies, and stops for
   assert.ok(!existsSync(join(dir, 'cloudflared', 'cloudflared.pid')));
 });
 
+test('cloudflared dies with BrainAI even when BrainAI is killed hard (no exit handler runs)', async (t) => {
+  const { env, f, dir } = world(t, {});
+  await startSignIn(env).done;
+  const p = await prepareTunnel(env, dir, 'brain.example.net') as { tunnelId: string; credentials: string };
+  // A stand-in for the server: a node process that starts the tunnel, then is killed with SIGKILL.
+  const script = join(dir, 'host.mts');
+  writeFileSync(script, `import { TunnelRunner } from ${JSON.stringify(new URL('./cloudflared.ts', import.meta.url).href)};
+const r = new TunnelRunner({ home: ${JSON.stringify(env.home)}, path: ${JSON.stringify(env.path)} }, ${JSON.stringify(dir)});
+r.start(${JSON.stringify(p.tunnelId)}, ${JSON.stringify(p.credentials)}, 4321);
+setInterval(() => {}, 1000);
+`);
+  const host = spawn(process.execPath, ['--import', 'tsx', script], { stdio: 'ignore', cwd: process.cwd() });
+  t.after(() => { try { host.kill('SIGKILL'); } catch { /* gone */ } });
+  await until(() => (f.state().running as { url?: string } | null)?.url === 'http://127.0.0.1:4321', 15_000);
+  const tunnel = (f.state().running as { pid: number }).pid;
+  assert.ok(alive(tunnel));
+  host.kill('SIGKILL');
+  await until(() => !alive(tunnel), 5000);
+});
+
+test('stopping right after the start, again and again, never leaves a cloudflared behind', async (t) => {
+  const { env, f, dir } = world(t, {});
+  await startSignIn(env).done;
+  const p = await prepareTunnel(env, dir, 'brain.example.net') as { tunnelId: string; credentials: string };
+  const seen = new Set<number>();
+  for (let i = 0; i < 25; i++) {
+    const runner = new TunnelRunner(env, dir, { delays: [50] });
+    runner.start(p.tunnelId, p.credentials, 4400 + i);
+    if (i % 3 === 1) await sleep(i);
+    runner.stop();
+    await sleep(60);
+    const r = f.state().running as { pid: number } | null;
+    if (r) seen.add(r.pid);
+  }
+  await sleep(500);
+  for (const pid of seen) assert.ok(!alive(pid), `cloudflared ${pid} is gone`);
+  const r = f.state().running as { pid: number } | null;
+  if (r) assert.ok(!alive(r.pid));
+});
+
 test('a leftover cloudflared from a crashed BrainAI is stopped; an unrelated process with that pid is not', async (t) => {
   const { env, f, dir } = world(t, {});
   await startSignIn(env).done;

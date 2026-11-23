@@ -4,6 +4,61 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Version shows the version you run.
 
+## 1.10.3 (2026-11-23)
+
+Security fixes from the 2026-11-23 review (setup pages, links, updater, installer, stored text, restore, discussions):
+- **Refused sign-in addresses** show with the name an app gave only on the setup page of the app whose known address
+  they match. Anything else sits behind a warning as "unknown app", and a registration that arrives with a cross-site
+  Origin is not listed at all. Refusals through the public door are still listed, because ChatGPT and Grok register that way.
+- **Links in stored text** to `/app/...`, `/authorize...` and `/consent/...` (any case or spelling) are shown as plain
+  text. In the desktop app, a link that asks for a restart or an update now asks for your confirmation first.
+- **The updater** repeats the rule that a release must be strictly newer than the running version, as defence in depth
+  (a release replaces its own pre-release). This does not close finding 8: the signature covers the build, not the
+  version in the release list, so a lying release list can still point at an old signed build until the manifest
+  itself is signed.
+- **The Windows installer** starts PowerShell by its full system path.
+- **The instruction check** also catches text addressed to assistants ("for AI agents", "assistants reading this",
+  "you must call forget", and the Spanish, French and German forms). Pages are checked again once after updating.
+- **Secrets**: a labelled bare key ("OpenWeather API key is 7f3a...") is refused like the known key formats; ids,
+  hashes, commit ids and UUIDs are not.
+- **Restoring a saved copy** resets the sign-in address list to its defaults, drops registered apps and their
+  connections (apps register and you approve them again), switches restored skills Off and runs restored pictures
+  through the same cleaning uploads get.
+- **Connection names**: a name already used by a live connection at a different access level is refused (English and
+  Spanish message). Discussions record which connection opened a discussion or wrote a reply and use that, not the name.
+
+Assistant behaviour (from the 2026-11-23 behaviour review); nothing to do when updating.
+- Saving a decision now reminds the assistant, in one sentence, to update the project's status (named by id) and roadmap in the same turn, before it answers. The save nudge on recall and briefs says the same.
+- One instruction for conflicting facts: call flag_disagreement in the same turn and tell the owner; when the owner says which is right, save it with supersedes. The brief no longer suggests forget.
+- load_profile lists the skills that are On (name and short description), so assistants no longer need a separate list_skills call; list_skills still works.
+- write_page asks for one short pointer fact (title and page id, under about 150 characters) instead of a copy of the page.
+- The "close facts" nudge after a save is quieter: not sent when the save used supersedes, at most two facts, a higher similarity cut-off (40% of the way from the close-facts floor to the duplicate threshold), and a shorter sentence.
+- A deleted fact's text, page section names (in page and tidy replies) and the list of sections a save may also need are shown as data, never inside a tool's own sentence.
+- load_profile lists at most 30 skills, then says how many more and to call list_skills.
+- read_page, list_pages and project_brief print contains_instructions only when true; facts that read like instructions are marked the same way in recall and briefs.
+
+Security (review of 2026-11-23, findings 1 to 5 and 13). Nothing to do when updating, except that you sign in again at
+the public address (Reach) once, and browser logins on this computer now last 7 days.
+- The public address never serves the app's own pages (`/app/...`), whatever the letter case or spelling of the address
+  (`/APP`, `/%61pp`, `//app`), and the pages themselves refuse it too. No app ticket is made or accepted there, and the
+  window's session cookie is set with the right options.
+- Each sign-in remembers where it was made. The window's and this computer's logins stop working at the public address;
+  only a login made there works there. A password login in a browser on this computer lasts 7 days instead of 30.
+  Existing sessions count as made on this computer, so Reach needs one new login.
+- On this computer, sign-in requests from a web page (a request with a foreign Origin) are refused before they count
+  against any limit, and the token limit is kept for each app instead of for the whole computer, so a web page can no
+  longer block your tools from signing in or refreshing.
+- At the public address the login limit is kept for each visitor's address, and the owner's known browser has a limit of
+  its own: strangers failing five logins no longer lock you out.
+- When the usual address (localhost port) is held at start by a program that does not answer like BrainAI, the app says
+  so (EN/ES). Whatever holds it, on a temporary port BrainAI accepts a sign-in made for the usual address only from the
+  Claude desktop bridge's own key, and a refresh is bound to the address it arrives at.
+- Web pages are also refused when the browser says the request is cross-site and not a page visit, and the sign-in
+  limits on this computer are kept for each token presented. Failed logins from the internet use a bucket of their own,
+  so they never block logins on this computer.
+- When turning Reach off at exit is not confirmed by Tailscale, the next start is told to turn it off; the Cloudflare
+  tunnel program now stops with BrainAI even when BrainAI is killed.
+
 ## 1.10.2 (2026-11-23)
 
 Updating: on the desktop app it downloads in the background and installs when you restart; on a server, the usual

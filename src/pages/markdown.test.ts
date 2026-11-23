@@ -290,3 +290,25 @@ test('[[fact:id|words]] links the fact under its id and shows the writer\'s word
   assert.match(html, /<a class="wikilink" href="\/memories\/abc-123">fact<\/a>/);
   assert.match(renderMarkdown('x [[fact:gone|fact]]', () => null).value, /<span class="wikilink missing">fact<\/span>/);
 });
+
+test('links to the app\'s own action paths are plain text, whatever the case or spelling', () => {
+  for (const h of ['/app/update', '/APP/restart', '/App/Restore/pick', '/authorize?client_id=x', '/Authorize', '/consent/abc', '/CONSENT/abc', '/%61pp/update', '/./app/update', '/x/../app/goodbye', 'http://127.0.0.1:3000/app/restart', 'http://localhost/authorize?x=1']) {
+    const out = md(`[click](${h})`);
+    assert.doesNotMatch(out, /href=/, h);
+    assert.match(out, /click/, h);
+  }
+  assert.match(md('[ok](/application/notes)'), /href="\/application\/notes"/);
+  assert.match(md('[ok](https://docs.example/app/guide)'), /href="https:\/\/docs\.example\/app\/guide"/);
+});
+
+test('links to the brain\'s own public or Reach address that act on the app are plain text too', async () => {
+  const { setOwnOrigins } = await import('./markdown.js');
+  setOwnOrigins(() => ['https://brain.example.net', 'https://mac.tail1234.ts.net']);
+  try {
+    for (const h of ['https://brain.example.net/app/update', 'https://mac.tail1234.ts.net/authorize?x=1', 'https://BRAIN.example.net/Consent/abc']) {
+      assert.doesNotMatch(md(`[go](${h})`), /href=/, h);
+    }
+    assert.match(md('[ok](https://brain.example.net/pages/abc)'), /href="https:\/\/brain\.example\.net\/pages\/abc"/);
+    assert.match(md('[ok](https://other.example/app/x)'), /href=/);
+  } finally { setOwnOrigins(() => []); }
+});

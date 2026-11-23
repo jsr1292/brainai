@@ -583,6 +583,31 @@ test('stopping BrainAI turns Funnel off, and the next start turns it back on at 
   assert.equal(second.deps.reach!.url()?.origin, PUBLIC);
 });
 
+test('when turning Funnel off at exit fails, the pending-off marker is written so the next start deals with it (review 2026-11-23, 13)', async (t) => {
+  const ts = fakeTailscale({ backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' });
+  t.after(() => ts.cleanup());
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  const first = await startTestApp({ localMode: true, statusDir: dir, tools: tsTools(ts) });
+  safely(t, first);
+  const f = await loggedIn(first);
+  assert.equal((await f('/settings/reach/on', FORM)).status, 303);
+  assert.equal(existsSync(join(dir, 'funnel-off-pending')), false);
+  writeFileSync(join(ts.home, 'tailscale.json'), JSON.stringify({ ...ts.state(), offFails: true }));
+  first.deps.reach!.shutdown();
+  assert.equal(ts.state().funnel, true, 'Tailscale did not confirm');
+  assert.equal(existsSync(join(dir, 'funnel-off-pending')), true, 'so the next start is told');
+  await first.close();
+  // A confirmed off at exit leaves no marker.
+  const ok = fakeTailscale({ backend: 'Running', dns: 'brainai-mac.tail1234.ts.net.' });
+  t.after(() => ok.cleanup());
+  const dir2 = mkdtempSync(join(tmpdir(), 'brainai-reach-'));
+  const second = await startTestApp({ localMode: true, statusDir: dir2, tools: tsTools(ok) });
+  safely(t, second);
+  assert.equal((await (await loggedIn(second))('/settings/reach/on', FORM)).status, 303);
+  second.deps.reach!.shutdown();
+  assert.equal(existsSync(join(dir2, 'funnel-off-pending')), false);
+});
+
 test('stopping BrainAI with Reach off does not ask Tailscale to turn Funnel off', async (t) => {
   const ts = fakeTailscale({ backend: 'Running' });
   t.after(() => ts.cleanup());

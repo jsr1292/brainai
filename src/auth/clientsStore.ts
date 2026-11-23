@@ -6,6 +6,7 @@ import { InvalidClientMetadataError } from '@modelcontextprotocol/sdk/server/aut
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
 import { posesAsBrainAI, posesAsOwner } from '../memory/types.js';
+import { t } from '../i18n/core.js';
 import { randomToken } from './hash.js';
 import { fetchClientMetadata, TransientFetchError } from './cimd.js';
 import type { RedirectAllowlist } from './redirects.js';
@@ -40,6 +41,9 @@ export function validateDisplayName(raw: string): string {
   if (posesAsBrainAI(name)) throw new InvalidNameError('The name "BrainAI" is kept for BrainAI itself. Choose another.');
   return name;
 }
+
+/** The error for a name that a live connection at another access level already uses; EN or ES by the request's language. */
+export const nameTakenError = (name: string): InvalidNameError => new InvalidNameError(t('auth.name.taken', { name }));
 
 /** An allowlist entry plain enough to print inside a command for the owner to paste: no shell characters at all. */
 const PLAIN_ENTRY = /^https:\/\/[A-Za-z0-9.-]+(:\d+)?\/[A-Za-z0-9._~\/-]*$/;

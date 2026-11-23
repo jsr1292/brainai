@@ -52,6 +52,11 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("remove.trash_failed", "BrainAI could not move itself to the Trash: drag {path} there yourself.", "BrainAI no ha podido moverse a la papelera: arrastra {path} hasta ella tú."),
     ("remove.drag_trash", "Drag BrainAI to the Trash to finish.", "Arrastra BrainAI a la papelera para terminar."),
     ("remove.uninstall_manual", "Uninstall BrainAI from Settings › Apps to finish.", "Desinstala BrainAI desde Configuración › Aplicaciones para terminar."),
+    // A link in the window asking for a restart or an update: the app asks first, so a page cannot do it alone.
+    ("restart.confirm", "Restart BrainAI now to finish?", "¿Reiniciar BrainAI ahora para terminar?"),
+    ("restart.button", "Restart", "Reiniciar"),
+    ("update.confirm", "Install the downloaded update and restart BrainAI now?", "¿Instalar la actualización descargada y reiniciar BrainAI ahora?"),
+    ("update.button", "Install and restart", "Instalar y reiniciar"),
     // Moving to a server.
     (
         "goodbye.confirm",
@@ -87,6 +92,11 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("start.finishing_update", "Finishing the update…", "Terminando la actualización…"),
     ("err.timeout", "BrainAI's server did not start.", "El servidor de BrainAI no ha arrancado."),
     ("err.squatter", "Another program keeps answering on BrainAI's port.", "Otro programa sigue respondiendo en el puerto de BrainAI."),
+    (
+        "err.usual_port_held",
+        "Another program is using BrainAI's usual address (localhost:{old}); your apps may be talking to it. Quit other copies of BrainAI or other programs that might be using it, or restart the computer.",
+        "Otro programa está usando la dirección habitual de BrainAI (localhost:{old}); tus aplicaciones pueden estar hablando con él. Cierra otras copias de BrainAI u otros programas que puedan estar usándola, o reinicia el ordenador.",
+    ),
     ("err.keeps_stopping", "BrainAI's server keeps stopping.", "El servidor de BrainAI se sigue deteniendo."),
     ("err.crashed_start", "BrainAI stopped unexpectedly while starting.", "BrainAI se ha detenido inesperadamente al arrancar."),
     ("err.log_at", "{why}\n\nThe server's log is at {log}.", "{why}\n\nEl registro del servidor está en {log}."),

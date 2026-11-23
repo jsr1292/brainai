@@ -1,6 +1,6 @@
 /** Guided setup (round 2 §17b): one app's page, three steps, and its check line. */
 import type { GrantInfo } from '../auth/provider.js';
-import type { Refused } from '../auth/refusedRedirects.js';
+import { matchesKnownHosts, type Refused } from '../auth/refusedRedirects.js';
 import { SETUP_VERSION, appOfGrant, type SetupApp } from '../setup/texts.js';
 import { when } from './dashboardViews.js';
 import { html, type SafeHtml } from './html.js';
@@ -39,10 +39,17 @@ function allowBlock(app: SetupApp, a: { allowed: boolean; refused: readonly Refu
   const own = !app.allow?.length ? html``
     : a.allowed ? html`<p class="ok">${t('setup.allow.ok', { app: app.name })}</p>`
     : html`<p>${t('setup.allow.only')}</p><form method="post" action="/settings/setup/${app.slug}/allow" class="inline"><button type="submit" class="primary">${t('setup.allow.button', { app: app.name })}</button></form>`;
-  const refused = a.refused.length === 0 ? html``
-    : html`<div class="refused"><p><strong>${t('setup.refused.title')}</strong> ${t('setup.refused.note')}</p><ul>${a.refused.map((r) =>
-      html`<li>${tHtml('setup.refused.item', { name: html`<bdi>${r.clientName}</bdi>`, host: html`<strong>${new URL(r.uri).host}</strong>` })} <code>${r.uri}</code> <form method="post" action="/settings/setup/${app.slug}/allow" class="inline"><input type="hidden" name="uri" value="${r.uri}"><button type="submit" class="secondary">${t('setup.allow.short')}</button></form></li>`)}</ul></div>`;
-  return html`<div id="allow">${own}${refused}</div>`;
+  const form = (uri: string, label: string) => html`<form method="post" action="/settings/setup/${app.slug}/allow" class="inline"><input type="hidden" name="uri" value="${uri}"><button type="submit" class="secondary">${label}</button></form>`;
+  // The caller chooses its own name, so an address is offered with it only on the page of the app whose known hosts it uses.
+  const mine = a.refused.filter((r) => matchesKnownHosts(r.uri, app.allow));
+  const unknown = a.refused.filter((r) => !matchesKnownHosts(r.uri, app.allow));
+  const refused = mine.length === 0 ? html``
+    : html`<div class="refused"><p><strong>${t('setup.refused.title')}</strong> ${t('setup.refused.note')}</p><ul>${mine.map((r) =>
+      html`<li>${tHtml('setup.refused.item', { name: html`<bdi>${r.clientName}</bdi>`, host: html`<strong>${new URL(r.uri).host}</strong>` })} <code>${r.uri}</code> ${form(r.uri, t('setup.allow.short'))}</li>`)}</ul></div>`;
+  const other = unknown.length === 0 ? html``
+    : html`<details class="refused"><summary>${t('setup.refused.unknown.title')}</summary><p class="notice error" role="alert">${t('setup.refused.unknown.warning')}</p><ul>${unknown.map((r) =>
+      html`<li>${tHtml('setup.refused.unknown.item', { host: html`<strong>${new URL(r.uri).host}</strong>` })} <code>${r.uri}</code> ${form(r.uri, t('setup.refused.unknown.allow'))}</li>`)}</ul></details>`;
+  return html`<div id="allow">${own}${refused}${other}</div>`;
 }
 
 /** How the owner signs in: password and code when both are set; otherwise (local mode) BrainAI's window approves. */

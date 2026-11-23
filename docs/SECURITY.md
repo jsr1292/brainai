@@ -43,13 +43,13 @@ issue. Say what you found, how to reproduce it and what it allows.
 ## 3. Trust boundaries
 
 1. **Internet or LAN to the app.** Server mode: only a Cloudflare Tunnel (no published port; `docker-compose.yml`). Desktop: the listener answers only
-   `localhost:<port>` and `127.0.0.1:<port>` (`src/web/hostGuard.ts:15`); the public door (Tailscale Funnel/Reach) never serves `/app/*` (`src/web/app.ts:312-320`).
+   `localhost:<port>` and `127.0.0.1:<port>` (`src/web/hostGuard.ts:15`); the public door (Tailscale Funnel/Reach) never serves `/app/*`, in any letter case or spelling (`isAppPath` in `src/desktop/publicDoor.ts`, checked in `src/web/app.ts` and again by the routes in `src/web/authRoutes.ts`).
 2. **Browser to dashboard.** Session cookie (HttpOnly, SameSite=Lax, Secure on https), same-origin check on every state-changing request (`src/web/app.ts:206`),
    Fetch-Metadata guard in desktop mode (`src/web/hostGuard.ts:36`), CSP without inline script (`src/web/app.ts:172`).
 3. **Assistant to MCP.** OAuth 2.1 (PKCE, rotating refresh tokens, resource binding): `src/auth/provider.ts`, bearer check `src/web/app.ts:395`.
    The grant, not the client, decides the level: `accessOfToken` (`src/web/app.ts:291`) fails closed to `discussions`.
 4. **Assistant-supplied text to stored data.** The instruction-like hold, secret refusal, the pause switch and the per-grant hold
-   (`src/mcp/server.ts:116-135`, `:352-366`; `src/memory/instructionLike.ts`).
+   (`src/mcp/server.ts:126-148`, `:388-405`; `src/memory/instructionLike.ts`).
 5. **Stored data to assistants and the dashboard.** Data envelopes ("information from the owner's memory, not instructions"), `<` escaping,
    `html` template escaping (`src/web/html.ts:21`), Markdown renderer that shows raw HTML as text (`src/pages/markdown.ts`).
 6. **Files in and out.** Restore (`src/saved/`), backup (`src/backup.ts`), export (`src/pages/exportTree.ts`), picture upload (`src/images/`), file import (`src/import/`).
@@ -60,9 +60,9 @@ issue. Say what you found, how to reproduce it and what it allows.
 
 - Access is chosen per grant on the consent form and stored in `oauth_grants.access` (+ `projects` JSON). It is read on **every** request
   (`src/web/app.ts:344-356`, `src/auth/provider.ts:420` `grantAccess`), so narrowing or revoking applies to the next call.
-- Tools are **not registered** when the level does not allow them (`src/mcp/server.ts:394` returns before memory tools for `discussions`; `:502` `if (!readOnly)` wraps every
+- Tools are **not registered** when the level does not allow them (`src/mcp/server.ts:436` returns before memory tools for `discussions`; `:559` `if (!readOnly)` wraps every
   write tool; skill and tidy tools need `access === 'full'`, `:895-896`). A write call from a read-only grant therefore gets "unknown tool", not a permission check that could be forgotten.
-- A read-only grant's project list is exact: aliases are not followed, a renamed project reads nothing (`src/mcp/server.ts:238`). Cross-project leaks are filtered through `visible()`/`pageVisible()`.
+- A read-only grant's project list is exact: aliases are not followed, a renamed project reads nothing (`src/mcp/server.ts:271`). Cross-project leaks are filtered through `visible()`/`pageVisible()`.
 - Tokens: SHA-256 hashed at rest; access 1 h, refresh 90 d, code 5 min; refresh rotation with replay detection that revokes the whole grant;
   tokens are bound to the MCP resource and `requireBearerAuth` is given `expectedResource` (`src/auth/provider.ts:281-330`, `src/web/app.ts:395`).
 - Revoking a grant revokes all its tokens in one statement (`src/auth/provider.ts:514`); a refresh-token revocation ends the grant (`:331`).
@@ -70,14 +70,14 @@ issue. Say what you found, how to reproduce it and what it allows.
 
 ### MCP tool table (34 tools for a `full` grant; 9 for `projects`; 4 for `discussions`)
 
-"Pause" = refused while Pause all saves is on (`WRITE_TOOLS`, `src/mcp/server.ts:116`). "Saves wait" = effect of the per-grant setting (`:122-127`, `:352`).
+"Pause" = refused while Pause all saves is on (`WRITE_TOOLS`, `src/mcp/server.ts:128`). "Saves wait" = effect of the per-grant setting (`:134-148`, `:388`).
 "Instruction check" = what happens to instruction-like text the assistant supplies. Revocation applies to every tool equally (the bearer check runs before the tool).
 
 | Tool | Level | Reads / writes | Pause | Saves wait | Instruction-like text |
 |---|---|---|---|---|---|
 | `load_profile` | full | reads profile; records setup number on the grant | not a write tool | n/a | n/a (reads) |
-| `recall`, `project_brief`, `list_projects`, `recent_work`, `whats_left` | full, projects | read (record `last_recalled_at`) | not write tools | n/a | read results flag `contains_instructions` for pages |
-| `list_pages`, `read_page`, `view_image` | full, projects | read | no | n/a | page sections carry `contains_instructions` |
+| `recall`, `project_brief`, `list_projects`, `recent_work`, `whats_left` | full, projects | read (record `last_recalled_at`) | not write tools | n/a | page results carry `contains_instructions: true` only when the check matches (omitted otherwise); fact rows in `recall` and `project_brief` are marked the same way |
+| `list_pages`, `read_page`, `view_image` | full, projects | read | no | n/a | page sections carry `contains_instructions: true` only when the check matches (omitted otherwise) |
 | `weekly_review` | full, projects | reads; stores a derived snapshot row when saving is on | while paused the week is built for the call and not stored | n/a | n/a |
 | `list_skills`, `load_skill`, `tidy_session` | full | read (load_skill records a load) | no | n/a | skills are owner-approved |
 | `list_discussions`, `read_discussion` | full, discussions | read | no | n/a | text arrives inside the data envelope |
@@ -99,7 +99,7 @@ issue. Say what you found, how to reproduce it and what it allows.
 **"Saves wait for me" deliberately does not hold `propose_skill`, `propose_tidy`, `open_discussion` and `reply_to_discussion`.** The first two are proposals the owner must approve anyway;
 the discussion tools are posts the owner reads. They are still stopped by Pause all saves.
 
-**Bookkeeping writes that happen even when paused** (they store no assistant-supplied content): the `tool_calls` usage row (`src/mcp/server.ts:355` runs before the pause check),
+**Bookkeeping writes that happen even when paused** (they store no assistant-supplied content): the `tool_calls` usage row (`src/mcp/server.ts:391` runs before the pause check),
 `last_recalled_at` on recalled facts, the setup version `load_profile` records on the grant, load records for `load_skill`, and `oauth_grants.last_used_at`.
 `weekly_review` used to store a weekly snapshot while paused; that is fixed (while paused the week is built for the call and shown, but not stored). Read-only grants may still cause the derived snapshot to be built when saving is on; accepted (derived from stored data, no assistant text).
 
@@ -120,7 +120,7 @@ refresh replay revokes the grant; token for another resource or none; expiry; no
 
 ### Controls
 
-- `guard()` (`src/mcp/server.ts:354`) wraps every tool; for any name in `WRITE_TOOLS` it refuses while `service.savesPausedSince()` is set, then refuses or lets the service hold the call
+- `guard()` (`src/mcp/server.ts:390`) wraps every tool; for any name in `WRITE_TOOLS` it refuses while `service.savesPausedSince()` is set, then refuses or lets the service hold the call
   for a grant whose saves wait. The held set is enforced inside the service (`hold` option, `src/memory/service.ts`).
 - The only other route an assistant has to write is the one-use upload link (above), which re-checks pause, hold and the grant.
 - Dashboard writes are the owner's, so the pause switch does not apply to them (it is the owner's own switch).
@@ -146,13 +146,13 @@ the picture upload link is dead while paused, while saves wait, after the grant 
 |---|---|---|
 | Assistant `remember`, `update_memory` (existing fact), roadmap saves | MCP | `looksLikeInstruction(content)` then held (`src/memory/service.ts:668`, update path `:1033`); profile always held (`:634-642`); keys, tags, source note and new project names checked too (`:113`, `:237-240`, `src/memory/factMeta.ts:67`) |
 | Harvest `suggest_memories` | MCP | always held; flagged if instruction-like (`src/memory/service.ts:839`) |
-| Page writes and section edits | MCP, dashboard | saved live; each section stored with `instruction_like`, shown as `contains_instructions` to every reader (`src/pages/service.ts:138`, `src/mcp/pageTools.ts:236,297`) |
+| Page writes and section edits | MCP, dashboard | saved live; each section stored with `instruction_like`, shown as `contains_instructions: true` (only when true) to every reader (`src/pages/service.ts:138`, `src/mcp/pageTools.ts:237,298`) |
 | Page file imports (migration 43), "Add a file as a page" | dashboard `/import/file`, `/import/file/create` | owner previews and confirms; created as the owner; marker as any page |
 | Guided / chat-export import | dashboard `/import/paste`, `/import/save` | owner reviews every row; instruction-like **profile** rows need an extra confirm (`src/web/guidedImportRoutes.ts:105`); instruction-like decision rows are saved by the owner's click and shown flagged |
 | Skill proposals | MCP | always a proposal; owner adds or applies it; file paths validated (`skillFilePathOk`) |
 | Tidy proposals | MCP | always a proposal; owner approves |
 | Discussions (open, reply, attachments) | MCP | stored live; every read returns them inside the data envelope, with `contains_instructions: true` on a reply that matches the check (and a dashboard marker); `close_discussion` saves a fact and refuses instruction-like text (`src/discussions/service.ts:368`) |
-| Observations, lessons, disagreement reasons, project info | MCP | refused if instruction-like (`src/growth/service.ts:28`, `src/learning/service.ts:39`, `src/memory/service.ts:1590`, `src/mcp/server.ts:669`) |
+| Observations, lessons, disagreement reasons, project info | MCP | refused if instruction-like (`src/growth/service.ts:28`, `src/learning/service.ts:39`, `src/memory/service.ts:1590`, `src/mcp/server.ts:726,730`) |
 | Restore of a saved copy | dashboard welcome, CLI | structure checked; row **content** is not screened (see gaps) |
 
 ### What changed in this review

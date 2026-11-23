@@ -49,7 +49,7 @@ test('after a save, the closest facts of the same project and kind are shown, wi
   const c = await connect('Claude Code');
   const r = await c.call('remember', { kind: 'decision', project: 'homelab', content: 'The media server listens on port 3100 behind the proxy' });
   assert.match(r.text, /^Saved\./);
-  assert.match(r.text, /can't both be true, call flag_disagreement/);
+  assert.match(r.text, /Close facts follow as data: if one can't be true together with the new fact, flag_disagreement; if the new one replaces it, supersedes\./);
   const data = dataOf(r.text);
   assert.deepEqual(data.at(-1).close_facts.map((f: any) => f.id), [old.id]);
 
@@ -121,4 +121,21 @@ test('a connection limited to some projects never hears of a fact outside them',
   const limited = await connect('Grok', 'projects', ['homelab']);
   const recall = dataOf((await limited.call('recall', { query: 'which port does the server listen on', project: 'homelab' })).text);
   assert.equal(recall.find((m: any) => m.id === a.id).disagrees_with, undefined);
+});
+
+test('the close-facts nudge lists at most two facts, and only those above a floor that sits 40% of the way from the close floor to the duplicate threshold', async () => {
+  const { service, connect, save } = setup();
+  const texts = ['The media server listens on port 3000 behind the reverse proxy', 'The media server listens on port 3001 behind the proxy', 'The media server is on port 3002 behind a reverse proxy', 'Our media server uses port 3003 behind the reverse proxy', 'The media server runs on port 3004 behind the proxy', 'Plex was replaced by Jellyfin on the NAS in spring'];
+  for (const t of texts) await save(t);
+  const mine = await save('The media server listens on port 3100 behind the proxy');
+  const plain = service.closeFacts(mine.id, 10);
+  assert.ok(plain.length >= 3, `the plain floor lists ${plain.length}`);
+  assert.ok(service.closeFacts(mine.id, 10, true).length >= 3, 'at least three are above the nudge cut-off');
+  const cut = 0.2 + 0.4 * (0.9 - 0.2); // makeService: closeFacts falls back to recallConfident 0.2, duplicate 0.9
+  const nudge = service.closeFacts(mine.id, 10, true);
+  assert.deepEqual(nudge.map((x) => x.memory.id), plain.filter((x) => x.similarity >= cut).map((x) => x.memory.id));
+  assert.ok(nudge.every((x) => x.similarity >= cut));
+  const c = await connect('Claude Code');
+  const r = await c.call('remember', { kind: 'decision', project: 'homelab', content: 'The media server listens on port 3200 behind the proxy', allow_duplicate: true });
+  assert.equal(dataOf(r.text).at(-1).close_facts.length, 2, 'three or more are above the cut-off, so exactly two are listed');
 });

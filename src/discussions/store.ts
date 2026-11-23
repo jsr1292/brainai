@@ -2,16 +2,16 @@ import { randomInt } from 'node:crypto';
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
 import { voiceKey } from './types.js';
-import type { Discussion, DiscussionFile, Post } from './types.js';
+import type { Discussion, DiscussionFile, Post, StoredPost } from './types.js';
 
 interface DiscussionRow {
   id: string; title: string; question: string; project: string | null; opened_by: string; opened_model: string;
   opened_at: string; round: number; ask: string; include_limited: number; closed_at: string | null;
-  decision: string | null; decision_memory_id: string | null;
+  decision: string | null; decision_memory_id: string | null; opened_grant: string | null;
 }
 interface PostRow {
   id: number; discussion_id: string; round: number; kind: Post['kind']; author: string; model: string;
-  text: string; created_at: string;
+  text: string; created_at: string; grant_id: string | null;
 }
 interface FileRow { name: string; size: number; added_by: string; added_at: string; post_id: number | null }
 
@@ -22,11 +22,11 @@ const toDiscussion = (r: DiscussionRow): Discussion => ({
   id: r.id, title: r.title, question: r.question, project: r.project,
   openedBy: { name: r.opened_by, model: r.opened_model }, openedAt: r.opened_at, round: r.round,
   ask: JSON.parse(r.ask) as string[], includeLimited: r.include_limited === 1, closedAt: r.closed_at,
-  decision: r.decision, decisionMemoryId: r.decision_memory_id,
+  decision: r.decision, decisionMemoryId: r.decision_memory_id, openedGrant: r.opened_grant,
 });
-const toPost = (r: PostRow): Post => ({
+const toPost = (r: PostRow): StoredPost => ({
   id: r.id, discussionId: r.discussion_id, round: r.round, kind: r.kind, author: r.author, model: r.model,
-  text: r.text, createdAt: r.created_at,
+  text: r.text, createdAt: r.created_at, grantId: r.grant_id,
 });
 
 const ID_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -45,13 +45,13 @@ export class DiscussionStore {
     return this.db.transaction(fn)();
   }
 
-  create(d: Omit<Discussion, 'id' | 'openedAt' | 'round' | 'closedAt' | 'decision' | 'decisionMemoryId'>): Discussion {
+  create(d: Omit<Discussion, 'id' | 'openedAt' | 'round' | 'closedAt' | 'decision' | 'decisionMemoryId' | 'openedGrant'> & { openedGrant?: string | null }): Discussion {
     const exists = this.db.prepare('SELECT 1 FROM discussions WHERE id = ?');
     let id = newId();
     while (exists.get(id)) id = newId();
-    this.db.prepare(`INSERT INTO discussions(id, title, question, project, opened_by, opened_model, opened_at, ask, include_limited)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, d.title, d.question, d.project, d.openedBy.name, d.openedBy.model, this.ts(), JSON.stringify(d.ask), d.includeLimited ? 1 : 0);
+    this.db.prepare(`INSERT INTO discussions(id, title, question, project, opened_by, opened_model, opened_at, ask, include_limited, opened_grant)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, d.title, d.question, d.project, d.openedBy.name, d.openedBy.model, this.ts(), JSON.stringify(d.ask), d.includeLimited ? 1 : 0, d.openedGrant ?? null);
     return this.get(id)!;
   }
 
@@ -70,16 +70,18 @@ export class DiscussionStore {
     return (this.db.prepare(sql).all() as DiscussionRow[]).map(toDiscussion);
   }
 
-  posts(id: string): Post[] {
+  posts(id: string): StoredPost[] {
     return (this.db.prepare('SELECT * FROM discussion_posts WHERE discussion_id = ? ORDER BY round, created_at, id')
       .all(id) as PostRow[]).map(toPost);
   }
 
-  addPost(p: Omit<Post, 'id' | 'createdAt'>): Post {
+  addPost(input: Omit<Post, 'id' | 'createdAt'> & { grantId?: string | null }): StoredPost {
+    const p = { ...input, grantId: input.grantId ?? null };
     const createdAt = this.ts();
-    const info = this.db.prepare(`INSERT INTO discussion_posts(discussion_id, round, kind, author, model, voice_key, text, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(p.discussionId, p.round, p.kind, p.author, p.model, voiceKey(p.author, p.model), p.text, createdAt);
+    const info = this.db.prepare(`INSERT INTO discussion_posts(discussion_id, round, kind, author, model, voice_key, text, created_at, grant_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      // The one-reply-per-round index runs on this key: the grant, when there is one, so a namesake cannot take the slot.
+      .run(p.discussionId, p.round, p.kind, p.author, p.model, p.grantId ? `grant:${p.grantId}\u0000${p.model.trim().toLowerCase().replace(/\s+/g, ' ')}` : voiceKey(p.author, p.model), p.text, createdAt, p.grantId);
     return { ...p, id: Number(info.lastInsertRowid), createdAt };
   }
 

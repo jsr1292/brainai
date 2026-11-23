@@ -485,7 +485,30 @@ fn check(app: &AppHandle) -> Result<Option<Update>, tauri_plugin_updater::Error>
     let leaving = app.clone();
     builder = builder.on_before_exit(move || leaving.state::<Running>().quitting.store(true, Ordering::SeqCst));
     let updater = builder.build()?;
-    tauri::async_runtime::block_on(updater.check())
+    // The plugin already offers a build only when the manifest's version is newer than ours; this repeats the rule as
+    // defence in depth, in the way the rest of the app counts versions. It is not a fix for the downgrade risk: the
+    // signature covers the build, not the manifest's version, and the plugin gives no access to the version inside
+    // the signed artefact, so a manifest that lies about a higher version for an old, genuinely signed build still
+    // installs a downgrade. Signing the manifest would close it (review finding 8 stays open).
+    Ok(tauri::async_runtime::block_on(updater.check())?.filter(|u| manifest_is_newer(&u.version, &u.current_version)))
+}
+
+/// Whether a manifest's version is strictly newer than the running one. A release is newer than a pre-release of the
+/// same x.y.z (1.10.2-rc.1 to 1.10.2 is offered); `newer` alone reads the two as equal.
+fn manifest_is_newer(manifest: &str, running: &str) -> bool {
+    if newer(manifest, running) {
+        return true;
+    }
+    let pre = |v: &str| v.trim().split_once('-').map(|(_, p)| p.to_string());
+    // Neither is newer by number: the same x.y.z, so only the pre-release part can tell them apart.
+    if newer(running, manifest) {
+        return false;
+    }
+    match (pre(manifest), pre(running)) {
+        (None, Some(_)) => true,
+        (Some(m), Some(r)) => m > r,
+        _ => false,
+    }
 }
 
 /// The endpoint a check asked: BRAINAI_UPDATE_ENDPOINT when set, else the first of tauri.conf.json's.
@@ -1173,6 +1196,18 @@ mod tests {
         assert!(!newer("1.2.0", "1.2.0"));
         assert!(newer("2", "1.9.9"), "missing parts are 0");
         assert!(!newer("x.y.z", "0.0.0"), "parseInt('x') is NaN, so 0");
+    }
+
+    #[test]
+    fn a_manifest_that_is_not_strictly_newer_is_refused() {
+        assert!(manifest_is_newer("1.10.3", "1.10.2"));
+        assert!(!manifest_is_newer("1.10.2", "1.10.2"));
+        assert!(!manifest_is_newer("1.9.0", "1.10.2"), "a downgrade");
+        assert!(!manifest_is_newer("1.10.2-rc.1", "1.10.2"));
+        assert!(manifest_is_newer("1.10.2", "1.10.2-rc.1"), "a release replaces its own pre-release");
+        assert!(manifest_is_newer("1.10.2-rc.2", "1.10.2-rc.1"));
+        assert!(!manifest_is_newer("1.10.2-rc.1", "1.10.2-rc.1"));
+        assert!(manifest_is_newer("1.10.3-rc.1", "1.10.2"));
     }
 
     #[test]

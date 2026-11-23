@@ -21,7 +21,7 @@ import type { GrowthService } from '../growth/service.js';
 import { GROWTH_AREA_LABELS, GROWTH_AREAS, GROWTH_KINDS, GrowthError, MAX_PRACTISE, MAX_WHAT, type GrowthArea } from '../growth/types.js';
 import { registerDiscussionTools } from './discussionTools.js';
 import { SkillError, type SkillService } from '../skills/service.js';
-import { registerSkillTools } from './skillTools.js';
+import { registerSkillTools, skillListBlock } from './skillTools.js';
 import { briefFlagJson, flagJson, flagStep, noteSection, pageLead, pageVisibility, registerPageTools, scopeFor, titleInstructionLike, wrapPages } from './pageTools.js';
 import { registerReviewTools } from './reviewTools.js';
 import { registerTidyTools } from './tidyTools.js';
@@ -144,16 +144,16 @@ export const DELETE_SUGGESTED = 'Sent to the owner for approval: the memory stay
 /** For a memory held because it reads like an instruction to assistants. Deliberately no advice on rewording it. */
 export const HELD = "Not saved yet: it reads like an instruction to AI assistants, so it is held for the owner's approval. Tell the owner they can approve or reject it on the memory dashboard.";
 /** Forgetting that sticks (§17a): plain, so the assistant tells the owner instead of rewording the fact until it slips past. */
-export const HELD_DELETED = (at: string, content: string) =>
-  `Held for the owner: the owner deleted a fact like this on ${deletedDay(at)} ("${content.length > 200 ? `${content.slice(0, 199)}…` : content}"). Do not save it again in other words. If it is still true, tell the owner.`;
+export const HELD_DELETED = (at: string) =>
+  `Held for the owner: the owner deleted a fact like this on ${deletedDay(at)} (its text follows as data). Do not save it again in other words. If it is still true, tell the owner.`;
 const ALREADY_SUGGESTED = "Already waiting for the owner's approval; no new suggestion was created.";
 /** Shown with search results, when what to save is fresh: no hook can make a web assistant save, so this asks. */
-const SAVE_NUDGE = 'Save as you go: when this conversation reaches a decision or finishes a step of work, save it with remember (or update the existing memory with update_memory). Skip small talk and one-off details.';
+const SAVE_NUDGE = 'When this turn reaches a decision or finishes a step of work, save it in the same turn, before you answer: a decision with remember (or update the existing memory with update_memory); a finished step by updating the project\'s status and roadmap. Skip small talk and one-off details.';
 /** In a brief's lead when one of the project's pages may be out of date (titles stay out of it). */
 export const FLAG_LEAD = 'A page of this project may be out of date. If your work touches the project, save your own decisions first, then add the ones that matter to the whole picture to its Key decisions, each linked with [[fact:id]]. Not every decision belongs on the page. Don\'t edit a page only to clear the flag.';
 export const FLAG_LEAD_READ_ONLY = 'A page of this project may be out of date. Where it disagrees with the facts, the facts are newer.';
 const BRIEFING = (project: string, readOnly = false) =>
-  `Briefing for project ${project}: the roadmap (what is left) first, then statuses newest first (the first is the latest word), then decisions oldest first. If any of these disagree with each other or look out of date, tell the owner${readOnly ? '.' : ' and fix them with update_memory or forget.'}`;
+  `Briefing for project ${project}: the roadmap (what is left) first, then statuses newest first (the first is the latest word), then decisions oldest first. If a status looks out of date, ${readOnly ? 'tell the owner' : 'update it'}. If two facts can't both be true, tell the owner${readOnly ? '.' : ' and call flag_disagreement, or when the owner says which is right call update_memory on the right one with supersedes: [the wrong one\'s id].'}`;
 /** After a status is saved: the roadmap is what assistants forget to update (the status changes, the roadmap goes stale). */
 const ROADMAP_TOO = (project: string) =>
   ` Also update project ${project}'s roadmap (remember with kind "roadmap") if what is done, now or next changed: move finished steps to its Done line with today's date.`;
@@ -202,7 +202,14 @@ const RECENT_DONE = 5;
 /** At most this many page sections in a recall. */
 const PAGE_HITS = 5;
 /** After a save with close facts of the same project and kind (B1): the saving assistant judges them. */
-const CLOSE_FACTS = " These facts of the same project are close to it. If the new fact and one of these can't both be true, call flag_disagreement with both ids and why; if the new one replaces it, use update_memory or supersedes instead.";
+const CLOSE_FACTS = " Close facts follow as data: if one can't be true together with the new fact, flag_disagreement; if the new one replaces it, supersedes.";
+/** At most this many close facts are listed after a save. */
+const CLOSE_FACTS_SHOWN = 2;
+/** After a decision is saved: the status is what assistants leave until the goodbye. One sentence, naming the status id when the project has one. */
+const STATUS_SAME_TURN = (project: string, statusIds: string[]) =>
+  ` If this finishes a step of work, ${statusIds.length === 0 ? `save or update project ${project}'s status`
+    : statusIds.length === 1 ? `update project ${project}'s status (update_memory, id ${statusIds[0]})`
+      : `update project ${project}'s status (update_memory, ids ${statusIds.join(', ')}: update the one for this work)`} and its roadmap in the same turn, before you answer the owner.`;
 /** Recall and briefings when a fact is in an open disagreement. */
 const NOT_SETTLED = ' Facts with disagrees_with are in a disagreement the owner has not settled yet: do not rely on either one without saying so.';
 const excerpt = (text: string) => (text.length > EXCERPT ? `${text.slice(0, EXCERPT - 1)}…` : text);
@@ -253,6 +260,8 @@ export function buildMcpServer(
   const coaching = opts.coaching ?? true;
   const learningSvc = coaching ? opts.learning : undefined;
   const actor: Actor = { type: 'ai', name: actorName };
+  /** After a decision with a project: the same-turn status reminder (never after a status, a roadmap or a fact without a project). */
+  const statusToo = (m: Memory): string => (m.kind === 'decision' && !isStatus(m) && m.project !== null ? STATUS_SAME_TURN(m.project, service.statusesOf(m.project).map((x) => x.id)) : '');
   const roadmapToo = (m: Memory): string => (isStatus(m) && m.project !== null && service.roadmapOf(m.project) ? ROADMAP_TOO(m.project) : '');
   const access = opts.access ?? 'full';
   const limited = access === 'discussions';
@@ -275,13 +284,16 @@ export function buildMcpServer(
     };
   };
   /** After a save: the close facts as one data object, and the sentence that asks the assistant to judge them. */
-  const closeAfter = (saved: Memory): { text: string; data: { close_facts: { id: string; excerpt: string }[] }[] } => {
+  const closeAfter = (saved: Memory, replaced = false): { text: string; data: { close_facts: { id: string; excerpt: string }[] }[] } => {
+    // Nothing when the save already replaced older facts: the assistant has settled what it conflicts with.
+    if (replaced) return { text: '', data: [] };
     // Only writers get here (a read-only connection never saves), so every close fact is theirs to see.
-    const close = service.closeFacts(saved.id);
+    const close = service.closeFacts(saved.id, CLOSE_FACTS_SHOWN, true);
     return close.length === 0 ? { text: '', data: [] } : { text: CLOSE_FACTS, data: [{ close_facts: close.map((c) => ({ id: c.memory.id, excerpt: excerpt(c.memory.content) })) }] };
   };
   /** A fact as a result row: its fields, and its date and source when it has them. */
-  const memJson = (m: Memory) => ({ ...memoryJson(m), ...metaJson(m, service.isPastDate(m)) });
+  const instructionMark = (m: Memory): { contains_instructions?: true } => (looksLikeInstruction(m.content) !== null ? { contains_instructions: true } : {});
+  const memJson = (m: Memory) => ({ ...memoryJson(m), ...metaJson(m, service.isPastDate(m)), ...instructionMark(m) });
   const pageVisible = pageVisibility(service, readable);
   /** Another fact's excerpt, only when this connection can read its project (a fact moved across projects never leaks). */
   const peek = (m: Memory) => (visible(m.project) ? excerpt(m.content) : null);
@@ -314,7 +326,7 @@ export function buildMcpServer(
     pages: ordered.map((p) => {
       const lead = pageLead(opts.pages, p);
       const flag = flagJson(flags.get(p.id));
-      return { id: p.id, title: p.title, version: p.version, summary: lead.summary, summary_contains_instructions: lead.instructionLike, may_be_out_of_date: forBrief ? briefFlagJson(flag) : flag };
+      return { id: p.id, title: p.title, version: p.version, summary: lead.summary, ...(lead.instructionLike ? { summary_contains_instructions: true } : {}), may_be_out_of_date: forBrief ? briefFlagJson(flag) : flag };
     }),
     open_notes: opts.notes.openForProject(project).filter((x) => pageVisible(x.page))
       .map(({ note, page: p }) => ({ id: note.id, page_id: p.id, page_title: p.title, ...noteSection(opts.pages, note), text: note.text, created_at: note.createdAt })),
@@ -418,7 +430,7 @@ export function buildMcpServer(
   };
 
   if (opts.discussions && !readOnly) {
-    registerDiscussionTools(server, opts.discussions, (model) => ({ name: actorName, model, access }), guard,
+    registerDiscussionTools(server, opts.discussions, (model) => ({ name: actorName, model, access, grantId: opts.grantId }), guard,
       { commands: opts.askCommands?.() ?? {}, memory: opts.localMode ? 'brainai' : 'shared-memory' });
   }
   if (limited) return server;
@@ -426,7 +438,7 @@ export function buildMcpServer(
   if (!readOnly) server.registerTool('load_profile', {
     title: 'Load profile',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    description: "Returns the BrainAI operating rules (from the server, as the first block) and the owner's approved profile memories, with project nicknames and open notes on pages without a project. Call it at the start of every conversation. setup: the setup number from the owner's setup text, when it gives one; passing it records that setup version and the time on this connection.",
+    description: "Returns the BrainAI operating rules (from the server, as the first block), the owner's approved profile memories, the names and descriptions of the skills the owner turned on (load one with load_skill when the task matches), with project nicknames and open notes on pages without a project. Call it at the start of every conversation. setup: the setup number from the owner's setup text, when it gives one; passing it records that setup version and the time on this connection.",
     inputSchema: { setup: z.number().int().min(1).max(1000).optional() },
   }, guard('load_profile', (a: { setup?: number }) => {
     if (a.setup !== undefined) opts.onSetup?.(a.setup);
@@ -448,7 +460,8 @@ export function buildMcpServer(
     // Notes on pages without a project have no brief to appear in, so every conversation hears of them here.
     // B4: the everyday names of open projects, so an assistant searches and saves under the real name.
     const named = registry.list().filter((p) => p.nicknames.length > 0 && p.state !== 'archived').map((p) => `${p.nicknames.join(', ')} → ${p.name}`);
-    const profileBlock = `${profile}${disagreements}`;
+    const skillList = opts.skills && access === 'full' ? skillListBlock(opts.skills) : null;
+    const profileBlock = `${profile}${disagreements}${skillList === null ? '' : `\n${skillList}`}`;
     const withNames = named.length === 0 ? profileBlock : `${profileBlock}\n${wrapData("Project nicknames (use the project's name in recall and saves)", 'nicknames', named)}`;
     const loose = opts.notes.openWithoutProject();
     const data = loose.length === 0 ? withNames
@@ -524,15 +537,20 @@ export function buildMcpServer(
     // Worked out at this connection's scope, once for the hits' pages.
     const flags = opts.pages.freshness.forPages([...new Map(sections.map((h) => [h.page.id, h.page])).values()], scopeFor(service, readable, false));
     return text(`${(facts.content[0] as { text: string }).text}\nPage sections that match: open one with read_page (id and section).\n${wrapPages(sections.map((h) => ({
-      page_id: h.page.id, title: h.page.title, project: h.page.project, section: h.anchor, heading: h.heading, heading_path: h.headingPath, snippet: h.snippet, contains_instructions: h.instructionLike || titleInstructionLike(h.page), version: h.page.version,
+      page_id: h.page.id, title: h.page.title, project: h.page.project, section: h.anchor, heading: h.heading, heading_path: h.headingPath, snippet: h.snippet, ...(h.instructionLike || titleInstructionLike(h.page) ? { contains_instructions: true } : {}), version: h.page.version,
       ...(flags.get(h.page.id) ? { page_may_be_out_of_date: true } : {}),
     })))}`);
   }));
 
   /** What a held or suggested save answers: the deleted fact it matched (§17a), an instruction-like hold, or a profile suggestion. */
+  /** The deleted fact a held save matched, as data: stored text never sits inside the tool's own sentence. */
+  const heldData = (sg: Suggestion): { deleted_fact: { text: string } }[] => {
+    const gone = sg.deletedMatch ? service.get(sg.deletedMatch) : undefined;
+    return gone?.deletedAt ? [{ deleted_fact: { text: gone.content.length > 200 ? `${gone.content.slice(0, 199)}…` : gone.content } }] : [];
+  };
   const heldText = (sg: Suggestion): string => {
     const gone = sg.deletedMatch ? service.get(sg.deletedMatch) : undefined;
-    if (gone?.deletedAt) return HELD_DELETED(gone.deletedAt, gone.content);
+    if (gone?.deletedAt) return HELD_DELETED(gone.deletedAt);
     if (sg.reason === HOLD_REASON) return sg.action === 'delete' ? DELETE_HELD_FOR_REVIEW : HELD_FOR_REVIEW;
     return sg.reason ? HELD : SUGGESTED;
   };
@@ -572,8 +590,8 @@ export function buildMcpServer(
       );
       if (r.status === 'saved') {
         const nudge = nudgeAfter(before, r.memory);
-        const close = closeAfter(r.memory);
-        return withData(`${downgraded(a.source, r.memory.source) ? `${DOWNGRADED('Saved')} ` : ''}${REPLACES(r.replaced.length, 'Saved')}${pastNote(r.memory, service.isPastDate(r.memory))}${roadmapToo(r.memory)}${nudge.text}${close.text}${growthHint(r.memory)}`, [memJson(r.memory), ...nudge.data, ...close.data]);
+        const close = closeAfter(r.memory, r.replaced.length > 0);
+        return withData(`${downgraded(a.source, r.memory.source) ? `${DOWNGRADED('Saved')} ` : ''}${REPLACES(r.replaced.length, 'Saved')}${pastNote(r.memory, service.isPastDate(r.memory))}${roadmapToo(r.memory)}${nudge.text}${statusToo(r.memory)}${close.text}${growthHint(r.memory)}`, [memJson(r.memory), ...nudge.data, ...close.data]);
       }
       if (r.status === 'similar_exists') return withData(SIMILAR, r.similar.map((s) => memJson(s.memory)));
       if (r.status === 'status_exists') return withData(STATUS_EXISTS(r.statuses), r.statuses.map(memJson));
@@ -583,7 +601,7 @@ export function buildMcpServer(
       if (r.status === 'was_replaced') {
         return withData(WAS_REPLACED(r.at, r.current.id), [{ replaced: { id: r.replaced.id, content: r.replaced.content }, current: { id: r.current.id, content: r.current.content } }]);
       }
-      return withData(`${heldText(r.suggestion)}${downgraded(a.source, service.heldOutcome(r.suggestion).source) ? ` Its source is stored as inferred: owner_said needs the owner's own words in source_note.` : ''}`, [suggestionJson(r.suggestion)]);
+      return withData(`${heldText(r.suggestion)}${downgraded(a.source, service.heldOutcome(r.suggestion).source) ? ` Its source is stored as inferred: owner_said needs the owner's own words in source_note.` : ''}`, [suggestionJson(r.suggestion), ...heldData(r.suggestion)]);
     }));
 
     // B1: harvest. Every item becomes a held suggestion for the owner; nothing is saved by this call.
@@ -646,11 +664,11 @@ export function buildMcpServer(
       const r = await service.update(a.id, { content: a.content, project: givenProject(a.project), tags: a.tags, keys: a.keys, meta: metaInput(a), newProject: a.new_project, supersedes: a.supersedes }, actor, { base: a.base_updated_at, hold: hold() });
       if (r.status === 'updated') {
         const nudge = nudgeAfter(before, r.memory);
-        const close = closeAfter(r.memory);
-        return withData(`${downgraded(a.source, r.memory.source) ? `${DOWNGRADED('Updated')} ` : ''}${REPLACES(r.replaced.length, 'Updated')}${pastNote(r.memory, service.isPastDate(r.memory))}${roadmapToo(r.memory)}${nudge.text}${close.text}${a.content !== undefined ? growthHint(r.memory) : ''}`, [memJson(r.memory), ...nudge.data, ...close.data]);
+        const close = closeAfter(r.memory, r.replaced.length > 0);
+        return withData(`${downgraded(a.source, r.memory.source) ? `${DOWNGRADED('Updated')} ` : ''}${REPLACES(r.replaced.length, 'Updated')}${pastNote(r.memory, service.isPastDate(r.memory))}${roadmapToo(r.memory)}${nudge.text}${a.content !== undefined ? statusToo(r.memory) : ''}${close.text}${a.content !== undefined ? growthHint(r.memory) : ''}`, [memJson(r.memory), ...nudge.data, ...close.data]);
       }
       if (r.status === 'new_project') return withData(NEW_PROJECT(r.project), r.candidates);
-      return withData(`${heldText(r.suggestion)}${downgraded(a.source, service.heldOutcome(r.suggestion).source) ? ` Its source is stored as inferred: owner_said needs the owner's own words in source_note.` : ''}`, [suggestionJson(r.suggestion)]);
+      return withData(`${heldText(r.suggestion)}${downgraded(a.source, service.heldOutcome(r.suggestion).source) ? ` Its source is stored as inferred: owner_said needs the owner's own words in source_note.` : ''}`, [suggestionJson(r.suggestion), ...heldData(r.suggestion)]);
     }));
 
     server.registerTool('forget', {
@@ -667,8 +685,8 @@ export function buildMcpServer(
     server.registerTool('flag_disagreement', {
       title: 'Flag a disagreement',
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-      description: "Says two facts (by id) can't both be true, when you can't tell which one is right: the owner settles it on the dashboard. "
-        + 'If you know the newer one is right, use update_memory or supersedes instead. why: a few words on what they disagree about (at most 300 characters).',
+      description: "Says two facts (by id) can't both be true and the owner hasn't said which is right: the owner settles it on the dashboard. "
+        + 'If the owner told you which is right, or your new fact replaces an older one, use supersedes instead. why: a few words on what they disagree about (at most 300 characters).',
       inputSchema: { a: z.string(), b: z.string(), why: z.string() },
     }, guard('flag_disagreement', (a: { a: string; b: string; why: string }) => {
       const r = service.flagDisagreement(a.a, a.b, a.why, actor);
@@ -827,7 +845,7 @@ export function buildMcpServer(
       const handbookOthers = (learn.handbook ?? []).filter((t) => !t.here).map((t) => ({ title: t.title, level: t.level }));
       const fullRow = (m: Memory) => ({ ...memJson(m), ...keysJson(m), ...replacesJson(m), ...mark(m) });
       const cutRow = (m: Memory, len: number) => ({
-        id: m.id, content: m.content.length > len ? `${m.content.slice(0, len - 1)}…` : m.content, excerpt: true, date: m.createdAt.slice(0, 10), ...keysJson(m), ...metaJson(m, service.isPastDate(m), false), ...mark(m),
+        id: m.id, content: m.content.length > len ? `${m.content.slice(0, len - 1)}…` : m.content, excerpt: true, date: m.createdAt.slice(0, 10), ...keysJson(m), ...metaJson(m, service.isPastDate(m), false), ...instructionMark(m), ...mark(m),
       });
       const rows = { statuses: statuses.map((m) => ({ full: fullRow(m), m })), decisions: decisions.map((m, i) => ({ full: fullRow(m), m, i })) };
       const healthJsonOnce = healthData(project);

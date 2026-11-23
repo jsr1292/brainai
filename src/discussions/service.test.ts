@@ -533,3 +533,34 @@ test('an assistant closing with a decision close to one the owner deleted is ref
   assert.equal(memStore.listSuggestions('pending').length, 0);
   assert.equal(svc.ownerView(d2.id).closed, false);
 });
+
+const grant = (name: string, model: string, grantId: string, access: 'full' | 'discussions' = 'full'): Caller => ({ name, model, access, grantId });
+
+test('the opener is known by its grant: a namesake connection is not the opener (security review #12)', () => {
+  const { svc } = setup();
+  const d = svc.open(grant('Claude Code', 'Opus', 'g-real'), { ...A, ask: ['Codex'] });
+  assert.equal(svc.read(grant('Claude Code', 'Opus', 'g-real'), d.id).callerIsOpener, true);
+  assert.equal(svc.read(grant('Claude Code', 'Opus', 'g-impostor', 'discussions'), d.id).callerIsOpener, false);
+  assert.equal(svc.read(who('Claude Code', 'Opus'), d.id).callerIsOpener, false, 'no grant against a discussion opened with one');
+  // Older discussions (no grant recorded) still compare names.
+  const old = svc.open(who('Claude Code', 'Opus'), A);
+  assert.equal(svc.read(grant('Claude Code', 'Opus', 'g-any'), old.id).callerIsOpener, true);
+  assert.equal(svc.read(who('Other', 'x'), old.id).callerIsOpener, false);
+});
+
+test('a namesake cannot take another connection\'s reply slot, and no grant id leaves the service', () => {
+  const { svc } = setup();
+  const d = svc.open(who('Claude Code', 'Opus'), { ...A, ask: ['Codex', 'Grok'] });
+  svc.reply(grant('Codex', 'GPT-5', 'g1'), d.id, { text: 'first' });
+  // Same name and model, another connection: its own reply, not "already replied", and it is still blind.
+  assert.equal(svc.read(grant('Codex', 'GPT-5', 'g2'), d.id).stage, 'blind');
+  svc.reply(grant('Codex', 'GPT-5', 'g2'), d.id, { text: 'second' });
+  // The same connection twice is refused.
+  assert.throws(() => svc.reply(grant('Codex', 'GPT-5', 'g1'), d.id, { text: 'again' }), code('invalid', /already replied/));
+  assert.equal(svc.read(grant('Codex', 'GPT-5', 'g1'), d.id).stage, 'replied');
+  const view = svc.read(grant('Codex', 'GPT-5', 'g1'), d.id);
+  assert.doesNotMatch(JSON.stringify(view), /grantId|"g1"|"g2"/);
+  assert.doesNotMatch(JSON.stringify(svc.ownerView(d.id)), /grantId|"g1"|"g2"/);
+  // A caller without a grant is not the voice of a post written with one.
+  assert.equal(svc.read(who('Codex', 'GPT-5'), d.id).stage, 'blind');
+});

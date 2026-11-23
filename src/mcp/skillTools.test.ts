@@ -24,7 +24,8 @@ async function connect(access: 'full' | 'discussions' | 'projects' = 'full') {
     const r: any = await client.callTool({ name, arguments: args }); return { text: r.content[0].text as string, isError: !!r.isError };
   };
   const names = async () => (await client.listTools().then((r) => r.tools.map((t) => t.name), () => [] as string[]));
-  return { call, names, skills, pages };
+  const blocks = async (name: string) => ((await client.callTool({ name, arguments: {} })) as any).content.map((b: any) => b.text as string);
+  return { call, names, skills, pages, blocks };
 }
 const deploy = { name: 'brain-deploy', description: 'Use when deploying brainai to the mini PC.', body: '1. Back up.\n2. Tag, merge, push.' };
 
@@ -92,4 +93,37 @@ test('a skill never shows in recall, list_pages or read_page', async () => {
   for (const [tool, args] of [['recall', { query: 'wildlog deploy runbook' }], ['list_pages', {}], ['read_page', { title: 'wildlog-runbook' }]] as const) {
     assert.doesNotMatch((await call(tool, args)).text, /wildlog deploy steps|wildlog-runbook/, tool);
   }
+});
+
+test('load_profile lists the skills that are On (name and short description, in the approved envelope) and keeps list_skills working', async () => {
+  const { call, skills, blocks } = await connect();
+  const on = skills.create(deploy, 'owner');
+  skills.setEnabled(on.id, true, 'owner');
+  skills.create({ ...deploy, name: 'release-notes', description: 'Use when writing release notes.' }, 'owner');
+  const long = skills.create({ ...deploy, name: 'long-one', description: 'x'.repeat(300) }, 'owner');
+  skills.setEnabled(long.id, true, 'owner');
+  const [rules, data] = await blocks('load_profile');
+  assert.match(rules!, /^BrainAI operating rules/);
+  assert.match(data!, /Skills approved by the owner \([^)]*\):\n<skills>/);
+  const list = JSON.parse(data!.slice(data!.indexOf('<skills>\n') + 9, data!.indexOf('\n</skills>')));
+  assert.deepEqual(list.map((x: any) => x.name).sort(), ['brain-deploy', 'long-one']);
+  assert.equal(list.find((x: any) => x.name === 'brain-deploy').description, 'Use when deploying brainai to the mini PC.');
+  assert.ok(list.find((x: any) => x.name === 'long-one').description.length <= 160);
+  assert.doesNotMatch(data!, /release-notes/, 'a skill that is Off is not listed');
+  assert.match((await call('list_skills')).text, /brain-deploy/);
+});
+
+test('load_profile has no skills block when none is On', async () => {
+  const { skills, blocks } = await connect();
+  skills.create(deploy, 'owner');
+  assert.doesNotMatch((await blocks('load_profile')).join('\n'), /<skills>/);
+});
+
+test('load_profile lists at most 30 skills, then says how many more and to call list_skills', async () => {
+  const { skills, blocks } = await connect();
+  for (let i = 0; i < 33; i++) skills.setEnabled(skills.create({ ...deploy, name: `skill-${i}` }, 'owner').id, true, 'owner');
+  const data = (await blocks('load_profile'))[1]!;
+  const list = JSON.parse(data.slice(data.indexOf('<skills>\n') + 9, data.indexOf('\n</skills>')));
+  assert.equal(list.length, 30);
+  assert.match(data, /\n3 more: call list_skills\.$/);
 });

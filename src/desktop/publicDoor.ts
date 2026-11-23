@@ -4,14 +4,44 @@
  * says, so a request from the tunnel can never pass as one from this Mac. A Funnel left behind (BrainAI quit, a failed
  * Turn off, a reinstall) reaches a closed port instead of the dashboard.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createServer, type IncomingMessage, type RequestListener, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 const throughDoor = new WeakSet<IncomingMessage>();
+/** Set for everything done while answering a request that came through the door (also across awaits), so a check deep inside, such as the session store's, cannot forget to ask. */
+const doorContext = new AsyncLocalStorage<true>();
+
+/** True while a request that came through the public door is being answered. */
+export function inDoorRequest(): boolean {
+  return doorContext.getStore() === true;
+}
 
 /** True for a request that came in through the public door. */
 export function viaDoor(req: IncomingMessage): boolean {
   return throughDoor.has(req);
+}
+
+/**
+ * True when a request path names the desktop app's own endpoints (/app and under it), however it is written: any letter case,
+ * %-encoded letters, doubled or dot-segment slashes, a backslash. Used where the door must refuse them, so it errs wide:
+ * anything that decodes (even twice) or normalises to /app is one, and an undecodable path counts as one.
+ */
+export function isAppPath(path: string): boolean {
+  let p = path;
+  try {
+    for (let i = 0; i < 2; i++) p = decodeURIComponent(p);
+  } catch { return true; }
+  p = p.toLowerCase().replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+  // The first real segment of the path as written is judged before any '..' is resolved, so '/app/..' or '/app/x/../..' cannot
+  // pop it away.
+  if (p.split('/').find((seg) => seg !== '' && seg !== '.') === 'app') return true;
+  const parts: string[] = [];
+  for (const seg of p.split('/')) {
+    if (seg === '..') parts.pop();
+    else if (seg !== '.' && seg !== '') parts.push(seg);
+  }
+  return parts[0] === 'app';
 }
 
 export class PublicDoor {
@@ -30,7 +60,7 @@ export class PublicDoor {
     if (open !== null) return open;
     const server = createServer((req, res) => {
       throughDoor.add(req);
-      this.handler(req, res);
+      doorContext.run(true, () => this.handler(req, res));
     });
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);

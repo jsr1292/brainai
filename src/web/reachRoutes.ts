@@ -7,10 +7,10 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import QRCode from 'qrcode';
-import { SESSION_DAYS } from '../auth/sessions.js';
+import { originOf, sessionDays, type SessionOrigin } from '../auth/sessions.js';
 import { generateTotpSecret, otpauthUri, totpAt } from '../auth/totp.js';
 import type { AppDeps } from './app.js';
-import { requireOwner, SESSION_COOKIE, sessionCookieOptions } from './authRoutes.js';
+import { readCookie, requireOwner, SESSION_COOKIE, sessionCookieOptions } from './authRoutes.js';
 import { html, page } from './html.js';
 import { t } from '../i18n/core.js';
 import { tHtml } from '../i18n/tHtml.js';
@@ -122,7 +122,13 @@ export function reachRoutes(d: AppDeps): Router {
     gateOf(d).gen++;
     stopRetry();
     runner?.stop();
-    if (!windows && d.reach?.saved() && d.reach.via() === 'tailscale') funnelOffSync(ts);
+    if (!windows && d.reach?.saved() && d.reach.via() === 'tailscale' && !funnelOffSync(ts)) {
+      // Tailscale did not confirm within the 3 seconds (slow, hung, or not answering): the share may still point at the door's
+      // port, which another program could take. Leave the marker so the next start turns it off first (it exists for
+      // the same case in Turn off). Synchronous: this runs in process 'exit'.
+      const marker = pendingOff(d);
+      if (marker) { try { writeFileSync(marker, ''); } catch { /* nowhere to say it: the next start's own check still runs */ } }
+    }
   });
   let signing: SignInRun | null = null;
   // Reach from phone and web is Mac-only in D6: on Windows nothing here runs tailscale or cloudflared.
@@ -134,8 +140,11 @@ export function reachRoutes(d: AppDeps): Router {
 
   /** A new password or authenticator signs every browser out: this one gets a fresh session, so the owner stays in. */
   const keepSignedIn = (req: Request, res: Response) => {
-    const token = d.sessions.create(req.get('user-agent'));
-    res.cookie(SESSION_COOKIE, token, { ...sessionCookieOptions(d.publicUrl), maxAge: SESSION_DAYS * 86_400_000 });
+    // The new session is made where the old one was: the window stays a window session.
+    const origin: SessionOrigin = viaDoor(req) || !d.localMode ? 'door' : (originOf(readCookie(req, SESSION_COOKIE) ?? '') === 'app' ? 'app' : 'local');
+    const token = d.sessions.create(req.get('user-agent'), origin);
+    const secure = sessionCookieOptions(d.publicUrl);
+    res.cookie(SESSION_COOKIE, token, { ...secure, secure: secure.secure || viaDoor(req), maxAge: sessionDays(origin) * 86_400_000 });
   };
   const back = (res: Response, text: string | (() => string) | null) => { said = text; res.redirect(303, '/settings/reach'); };
 

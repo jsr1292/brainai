@@ -608,7 +608,7 @@ test('when an app is already connected, consent preselects no access level and n
   const second = await startAuthorize(app, 'ChatGPT');
   // Already connected with full access: a second account (the work one) must not get Full by a quick click.
   assert.doesNotMatch(await (await f(second.consent)).text(), /<input[^>]*type="radio"[^>]*name="access"[^>]* checked/);
-  assert.equal((await f(second.consent, { method: 'POST', body: new URLSearchParams([['decision', 'approve'], ['access', 'projects'], ['projects', 'trellis']]) })).status, 302);
+  assert.equal((await f(second.consent, { method: 'POST', body: new URLSearchParams([['decision', 'approve'], ['name', 'ChatGPT work'], ['access', 'projects'], ['projects', 'trellis']]) })).status, 302);
   const third = await startAuthorize(app, 'ChatGPT');
   const body = await (await f(third.consent)).text();
   assert.doesNotMatch(body, /<input[^>]*type="radio"[^>]*name="access"[^>]* checked/);
@@ -773,4 +773,20 @@ test('the Tidy up lede says anything changed there can be undone', async (t) => 
   await app.deps.service.remember({ kind: 'summary', content: 'The cellar is dry', project: 'wildlog' }, { type: 'owner' });
   const f = await loggedIn(app);
   assert.match(await (await f('/facts/tidy')).text(), /<p class="lede">What could be cleaner in memory, so assistants find the right thing\. Anything you change here can be undone\.<\/p>/);
+});
+
+
+test('changing a connection to an access level where another live connection has its name is a 400 with a message, not a crash', async (t) => {
+  const app = await start(t);
+  const f = await loggedIn(app);
+  await connectClient(app.baseUrl, f, 'ChatGPT');
+  await connectClient(app.baseUrl, f, 'Grok');
+  const grants = app.deps.provider.listGrants();
+  const a = grants.find((g) => app.deps.provider.grantName(g.id) === 'ChatGPT')!;
+  const b = grants.find((g) => g.id !== a.id)!;
+  app.deps.provider.setGrantName(b.id, 'ChatGPT');
+  const r = await f(`/clients/${a.id}/access`, form({ access: 'discussions' }));
+  assert.equal(r.status, 400);
+  assert.match(await r.text(), /different access level/);
+  assert.equal(app.deps.provider.grantAccess(a.id), 'full');
 });

@@ -13,16 +13,16 @@ import { buildMcpServer } from './server.js';
 
 const TOOLS = ['close_discussion', 'edit_page_section', 'flag_disagreement', 'forget', 'list_discussions', 'list_pages', 'list_projects', 'load_profile', 'note_observation', 'open_discussion', 'project_brief', 'read_discussion', 'read_page', 'recall', 'recent_work', 'remember', 'reply_to_discussion', 'resolve_note', 'set_project_info', 'suggest_memories', 'update_memory', 'whats_left', 'write_page'];
 
-function setup(opts: { askCommands?: () => Record<string, string>; localMode?: boolean } = {}) {
+function setup(opts: { askCommands?: () => Record<string, string>; localMode?: boolean } = {}, live: Map<string, 'live' | 'gone-full' | 'gone-other' | 'missing'> | null = null) {
   const given = makeService();
   const { service, db } = given;
   const growth = makeGrowth(given);
   const pages = makePages(given);
   const notes = new NoteService(db, pages, () => new Date());
-  const discussions = new DiscussionService(new DiscussionStore(db, () => new Date()), service, () => [], () => new Date());
-  const connect = async (name: string, access: Access = 'full') => {
+  const discussions = new DiscussionService(new DiscussionStore(db, () => new Date()), service, () => [], () => new Date(), live ? (id) => live.get(id) ?? 'missing' : undefined);
+  const connect = async (name: string, access: Access = 'full', grantId?: string) => {
     const [ct, st] = InMemoryTransport.createLinkedPair();
-    await buildMcpServer(service, name, { registry: new ProjectStore(db, () => new Date()), growth, pages, notes, discussions, access, ...opts }).connect(st);
+    await buildMcpServer(service, name, { registry: new ProjectStore(db, () => new Date()), growth, pages, notes, discussions, access, grantId, ...opts }).connect(st);
     const client = new Client({ name: 't', version: '0' }); await client.connect(ct);
     const call = async (tool: string, args: Record<string, unknown> = {}) => {
       const r: any = await client.callTool({ name: tool, arguments: args }); return { text: r.content[0].text as string, isError: !!r.isError };
@@ -307,4 +307,41 @@ test('in local mode the discussion texts name the memory brainai', async () => {
   const opened = await chat.call('open_discussion', { title: 'T', question: 'Q?', model: 'GPT' });
   assert.match(opened.text, /Read the brainai discussion with id/);
   assert.doesNotMatch(opened.text, /shared-memory/);
+});
+
+test('the opener is known by its grant: two connections both named Claude Code are not the same opener', async () => {
+  const live = new Map<string, 'live' | 'gone-full' | 'gone-other' | 'missing'>([['g-real', 'live'], ['g-other', 'live']]);
+  const { connect } = setup({ askCommands: () => ASK }, live);
+  const real = await connect('Claude Code', 'full', 'g-real');
+  const other = await connect('Claude Code', 'full', 'g-other');
+  const id = idOf((await real.call('open_discussion', { title: 'Which db', question: 'q', model: 'Opus', ask: ['codex'] })).text);
+  const mine = await real.call('read_discussion', { id, model: 'Opus' });
+  assert.match(mine.text, /run each command below/);
+  assert.doesNotMatch(mine.text, /callerIsOpener/);
+  const theirs = await other.call('read_discussion', { id, model: 'Opus' });
+  assert.doesNotMatch(theirs.text, /run each command below/);
+  // The other one's reply is its own slot: the opener's reply does not count as the namesake's.
+  await real.call('reply_to_discussion', { id, model: 'Opus', text: 'mine' });
+  assert.equal((await other.call('reply_to_discussion', { id, model: 'Opus', text: 'theirs' })).isError, false);
+  assert.equal((await real.call('reply_to_discussion', { id, model: 'Opus', text: 'again' })).isError, true);
+  // The opener's connection is revoked and the owner reconnects: the new Full Claude Code takes over, a discussions-only namesake does not.
+  live.set('g-real', 'gone-full');
+  const back = await connect('Claude Code', 'full', 'g-new');
+  assert.match((await back.call('read_discussion', { id, model: 'Opus' })).text, /run each command below|Everyone asked/);
+  const lim = await connect('Claude Code', 'discussions', 'g-lim');
+  assert.doesNotMatch((await lim.call('read_discussion', { id, model: 'Opus' })).text, /run each command below/);
+});
+
+test('a gone discussions-only opener is not taken over by a Full namesake; a gone Full opener is', async () => {
+  const live = new Map<string, 'live' | 'gone-full' | 'gone-other' | 'missing'>([['g-lim', 'live'], ['g-full', 'live']]);
+  const { connect } = setup({ askCommands: () => ASK }, live);
+  const lim = await connect('Claude Code', 'discussions', 'g-lim');
+  const idLim = idOf((await lim.call('open_discussion', { title: 'Limited', question: 'q', model: 'Opus' })).text);
+  live.set('g-lim', 'gone-other');
+  const full = await connect('Claude Code', 'full', 'g-new');
+  assert.doesNotMatch((await full.call('read_discussion', { id: idLim, model: 'Opus' })).text, /run each command below/);
+  const old = await connect('Claude Code', 'full', 'g-full');
+  const idFull = idOf((await old.call('open_discussion', { title: 'Full', question: 'q', model: 'Opus', ask: ['codex'] })).text);
+  live.set('g-full', 'gone-full');
+  assert.match((await full.call('read_discussion', { id: idFull, model: 'Opus' })).text, /run each command below/);
 });

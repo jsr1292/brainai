@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allowableUri, RefusedRedirects } from './refusedRedirects.js';
+import { allowableUri, matchesKnownHosts, RefusedRedirects } from './refusedRedirects.js';
 
 test('the refused list keeps at most 10 addresses for a day, newest first, and never one already allowed', () => {
   let t = Date.parse('2026-11-06T10:00:00Z');
@@ -39,4 +39,12 @@ test('addresses on this machine or the home network are never offered: allowing 
     assert.equal(allowableUri(internal), undefined, internal);
   }
   assert.equal(allowableUri('https://chatgpt.com/connector/oauth/a'), 'https://chatgpt.com/connector/oauth/a');
+});
+
+test('matchesKnownHosts compares the exact host, never a lookalike', () => {
+  const known = ['https://chatgpt.com/connector_platform_oauth_redirect'];
+  assert.equal(matchesKnownHosts('https://chatgpt.com/x/y', known), true);
+  assert.equal(matchesKnownHosts('https://chatgpt.com.connector-auth.example/cb', known), false);
+  assert.equal(matchesKnownHosts('https://evilchatgpt.com/cb', known), false);
+  assert.equal(matchesKnownHosts('https://chatgpt.com/x', undefined), false);
 });

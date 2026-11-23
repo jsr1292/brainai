@@ -1252,6 +1252,11 @@ export class MemoryService {
     return this.store.listProjects(opts).map((p) => ({ ...p, aliases: aliases.filter((a) => a.project === p.project).map((a) => a.alias) }));
   }
 
+  /** The project's live statuses, newest first (at most 3). */
+  statusesOf(project: string): Memory[] {
+    return this.store.list({ project }).filter(isStatus).slice(0, 3);
+  }
+
   /** The project's roadmap, if it has one. */
   roadmapOf(project: string): Memory | undefined {
     return this.store.list({ project, kind: 'roadmap' })[0];
@@ -1744,7 +1749,12 @@ export class MemoryService {
    * same fact (between the recall-confident floor and the duplicate threshold), closest first. Never statuses or
    * roadmaps, never a pair already flagged; the saving assistant judges whether one of them disagrees.
    */
-  closeFacts(id: string, limit = 3): { memory: Memory; similarity: number }[] {
+  closeFacts(id: string, limit = 3, nudge = false): { memory: Memory; similarity: number }[] {
+    // The nudge after a save is stricter than the floor: 40% of the way from the close-facts floor to the duplicate threshold
+    // (Gemma 0.48 -> 0.60, e5 0.86 -> 0.89), so only facts that really look like the new one are listed. e5 is less
+    // discriminating near the top (its scores crowd together), so its band is narrow and the cut matters less there.
+    const floor = this.opts.closeFacts ?? this.opts.recallConfidentSimilarity;
+    const cut = nudge ? floor + 0.4 * (this.opts.duplicateThreshold - floor) : floor;
     const m = this.store.get(id);
     if (!m || m.deletedAt || m.kind === 'roadmap' || isStatus(m)) return [];
     const project = (x: Memory) => (x.project === null ? null : this.canonical(x.project));
@@ -1758,7 +1768,7 @@ export class MemoryService {
     return all
       .filter((e) => e.id !== id)
       .map((e) => ({ id: e.id, similarity: cosine(self.embedding, e.embedding) }))
-      .filter((x) => x.similarity >= (this.opts.closeFacts ?? this.opts.recallConfidentSimilarity) && x.similarity < this.opts.duplicateThreshold)
+      .filter((x) => x.similarity >= cut && x.similarity < this.opts.duplicateThreshold)
       .sort((x, y) => y.similarity - x.similarity)
       .map((x) => ({ memory: this.store.get(x.id)!, similarity: x.similarity }))
       .filter((x) => x.memory && !isStatus(x.memory) && project(x.memory) === mine && !this.store.disagreements.forPair(id, x.memory.id))

@@ -9,7 +9,9 @@ import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
 import type { Access } from '../discussions/types.js';
 import { PROJECT_RE } from '../memory/service.js';
-import { validateDisplayName, type ClientsStore } from './clientsStore.js';
+import { nameTakenError, validateDisplayName, type ClientsStore } from './clientsStore.js';
+import { nameKey } from '../discussions/types.js';
+import { readAsSeen } from '../memory/instructionLike.js';
 import { randomToken, sha256 } from './hash.js';
 import type { RedirectAllowlist } from './redirects.js';
 
@@ -178,6 +180,26 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
     return levels.length === 1 && levels[0]!.access !== 'full' ? levels[0]!.access : null;
   }
 
+  /**
+   * Refuses a name a live (not revoked) connection already uses at a different access level, so a discussions-only
+   * connection cannot pass as "Claude Code" next to the Full one (security review #12). The same level may share a name:
+   * several installs of one app do. `except` is the grant being renamed or changed.
+   */
+  private assertNameFree(name: string, access: Access, except?: string): void {
+    const nowIso = this.iso();
+    const recent = this.iso(-30 * 86400);
+    // Live: a token that is neither revoked nor expired, or use (or, if never used, creation) within 30 days. An old, abandoned connection does not hold a name.
+    const live = this.db.prepare(
+      `SELECT g.id, g.access, COALESCE(g.name, c.display_name, c.client_name) AS name FROM oauth_grants g
+       JOIN oauth_clients c ON c.client_id = g.client_id
+       WHERE g.revoked_at IS NULL AND (COALESCE(g.last_used_at, g.created_at) > ? OR EXISTS (SELECT 1 FROM oauth_tokens t WHERE t.grant_id = g.id AND t.revoked_at IS NULL AND t.expires_at > ?))`,
+    ).all(recent, nowIso) as { id: string; access: Access; name: string | null }[];
+    // Lookalike letters, accents and case do not make a different name.
+    const key = (n: string) => nameKey(readAsSeen(n));
+    const want = key(name);
+    if (live.some((g) => g.id !== except && g.access !== access && g.name !== null && key(g.name) === want)) throw nameTakenError(name);
+  }
+
   async approvePending(id: string, opts: { name?: string; access?: Access; projects?: string[] } = {}): Promise<string> {
     const access = opts.access ?? 'full';
     if (!isAccess(access)) throw new InvalidRequestError('Unknown access level');
@@ -186,6 +208,8 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
     const name = opts.name === undefined ? undefined : validateDisplayName(opts.name);
     const pending = this.pendingRow(id);
     if (!pending) throw new InvalidRequestError('Authorization request not found or expired');
+    // The name the connection will carry: the owner's, or the app's own.
+    this.assertNameFree(name ?? this.clients.clientName(pending.clientId), access);
     // Re-check the client and redirect at approval time: either may have been removed since authorize().
     const client = await this.clients.getClient(pending.clientId);
     const { redirectUri } = pending.params;
@@ -295,7 +319,7 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
       }
       if (row.grant_revoked_at !== null) return { ok: false, message: 'Grant has been revoked' };
       if (row.expires_at <= nowIso) return { ok: false, message: 'Refresh token expired' };
-      if (resource && row.resource !== null && resource.href !== row.resource) return { ok: false, message: 'resource does not match' };
+      if (resource && row.resource !== null && comparableResource(resource) !== comparableResource(new URL(row.resource))) return { ok: false, message: 'resource does not match' };
       if (row.revoked_at === null) {
         const rotated = this.db.prepare('UPDATE oauth_tokens SET revoked_at = ?, rotated_at = ? WHERE token_hash = ? AND revoked_at IS NULL')
           .run(nowIso, nowIso, tokenHash);
@@ -394,13 +418,17 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
 
   /** Renames one connection; other connections of the same app keep their names. */
   setGrantName(grantId: string, name: string): void {
-    const r = this.db.prepare('UPDATE oauth_grants SET name = ? WHERE id = ?').run(validateDisplayName(name), grantId);
+    const valid = validateDisplayName(name);
+    this.assertNameFree(valid, this.grantAccess(grantId), grantId);
+    const r = this.db.prepare('UPDATE oauth_grants SET name = ? WHERE id = ?').run(valid, grantId);
     if (r.changes !== 1) throw new Error(`Unknown grant ${grantId}`);
   }
 
   /** Changes what a connection may reach (`projects`: for read-only access). Takes effect on its next request. */
   setGrantAccess(grantId: string, access: Access, projects?: string[]): void {
     if (!isAccess(access)) throw new Error(`Unknown access level ${String(access)}`);
+    // Moving to another level must not make this name a namesake of a live connection at the new level's neighbours.
+    if (this.db.prepare('SELECT 1 FROM oauth_grants WHERE id = ?').get(grantId)) this.assertNameFree(this.grantName(grantId), access, grantId);
     const r = this.db.prepare('UPDATE oauth_grants SET access = ?, projects = ? WHERE id = ?').run(access, projectsColumn(access, projects), grantId);
     if (r.changes !== 1) throw new Error(`Unknown grant ${grantId}`);
   }
@@ -409,6 +437,14 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
   grantProjects(grantId: string): string[] {
     const r = this.db.prepare("SELECT projects FROM oauth_grants WHERE id = ? AND access = 'projects'").get(grantId) as { projects: string | null } | undefined;
     return parseProjects(r?.projects ?? null);
+  }
+
+  /** What became of a grant, for discussions: live, revoked (Full or not), or no row (a restored brain). */
+  grantState(grantId: string): 'live' | 'gone-full' | 'gone-other' | 'missing' {
+    const r = this.db.prepare('SELECT access, revoked_at FROM oauth_grants WHERE id = ?').get(grantId) as { access: string; revoked_at: string | null } | undefined;
+    if (!r) return 'missing';
+    if (r.revoked_at === null) return 'live';
+    return r.access === 'full' ? 'gone-full' : 'gone-other';
   }
 
   /** Whether a grant exists and is not revoked (an upload link is checked again when it is used). */
@@ -446,6 +482,7 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
   issueLocalGrant(opts: { name: string; clientName: string; years?: number }): { grantId: string; token: string } {
     const name = validateDisplayName(opts.name);
     const clientName = validateDisplayName(opts.clientName);
+    this.assertNameFree(name, 'full');
     const years = opts.years ?? 10;
     if (!Number.isInteger(years) || years < 1) throw new Error('years must be a whole number of at least 1');
     const token = randomToken();
@@ -469,6 +506,13 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
         .run(sha256(token), grantId, this.resourceUrl.href, expires.toISOString());
     })();
     return { grantId, token };
+  }
+
+  /** True for a grant made by issueLocalGrant (the Claude bridge's key): its client has no redirect URIs. */
+  isLocalGrant(grantId: string): boolean {
+    const row = this.db.prepare('SELECT c.metadata FROM oauth_grants g JOIN oauth_clients c ON c.client_id = g.client_id WHERE g.id = ?').get(grantId) as { metadata: string } | undefined;
+    if (!row) return false;
+    try { return ((JSON.parse(row.metadata) as { redirect_uris?: unknown[] }).redirect_uris ?? []).length === 0; } catch { return false; }
   }
 
   /** The stored hash of a local grant's access token while it still works: grant and token not revoked, not expired, made for `resource`. */

@@ -12,9 +12,14 @@ import { packArchive } from './archive.js';
 import { backupNow, missingPictures } from '../backup.js';
 import { backupHealth } from '../backupStatus.js';
 import { latestSchema } from '../db.js';
+import { cleanImage } from '../images/clean.js';
+import { pngWithText, svg, gifWithComment } from '../testing/imageFixtures.js';
 import { handTar, tarOf } from './testArchives.js';
 import { restoredRowsProblem } from './rowChecks.js';
 import { applyPendingRestore, isEmptyBrain, restoreInto, stageRestore, swapIn } from './restore.js';
+
+/** A real, already clean PNG: pictures that restore keeps must pass the cleaning uploads get. */
+const goodPng = async (): Promise<Buffer> => cleanImage(await pngWithText()).bytes;
 
 const T = new Date('2026-11-06T10:00:00Z');
 const me = { type: 'owner' } as const;
@@ -380,8 +385,8 @@ test('a sign-in table or column spelled in another case is still stripped', asyn
   assert.equal(signInRows(join(dir, 'memory.db')).owner, 0);
   const db = new Database(join(dir, 'memory.db'), { readonly: true });
   t.after(() => db.close());
-  const secret = (db.prepare("SELECT json_extract(metadata, '$.client_secret') AS s FROM oauth_clients WHERE client_id = 'c1'").get() as { s: string }).s;
-  assert.notEqual(secret, 'old-secret');
+  // Registered apps are dropped on restore (the client secret with them): nothing of the file's survives.
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM oauth_clients').get() as { n: number }).n, 0);
 });
 
 test('a backup-file import marks its pictures removed, so the restored brain is not flagged for pictures it cannot have', async (t) => {
@@ -551,11 +556,11 @@ test('a backup file with an images folder beside it (the second backup folder) b
   const { file } = await backupFile(t, 3);
   const beside = join(file, '..', 'images', '00');
   mkdirSync(beside, { recursive: true });
-  writeFileSync(join(beside, `${'0'.repeat(24)}.png`), 'pic');
+  writeFileSync(join(beside, `${'0'.repeat(24)}.png`), await goodPng());
   const dir = emptyData(t);
   assert.deepEqual(await stageRestore(file, dir), { facts: 2, pages: 1, pictures_missing: 2 });
   assert.deepEqual(applyPendingRestore(dir), { facts: 2, pages: 1, pictures_missing: 2 });
-  assert.equal(readFileSync(join(dir, 'images', '00', `${'0'.repeat(24)}.png`), 'utf8'), 'pic');
+  assert.ok(readFileSync(join(dir, 'images', '00', `${'0'.repeat(24)}.png`)).equals(await goodPng()));
   const restored = new Database(join(dir, 'memory.db'));
   t.after(() => restored.close());
   assert.equal(restored.prepare("SELECT removed_at FROM images WHERE id = ?").get('0'.repeat(24)) !== undefined, true);
@@ -567,7 +572,7 @@ test('an unreadable picture beside a backup file does not fail the restore and a
   const { file } = await backupFile(t, 3);
   const beside = join(file, '..', 'images');
   for (const d of ['00', '11', '22', '33']) mkdirSync(join(beside, d), { recursive: true });
-  writeFileSync(join(beside, '00', `${'0'.repeat(24)}.png`), 'pic');
+  writeFileSync(join(beside, '00', `${'0'.repeat(24)}.png`), await goodPng());
   writeFileSync(join(beside, '11', `${'1'.repeat(24)}.png`), 'locked');
   chmodSync(join(beside, '11', `${'1'.repeat(24)}.png`), 0o000);
   t.after(() => { try { chmodSync(join(beside, '11', `${'1'.repeat(24)}.png`), 0o600); } catch { /* already removed */ } });
@@ -679,7 +684,7 @@ test('pictures an earlier restore left out come back when their file is beside t
   const beside = join(file, '..');
   for (const id of ['000000000000000000000000', '111111111111111111111111']) {
     mkdirSync(join(beside, 'images', id.slice(0, 2)), { recursive: true });
-    writeFileSync(join(beside, 'images', id.slice(0, 2), `${id}.png`), 'png');
+    writeFileSync(join(beside, 'images', id.slice(0, 2), `${id}.png`), await goodPng());
   }
   const dir = emptyData(t);
   assert.deepEqual(await stageRestore(file, dir), { facts: 2, pages: 1, pictures_missing: 0 });
@@ -740,4 +745,90 @@ test('swapIn: a failure part-way through moving the old brain aside rolls back e
   assert.ok(existsSync(join(dir, 'memory.db-wal')) && existsSync(join(dir, 'memory.db-shm')));
   assert.equal(signInRows(join(dir, 'memory.db')).owner, 1);
   assert.ok(existsSync(join(from, 'memory.db')), 'the staged copy was not used');
+});
+
+
+test('restore resets the allowlist, drops clients and grants, switches skills Off (security review #11)', async (t) => {
+  const { file } = await backupFile(t);
+  const src = new Database(file);
+  src.pragma('foreign_keys = OFF');
+  src.prepare("INSERT INTO redirect_allowlist(entry, added_at) VALUES ('https://attacker.example/cb', '2026-11-06')").run();
+  src.prepare("INSERT INTO oauth_clients(client_id, client_name, metadata, created_at) VALUES ('evil', 'Claude', '{}', '2026-11-06')").run();
+  src.prepare("INSERT INTO oauth_grants(id, client_id, created_at) VALUES ('g9', 'evil', '2026-11-06')").run();
+  src.prepare(`INSERT INTO skills(id, name, description, body, enabled, origin, version, created_at, created_by, updated_at, updated_by)
+    VALUES ('s1', 'do-things', 'd', 'b', 1, 'here', 1, '2026-11-06', 'owner', '2026-11-06', 'owner')`).run();
+  src.close();
+  for (const via of ['restoreInto', 'stage'] as const) {
+    const dir = emptyData(t);
+    if (via === 'restoreInto') await restoreInto(file, dir);
+    else { await stageRestore(file, dir); applyPendingRestore(dir); }
+    const db = new Database(join(dir, 'memory.db'), { readonly: true });
+    try {
+      assert.deepEqual((db.prepare('SELECT entry FROM redirect_allowlist ORDER BY entry').all() as { entry: string }[]).map((r) => r.entry),
+        ['https://claude.ai/api/mcp/auth_callback', 'https://claude.com/api/mcp/auth_callback', 'loopback'], via);
+      assert.equal((db.prepare('SELECT COUNT(*) AS n FROM oauth_clients').get() as { n: number }).n, 0, via);
+      assert.equal((db.prepare('SELECT COUNT(*) AS n FROM oauth_grants').get() as { n: number }).n, 0, via);
+      assert.equal((db.prepare("SELECT enabled FROM skills WHERE id = 's1'").get() as { enabled: number }).enabled, 0, via);
+    } finally { db.close(); }
+  }
+});
+
+test('restored pictures pass the cleaning uploads get: private data is cut, a picture that fails is removed', async (t) => {
+  const source = tmp(t);
+  const given = makeService({ now: () => T });
+  const dirty = await gifWithComment();
+  const ids = { gif: 'aa1111111111111111111111', svg: 'bb2222222222222222222222', png: 'cc3333333333333333333333' };
+  const add = (id: string, type: string) => given.db.prepare("INSERT INTO images(id, type, bytes, width, height, created_at, created_by) VALUES (?, ?, 1, 1, 1, '2026-11-06', 'owner')").run(id, type);
+  add(ids.gif, 'gif'); add(ids.svg, 'png'); add(ids.png, 'png');
+  const put = (id: string, ext: string, bytes: Buffer) => { mkdirSync(join(source, 'images', id.slice(0, 2)), { recursive: true }); writeFileSync(join(source, 'images', id.slice(0, 2), `${id}.${ext}`), bytes); };
+  put(ids.gif, 'gif', dirty);
+  put(ids.svg, 'png', svg());
+  put(ids.png, 'png', await goodPng());
+  const archive = join(tmp(t), 'brainai-saved-2026-11-06.tar.gz');
+  await packArchive(given.db, source, archive, T);
+  const dir = emptyData(t);
+  const counts = await restoreInto(archive, dir);
+  assert.equal(counts.pictures_missing, 1, 'the SVG posing as a PNG is counted as missing');
+  assert.ok(!existsSync(join(dir, 'images', 'bb', `${ids.svg}.png`)));
+  const kept = readFileSync(join(dir, 'images', 'aa', `${ids.gif}.gif`));
+  assert.ok(kept.equals(cleanImage(dirty).bytes), 'the GIF is what an upload would have stored');
+  assert.ok(!kept.includes(Buffer.from('comment')) || kept.length < dirty.length);
+  const db = new Database(join(dir, 'memory.db'), { readonly: true });
+  t.after(() => db.close());
+  const row = db.prepare('SELECT removed_by FROM images WHERE id = ?');
+  assert.equal((row.get(ids.svg) as { removed_by: string }).removed_by, 'restore');
+  assert.equal((row.get(ids.png) as { removed_by: string | null }).removed_by, null);
+});
+
+test('restore cleaning updates the picture row to the cleaned file, and a folder where a picture should be is removed', async (t) => {
+  const source = tmp(t);
+  const given = makeService({ now: () => T });
+  const dirty = await gifWithComment();
+  const gif = 'dd4444444444444444444444';
+  const dir1 = 'ee5555555555555555555555';
+  given.db.prepare("INSERT INTO images(id, type, bytes, width, height, frames, created_at, created_by) VALUES (?, 'gif', ?, 9, 9, 7, '2026-11-06', 'owner')").run(gif, dirty.length);
+  given.db.prepare("INSERT INTO images(id, type, bytes, width, height, created_at, created_by) VALUES (?, 'png', 1, 1, 1, '2026-11-06', 'owner')").run(dir1);
+  mkdirSync(join(source, 'images', 'dd'), { recursive: true });
+  writeFileSync(join(source, 'images', 'dd', `${gif}.gif`), dirty);
+  mkdirSync(join(source, 'images', 'ee'), { recursive: true });
+  writeFileSync(join(source, 'images', 'ee', `${dir1}.png`), 'x');
+  const first = join(tmp(t), 'first.tar.gz');
+  await packArchive(given.db, source, first, T);
+  // Unpack, put a folder where the picture file is, and pack again (the packer itself would refuse a folder).
+  const work = tmp(t);
+  execFileSync('tar', ['-xzf', first, '-C', work]);
+  rmSync(join(work, 'images', 'ee', `${dir1}.png`));
+  mkdirSync(join(work, 'images', 'ee', `${dir1}.png`, 'inner'), { recursive: true });
+  writeFileSync(join(work, 'images', 'ee', `${dir1}.png`, 'inner', 'x'), 'x');
+  const archive = tarOf(work, join(tmp(t), 'brainai-saved-2026-11-06.tar.gz'), ['memory.db', 'images']);
+  const dir = emptyData(t);
+  const counts = await restoreInto(archive, dir);
+  const cleaned = cleanImage(dirty);
+  const db = new Database(join(dir, 'memory.db'), { readonly: true });
+  t.after(() => db.close());
+  const row = db.prepare('SELECT bytes, width, height, frames FROM images WHERE id = ?').get(gif) as { bytes: number; width: number; height: number; frames: number };
+  assert.deepEqual(row, { bytes: cleaned.bytes.length, width: cleaned.width, height: cleaned.height, frames: cleaned.frames });
+  assert.ok(!existsSync(join(dir, 'images', 'ee', `${dir1}.png`)), 'the folder is gone');
+  assert.equal((db.prepare('SELECT removed_by FROM images WHERE id = ?').get(dir1) as { removed_by: string }).removed_by, 'restore');
+  assert.ok(counts.pictures_missing >= 1);
 });

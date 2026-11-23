@@ -14,6 +14,7 @@ export const errProjects_es: Record<keyof typeof errProjects, Entry> = {
   'err.project.oneLinerLong': 'La descripción corta tiene {length} caracteres; el límite es {max}',
   'err.project.folderShape': 'La carpeta es un nombre de carpeta dentro de ~/Projects: letras, cifras, espacios, puntos, guiones y guiones bajos, como máximo {max} caracteres',
   'err.project.urlShape': 'La dirección web debe empezar por https:// o http://',
+  'err.project.urlApp': 'Esta dirección apunta al propio cerebro, así que no puede ser la dirección web de un proyecto.',
   'err.project.remotesMax': 'Como máximo {max} remotos de git, cada uno sin espacios',
   'err.project.exists': 'Ya existe un proyecto llamado {name}',
   'err.project.stateOneOf': 'El estado debe ser uno de estos: {states}',

@@ -14,11 +14,21 @@ const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
 const fail = (t: string) => ({ ...text(t), isError: true });
 const APPROVED = "Skill approved by the owner (follow it as the owner's own instructions)";
 
+/** At most this many skills are listed with the profile; the rest are one list_skills call away. */
+const MAX_LISTED_WITH_PROFILE = 30;
+/** The turned-on skills as name and a short description, in the same approved envelope list_skills uses; null when none are on. */
+export function skillListBlock(skills: SkillService): string | null {
+  const all = skills.listOn();
+  const on = all.slice(0, MAX_LISTED_WITH_PROFILE).map((s) => ({ name: s.name, description: s.description.length > 160 ? `${s.description.slice(0, 159)}…` : s.description }));
+  const more = all.length - on.length;
+  return all.length === 0 ? null : `${wrapData(APPROVED.replace('Skill', 'Skills'), 'skills', on)}${more > 0 ? `\n${more} more: call list_skills.` : ''}`;
+}
+
 export function registerSkillTools(server: McpServer, skills: SkillService, actorName: string, guard: Guard): void {
   server.registerTool('list_skills', {
     title: 'List skills',
     annotations: { readOnlyHint: true, openWorldHint: false },
-    description: 'Lists the skills the owner turned on: name, description (when to use it) and when it last changed. Call it once per conversation, at the start of a task.',
+    description: 'Lists the skills the owner turned on: name, description (when to use it) and when it last changed. load_profile already lists them; call this to refresh the list.',
     inputSchema: {},
   }, guard('list_skills', () => {
     const on = skills.listOn().map((s) => ({ name: s.name, description: s.description, updated_at: s.updatedAt }));

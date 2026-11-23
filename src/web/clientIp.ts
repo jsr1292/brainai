@@ -44,12 +44,39 @@ export function ipKey(ip: string): string {
   return `${g.slice(0, 4).map((x) => x.toString(16)).join(':')}::/64`;
 }
 
+/** Express app setting: a function giving the tunnel in use ('tailscale', 'cloudflare') or null; set by createApp in the desktop app. */
+export const DOOR_VIA_SETTING = 'door forwarder';
+
+/**
+ * The stranger's own address for a request through the public door, as the forwarder saw it, or null when it cannot be told.
+ * The door only ever receives what the tunnel program (cloudflared, Tailscale Funnel) forwards from this computer, so these
+ * headers are set by it, not by the caller, with two limits that decide what is read:
+ *  - cf-connecting-ip is Cloudflare's own and replaces whatever the caller sent, but only through cloudflared: with a Tailscale
+ *    Funnel a caller could send it himself, so it is read only when the tunnel in use is Cloudflare's;
+ *  - X-Forwarded-For can hold the caller's own entries in front, and the forwarder adds its own at the END: only the last entry
+ *    is read.
+ * A local program that talks to the door directly can set either, and gains nothing it did not have (it is on this computer).
+ * Anything that is not an IP address is ignored, so a made-up value cannot make endless keys.
+ */
+export function doorClient(req: Request): string | null {
+  const via = (req.app?.get(DOOR_VIA_SETTING) as (() => string | null) | undefined)?.() ?? null;
+  const cf = via === 'cloudflare' ? req.get('cf-connecting-ip')?.trim() : undefined;
+  if (cf && (isIPv4(cf) || isIPv6(cf))) return cf;
+  const xff = req.get('x-forwarded-for');
+  const last = xff?.split(',').pop()?.trim();
+  return last && (isIPv4(last) || isIPv6(last)) ? last : null;
+}
+
 /**
  * The key every rate limiter uses for the caller (OAuth endpoints and the login limiter). Everything through the
- * desktop app's public door shares one key of its own (D4 review): it all arrives from 127.0.0.1, and a stranger
- * using up the limits must not block the apps on the Mac. X-Forwarded-For is not used: a client can set it.
+ * desktop app's public door has keys of its own (D4 review), never the Mac's: it all arrives from 127.0.0.1, and a stranger
+ * using up the limits must not block the apps on the Mac. Each stranger gets a key by the address the forwarder saw (see
+ * doorClient), so one cannot use up another's limit (or the owner's); with no such address they share one key.
  */
 export function rateLimitKey(req: Request): string {
-  if (viaDoor(req)) return 'public-door';
+  if (viaDoor(req)) {
+    const who = doorClient(req);
+    return who ? `public-door:${ipKey(who)}` : 'public-door';
+  }
   return ipKey(clientIp(req));
 }

@@ -48,7 +48,8 @@ export function registerDiscussionTools(
   });
   // Only an assistant that has a command of its own runs on the owner's computer and can run the others' commands; a
   // chat app (Claude, ChatGPT) that opened a discussion asks the owner as before.
-  const isOpener = (c: Caller, v: DiscussionView) => c.access === 'full' && hasCommand(c.name) && nameKey(v.openedBy.name) === nameKey(c.name);
+  // By grant, not by name: a namesake connection that did not open it is not the opener (the service decides, see isOpener there).
+  const isOpener = (c: Caller, v: DiscussionView) => c.access === 'full' && hasCommand(c.name) && v.callerIsOpener;
 
   /** For the opener: the commands for those still to reply this round, or, once all have, the step to report. */
   const openerSteps = (c: Caller, v: DiscussionView): string => {
@@ -132,7 +133,9 @@ export function registerDiscussionTools(
         return withData(`File part ${f.part} of ${f.parts}; its name and text are in the data below.`, f);
       }
       const v = discussions.read(c, a.id);
-      return withData(stageSentence(v) + openerSteps(c, v), v);
+      // callerIsOpener only decides the steps above; the assistant is not shown it.
+      const { callerIsOpener: _own, ...shown } = v;
+      return withData(stageSentence(v) + openerSteps(c, v), shown);
     });
   }));
 

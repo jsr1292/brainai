@@ -310,6 +310,28 @@ fn quit_from_tray(app: &AppHandle) {
     });
 }
 
+/// Whether a confirmation for a window link (restart, update) is already on screen: a page that fires the link many
+/// times must not stack dialogs.
+static CONFIRMING: AtomicBool = AtomicBool::new(false);
+
+/// The app's own question before it acts on a link in the page (/app/restart, /app/update): stored text can contain a
+/// link, so the click alone is not the owner's decision. Blocks; call it off the navigation callback.
+fn confirm_link_action(app: &AppHandle, text_key: &str, button_key: &str) -> bool {
+    if CONFIRMING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return false;
+    }
+    lang::refresh();
+    let ok = app
+        .dialog()
+        .message(tr(text_key))
+        .title("BrainAI")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(tr(button_key), tr("common.cancel")))
+        .blocking_show();
+    CONFIRMING.store(false, Ordering::SeqCst);
+    ok
+}
+
 /// After an import was staged (Task 7's /app/restart): stops the server and starts it again, which swaps the staged
 /// copy in, and lands on the welcome page's Search step (the third). Not a crash: the watcher of the old start stands down and
 /// the restart counter starts again from zero.
@@ -688,6 +710,9 @@ fn start_and_open(app: &AppHandle, page: &str) {
     let Some(mut port) = port::settle(saved, port::is_free, 20, || std::thread::sleep(Duration::from_millis(500))) else {
         return give_up(app, &tr("err.ports_all"));
     };
+    // On a temporary port because the usual one is held: when the holder does not answer like a BrainAI, say so (a notice only: the
+    // server refuses a tool's usual-address token on a temporary port whatever the holder is).
+    let foreign_holder = matches!(saved, Some(usual) if usual != port) && server::usual_holder(saved.unwrap()) == server::Holder::Foreign;
     let mut tried = Vec::new();
     for _attempt in 0..3 {
         let secret = proof::random_hex();
@@ -713,6 +738,11 @@ fn start_and_open(app: &AppHandle, page: &str) {
                 // Only a home port given up after several starts in a row is worth a dialog; a temporary port is said on the Tools page.
                 if let Some(old) = remembered.moved_from {
                     tell(app, MessageDialogKind::Info, tr_with("err.port_changed", &[("old", &old.to_string()), ("port", &port.to_string())]));
+                }
+                // Said once per run of the app (a restart after a crash does not repeat it); the server refuses those tokens anyway.
+                static HOLDER_SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                if foreign_holder && !HOLDER_SAID.swap(true, Ordering::SeqCst) {
+                    tell(app, MessageDialogKind::Warning, tr_with("err.usual_port_held", &[("old", &saved.unwrap_or(0).to_string())]));
                 }
                 watch_server(app.clone());
                 week_note::start(app.clone());
@@ -824,13 +854,21 @@ pub fn run() {
                     if nav::is_restart(url.as_str(), port.load(Ordering::SeqCst)) {
                         // Cancelled: the window keeps its page until the new server opens it with a ticket.
                         let app = leaving.clone();
-                        std::thread::spawn(move || restart_server(&app));
+                        std::thread::spawn(move || {
+                            if confirm_link_action(&app, "restart.confirm", "restart.button") {
+                                restart_server(&app);
+                            }
+                        });
                         return false;
                     }
                     if nav::is_update(url.as_str(), port.load(Ordering::SeqCst)) {
                         // Cancelled: the window stays on Home, where the card follows the update until it reopens.
                         let app = leaving.clone();
-                        std::thread::spawn(move || update::update_and_restart(&app));
+                        std::thread::spawn(move || {
+                            if confirm_link_action(&app, "update.confirm", "update.button") {
+                                update::update_and_restart(&app);
+                            }
+                        });
                         return false;
                     }
                     if nav::is_check_updates(url.as_str(), port.load(Ordering::SeqCst)) {

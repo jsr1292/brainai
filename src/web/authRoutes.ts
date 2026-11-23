@@ -6,7 +6,7 @@ import { InvalidRequestError } from '@modelcontextprotocol/sdk/server/auth/error
 import { InvalidNameError } from '../auth/clientsStore.js';
 import { PENDING_TTL_SEC, type PendingInfo } from '../auth/provider.js';
 import type { Access } from '../discussions/types.js';
-import { DEVICE_DAYS, SESSION_DAYS, type SessionStore } from '../auth/sessions.js';
+import { DEVICE_DAYS, sessionDays, type SessionStore } from '../auth/sessions.js';
 import { PROJECT_RE } from '../memory/service.js';
 import type { AppDeps } from './app.js';
 import { projectChoices } from './dashboardViews.js';
@@ -14,7 +14,7 @@ import { rateLimitKey } from './clientIp.js';
 import { t } from '../i18n/core.js';
 import { tHtml } from '../i18n/tHtml.js';
 import { computerName } from '../desktop/computer.js';
-import { viaDoor } from '../desktop/publicDoor.js';
+import { isAppPath, viaDoor } from '../desktop/publicDoor.js';
 import { html, memoryName, page, type SafeHtml } from './html.js';
 import { approvedView, deniedView, waitingView } from './consentViews.js';
 
@@ -134,6 +134,10 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
    * and the window opens /app/open?ticket=…. Local mode only. Anything wrong falls through to the unknown-page answer.
    */
   const appKey = d.localMode && d.appSecret ? createHash('sha256').update(d.appSecret).digest() : null;
+  // The app's endpoints are for this computer only. The door's own block in createApp already refuses them; this is the second
+  // lock, on the routes themselves, in case that one is ever bypassed (any letter case, encoded letters): no ticket is made or
+  // accepted, no proof given, through the door.
+  router.use((req, res, next) => (viaDoor(req) && isAppPath(req.path) ? res.status(404).type('text/plain').send('Not found') : next()));
   const fromApp = appKeyCheck(d);
   const tickets = new Map<string, number>();
   const TICKET_MS = 60_000;
@@ -178,8 +182,8 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
     if (until === undefined) return next();
     tickets.delete(ticket);
     if (until < d.now().getTime()) return next();
-    const token = d.sessions.create(req.get('user-agent'));
-    res.cookie(SESSION_COOKIE, token, { ...cookieOptions, maxAge: SESSION_DAYS * 86_400_000 });
+    const token = d.sessions.create(req.get('user-agent'), 'app');
+    res.cookie(SESSION_COOKIE, token, { ...optionsFor(req), maxAge: sessionDays('app') * 86_400_000 });
     res.set('Cache-Control', 'no-store').redirect(303, safeNext(req.query.next) ?? '/');
   });
 
@@ -201,16 +205,19 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
 
   router.post('/login', async (req, res) => {
     if (!d.owner.isConfigured()) return notConfigured(res);
-    const ip = rateLimitKey(req);
     const next = safeNext(field(req.body, 'next'));
-    const knownDevice = d.sessions.isKnownDevice(readCookie(req, DEVICE_COOKIE));
+    const deviceToken = readCookie(req, DEVICE_COOKIE);
+    const knownDevice = d.sessions.isKnownDevice(deviceToken);
+    // A known device has a limit of its own: strangers failing from anywhere (or from the same address) cannot lock the owner's
+    // phone out. Its cookie is a random secret the database knows, so it cannot be made up to get fresh limits.
+    const ip = knownDevice && deviceToken ? `device:${createHash('sha256').update(deviceToken).digest('hex').slice(0, 24)}` : rateLimitKey(req);
     const outcome = await loginLock.run(async (): Promise<LoginOutcome> => {
-      const gate = await d.limiter.check(ip, { knownDevice });
+      const gate = await d.limiter.check(ip, { knownDevice, door: viaDoor(req) });
       if (!gate.allowed) return { kind: 'blocked', retryAfterSec: gate.retryAfterSec };
       // The code is only checked (and its step consumed) once the password is right.
       const ok = (await d.owner.verifyPassword(field(req.body, 'password'))) && d.owner.verifyTotp(field(req.body, 'code').trim());
       if (!ok) {
-        await d.limiter.fail(ip);
+        await d.limiter.fail(ip, { door: viaDoor(req) });
         return { kind: 'failed' };
       }
       await d.limiter.succeed(ip);
@@ -225,8 +232,11 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
     }
     if (outcome.kind === 'failed') return loginForm(401, res, next ?? '', t('auth.login.wrong'));
 
-    const token = d.sessions.create(req.get('user-agent'));
-    res.cookie(SESSION_COOKIE, token, { ...optionsFor(req), maxAge: SESSION_DAYS * 86_400_000 });
+    // Remember where it was made: a session from this computer's address is refused at the public door, and lasts less.
+    // (A server, not the desktop app, has only one address: its logins are 'door' ones, a month long.)
+    const origin = viaDoor(req) || !d.localMode ? 'door' : 'local';
+    const token = d.sessions.create(req.get('user-agent'), origin);
+    res.cookie(SESSION_COOKIE, token, { ...optionsFor(req), maxAge: sessionDays(origin) * 86_400_000 });
     if (!knownDevice) res.cookie(DEVICE_COOKIE, d.sessions.rememberDevice(), { ...optionsFor(req), maxAge: DEVICE_DAYS * 86_400_000 });
     res.redirect(302, next ?? '/');
   });

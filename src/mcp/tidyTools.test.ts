@@ -33,7 +33,7 @@ async function connect(access: 'full' | 'projects' | 'discussions' = 'full', o: 
     return { text: String(r.content[0].text), isError: !!r.isError };
   };
   const save = async (content: string) => ((await service.remember({ kind: 'decision', content, project: 'p' }, owner)) as { memory: Memory }).memory;
-  return { client, call, save, tidy, server, given };
+  return { client, call, save, tidy, server, given, pages };
 }
 const data = (text: string) => JSON.parse(text.split('<memories>\n')[1]!.split('\n</memories>')[0]!);
 
@@ -92,4 +92,15 @@ test('propose_tidy creates an Inbox proposal and changes nothing; refusals are e
   // Blank optional fields mean left out.
   const e = await c.call('propose_tidy', { cluster_id: '', ids: [], proposal: { keep: { ids: [a.id] } }, reason: 'r' });
   assert.match(e.text, /cluster_id|ids/);
+});
+
+test('propose_tidy with an unknown page section lists the section names as data, not in the tool\'s sentence', async () => {
+  const c = await connect('full', { name: 'Codex' });
+  const a = await c.save(A); const b = await c.save(B);
+  const d = data((await c.call('tidy_session', { project: 'p' })).text);
+  const page = await c.pages.create({ title: 'p — notes', project: 'p', body: 'Lead.\n\n## Stack\nSQLite.' }, 'owner');
+  const r = await c.call('propose_tidy', { cluster_id: d.cluster_id, proposal: { move_to_page: { ids: [a.id, b.id], page_id: page.id, section: 'nope' } }, reason: 'r' });
+  assert.equal(r.isError, true);
+  assert.match(r.text.split('\n')[0]!, /^Page \S+ has no section nope; its sections, as data:$/);
+  assert.match(r.text, /<pages>\n\{"sections":\["top","stack"\]\}\n<\/pages>/);
 });

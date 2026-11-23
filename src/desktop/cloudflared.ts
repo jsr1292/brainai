@@ -164,6 +164,29 @@ export function stopLeftover(dir: string): void {
   } catch { /* gone */ }
 }
 
+/**
+ * Runs cloudflared so it cannot outlive BrainAI. A hard kill of the server (no exit handler runs) would leave the tunnel
+ * pointing at a closed door port that another local program could bind. cloudflared has no "stop when my parent stops"
+ * option and macOS has no parent-death signal, so a small shell holds cloudflared as its child and watches the pipe BrainAI
+ * keeps open to it: when BrainAI is gone, the operating system closes the pipe, the read ends, and cloudflared is killed.
+ * stop() sends TERM to the shell's whole process group (it is spawned detached); a TERM, INT or HUP to the shell alone ends cloudflared too. The shell writes cloudflared's own pid to the pid file
+ * ($1) so stopLeftover finds the tunnel itself. Arguments: pid file, cloudflared, then its arguments.
+ */
+const DIES_WITH_PARENT = `exec 3<&0
+pf=$1; shift
+stop=0; pid=; w=
+trap 'stop=1; [ -n "$pid" ] && { kill "$pid" 2>/dev/null; [ -n "$w" ] && kill "$w" 2>/dev/null; exit 0; }' TERM INT HUP
+( trap - TERM INT HUP; exec "$@" </dev/null ) &
+pid=$!
+[ "$stop" = 1 ] && { kill "$pid" 2>/dev/null; exit 0; }
+echo "$pid" > "$pf"
+( read _ <&3; kill "$pid" 2>/dev/null ) &
+w=$!
+[ "$stop" = 1 ] && { kill "$pid" "$w" 2>/dev/null; exit 0; }
+wait "$pid"
+kill "$w" 2>/dev/null
+exit 0`;
+
 /** Keeps `cloudflared tunnel run` going to the door while Reach is on: started again after it stops, until stop(). */
 export class TunnelRunner {
   private child: ChildProcess | null = null;
@@ -185,10 +208,11 @@ export class TunnelRunner {
     const w = this.wanted;
     const cli = findCli(this.env);
     if (!w || !cli) return;
-    const child = spawn(cli, ['tunnel', ...own(this.env, this.dir), '--no-autoupdate', 'run', '--credentials-file', w.credentials, '--url', `http://127.0.0.1:${w.port}`, w.id], { env: childEnv(this.env), stdio: ['ignore', 'ignore', 'pipe'] });
-    this.child = child;
     mkdirSync(folder(this.dir), { recursive: true, mode: 0o700 });
-    if (child.pid) writeFileSync(pidFile(this.dir), `${child.pid}\n`);
+    const args = ['tunnel', ...own(this.env, this.dir), '--no-autoupdate', 'run', '--credentials-file', w.credentials, '--url', `http://127.0.0.1:${w.port}`, w.id];
+    const child = spawn('/bin/sh', ['-c', DIES_WITH_PARENT, 'brainai-tunnel', pidFile(this.dir), cli, ...args], { env: childEnv(this.env), stdio: ['pipe', 'ignore', 'pipe'], detached: true });
+    this.child = child;
+    child.stdin?.on('error', () => { /* the wrapper is gone */ });
     child.stderr?.on('data', (c: Buffer) => { this.lines = [...this.lines, ...c.toString().split('\n').filter(Boolean)].slice(-20); });
     child.on('error', () => { /* reported through exit */ });
     child.on('exit', () => {
@@ -217,7 +241,20 @@ export class TunnelRunner {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     const child = this.child;
     this.child = null;
-    if (child) child.kill('SIGTERM');
+    if (child) {
+      // The wrapper leads a process group of its own (detached), and the whole group gets the TERM: a stop a few
+      // milliseconds after the start, before the wrapper has set its trap or forked cloudflared, still leaves nothing behind.
+      try { if (child.pid) process.kill(-child.pid, 'SIGTERM'); else child.kill('SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch { /* gone */ } }
+      // And the pipe is closed: if the TERM came before the wrapper had set its trap, or the group did not exist yet, its
+      // watcher sees the end of the pipe and stops cloudflared all the same.
+      child.stdin?.destroy();
+      // Belt: whatever of that group is still there a moment later (a TERM that landed while cloudflared was being forked
+      // is taken by the shell's trap in the child) is killed outright. The group is ours alone, so nothing else can be hit.
+      if (child.pid) {
+        const group = child.pid;
+        setTimeout(() => { try { process.kill(-group, 'SIGKILL'); } catch { /* none left */ } }, 300).unref();
+      }
+    }
     rmSync(pidFile(this.dir), { force: true });
   }
 }

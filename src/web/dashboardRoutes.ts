@@ -715,7 +715,13 @@ export function dashboardRoutes(d: AppDeps): Router {
     if (access === 'projects' && !projects) {
       return send(res, 400, 'badRequest', t('common.badRequest'), html`<h1>${t('common.badRequest')}</h1><p>${t('auth.consent.pickProject')}</p><p><a href="/settings#connections">${t('inbox.settings.backToSettings')}</a></p>`);
     }
-    d.provider.setGrantAccess(id, access, projects);
+    try {
+      d.provider.setGrantAccess(id, access, projects);
+    } catch (e) {
+      if (!(e instanceof InvalidNameError)) throw e;
+      // Another live connection has this name at the new level: rename one of them first.
+      return send(res, 400, 'badRequest', t('common.badRequest'), html`<h1>${t('common.badRequest')}</h1><p>${e.message}</p><p><a href="/settings#connections">${t('inbox.settings.backToSettings')}</a></p>`);
+    }
     res.redirect(303, '/settings#connections');
   });
 

@@ -38,4 +38,5 @@ export const auth = {
   'auth.sign.approvedText': 'Approved: {client} finishes connecting in your browser.',
   'auth.sign.deniedText': 'Denied: {client} was told no. Its page in your browser goes back to the tool.',
   'auth.sign.backHome': 'Back to BrainAI',
+  'auth.name.taken': 'Another live connection is already called “{name}” at a different access level. Choose a different name, so the two cannot be mistaken for each other, or remove the old connection in Settings › Connections.',
 } as const;

@@ -12,6 +12,7 @@ import { plain } from './shown.js';
 import Database from 'better-sqlite3';
 import { checkArchive, listLines } from './archive.js';
 import { restoredRowsProblem } from './rowChecks.js';
+import { cleanImage, EXT } from '../images/clean.js';
 import { checkBackupFile, kindOfFile, pictureRows, picturesCanBeRemoved, stripSignIn } from './backupFile.js';
 
 const run = promisify(execFile);
@@ -80,6 +81,74 @@ export async function checked(file: string): Promise<{ kind: 'archive' | 'databa
   return { kind, counts: { facts: c.facts, pages: c.pages, pictures_missing: 0 } };
 }
 
+/** The sign-in addresses every brain starts with (db.ts MIGRATION_1); a restored copy goes back to exactly these. */
+const DEFAULT_ALLOWLIST = ['https://claude.ai/api/mcp/auth_callback', 'https://claude.com/api/mcp/auth_callback', 'loopback'];
+
+/**
+ * Security settings a saved copy must not bring in (security review #11), after its sign-in data is stripped: the
+ * redirect allowlist goes back to the defaults, registered apps and their connections are dropped (an app registers and
+ * the owner approves it again), and skills the copy has switched on are Off until the owner turns them on.
+ */
+function resetSecuritySettings(file: string): void {
+  const db = new Database(file);
+  try {
+    const has = (table: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? COLLATE NOCASE").get(table);
+    db.transaction(() => {
+      if (has('redirect_allowlist')) {
+        db.exec('DELETE FROM redirect_allowlist');
+        const add = db.prepare("INSERT INTO redirect_allowlist(entry, added_at) VALUES (?, datetime('now'))");
+        for (const e of DEFAULT_ALLOWLIST) add.run(e);
+      }
+      for (const table of ['oauth_grants', 'oauth_clients']) if (has(table)) db.exec(`DELETE FROM ${table}`);
+      if (has('skills') && (db.pragma('table_info(skills)') as { name: string }[]).some((c) => c.name.toLowerCase() === 'enabled')) db.exec('UPDATE skills SET enabled = 0');
+    })();
+    db.exec('VACUUM');
+  } finally { db.close(); }
+}
+
+/**
+ * Runs every picture the staged database lists and whose file is there through the cleaning uploads get (cleanImage:
+ * type from the bytes, only listed parts kept, size limits). A file that fails, is not what its row says, or is not a
+ * plain file is deleted and its row marked removed by the restore (or dropped, in a database that does not record
+ * removals). Files the database does not list are never served and are left alone. Returns how many pictures went.
+ */
+function cleanRestoredPictures(into: string): number {
+  const db = new Database(join(into, 'memory.db'));
+  try {
+    const hasRemoved = (db.pragma('table_info(images)') as { name: string }[]).some((c) => c.name === 'removed_by');
+    const hasFrames = (db.pragma('table_info(images)') as { name: string }[]).some((c) => c.name === 'frames');
+    const at = new Date().toISOString();
+    let dropped = 0;
+    for (const r of restorablePictures(db)) {
+      if (!/^[0-9a-f]{3,}$/.test(r.id) || !/^[a-z0-9]{1,8}$/.test(r.type)) continue;
+      const file = join(into, 'images', r.id.slice(0, 2), `${r.id}.${r.type === 'jpeg' ? 'jpg' : r.type}`);
+      let st;
+      try { st = lstatSync(file); } catch { continue; }
+      let bad = !st.isFile();
+      if (!bad) {
+        try {
+          const original = readFileSync(file);
+          const c = cleanImage(original);
+          if (c.type !== r.type || EXT[c.type] !== (r.type === 'jpeg' ? 'jpg' : r.type)) bad = true;
+          else if (!c.bytes.equals(original)) {
+            writeFileSync(file, c.bytes);
+            // The row describes the file that is there now (the size and the header's width, height and frames).
+            if (hasFrames) db.prepare('UPDATE images SET bytes = ?, width = ?, height = ?, frames = ? WHERE id = ?').run(c.bytes.length, c.width, c.height, c.frames, r.id);
+            else db.prepare('UPDATE images SET bytes = ?, width = ?, height = ? WHERE id = ?').run(c.bytes.length, c.width, c.height, r.id);
+          }
+        } catch { bad = true; }
+      }
+      if (!bad) continue;
+      // A folder (or a link) where the file should be goes too, with whatever is in it.
+      rmSync(file, { recursive: true, force: true });
+      if (hasRemoved) db.prepare("UPDATE images SET removed_at = COALESCE(removed_at, ?), removed_by = COALESCE(removed_by, 'restore') WHERE id = ?").run(at, r.id);
+      else db.prepare('DELETE FROM images WHERE id = ?').run(r.id);
+      dropped++;
+    }
+    return dropped;
+  } finally { db.close(); }
+}
+
 /** Puts the database (and an archive's pictures) into `into`, with the sign-in data taken out. The source is never changed. */
 async function unpack(file: string, kind: 'archive' | 'database', into: string): Promise<number> {
   if (kind === 'archive') {
@@ -89,13 +158,15 @@ async function unpack(file: string, kind: 'archive' | 'database', into: string):
     copyFileSync(file, join(into, 'memory.db'));
   }
   stripSignIn(join(into, 'memory.db'));
+  resetSecuritySettings(join(into, 'memory.db'));
   const problem = restoredRowsProblem(join(into, 'memory.db'));
   if (problem) throw new Error(`This saved copy holds names BrainAI would never write (${problem}), so it is not brought back.`);
-  if (kind === 'archive') return 0;
+  if (kind === 'archive') return cleanRestoredPictures(into);
   // A backup file holds no pictures itself. The pictures that sit beside it (an `images` folder, as the second backup
   // folder keeps them) are brought along; the live pictures still without a file are counted, then marked removed on the
   // staged copy, so the restored brain does not list pictures it cannot have and the backup check has nothing to flag.
   copyBesidePictures(dirname(file), into);
+  cleanRestoredPictures(into);
   const db = new Database(join(into, 'memory.db'));
   try {
     let n = 0;

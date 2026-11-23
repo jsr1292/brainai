@@ -741,6 +741,15 @@ INSERT OR IGNORE INTO brain_switches(name, value, set_at)
  * A new migration needs a downgrade recipe in `DOWNGRADES` (src/scripts/restoreDrill.ts), or the restore drill's test fails:
  * the drill restores a brain one schema back and forward again. Add the recipe in the same commit.
  */
+/**
+ * Discussions know a connection by its grant, not by the display name it chose (security review #12): who opened a
+ * discussion and who wrote each post. NULL on what was written before this; those keep comparing names.
+ */
+const MIGRATION_45 = `
+ALTER TABLE discussions ADD COLUMN opened_grant TEXT;
+ALTER TABLE discussion_posts ADD COLUMN grant_id TEXT;
+`;
+
 const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] = [
   { version: 1, sql: MIGRATION_1 },
   { version: 2, sql: MIGRATION_2 },
@@ -787,6 +796,7 @@ const MIGRATIONS: { version: number; sql: string; foreignKeysOff?: string[] }[] 
   { version: 42, sql: MIGRATION_42 },
   { version: 43, sql: MIGRATION_43 },
   { version: 44, sql: MIGRATION_44 },
+  { version: 45, sql: MIGRATION_45 },
 ];
 
 /**

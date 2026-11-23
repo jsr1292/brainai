@@ -79,7 +79,7 @@ test('a save with a picture line that points at nothing is kept and the reply na
   const lost = '2'.repeat(24);
   const made = await call('write_page', { title: 'wildlog — flows', project: 'wildlog', body: `Lead.\n\n![Oops](/images/${lost}.jpg)\n\n\`\`\`mermaid\nflowchart TD\n a-->b\n\`\`\`` });
   assert.equal(made.isError, false);
-  assert.match(made.text, new RegExp(`^Created page \\S+ \\(version 1\\)\\. 1 picture line points to no picture: ${lost}\\. Diagrams are checked the next time the owner views the page\\.$`));
+  assert.match(made.text, new RegExp(`^Created page \\S+ \\(version 1\\)\\. Now save ONE one-line fact[^.]*\\. Don't copy the page's content into the fact\\. 1 picture line points to no picture: ${lost}\\. Diagrams are checked the next time the owner views the page\\.$`));
   const id = /page (\S+) /.exec(made.text)![1]!;
   const plain = await call('write_page', { id, base_version: 1, title: 'wildlog — flows', body: 'Just words.' });
   assert.equal(plain.text, `Saved page ${id} as version 2.`);

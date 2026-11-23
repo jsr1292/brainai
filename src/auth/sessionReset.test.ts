@@ -12,7 +12,7 @@ test('sessions made by the old automatic sign-in are forgotten once, at the firs
   try {
     const db = openDb(':memory:');
     const sessions = new SessionStore(db, () => new Date());
-    const old = sessions.create('curl/8');
+    const old = sessions.create('curl/8', 'local');
     assert.equal(sessions.isValid(old), true);
 
     assert.equal(forgetAutoSessions(db, dir), true);
@@ -20,7 +20,7 @@ test('sessions made by the old automatic sign-in are forgotten once, at the firs
     assert.equal(existsSync(join(dir, 'auto-sign-in-ended')), true);
 
     // A session made after the reset (the app window's) survives later starts.
-    const fresh = sessions.create('app');
+    const fresh = sessions.create('app', 'local');
     assert.equal(forgetAutoSessions(db, dir), false);
     assert.equal(sessions.isValid(fresh), true);
   } finally {

@@ -20,7 +20,7 @@ test('create then get round-trips every field, with round 1 and an 8-character i
   assert.match(d.id, /^[a-z0-9]{8}$/);
   assert.deepEqual(store.get(d.id), {
     ...base, id: d.id, openedAt: '2026-10-19T10:00:00.000Z', round: 1,
-    closedAt: null, decision: null, decisionMemoryId: null,
+    closedAt: null, decision: null, decisionMemoryId: null, openedGrant: null,
   });
 });
 

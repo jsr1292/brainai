@@ -1,4 +1,5 @@
 import type { Say } from '../i18n/errors.js';
+import { actsOnTheApp } from '../pages/markdown.js';
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
 import { looksLikeInstruction } from '../memory/instructionLike.js';
@@ -75,6 +76,8 @@ function checkUrl(v: string | null): string | null {
   if (v === null || v.trim() === '') return null;
   const s = v.trim();
   if (s.length > MAX_URL || !/^https?:\/\/[^\s]+$/i.test(s)) throw invalid('The URL must start with https:// or http://', { key: 'err.project.urlShape' });
+  // A link to the brain's own sign-in or app actions (/authorize, /app/...) is never a project's web address.
+  if (actsOnTheApp(s)) throw invalid('This address points at the brain itself, so it cannot be a project URL.', { key: 'err.project.urlApp' });
   checkNoSecret('URL', s);
   return s;
 }
