@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { isRemoving } from '../desktop/removing.js';
 import { shiftWeek, weekOf, weeklyDigest } from '../memory/digest.js';
 import type { StoredReview } from '../review/types.js';
 import type { AppDeps } from './app.js';
@@ -29,8 +30,11 @@ export function reviewRoutes(d: AppDeps): Router {
     send(res, reviewView(view, { error: backError(req.query.error), prev: prevOf(r.monday), next: last ? null : shiftWeek(r.monday, 1), back: last ? '/review' : null, monday: { show: last && !view.empty && r.openedAt === null && r.dismissedAt === null } }), 200, last ? undefined : { href: '/review/all', labelKey: 'review.allWeeks' }, last ? 'last' : undefined);
   };
 
+  /** A week is stored only while the app is not being removed (a stored week would be a write after the copy). */
+  const ensureWeek = (monday: string) => (isRemoving() ? d.reviews.preview(monday, 'owner') : d.reviews.ensure(monday, 'owner'));
+
   router.get('/review', owner, (req, res) => {
-    const r = d.reviews.ensure(d.reviews.lastMonday(), 'owner');
+    const r = ensureWeek(d.reviews.lastMonday());
     if (!r) return send(res, noWeekYetView(), 200, undefined, 'last');
     showWeek(req, res, r);
   });
@@ -62,7 +66,7 @@ export function reviewRoutes(d: AppDeps): Router {
     if (at.to === 'none') return notFound(res);
     if (at.to === 'now') return res.redirect(302, '/review/now');
     if (at.redirect) return res.redirect(302, `/review/${at.monday}`);
-    const r = d.reviews.ensure(at.monday, 'owner');
+    const r = ensureWeek(at.monday);
     if (!r) return notFound(res);
     showWeek(req, res, r);
   });

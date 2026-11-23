@@ -6,6 +6,7 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { plain } from './shown.js';
 import Database from 'better-sqlite3';
@@ -37,8 +38,9 @@ function count(db: Database.Database, sql: string): number {
 }
 
 /**
- * True when the file is missing, or holds no live pages and no live memories except the welcome (the owner's profile
- * fact). Opened read-only and never migrated, so looking never changes the brain.
+ * True when the file is missing, or holds no live pages, memories, skills or discussions of the owner's, except the
+ * welcome's name (at most ONE live owner profile fact). Opened read-only and never migrated, so looking never changes
+ * the brain.
  */
 export function isEmptyBrain(dbPath: string): boolean {
   if (!existsSync(dbPath)) return true;
@@ -47,7 +49,10 @@ export function isEmptyBrain(dbPath: string): boolean {
     db = new Database(dbPath, { readonly: true });
     const pages = count(db, 'SELECT COUNT(*) AS n FROM pages WHERE deleted_at IS NULL');
     const facts = count(db, "SELECT COUNT(*) AS n FROM memories WHERE deleted_at IS NULL AND NOT (kind = 'profile' AND created_by = 'owner')");
-    return pages === 0 && facts === 0;
+    const names = count(db, "SELECT COUNT(*) AS n FROM memories WHERE deleted_at IS NULL AND kind = 'profile' AND created_by = 'owner'");
+    const skills = count(db, 'SELECT COUNT(*) AS n FROM skills WHERE deleted_at IS NULL');
+    const discussions = count(db, 'SELECT COUNT(*) AS n FROM discussions WHERE deleted_at IS NULL');
+    return pages === 0 && facts === 0 && names <= 1 && skills === 0 && discussions === 0;
   } catch {
     return false;
   } finally {
@@ -66,7 +71,7 @@ async function extract(archive: string, into: string): Promise<void> {
 }
 
 /** Checks either kind of file and says what it holds; `pictures_missing` counts the pictures only a database can lack. */
-async function checked(file: string): Promise<{ kind: 'archive' | 'database'; counts: Restored }> {
+export async function checked(file: string): Promise<{ kind: 'archive' | 'database'; counts: Restored }> {
   const kind = kindOfFile(file);
   if (!kind) throw new Error('This is not a saved BrainAI file or backup (a .tar.gz or a memory-….db).');
   const c = kind === 'archive' ? await checkArchive(file) : checkBackupFile(file);
@@ -94,39 +99,64 @@ async function unpack(file: string, kind: 'archive' | 'database', into: string):
   const db = new Database(join(into, 'memory.db'));
   try {
     let n = 0;
-    if (pictureRows(db) > 0 && picturesCanBeRemoved(db)) {
-      const rows = db.prepare('SELECT id, type FROM images WHERE removed_at IS NULL').all() as { id: string; type: string }[];
-      const gone = rows.filter((r) => !/^[0-9a-f]{3,}$/.test(r.id) || !/^[a-z0-9]{1,8}$/.test(r.type) || !existsSync(join(into, 'images', r.id.slice(0, 2), `${r.id}.${r.type === 'jpeg' ? 'jpg' : r.type}`)));
+    if (picturesCanBeRemoved(db)) {
+      // Pictures an earlier restore left out come back when their file is beside the copy this time.
+      const rows = restorablePictures(db);
+      const here = (r: PictureRow) => existsSync(join(into, 'images', r.id.slice(0, 2), `${r.id}.${r.type === 'jpeg' ? 'jpg' : r.type}`)) && /^[0-9a-f]{3,}$/.test(r.id) && /^[a-z0-9]{1,8}$/.test(r.type);
+      const back = db.prepare('UPDATE images SET removed_at = NULL, removed_by = NULL WHERE id = ?');
       const mark = db.prepare("UPDATE images SET removed_at = ?, removed_by = 'restore' WHERE id = ?");
       const at = new Date().toISOString();
-      for (const r of gone) mark.run(at, r.id);
-      n = gone.length;
+      for (const r of rows) {
+        if (here(r)) { if (r.removed_at !== null) back.run(r.id); } else { n++; if (r.removed_at === null) mark.run(at, r.id); }
+      }
     } else n = pictureRows(db);
     writeFileSync(join(into, FROM_DATABASE), String(n));
     return n;
   } finally { db.close(); }
 }
 
+export type PictureRow = { id: string; type: string; removed_at: string | null };
+
+/** The pictures a copy could bring: the live ones, and those an earlier restore left out (removed_by = 'restore'). */
+export function restorablePictures(db: Database.Database): PictureRow[] {
+  const cols = (db.prepare("PRAGMA table_info('images')").all() as { name: string }[]).map((c) => c.name);
+  if (cols.length === 0) return [];
+  if (!cols.includes('removed_at') || !cols.includes('removed_by')) return (db.prepare('SELECT id, type FROM images').all() as { id: string; type: string }[]).map((r) => ({ ...r, removed_at: null }));
+  return db.prepare("SELECT id, type, removed_at FROM images WHERE removed_at IS NULL OR removed_by = 'restore'").all() as PictureRow[];
+}
+
 /**
- * Copies the pictures the staged database lists as live (`<from>/images/<2 hex>/<id>.<ext>`) into `<into>/images`: real folders
+ * Where a picture's file sits beside a saved copy (`<folder>/images/<2 hex>/<id>.<ext>`): real folders and a regular file
+ * only, never a link. null when it is not there or the row's id or type is not what BrainAI writes. The one rule the
+ * preview counts by and the copy follows.
+ */
+export function besidePicture(folder: string, r: { id: string; type: string }): string | null {
+  if (!/^[0-9a-f]{3,}$/.test(r.id) || !/^[a-z0-9]{1,8}$/.test(r.type)) return null;
+  const real = (path: string) => { try { return lstatSync(path).isDirectory(); } catch { return false; } };
+  const sub = join(folder, 'images', r.id.slice(0, 2));
+  const file = join(sub, `${r.id}.${r.type === 'jpeg' ? 'jpg' : r.type}`);
+  try {
+    if (!real(join(folder, 'images')) || !real(sub) || !lstatSync(file).isFile()) return null;
+  } catch { return null; }
+  return file;
+}
+
+/**
+ * Copies the pictures the staged database lists as live or left out by an earlier restore (`<from>/images/<2 hex>/<id>.<ext>`) into `<into>/images`: real folders
  * and regular files only, never a link, a half-written .partial or a stray file the database does not know. A file that cannot
  * be copied is skipped, so it counts as a missing picture.
  */
 function copyBesidePictures(from: string, into: string): void {
-  const root = join(from, 'images');
-  const real = (path: string) => { try { return lstatSync(path).isDirectory(); } catch { return false; } };
-  if (!real(root)) return;
-  let rows: { id: string; type: string }[] = [];
+  let rows: PictureRow[] = [];
   const db = new Database(join(into, 'memory.db'), { readonly: true });
-  try { rows = db.prepare('SELECT id, type FROM images WHERE removed_at IS NULL').all() as { id: string; type: string }[]; } catch { rows = []; } finally { db.close(); }
+  try { rows = restorablePictures(db); } catch { rows = []; } finally { db.close(); }
   for (const r of rows) {
-    if (!/^[0-9a-f]{3,}$/.test(r.id) || !/^[a-z0-9]{1,8}$/.test(r.type)) continue;
-    const sub = r.id.slice(0, 2);
-    const file = `${r.id}.${r.type === 'jpeg' ? 'jpg' : r.type}`;
+    const src = besidePicture(from, r);
+    if (!src) continue;
     try {
-      if (!real(join(root, sub)) || !lstatSync(join(root, sub, file)).isFile()) continue;
+      const sub = r.id.slice(0, 2);
       mkdirSync(join(into, 'images', sub), { recursive: true, mode: 0o700 });
-      copyFileSync(join(root, sub, file), join(into, 'images', sub, file));
+      copyFileSync(src, join(into, 'images', sub, `${r.id}.${r.type === 'jpeg' ? 'jpg' : r.type}`));
     } catch { /* unreadable: counted as a missing picture */ }
   }
 }
@@ -141,12 +171,43 @@ function missingFromNote(staged: string): number {
   }
 }
 
-/** Moves the unpacked database and pictures from `from` into the data folder, dropping the old database's side files. */
-function swapIn(from: string, dataDir: string): void {
+/** `YYYYMMDD-HHMMSS` in local time, for the name the replaced brain is kept under. */
+function stamp(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+/**
+ * Moves the unpacked database and pictures from `from` into the data folder. The brain being replaced is never lost:
+ * it is renamed (with its -wal and -shm, the server being stopped) to `memory-before-restore-<stamp>.db`, a name no
+ * backup code treats as one of its dated backups.
+ */
+export function swapIn(from: string, dataDir: string, rename: typeof renameSync = renameSync): void {
   // Pictures first and the database last: if the pictures fail, the database has not changed.
   if (existsSync(join(from, 'images'))) cpSync(join(from, 'images'), join(dataDir, 'images'), { recursive: true });
-  for (const f of ['memory.db-wal', 'memory.db-shm']) rmSync(join(dataDir, f), { force: true });
-  renameSync(join(from, 'memory.db'), join(dataDir, 'memory.db'));
+  const current = join(dataDir, 'memory.db');
+  const moved: [string, string][] = [];
+  let kept: string | null = null;
+  try {
+    if (existsSync(current)) {
+      const base = `memory-before-restore-${stamp(new Date())}`;
+      let name = `${base}.db`;
+      for (let i = 2; existsSync(join(dataDir, name)); i++) name = `${base}-${i}.db`;
+      for (const side of ['', '-wal', '-shm']) {
+        if (existsSync(current + side)) { rename(current + side, join(dataDir, name + side)); moved.push([join(dataDir, name + side), current + side]); }
+      }
+      kept = join(dataDir, name);
+    } else {
+      for (const f of ['memory.db-wal', 'memory.db-shm']) rmSync(join(dataDir, f), { force: true });
+    }
+    rename(join(from, 'memory.db'), current);
+  } catch (e) {
+    // Anything moved aside goes back under its own name: the brain being replaced is never left half-moved.
+    for (const [aside, original] of moved.reverse()) { try { rename(aside, original); } catch { /* nothing more to do */ } }
+    throw e;
+  }
+  // The kept brain is never a way to sign in later: its sign-in data goes, as it does from any copy (only after the swap, so a rollback keeps it whole).
+  if (kept) { try { stripSignIn(kept); } catch { /* the kept file is still the owner's: leave it as it is */ } }
 }
 
 /** An error from a crafted file may carry its text (SQLite quotes a constraint name): bounded and safe to print or show. */
@@ -176,16 +237,29 @@ async function restoreIntoRaw(file: string, dataDir: string): Promise<Restored> 
 
 export const restoreInto = (file: string, dataDir: string): Promise<Restored> => safely(() => restoreIntoRaw(file, dataDir));
 
-/** Checks the file and unpacks it into `<data>/restore-pending/`, for the server to swap in at its next start. */
+/** Left by a staging or an upload that never finished: `restore-pending.tmp-<hex>` folders and `restore-upload-<hex>.tmp` files. Only startup removes them (a live staging may own one). */
+const STRAY = /^(restore-pending\.tmp-[0-9a-f]+|restore-upload-[0-9a-f]+\.tmp)$/;
+function removeStray(dataDir: string): void {
+  try {
+    for (const n of readdirSync(dataDir)) if (STRAY.test(n)) rmSync(join(dataDir, n), { recursive: true, force: true });
+  } catch { /* no data folder yet */ }
+}
+
+/**
+ * Checks the file and unpacks it into `<data>/restore-pending/`, for the server to swap in at its next start. It is
+ * unpacked into a temporary folder and renamed only when everything succeeded, so a half-unpacked copy is never "ready".
+ */
 async function stageRestoreRaw(file: string, dataDir: string): Promise<Restored> {
   const { kind, counts } = await checked(file);
   if (!isEmptyBrain(join(dataDir, 'memory.db'))) throw new Error(NOT_EMPTY);
   const pending = join(dataDir, 'restore-pending');
+  const tmp = join(dataDir, `restore-pending.tmp-${randomBytes(8).toString('hex')}`);
   rmSync(pending, { recursive: true, force: true });
   try {
-    counts.pictures_missing = await unpack(file, kind, pending);
+    counts.pictures_missing = await unpack(file, kind, tmp);
+    renameSync(tmp, pending);
   } catch (e) {
-    rmSync(pending, { recursive: true, force: true });
+    rmSync(tmp, { recursive: true, force: true });
     throw e;
   }
   return counts;
@@ -199,6 +273,7 @@ export const stageRestore = (file: string, dataDir: string): Promise<Restored> =
  */
 export function applyPendingRestore(dataDir: string): Restored | null {
   const pending = join(dataDir, 'restore-pending');
+  removeStray(dataDir);
   if (!existsSync(join(pending, 'memory.db'))) {
     rmSync(pending, { recursive: true, force: true });
     return null;

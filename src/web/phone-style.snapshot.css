@@ -494,10 +494,10 @@ button.row { width: 100%; min-height: 52px; border: 0; border-radius: 0; backgro
 button.row:active { background: var(--raised); }
 .group > li > form { display: block; margin: 0; }
 /* The card clips its corners, so a row's pressed fill and inside focus ring follow them (card radius minus its border). */
-.group > li:first-child > :is(a, .row), .group > li:first-child > form > button.row, .group > li:first-child > .fy-week > form > button.row, .group > li:first-child > details > summary { border-radius: 13px 13px 0 0; }
-.group > li:last-child > :is(a, .row), .group > li:last-child > form > button.row, .group > li:last-child > .fy-week > form > button.row, .group > li:last-child > details:not([open]) > summary { border-radius: 0 0 13px 13px; }
-.group > li:only-child > :is(a, .row), .group > li:only-child > form > button.row, .group > li:only-child > .fy-week > form > button.row, .group > li:only-child > details:not([open]) > summary { border-radius: 13px; }
-.group > li > :is(a, .row):focus-visible, .group > li > form > button.row:focus-visible, .group > li > .fy-week > form > button.row:focus-visible, .group > li > details > summary:focus-visible, .group .fold-list > li > :is(a, .row):focus-visible { outline-offset: -2px; }
+.group > li:first-child > :is(a, .row), .group > li:first-child > form > button.row, .group > li:first-child > details > summary { border-radius: 13px 13px 0 0; }
+.group > li:last-child > :is(a, .row), .group > li:last-child > form > button.row, .group > li:last-child > details:not([open]) > summary { border-radius: 0 0 13px 13px; }
+.group > li:only-child > :is(a, .row), .group > li:only-child > form > button.row, .group > li:only-child > details:not([open]) > summary { border-radius: 13px; }
+.group > li > :is(a, .row):focus-visible, .group > li > form > button.row:focus-visible, .group > li > details > summary:focus-visible, .group .fold-list > li > :is(a, .row):focus-visible { outline-offset: -2px; }
 /* The trailing chevron: a 7px corner, pointing right; open folds point it down. */
 .chev { display: inline-block; flex: none; justify-self: end; width: 7px; height: 7px; margin-right: 3px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); }
 /* One fold: the summary is a row (name, grey count, chevron); only the chevron turns. */
@@ -900,15 +900,35 @@ details.earlier > summary { cursor: pointer; color: var(--muted); font-weight: 6
 .banner .txt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .phome form.idea { display: flex; width: 100%; }
 .idea input { flex: 1; min-width: 0; }
-/* For you: approvals and discussions (orange dot), Last week (grey dot), suggestions (no dot, quiet pills). */
-.fy-week { position: relative; }
-.fy-week .fy-read { display: block; margin: 0; }
-.fy-week button.row { padding-right: 112px; }
-.fy-week .txt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-.fy-week .fy-not { position: absolute; top: 50%; right: 8px; margin: 0; transform: translateY(-50%); }
+/* For you: approvals and discussions (orange dot), suggestions (no dot, quiet pills). */
 .fy-sug .acts { display: flex; gap: 4px; }
 .fy-more .fold-list .row { padding-left: 16px; }
 details.fold.fy-more > summary { color: var(--muted); font-weight: 400; }
+/* The Monday card: last week in a sentence and three numbers, at the top of Projects until Read it or Not now. */
+.monday-card { margin: 0 0 1rem; padding: 1rem 1.125rem; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: var(--r-card); }
+.monday-card h2 { margin: 0 0 0.375rem; }
+.mc-text { margin: 0 0 0.875rem; color: var(--fg); font-size: var(--t-body); }
+.mc-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; margin: 0 0 1rem; }
+.mc-stat { display: flex; flex-direction: column-reverse; justify-content: flex-end; margin: 0; min-width: 0; }
+.mc-n { margin: 0; font-family: var(--display); font-size: var(--t-title); font-weight: 650; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.mc-l { margin: 0.125rem 0 0; font-weight: 400; color: var(--muted); font-size: var(--t-meta); line-height: 1.3; }
+.mc-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.mc-actions form { margin: 0; }
+/* The health label on a project (computed, never set): needs you and at risk are tinted, stuck is a plain chip, on track is just quiet text. */
+.hl { flex: none; }
+.chip.hl-needs { background: color-mix(in srgb, var(--attention) 12%, var(--surface)); color: var(--attention); }
+.chip.hl-risk { background: color-mix(in srgb, var(--error) 12%, var(--surface)); color: var(--error); }
+.chip.hl-stuck { background: var(--raised); color: var(--fg); }
+.hl-ok { display: inline-block; color: var(--muted); font-size: var(--t-meta); font-weight: 500; white-space: nowrap; }
+:root[data-theme="dark"] .chip.hl-needs { background: color-mix(in srgb, var(--attention) 16%, var(--surface)); }
+:root[data-theme="dark"] .chip.hl-risk { background: color-mix(in srgb, var(--error) 16%, var(--surface)); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .chip.hl-needs { background: color-mix(in srgb, var(--attention) 16%, var(--surface)); }
+  :root:not([data-theme="light"]) .chip.hl-risk { background: color-mix(in srgb, var(--error) 16%, var(--surface)); }
+}
+.phealth { margin: 0.5rem 0 0; }
+.phealth-why { margin: 0.375rem 0 0; color: var(--muted); font-size: var(--t-sub); }
+.phealth-why > li + li { margin-top: 0.125rem; }
 
 /* ---- The approval card: in place under its For-you row on the desktop, a bottom sheet on the phone ---- */
 .fy-approval > summary { list-style: none; }
@@ -1082,7 +1102,7 @@ details.fold.fy-more > summary { color: var(--muted); font-weight: 400; }
 .prow.is-selected { background: var(--raised); box-shadow: none; }
 .prow-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prow-next { color: var(--muted); font-size: var(--t-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prow-chip { display: flex; justify-content: flex-end; min-width: 0; }
+.prow-chip { display: flex; justify-content: flex-end; gap: 6px; min-width: 0; }
 .row-note { margin-left: 8px; color: var(--muted); font-size: var(--t-meta); white-space: nowrap; }
 .prow-when { color: var(--muted); font-size: var(--t-meta); text-align: right; white-space: nowrap; }
 /* Facts, steps, remotes and URLs inside the panel often hold long unbroken text: break it rather than overflow. */

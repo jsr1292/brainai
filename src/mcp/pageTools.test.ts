@@ -761,7 +761,7 @@ test('update_memory on a fact a page links to nudges that page, even in another 
   w.at('2026-10-25T10:00:00Z');
   const { call } = await w.connect('Claude Code');
   const r = await call('update_memory', { id: ha.id, content: 'homeassistant runs on the NAS now' });
-  assert.match(r.text, new RegExp(`^Updated\\. Page ${main.id} may now be out of date: a fact it links to was changed after it was last brought up to date\\. If this work changed the whole picture, fix the page with edit_page_section, linking facts with \\[\\[fact:id\\]\\], before you finish\\.\\n`));
+  assert.match(r.text, new RegExp(`^Updated\\. Page ${main.id} may now be out of date: a fact it links to was changed after it was last brought up to date\\. If this work changed the whole picture, fix the page with edit_page_section, linking facts with \\[\\[fact:id\\]\\], before you finish\\. Growth: [^\\n]*note_observation[^\\n]*\\n`));
   assert.deepEqual(memData(r.text)[1], { page: main.id, decisions_to_consider: [ha.id] });
 });
 

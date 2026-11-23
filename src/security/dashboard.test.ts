@@ -14,7 +14,7 @@ import { createApp } from '../web/app.js';
 import { concretePath, listRoutes } from './routes.js';
 import { changedTables, fingerprint, seedWorld, sessionCookie } from './support.js';
 
-const EXEMPT_FROM_ORIGIN = new Set(['/mcp', '/authorize', '/token', '/register', '/revoke', '/app/hello', '/app/bridge-hello', '/app/ticket', '/app/removed/ready', '/app/backup-now', '/api/folder-report', '/api/image-upload', '/api/skills/report', '/api/skills/upload']);
+const EXEMPT_FROM_ORIGIN = new Set(['/mcp', '/authorize', '/token', '/register', '/revoke', '/app/hello', '/app/bridge-hello', '/app/ticket', '/app/removed/ready', '/app/removed/cancel', '/app/backup-now', '/api/folder-report', '/api/image-upload', '/api/skills/report', '/api/skills/upload']);
 const exempt = (path: string) => [...EXEMPT_FROM_ORIGIN].some((p) => path === p || path.startsWith(p + '/'));
 
 async function boot(opts: { localMode?: boolean; noPassword?: boolean } = {}) {
@@ -36,12 +36,12 @@ function realPath(path: string, ids: { page: string; fact: string; grant: string
 
 /** What each route that is not behind the owner's session may answer without one, and why. Everything else must redirect to /login. */
 const OPEN_ANSWERS = new Map<string, number[]>([
-  ['POST /login', [401, 503]], ['GET /login', [200]], ['GET /.well-known/oauth-authorization-server', [200]], ['GET /consent/:id/wait', [200]],
+  ['POST /login', [401, 503]], ['GET /login', [200]], ['GET /.well-known/oauth-authorization-server', [200]], ['GET /.well-known/oauth-authorization-server/mcp', [200]], ['GET /consent/:id/wait', [200]],
   ['GET /sw.js', [200]], ['GET /favicon.ico', [302]], ['GET /app/removed', [200]],
   ['POST /mcp', [401]], ['GET /mcp', [405]], ['DELETE /mcp', [405]],
   ['POST /api/folder-report', [401]], ['POST /api/skills/report', [401]], ['POST /api/skills/upload', [401]], ['PUT /api/image-upload/:token', [410]],
   // The desktop app's own endpoints answer like an unknown page without the key (or do not exist on a server).
-  ['POST /app/ticket', [404]], ['GET /app/hello', [404]], ['GET /app/bridge-hello', [404]], ['GET /app/open', [404]], ['GET /app/removed/ready', [404]], ['GET /app/goodbye', [404]], ['POST /app/backup-now', [404]],
+  ['POST /app/ticket', [404]], ['GET /app/hello', [404]], ['GET /app/bridge-hello', [404]], ['GET /app/open', [404]], ['GET /app/removed/ready', [404]], ['GET /app/goodbye', [404]], ['POST /app/backup-now', [404]], ['POST /app/removed/cancel', [404]], ['GET /app/week-note', [404]],
 ]);
 
 for (const mode of [{ name: 'server', opts: {} as { localMode?: boolean; noPassword?: boolean } }, { name: 'desktop (LOCAL_MODE)', opts: { localMode: true } }, { name: 'desktop with no password yet', opts: { localMode: true, noPassword: true } }]) {

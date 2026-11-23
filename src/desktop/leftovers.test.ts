@@ -113,3 +113,19 @@ test('removeHooks: a hook that only looks like ours (team-memory-save.mjs, anoth
   removeHooks({ home: h }, false);
   assert.deepEqual(JSON.parse(readFileSync(join(h, '.claude', 'settings.json'), 'utf8')), other);
 });
+
+test('removeHooks says nothing when neither script exists and settings.json has no BrainAI entry, even if a brain may be connected', () => {
+  const h = mkdtempSync(join(tmpdir(), 'brainai-left-'));
+  assert.deepEqual(removeHooks({ home: h }, true), { removed: [], kept: null }, 'no .claude at all');
+  mkdirSync(join(h, '.claude'), { recursive: true });
+  writeFileSync(join(h, '.claude', 'settings.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'say done' }] }] } }));
+  assert.deepEqual(removeHooks({ home: h }, true), { removed: [], kept: null }, "only the owner's own hooks");
+  assert.match(removeHooks({ home: home() }, true).kept ?? '', /were left in place/, 'with ours present it still says so');
+});
+
+test('hooksPresent ignores team-memory-save.mjs in settings.json', () => {
+  const h = mkdtempSync(join(tmpdir(), 'brainai-left-'));
+  mkdirSync(join(h, '.claude'), { recursive: true });
+  writeFileSync(join(h, '.claude', 'settings.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'node ~/team/team-memory-save.mjs' }] }] } }));
+  assert.deepEqual(removeHooks({ home: h }, true), { removed: [], kept: null });
+});

@@ -12,6 +12,6 @@ The brain has two layers. Facts are short: decisions, statuses, roadmaps and my 
 - When we produce something long that will matter later, write it as a page (write_page, or edit_page_section for one part) and save a one-line fact pointing to it.
 - Keep live status and to-dos in facts, never in a page. If the two disagree, the facts win.
 - Never put passwords, keys or tokens in either.
-- Follow the page rules in the brain's instructions and its page "How this brain is organised".
+- Follow the page rules in the brain's instructions.
 
-When you call load_profile, pass setup: 3.
+When you call load_profile, pass setup: 4.

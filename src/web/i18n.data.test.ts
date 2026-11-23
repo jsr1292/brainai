@@ -1,4 +1,5 @@
 /** The data area (import, save a copy, move to a server, remove, moved from Outline) in Spanish. Fake HOME only. */
+import { setRemoving } from '../desktop/removing.js';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
@@ -220,7 +221,7 @@ test('the data pages in the desktop app (save, move, remove, finishing) have no 
     assert.equal(removed.status, 303);
     const finish = await (await f('/settings/remove/done')).text();
     assertNoEnglishLeft(finish, 'remove done', { allow: [...allow, ...[...finish.matchAll(/<code class="path">([^<]*)<\//g)].map((m) => m[1]!)] });
-  } finally { enablePseudoLocale(false); }
+  } finally { enablePseudoLocale(false); setRemoving(false); }
 });
 
 test('in Spanish: save a copy, move and remove read in Spanish, with the same lit tab and back link', async (t) => {

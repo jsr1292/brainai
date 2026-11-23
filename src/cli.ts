@@ -35,8 +35,12 @@ import { factsAndPages, makeSavedCopy } from './saved/savedCopy.js';
 import { plural } from './web/dashboardViews.js';
 import { restoreInto } from './saved/restore.js';
 import { shown } from './saved/shown.js';
-import { disconnect, tracesOfThisBrain, type ToolEnv, type ToolId } from './desktop/tools.js';
+import { readPorts, usualPort } from './desktop/homePort.js';
+import { prepareEnv, disconnect, tracesOfThisBrain, type ToolEnv, type ToolId } from './desktop/tools.js';
 import { runClaudeBridge } from './desktop/claudeBridge.js';
+import { toolPathFor } from './desktop/toolPath.js';
+import { BackupCopy } from './desktop/backupCopy.js';
+import { removeClaudeHooks, takeToolsOut } from './desktop/removeTools.js';
 
 // One readline for the whole process: piped stdin delivers all lines at once, so a
 // per-prompt interface would lose the lines after the first.
@@ -235,14 +239,27 @@ async function exportBrain({ db, args = [] }: CliContext): Promise<void> {
  * Like export-brain it only reads, so nothing here needs an embedding model.
  */
 async function saveCopy({ db, args = [], dbPath }: CliContext): Promise<void> {
-  const parent = args[0];
-  if (!parent) throw new Error('Usage: cli save-copy <parentDir>');
+  // --app: the desktop app's own brain (the Windows uninstaller's copy before it deletes the data): the app's checklist.
+  const app = args.includes('--app');
+  const parent = args.filter((a) => a !== '--app')[0] ?? (app ? process.env.BRAINAI_COPY_TO : undefined);
+  if (!parent) throw new Error('Usage: cli save-copy <parentDir> [--app] (--app may take the folder from BRAINAI_COPY_TO)');
   if (!dbPath) throw new Error('save-copy needs the database file');
   const memoryStore = new MemoryStore(db, systemClock);
   const noModel: Embedder = { embed: async () => { throw new Error('save-copy never embeds'); } };
   const memories = new MemoryService(memoryStore, noModel, { duplicateThreshold: 1, minRecallSimilarity: 1, recallConfidentSimilarity: 1 });
   const pages = new PageService(new PageStore(db, systemClock), noModel, memories, new ProjectStore(db, systemClock), memoryStore, systemClock);
-  const lines = checklist({ install: 'server', webApps: webAppNames(db), tunnel: serverTunnel(process.env.PUBLIC_URL), leftTools: [], kept: [] });
+  const kept: string[] = [];
+  let tunnel: { hostname: string | null; deleted: boolean } | null = app ? null : serverTunnel(process.env.PUBLIC_URL);
+  if (app) {
+    // As the in-app Remove: a Cloudflare route in reach.json is a name the owner must delete in their DNS, and a second backup folder still has copies.
+    try {
+      const reach = JSON.parse(readFileSync(join(dirname(dbPath), 'reach.json'), 'utf8')) as { via?: unknown; url?: unknown };
+      if (reach.via === 'cloudflare' && typeof reach.url === 'string') tunnel = { hostname: new URL(reach.url).hostname || null, deleted: false };
+    } catch { /* no Reach, or an unreadable file */ }
+    const second = new BackupCopy(dirname(dbPath)).folder();
+    if (second) kept.push(`Your second backup folder still has copies of your brain: ${second}`);
+  }
+  const lines = checklist({ install: app ? 'app' : 'server', webApps: webAppNames(db), tunnel, leftTools: [], kept });
   const r = await makeSavedCopy({ db, dataDir: dirname(dbPath), pages, memoryStore, memories, skills: new SkillService(db, systemClock) }, parent, systemClock(), lines);
   console.log(`save-copy: ${plural(r.facts, 'fact', 'facts')}, ${plural(r.pages, 'page', 'pages')}`);
   console.log(r.folder);
@@ -318,50 +335,76 @@ async function restoreCommand(args: string[], dataDir: string): Promise<number> 
 }
 
 /**
- * The Windows uninstaller's step: takes this brain's entries out of the owner's tools before the app goes. DATA_DIR is
- * the app-data folder: the port is in its brainai.json, the server's data in its `data` folder. Claude's desktop app
- * key is revoked with one UPDATE on that database, opened lightly (no migrations, no backups, no server needed). It
- * never fails the uninstaller: no file means nothing to do, and every problem goes to stderr with exit code 0.
+ * The Windows uninstaller's step: takes this brain's entries out of the owner's tools before the app goes, the same way
+ * Settings › Remove BrainAI does (tools, their sign-ins, save reminders, Claude Code's hooks) leaving every `.brainai-backup` beside its original. The tools are looked for on the PATH the app connected them on (toolPathFor). DATA_DIR is the
+ * app-data folder: the port is in its brainai.json, the server's data in its `data` folder. The database is opened lightly
+ * (no migrations, no backups, no server needed). It never fails the uninstaller: no file means nothing to do, and every
+ * problem goes to stderr with exit code 0.
  */
 async function disconnectToolsCommand(dataDir: string): Promise<number> {
   try {
-    let port: unknown;
-    try { port = (JSON.parse(readFileSync(join(dataDir, 'brainai.json'), 'utf8')) as { port?: unknown }).port; } catch { return 0; }
-    if (typeof port !== 'number' || !Number.isInteger(port)) return 0;
+    // The usual port, not the running one: after a temporary run `port` is a one-off address and the apps are connected to `home`.
+    const ports = readPorts(join(dataDir, 'brainai.json'));
+    const port = usualPort(ports);
+    if (port === null) return 0;
+    const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
+    if (!home) return 0;
+    const dbFile = join(dataDir, 'data', 'memory.db');
+    const mcpUrl = `http://localhost:${port}/mcp`;
+    const previousUrls = ports.previous.map((p) => `http://localhost:${p}/mcp`);
+    /** Runs `fn` on the brain's database, opened lightly; nothing when there is no database. */
+    const withDb = <T>(fn: (db: DB) => T): T | undefined => {
+      if (!existsSync(dbFile)) return undefined;
+      const db = new Database(dbFile, { fileMustExist: true, timeout: 5000 });
+      try { return fn(db); } finally { db.close(); }
+    };
     const env: ToolEnv = {
-      home: process.env.USERPROFILE ?? process.env.HOME ?? '',
-      path: process.env.PATH ?? process.env.Path ?? '',
+      home,
+      path: toolPathFor({ platform: process.platform, path: process.env.PATH ?? process.env.Path, home, appData: process.env.APPDATA, localAppData: process.env.LOCALAPPDATA, programFiles: process.env.ProgramFiles }),
       platform: process.platform,
-      mcpUrl: `http://localhost:${port}/mcp`,
+      mcpUrl,
+      previousUrls,
       rules: () => '',
       // Claude's desktop app: the server's data is in <app data>/data (DATA_DIR here is the app data folder), and its key
       // is revoked in that database directly, as no server is running.
       bridge: { node: process.execPath, cli: fileURLToPath(import.meta.url), dataDir: join(dataDir, 'data'), portFile: join(dataDir, 'brainai.json') },
-      revokeKey: (grantId) => {
-        const file = join(dataDir, 'data', 'memory.db');
-        if (!existsSync(file)) return;
-        const db = new Database(file, { fileMustExist: true, timeout: 5000 });
+      revokeKey: (grantId) => { try { withDb((db) => providerOn(db, mcpUrl).revokeGrant(grantId)); } catch (e) { console.error(`revoking a key: ${e instanceof Error ? e.message : String(e)}`); } },
+      // The tools' own sign-ins end too, by app name, as Disconnect in the app does: a reinstall over kept data must not show them as signed in.
+      endSignIns: (toolName) => {
         try {
-          const now = new Date().toISOString();
-          db.prepare('UPDATE oauth_grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(now, grantId);
-          db.prepare('UPDATE oauth_tokens SET revoked_at = ? WHERE grant_id = ? AND revoked_at IS NULL').run(now, grantId);
-        } finally { db.close(); }
+          return withDb((db) => {
+            const provider = providerOn(db, mcpUrl);
+            const live = provider.listGrants().filter((g) => !g.revokedAt && g.clientName.toLowerCase().startsWith(toolName.toLowerCase()));
+            for (const g of live) provider.revokeGrant(g.id);
+            return live.length;
+          }) ?? 0;
+        } catch (e) {
+          console.error(`ending ${toolName}'s sign-ins: ${e instanceof Error ? e.message : String(e)}`);
+          return 0;
+        }
       },
     };
-    if (!env.home) return 0;
-    for (const id of ['claude-code', 'codex', 'opencode', 'cursor', 'gemini', 'claude-desktop'] as ToolId[]) {
-      try {
-        if ((await tracesOfThisBrain(id, env)) !== 'yes') continue;
-        const r = await disconnect(id, env);
-        if (!r.ok) console.error(`${id}: ${r.reason}`);
-      } catch (e) {
-        console.error(`${id}: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
+    await prepareEnv(env); // a tool installed or a Node folder added since the session started, and which left-behind ports are really stale
+    const kept: string[] = [];
+    const handled: string[] = [];
+    const step = async (what: string, fn: () => Promise<void> | void) => {
+      try { await fn(); } catch (e) { console.error(`${what}: ${e instanceof Error ? e.message : String(e)}`); }
+    };
+    await step('tools', async () => {
+      for (const l of (await takeToolsOut(env, kept)).leftTools) console.error(`${l.name}: ${l.reason}`);
+    });
+    await step("Claude Code's hooks", async () => { await removeClaudeHooks(env, kept, handled, { dropBackup: false }); });
+    for (const k of kept) console.error(k);
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));
   }
   return 0;
+}
+
+/** The OAuth provider on a lightly opened database (listing and revoking grants never use the address or fetch). */
+function providerOn(db: DB, mcpUrl: string): MemoryOAuthProvider {
+  const allow = new RedirectAllowlist(db);
+  return new MemoryOAuthProvider(db, new ClientsStore(db, allow, systemClock), allow, systemClock, new URL(mcpUrl));
 }
 
 /** `deps.embedder` and `deps.reranker` replace the local models (tests). */
@@ -369,6 +412,11 @@ export async function main(argv: string[], deps: { embedder?: Embedder; reranker
   const dir = process.env.DATA_DIR ?? './data';
   if (argv[0] === 'restore') return restoreCommand(argv.slice(1), dir);
   if (argv[0] === 'disconnect-tools') return disconnectToolsCommand(dir);
+  // The uninstaller's copy must never create an empty brain: no database means nothing to save.
+  if (argv[0] === 'save-copy' && argv.includes('--app') && !existsSync(join(dir, 'memory.db'))) {
+    console.error(`save-copy --app: there is no memory.db in ${dir}; nothing to save.`);
+    return 3;
+  }
   // Claude's desktop app runs this; stdout carries only MCP messages. It reads BRAINAI_DATA_DIR and BRAINAI_PORT_FILE.
   if (argv[0] === 'claude-bridge') {
     await runClaudeBridge(process.env);

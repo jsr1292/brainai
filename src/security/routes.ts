@@ -3,11 +3,12 @@ import type { Express } from 'express';
 
 export interface RouteInfo { method: string; path: string }
 
-interface Layer { route?: { path: string; methods: Record<string, boolean> }; handle?: { stack?: Layer[] } }
+interface Layer { route?: { path: string | string[]; methods: Record<string, boolean> }; handle?: { stack?: Layer[] } }
 
 function walk(stack: Layer[], out: RouteInfo[]): void {
   for (const l of stack) {
-    if (l.route) for (const m of Object.keys(l.route.methods)) out.push({ method: m.toUpperCase(), path: l.route.path });
+    // A route may be registered for several paths at once (app.get([a, b], ...)): one entry for each.
+    if (l.route) for (const p of [l.route.path].flat()) for (const m of Object.keys(l.route.methods)) out.push({ method: m.toUpperCase(), path: p });
     else if (l.handle?.stack) walk(l.handle.stack, out);
   }
 }

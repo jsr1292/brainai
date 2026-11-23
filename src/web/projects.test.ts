@@ -99,7 +99,8 @@ test('a late item shows "N days late" as a chip on its card, and no screen shows
   // The app counts days in the owner's time zone (Europe/Berlin), so the test must too.
   const today = localDay(app.deps.now());
   const days = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse('2026-01-01T00:00:00Z')) / DAY);
-  assert.match(await (await f('/')).text(), new RegExp(`<span class="chip late"><time class="day" datetime="2026-01-01">${days} days late</time></span>`));
+  // On the list the health chip (Needs you) carries the lateness; the project's own waiting list keeps the chip.
+  assert.match(await (await f('/?project=wildlog')).text(), new RegExp(`<span class="chip late"><time class="day" datetime="2026-01-01">${days} days late</time></span>`));
   const page = await app.deps.pages.create({ title: 'Wildlog', project: 'wildlog', body: 'Hello.' }, 'owner');
   for (const path of ['/', '/?project=wildlog', `/pages/${page.id}`, `/pages/${page.id}/history`, '/settings']) {
     const body = (await (await f(path)).text()).replace(/<(pre|code)[\s\S]*?<\/\1>/g, '');
@@ -270,22 +271,55 @@ async function monday(t: TestContext, opts: Parameters<typeof startTestApp>[0] =
   await seedWildlogWeek(app.deps, app.advance, end);
   return { app, f: await loggedIn(app) };
 }
-const LINE = '<b>Last week</b>, 26 Oct – 1 Nov: 3 steps done, all in wildlog. 1 thing is late, and energy went quiet.';
+const LINE = '3 steps done, all in wildlog. 1 thing is late, and energy went quiet.';
 
-test('on Monday the Last week row sits in For you, after the idea field, and keeps its two POSTs', async (t) => {
+test('on Monday the card sits at the top of Projects, above For you and the idea field, and keeps its two POSTs', async (t) => {
   const { app, f } = await monday(t);
   const x = app.deps.discussions.open({ name: 'Claude Code', model: 'opus', access: 'full' }, { title: 'Which course?', question: 'Which one?', ask: ['Grok'] });
   for (const text of ['This one.', 'Still this one.']) app.deps.discussions.reply({ name: 'Grok', model: 'g', access: 'full' }, x.id, { text });
   const body = await (await f('/')).text();
-  const card = body.indexOf('<ul class="group foryou"');
-  assert.ok(card > body.indexOf('class="idea"'), 'For you comes after the idea field');
-  assert.ok(body.indexOf('Waiting on you:') > card && body.indexOf('Waiting on you:') < body.indexOf('fy-week'), 'discussions before Last week');
-  assert.ok(body.includes(LINE), 'the sentence without its lead');
-  assert.match(body, /<form method="post" action="\/review\/2026-10-26\/open" class="fy-read"><button type="submit" class="row"><span class="dot muted"/);
-  assert.match(body, /<form method="post" action="\/review\/2026-10-26\/dismiss" class="fy-not"><button type="submit" class="ghost sm">Not now<\/button><\/form>/);
+  const card = body.indexOf('<section class="monday-card"');
+  assert.ok(card > body.indexOf('<h1>') && card < body.indexOf('class="idea"') && card < body.indexOf('<ul class="group foryou"'), 'the card is first, above the idea field and For you');
+  assert.ok(body.includes('<h2 id="monday-h">Your week, 26 Oct – 1 Nov</h2>'));
+  assert.ok(body.includes(`<p class="mc-text">${LINE}</p>`), 'the sentence without its lead');
+  assert.match(body, /<form method="post" action="\/review\/2026-10-26\/open"><button type="submit" class="secondary">Read it<\/button><\/form>/);
+  assert.match(body, /<form method="post" action="\/review\/2026-10-26\/dismiss"><button type="submit" class="ghost">Not now<\/button><\/form>/);
+  assert.doesNotMatch(body, /fy-week|fy-read/, 'no Last week row in For you any more');
+  assert.match(body, /Waiting on you: <b>Which course\?<\/b>/, 'the discussion row stays in For you');
 });
 
-test('a backup warning is the one banner, above the idea field, with Look; the Last week row waits behind it', async (t) => {
+test('the card carries three numbers: steps done last week, waiting on you now, projects stuck now (0 still shows)', async (t) => {
+  const { app, f } = await monday(t);
+  const stats = async () => [...(await (await f('/')).text()).matchAll(/<dt class="mc-l">([^<]+)<\/dt><dd class="mc-n">(\d+)<\/dd>/g)].map((x) => `${x[2]} ${x[1]}`);
+  const before = await stats();
+  assert.equal(before.length, 3);
+  assert.equal(before[0], '3 steps done last week');
+  // Calm: nothing is stuck and nothing dated is due within 3 days of 3 Nov.
+  assert.match(before[1]!, /^\d+ things? waiting on you$/);
+  assert.match(before[2]!, /^\d+ projects? stuck$/);
+  // A dated item due in 3 days (2026-11-06 from 2026-11-03), one in 4 days, an undated one, and a late one.
+  await app.deps.service.remember({ kind: 'roadmap', project: 'northwind', newProject: true, content: 'Done: old (2026-09-01)\nNow: ship\nWaiting on you: soon (by 2026-11-06); later (by 2026-11-07); undated; overdue (by 2026-11-01)' }, ai);
+  const after = await stats();
+  assert.equal(after[1], `${Number(before[1]!.split(' ')[0]) + 2} things waiting on you`, 'late and due within 3 days count; 4 days away and undated do not');
+});
+
+test('the stuck number counts open projects that are stuck now, and a 0 still shows', async (t) => {
+  const app = await startTestApp({ startAt: new Date('2026-09-01T08:00:00Z') });
+  t.after(() => app.close());
+  // Saved in September, never touched since: by 3 Nov it has no Done step and no status newer than 14 days.
+  await app.deps.service.remember({ kind: 'roadmap', project: 'oldapp', newProject: true, content: 'Done: first cut (2026-09-02)\nNow: polish' }, ai);
+  await seedWildlogWeek(app.deps, app.advance);
+  const f = await loggedIn(app);
+  const body = await (await f('/')).text();
+  const nums = [...body.matchAll(/<dd class="mc-n">(\d+)<\/dd>/g)].map((x) => Number(x[1]));
+  assert.equal(nums.length, 3);
+  const labels = body.match(/data-health="stuck"/g)?.length ?? 0;
+  assert.ok(labels >= 1 && nums[2] === labels, `${nums[2]} stuck on the card, ${labels} stuck labels in the list`);
+  assert.match(body, /<dt class="mc-l">projects? stuck<\/dt>/);
+  assert.match(body, /<span class="chip hl hl-stuck" data-health="stuck" title="Nothing finished or saved for \d+ days, and “polish” is still to do\.">Stuck<\/span>/);
+});
+
+test('a backup warning is the one banner, above the idea field, with Look; the card waits behind it', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'status-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const warned = await monday(t, { statusDir: dir });
@@ -294,19 +328,19 @@ test('a backup warning is the one banner, above the idea field, with Look; the L
   const banner = body.indexOf('class="banner warn"');
   assert.ok(banner > 0 && banner < body.indexOf('class="idea"'));
   assert.match(body.slice(banner), /^class="banner warn"><span class="dot attention" aria-hidden="true"><\/span><span class="txt">[^<]+<\/span><a class="button sm" href="\/settings#health">Look<\/a>/);
-  assert.doesNotMatch(body, /fy-week|Last week<\/b>/);
+  assert.doesNotMatch(body, /monday-card/);
 });
 
-test('the line hides once read, once dismissed, for an empty week and behind a backup warning', async (t) => {
+test('the card hides once read, once dismissed, for an empty week and behind a backup warning', async (t) => {
   const read = await monday(t);
-  assert.match(await (await read.f('/')).text(), /fy-week/);
+  assert.match(await (await read.f('/')).text(), /monday-card/);
   assert.equal((await post(read.f, '/review/2026-10-26/open')).status, 303);
-  assert.doesNotMatch(await (await read.f('/')).text(), /fy-week/);
+  assert.doesNotMatch(await (await read.f('/')).text(), /monday-card/);
 
   const dismissed = await monday(t);
-  assert.match(await (await dismissed.f('/')).text(), /fy-week/);
+  assert.match(await (await dismissed.f('/')).text(), /monday-card/);
   await post(dismissed.f, '/review/2026-10-26/dismiss');
-  assert.doesNotMatch(await (await dismissed.f('/')).text(), /fy-week/);
+  assert.doesNotMatch(await (await dismissed.f('/')).text(), /monday-card/);
 
   const quiet = await startTestApp({ startAt: new Date('2026-10-05T08:00:00Z') });
   t.after(() => quiet.close());
@@ -315,7 +349,7 @@ test('the line hides once read, once dismissed, for an empty week and behind a b
   const qf = await loggedIn(quiet);
   const qbody = await (await qf('/')).text();
   assert.equal(quiet.deps.reviews.present(quiet.deps.reviews.ensure('2026-10-12', 'owner')!, 'last', { kind: 'owner' }).empty, true);
-  assert.doesNotMatch(qbody, /fy-week/);
+  assert.doesNotMatch(qbody, /monday-card/);
 
   const dir = mkdtempSync(join(tmpdir(), 'status-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -323,19 +357,19 @@ test('the line hides once read, once dismissed, for an empty week and behind a b
   writeBackupStatus(dir, 'nightly', { at: warned.app.deps.now().toISOString(), ok: false, error: 'disk full' });
   const wbody = await (await warned.f('/')).text();
   assert.match(wbody, /class="banner warn"/);
-  assert.doesNotMatch(wbody, /fy-week/);
+  assert.doesNotMatch(wbody, /monday-card/);
 });
 
-test('while the line shows, the park-it suggestion for a project that went quiet is held back, and comes back once the line is gone', async (t) => {
+test('while the card shows, the park-it suggestion for a project that went quiet is held back, and comes back once the line is gone', async (t) => {
   const { f } = await monday(t, {}, '2026-11-08T12:00:00Z');
   const before = await (await f('/')).text();
-  assert.match(before, /fy-week/);
+  assert.match(before, /monday-card/);
   assert.doesNotMatch(before, /<b>energy<\/b> has been quiet for 3 weeks: park it\?/);
   await post(f, '/review/2026-10-26/dismiss');
   assert.match(await (await f('/')).text(), /<b>energy<\/b> has been quiet for 3 weeks: park it\?/);
 });
 
-test('the line never names a life area', async (t) => {
+test('the card never names a life area', async (t) => {
   const app = await startTestApp({ startAt: new Date('2026-10-18T08:00:00Z') });
   t.after(() => app.close());
   clockTo(app.deps, app.advance, '2026-10-18T10:00:00Z');
@@ -346,8 +380,8 @@ test('the line never names a life area', async (t) => {
   clockTo(app.deps, app.advance, '2026-11-03T07:14:00Z');
   const f = await loggedIn(app);
   const body = await (await f('/')).text();
-  const line = body.slice(body.indexOf('fy-week'), body.indexOf('</div>', body.indexOf('fy-week')));
-  assert.match(line, /<b>Last week<\/b>, 26 Oct – 1 Nov: 4 steps done\.<\/span>/);
+  const line = body.slice(body.indexOf('<section class="monday-card"'), body.indexOf('</section>', body.indexOf('<section class="monday-card"')));
+  assert.match(line, /<p class="mc-text">4 steps done\.<\/p>/);
   assert.doesNotMatch(line, /finances|health/);
 });
 
@@ -367,7 +401,7 @@ test('a review build that fails never takes Projects down', async (t) => {
   const res = await f('/');
   assert.equal(res.status, 200);
   const body = await res.text();
-  assert.doesNotMatch(body, /fy-week/);
+  assert.doesNotMatch(body, /monday-card/);
   assert.match(body, /wildlog/);
   assert.equal(errors.mock.callCount(), 1);
   assert.match(String(errors.mock.calls[0]!.arguments[0]), /^weekly review 2026-10-26 failed: /);
@@ -585,7 +619,7 @@ test('a tile shows the warning when work is not safe, and no not-pushed chip any
   const { device } = app.deps.devices.create('Mac');
   app.deps.devices.storeReport(device.id, [{ name: 'side-project', git: false, branch: null, uncommitted: null, unpushed: null, lastCommit: null, remotes: [] }]);
   const page = await (await f('/')).text();
-  assert.match(page, /<span class="pcard-name">side-project<\/span><span class="pwarn" role="img" aria-label="Work not safe: not in git"/);
+  assert.match(page, /<span class="pcard-name">side-project<\/span><span class="hl hl-ok" data-health="on_track">On track<\/span><span class="pwarn" role="img" aria-label="Work not safe: not in git"/);
   assert.doesNotMatch(page, /chip plain">not pushed/);
 });
 

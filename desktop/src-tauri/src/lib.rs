@@ -7,6 +7,7 @@ pub mod proof;
 pub mod server;
 pub mod update;
 pub mod updating;
+pub mod week_note;
 
 use server::StartError;
 use std::fs::OpenOptions;
@@ -209,10 +210,21 @@ fn node_path() -> PathBuf {
     std::env::current_exe().expect("the app's path").parent().expect("its folder").join("node")
 }
 
-/// The owner's tools' PATH, asked of their login shell once per run (it can take a moment).
-fn tool_path() -> &'static str {
-    static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    PATH.get_or_init(server::tool_path)
+/// The owner's tools' PATH and moved settings folders, asked of their login shell once per run (it can take a moment).
+fn login() -> &'static server::LoginEnv {
+    static LOGIN: std::sync::OnceLock<server::LoginEnv> = std::sync::OnceLock::new();
+    LOGIN.get_or_init(server::login_env)
+}
+
+/// The settings-folder variables the server gets: the app's own environment first (a launch from a terminal), else the login shell's.
+fn config_envs() -> Vec<(String, String)> {
+    let mut out = server::config_dirs(|k| std::env::var(k).ok());
+    for (k, v) in &login().config {
+        if !out.iter().any(|(name, _)| name == k) {
+            out.push((k.clone(), v.clone()));
+        }
+    }
+    out
 }
 
 fn start_server(app: &AppHandle, port: u16, secret: &str) -> std::io::Result<Child> {
@@ -234,7 +246,8 @@ fn start_server(app: &AppHandle, port: u16, secret: &str) -> std::io::Result<Chi
         // Only what the server needs: nothing else from the owner's environment reaches it.
         .env_clear()
         .env("HOME", std::env::var("HOME").unwrap_or_default())
-        .envs(server::env(&data, port, secret, server::local_timezone().as_deref(), locale.as_deref(), tmpdir.as_deref(), tool_path(), &system, &server::system_proxy()))
+        .envs(config_envs())
+        .envs(server::env(&data, port, secret, server::local_timezone().as_deref(), locale.as_deref(), tmpdir.as_deref(), &login().path, &system, &server::system_proxy()))
         // The server watches this pipe (APP_PARENT=stdin): when the app is gone, it closes and the server stops.
         .stdin(Stdio::piped())
         .stdout(Stdio::from(log.try_clone()?))
@@ -395,6 +408,22 @@ fn finish_removal(app: &AppHandle) {
         .buttons(MessageDialogButtons::OkCancelCustom(tr("remove.button"), tr("common.cancel")))
         .blocking_show();
     if !remove {
+        // The server stopped accepting saves when the removal began: open them again.
+        if !server::removal_cancel(port, &secret) {
+            tell(app, MessageDialogKind::Error, nav::not_reopened_text());
+            return;
+        }
+        // Back to the brain, so the owner is not left on the bare last page of the removal.
+        if let Some(w) = app.get_webview_window(MAIN) {
+            if let Ok(url) = format!("http://localhost:{port}/settings/tools").parse() {
+                let _ = w.navigate(url);
+            }
+        }
+        return;
+    }
+    // Nothing changed while the owner decided? Ask again, and only go on for the same saved folder.
+    if server::removal_ready(port, &secret).as_deref() != Some(folder.as_str()) {
+        tell(app, MessageDialogKind::Error, nav::not_saved_text());
         return;
     }
     state.quitting.store(true, Ordering::SeqCst);
@@ -511,6 +540,40 @@ fn choose_folder(app: &AppHandle) {
     }
 }
 
+/// The welcome's "Choose the folder with your copy…": a folder picker, then the server is asked (with the app's key) to
+/// look for a saved copy in the real folder, and the window opens the preview. Cancel returns to the choice.
+fn pick_restore_folder(app: &AppHandle) {
+    lang::refresh();
+    static PICKING: AtomicBool = AtomicBool::new(false);
+    if PICKING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return;
+    }
+    struct Release;
+    impl Drop for Release {
+        fn drop(&mut self) {
+            PICKING.store(false, Ordering::SeqCst);
+        }
+    }
+    let _release = Release;
+    let Some(w) = app.get_webview_window(MAIN) else { return };
+    let state = app.state::<Running>();
+    let go = |found: bool| {
+        let port = state.port.load(Ordering::SeqCst);
+        if port == 0 {
+            return;
+        }
+        if let Ok(url) = nav::restore_page(port, found).parse() {
+            let _ = w.navigate(url);
+        }
+    };
+    let picked = app.dialog().file().set_title(tr("restore.pick_title")).set_parent(&w).blocking_pick_folder().and_then(|p| p.into_path().ok());
+    let Some(path) = picked else { return go(false) };
+    let port = state.port.load(Ordering::SeqCst);
+    let secret = state.secret.lock().unwrap().clone();
+    let ours = port != 0 && !secret.is_empty() && matches!(server::check_once(port, &secret), Ok(true));
+    go(ours && server::restore_find(port, &secret, &path.to_string_lossy()));
+}
+
 /// Settings › Show in Finder/Explorer: opens the folder the daily backups are made in.
 fn reveal_backups(app: &AppHandle) {
     use tauri_plugin_opener::OpenerExt;
@@ -619,7 +682,9 @@ fn start_and_open(app: &AppHandle, page: &str) {
         }
     }
     let data = app_data(app);
-    let saved = port::load(&data);
+    let before = port::load_saved(&data);
+    // The usual port first, every start; another port is for this run only (see port::after_start).
+    let saved = before.usual();
     let Some(mut port) = port::settle(saved, port::is_free, 20, || std::thread::sleep(Duration::from_millis(500))) else {
         return give_up(app, &tr("err.ports_all"));
     };
@@ -641,13 +706,16 @@ fn start_and_open(app: &AppHandle, page: &str) {
                 if let Some(w) = app.get_webview_window(MAIN) {
                     let _ = w.navigate(nav::open_url(port, &ticket, page).parse().expect("a localhost URL"));
                 }
-                if saved != Some(port) {
-                    let _ = port::save(&data, port);
-                    if let Some(old) = saved {
-                        tell(app, MessageDialogKind::Info, tr_with("err.port_changed", &[("old", &old.to_string()), ("port", &port.to_string())]));
-                    }
+                // Only the app's first start of this run counts: a restart after a crash or an update check is the same run.
+                static FIRST_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+                let remembered = port::after_start(&before, port, FIRST_START.swap(false, Ordering::SeqCst));
+                let _ = port::write_saved(&data, &remembered.saved);
+                // Only a home port given up after several starts in a row is worth a dialog; a temporary port is said on the Tools page.
+                if let Some(old) = remembered.moved_from {
+                    tell(app, MessageDialogKind::Info, tr_with("err.port_changed", &[("old", &old.to_string()), ("port", &port.to_string())]));
                 }
                 watch_server(app.clone());
+                week_note::start(app.clone());
                 return;
             }
             Err(StartError::NotOurs) => {
@@ -722,6 +790,7 @@ pub fn run() {
     tauri::Builder::default()
         // A second launch shows the window of the one already running: never two servers on the same data.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| show_main(app)))
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![HIDDEN_ARG])))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -783,6 +852,12 @@ pub fn run() {
                         // Cancelled: the window keeps its page; a chosen folder is sent to Settings to fill a box.
                         let app = leaving.clone();
                         std::thread::spawn(move || choose_folder(&app));
+                        return false;
+                    }
+                    if nav::restore_pick(url.as_str(), port.load(Ordering::SeqCst)) {
+                        // Cancelled: the window keeps its page; the chosen folder goes to the server, then the preview opens.
+                        let app = leaving.clone();
+                        std::thread::spawn(move || pick_restore_folder(&app));
                         return false;
                     }
                     if nav::is_reveal_backups(url.as_str(), port.load(Ordering::SeqCst)) {

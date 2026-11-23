@@ -1,3 +1,4 @@
+import { WEEK_NOTICE_SWITCH, weekNoticeOn } from './weekNote.js';
 import { COACHING_SWITCH, coachingOn } from '../learning/coaching.js';
 import { t } from '../i18n/core.js';
 import { errorText } from './errorText.js';
@@ -187,6 +188,7 @@ export function dashboardRoutes(d: AppDeps): Router {
       language: { choice: storedChoice(d.store.switchValue(UI_LANGUAGE_SWITCH)) },
       appearance: { choice: currentTheme() ?? 'auto' },
       coaching: { on: coachingOn(d.store) },
+      weekNotice: d.localMode ? { on: weekNoticeOn(d.store) } : undefined,
       said: { backupNow: takeSettingsSaid('backup-now'), copy: takeSettingsSaid('backup-copy') },
       copy: d.localMode && d.backupCopy ? { keep: d.backupKeep ?? DEFAULT_BACKUP_KEEP, folder: d.backupCopy.folder(), last: d.backupCopy.lastResult(), ask, ...(pickedFolder(req) ? { picked: pickedFolder(req)! } : {}) } : undefined,
       reach: d.localMode ? { on: d.reach?.url() != null } : undefined,
@@ -768,6 +770,13 @@ export function dashboardRoutes(d: AppDeps): Router {
   router.post('/settings/coaching', owner, (req: Request, res) => {
     d.store.setSwitch(COACHING_SWITCH, str(req, 'coaching') === 'on' ? 'on' : null);
     res.redirect(303, '/settings#coaching');
+  });
+
+  // Settings › Appearance (desktop app only): the Monday notification switch. Stored as 'off'; no row means on.
+  router.post('/settings/week-notice', owner, (req: Request, res) => {
+    if (!d.localMode) return notFound(res);
+    d.store.setSwitch(WEEK_NOTICE_SWITCH, str(req, 'weekNotice') === 'on' ? null : 'off');
+    res.redirect(303, '/settings#appearance');
   });
 
   router.post('/clients/:grantId/name', owner, (req: Request, res) => {

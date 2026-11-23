@@ -225,8 +225,8 @@ usa la app de BrainAI. Para llevar a la app lo que contiene el zip:
 3. Quita la instalación del zip de Windows: en `%LOCALAPPDATA%\WorkMemory` ejecuta
    `powershell -ExecutionPolicy Bypass -File .\uninstall.ps1` y escribe `delete` cuando lo pida. También escribe una exportación en Markdown
    en Documentos y desconecta Codex y Claude Code.
-4. Si la app de BrainAI ya está en este ordenador porque la probaste, desinstálala primero con «Delete the application
-   data» marcado (borrar los datos de la aplicación): una importación solo llena una memoria vacía. Guarda antes una copia si contiene datos que quieras conservar.
+4. Si la app de BrainAI ya está en este ordenador porque la probaste, quítala primero con **Quitar BrainAI** en la app
+   (guarda una copia en Documentos y después quita los datos): una importación solo llena una memoria vacía.
 5. Instala la app de BrainAI, elige **Tengo una carpeta guardada de BrainAI** en la bienvenida y selecciona ese archivo.
 6. Conecta tus herramientas en el paso siguiente.
 
@@ -324,8 +324,17 @@ La misma app, con el icono de la bandeja del sistema (junto al reloj) en lugar d
   un servidor.
 - **Quitarlo:** usa **Quitar BrainAI** en la app (mira «Dejar BrainAI»): guarda una copia y después ejecuta el desinstalador
   en silencio y borra la carpeta de datos. Desinstalar desde Configuración › Aplicaciones › BrainAI también desconecta tus herramientas de programación
-  (no lo hace cuando una actualización sustituye la app). No guarda ninguna copia: la carpeta de datos se queda salvo que marques «Delete the
-  application data» (borrar los datos de la aplicación), y la carpeta que se conserva es tu copia. Iniciar al arrancar se quita con la app.
+  (no lo hace cuando una actualización sustituye la app). Busca las herramientas donde la app las conectó, termina sus inicios de sesión, quita los recordatorios de guardado y borra las
+  copias de seguridad de sus ajustes que hizo BrainAI. La carpeta de datos se queda. El desinstalador tiene una casilla, «Delete the application data»
+  (borrar los datos de la aplicación): no la marques si no quieres borrarlo todo. Si la marcas, el desinstalador guarda antes una copia de tu memoria
+  en Documentos (la misma carpeta `BrainAI saved <fecha>` que crea Quitar BrainAI); si no puede hacer esa copia, conserva tus datos y te lo dice en lugar
+  de borrarlos. Con `/S` es silencioso y nunca borra datos. Iniciar al arrancar se quita con la app.
+- **Borrarlo a mano:** si borras tú la carpeta de instalación y la de datos en lugar de desinstalar, nada saca BrainAI de tus herramientas. Queda:
+  la entrada `brainai`, el bloque de reglas de BrainAI y los recordatorios de guardado en Claude Code, Codex, OpenCode, Cursor y Gemini CLI, la entrada de
+  la app de escritorio de Claude, sus inicios de sesión en la memoria (que se va con la carpeta de datos), archivos `.brainai-backup` junto a los ajustes
+  de tus herramientas y la entrada de iniciar al arrancar. Quítalo a mano, o reinstala BrainAI sobre la carpeta de datos que se conservó
+  (`%LOCALAPPDATA%\io.github.jsr1292.brainai`): en Ajustes › Herramientas verás lo que sigue conectado, y Desconectar o Conectar arregla cada una. Borrar la
+  carpeta de datos sin copia borra tu memoria para siempre.
 
 ## Cómo funciona
 

@@ -13,6 +13,10 @@ import { t, tKey } from '../i18n/core.js';
 import type { Say } from '../i18n/errors.js';
 import { BRIDGE_KEY_FILE } from './claudeBridge.js';
 import { hasHooks, hooksState, installHooks, removeToolHooks } from './hooksInstall.js';
+import { writeAtomic } from './leftovers.js';
+import { refreshToolPath } from './toolPath.js';
+import { jsonText, readJsonFile, type JsonFile } from './configFile.js';
+import { claudeDir, claudeJsonPath, codexDir, configDir, configVars } from './configDirs.js';
 
 export type ToolId = 'claude-code' | 'codex' | 'opencode' | 'cursor' | 'gemini' | 'claude-desktop';
 export interface ToolEnv {
@@ -43,6 +47,14 @@ export interface ToolEnv {
   endSignIns?: (toolName: string) => number;
   /** B1: where the built hook scripts are (dist/hooks). Without it Connect installs no save reminders. */
   hooksDir?: string;
+  /** BrainAI runs on a temporary port this time: `mcpUrl` is its usual address (where the apps are connected), which does not answer now. */
+  temporary?: boolean;
+  /** Addresses BrainAI had before its usual port moved (after several starts without it): an entry or rules block there is this brain's own, stale. */
+  previousUrls?: string[];
+  /** Tests: whether something that looks like BrainAI answers at an address (default: a short GET of its OAuth metadata). */
+  probe?: (mcpUrl: string) => Promise<boolean>;
+  /** Notes a Connect leaves for the owner (the tool is connected, but something was not set). */
+  notes?: string[];
 }
 export interface ToolState {
   id: ToolId; name: string; installed: boolean;
@@ -66,7 +78,9 @@ const hostOf = (url: string) => { try { return new URL(url).host; } catch { retu
 
 const platformOf = (env: ToolEnv): NodeJS.Platform => env.platform ?? process.platform;
 /** What a Windows tool needs from the system to find its home, its settings and a temp folder (D6). */
-const WINDOWS_VARS = ['USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'SystemRoot', 'windir', 'COMSPEC', 'PATHEXT'] as const;
+const WINDOWS_VARS = ['USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'SystemRoot', 'windir', 'COMSPEC', 'PATHEXT', 'ProgramFiles', 'ProgramData'] as const;
+/** Re-exported: where the tools keep their settings (see configDirs.ts). */
+export { claudeDir, codexDir };
 
 /**
  * A tool's command on the PATH, as the computer's own shell finds it: on the Mac an executable file in a ':'
@@ -111,14 +125,15 @@ function onPath(env: ToolEnv, cmd: string): boolean {
   return findCommand(cmd, env) !== null;
 }
 
+
 /** A tool's environment: its PATH and home, and on Windows the system variables it needs; nothing else of BrainAI's. */
 export function childEnv(env: ToolEnv): NodeJS.ProcessEnv {
   if (platformOf(env) === 'win32') {
     const sys = env.system ?? process.env;
     const picked = Object.fromEntries(WINDOWS_VARS.flatMap((k) => (sys[k] !== undefined ? [[k, sys[k]!]] : [])));
-    return { ...picked, Path: env.path, ...env.extraEnv };
+    return { ...picked, ...configVars(env), Path: env.path, ...env.extraEnv };
   }
-  return { PATH: env.path, HOME: env.home, ...env.extraEnv };
+  return { PATH: env.path, HOME: env.home, ...configVars(env), ...env.extraEnv };
 }
 
 interface Ran { code: number; stdout: string; stderr: string; timedOut: boolean }
@@ -127,9 +142,9 @@ interface Ran { code: number; stdout: string; stderr: string; timedOut: boolean 
 function run(env: ToolEnv, cmd: string, args: string[]): Promise<Ran> {
   return new Promise((resolve) => {
     const found = findCommand(cmd, env);
-    if (!found) return resolve({ code: 127, stdout: '', stderr: `${cmd} was not found`, timedOut: false });
+    if (!found) return resolve({ code: 127, stdout: '', stderr: t('tools.why.notFound', { cmd }), timedOut: false });
     const line = commandLine(found, args, platformOf(env));
-    if (!line) return resolve({ code: 1, stdout: '', stderr: `BrainAI would not pass these values to ${cmd} through the command prompt`, timedOut: false });
+    if (!line) return resolve({ code: 1, stdout: '', stderr: t('tools.why.shell', { cmd }), timedOut: false });
     const child = execFile(line.file, line.args, { env: childEnv(env), shell: line.shell, windowsHide: true, timeout: TIMEOUT_MS, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
       const e = err as (NodeJS.ErrnoException & { killed?: boolean; code?: unknown }) | null;
       const code = !e ? 0 : typeof e.code === 'number' ? e.code : 1;
@@ -140,7 +155,7 @@ function run(env: ToolEnv, cmd: string, args: string[]): Promise<Ran> {
 }
 
 /** Why a command failed, in a few words. */
-const why = (r: Ran) => (r.timedOut ? 'it did not answer within 30 s' : `${r.stdout}${r.stderr}`.trim().slice(0, 200) || `it stopped with code ${r.code}`);
+const why = (r: Ran) => (r.timedOut ? t('tools.why.timeout') : `${r.stdout}${r.stderr}`.trim().slice(0, 200) || t('tools.why.code', { code: r.code }));
 /** The CLIs' own words for "there is no server by that name": only then is it safe to add one. */
 const notFound = (r: Ran) => /No MCP server named/i.test(`${r.stdout}${r.stderr}`);
 /** An entry named brainai that has no address (a bridge or a command): someone else's, never ours. */
@@ -163,14 +178,54 @@ function read(path: string): string | null {
 }
 
 /**
- * Writes a file, keeping the owner's original beside it as <name>.brainai-backup. The first backup is never overwritten,
- * so after Replace and Disconnect the original rules are still there.
+ * Keeps the owner's file beside it as <name>.brainai-backup before a change. The first backup is kept through Replace and
+ * Disconnect (the original rules stay there). It is replaced only when the file now holds nothing of BrainAI (the owner took
+ * BrainAI out and changed the file since), so the backup is always the newest version of the file without BrainAI in it.
  */
-function writeWithBackup(path: string, text: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  if (existsSync(path) && !existsSync(`${path}.brainai-backup`)) copyFileSync(path, `${path}.brainai-backup`);
-  writeFileSync(path, text);
+function backUp(path: string, ours: (text: string) => boolean): void {
+  if (!existsSync(path)) return;
+  const backup = `${path}.brainai-backup`;
+  if (!existsSync(backup)) { copyFileSync(path, backup); return; }
+  const now = readFileSync(path);
+  if (!ours(now.toString('utf8')) && !now.equals(readFileSync(backup))) copyFileSync(path, backup);
 }
+
+/** What shows a file holds BrainAI's own entry: its name in a settings file or config.toml, its marked block in a rules file. */
+export const hasBrainAI = (text: string): boolean => /brainai/i.test(text) || findBlock(text) !== null;
+
+/** A write that failed, with the file and the system's code (EACCES, EPERM, EBUSY...), so the owner is told what to do. */
+export class WriteError extends Error {
+  constructor(readonly file: string, readonly code: string, message: string) { super(message); }
+}
+
+/** Why a write failed, in the owner's words: read-only, in use by another program, or the system's own message. */
+export function writeFailure(e: unknown, file = ''): string {
+  const code = e instanceof WriteError ? e.code : (e as NodeJS.ErrnoException | undefined)?.code ?? '';
+  const f = e instanceof WriteError ? e.file : file;
+  if (f && (code === 'READONLY' || code === 'EACCES' || code === 'EROFS')) return t('tools.error.readOnly', { file: f });
+  if (f && (code === 'EPERM' || code === 'EBUSY')) return t('tools.error.busy', { file: f });
+  return t('tools.couldNotWrite', { file: f, error: e instanceof Error ? e.message : String(e) });
+}
+
+/** Writes a file in one step (writeAtomic: a half-written config is never left) after backing the original up. */
+export function writeWithBackup(path: string, text: string, ours: (text: string) => boolean = hasBrainAI): void {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    // A file the owner made read-only stays as it is (a rename over it would not notice the mode). Windows reports a read-only
+    // file as EPERM, which would read as "in use by another program": it is said as read-only whatever the code.
+    if (existsSync(path)) {
+      try { accessSync(path, constants.W_OK); } catch (e) { throw new WriteError(path, 'READONLY', e instanceof Error ? e.message : String(e)); }
+    }
+    backUp(path, ours);
+    writeAtomic(path, text);
+  } catch (e) {
+    if (e instanceof WriteError) throw e;
+    throw new WriteError(path, (e as NodeJS.ErrnoException).code ?? '', e instanceof Error ? e.message : String(e));
+  }
+}
+
+/** Why a JSON settings file was refused, in words: UTF-16 has its own advice, anything else says what the tool's own message does. */
+const refusal = (f: { refuse: 'utf16' | 'json' }, path: string, plain: string): string => (f.refuse === 'utf16' ? t('tools.refuse.utf16', { file: path }) : plain);
 
 export interface Tool {
   id: ToolId; name: string; slug: string;
@@ -197,18 +252,18 @@ const claudeCode: Tool = {
   installed: (env) => onPath(env, 'claude'),
   async server(env) {
     const r = await run(env, 'claude', ['mcp', 'get', NAME]);
-    if (r.code !== 0) return notFound(r) ? null : { refuse: `Claude Code did not answer clearly (${why(r)}).` };
+    if (r.code !== 0) return notFound(r) ? null : { refuse: t('tools.err.unclear', { name: 'Claude Code', why: why(r) }) };
     return /^\s*URL:\s*(\S+)/m.exec(r.stdout)?.[1] ?? NO_ADDRESS;
   },
   async add(env) {
     const r = await run(env, 'claude', ['mcp', 'add', '--transport', 'http', '--scope', 'user', NAME, env.mcpUrl]);
-    return r.code === 0 ? null : `Claude Code could not add BrainAI: ${why(r)}`;
+    return r.code === 0 ? null : t('tools.err.add', { name: 'Claude Code', why: why(r) });
   },
   async remove(env) {
     const r = await run(env, 'claude', ['mcp', 'remove', NAME, '-s', 'user']);
-    return r.code === 0 ? null : `Claude Code could not remove BrainAI: ${why(r)}`;
+    return r.code === 0 ? null : t('tools.err.remove', { name: 'Claude Code', why: why(r) });
   },
-  rulesFile: (env) => join(env.home, '.claude', 'CLAUDE.md'),
+  rulesFile: (env) => join(claudeDir(env), 'CLAUDE.md'),
   signIn: 'In Claude Code, type /mcp, choose brainai and Authenticate; then approve the sign-in in BrainAI.',
 };
 
@@ -232,7 +287,7 @@ export function withCodexApproval(text: string): string | null {
 
 /** Codex asks before every tool call unless its server table says otherwise (as the Windows installer sets it). */
 function approveCodexTools(env: ToolEnv): void {
-  const path = join(env.home, '.codex', 'config.toml');
+  const path = join(codexDir(env), 'config.toml');
   const text = read(path);
   const next = text === null ? null : withCodexApproval(text);
   if (next !== null) writeWithBackup(path, next);
@@ -243,43 +298,44 @@ const codex: Tool = {
   installed: (env) => onPath(env, 'codex'),
   async server(env) {
     const r = await run(env, 'codex', ['mcp', 'get', NAME, '--json']);
-    if (r.code !== 0) return notFound(r) ? null : { refuse: `Codex did not answer clearly (${why(r)}).` };
-    try { return (JSON.parse(r.stdout) as { transport?: { url?: string } }).transport?.url ?? NO_ADDRESS; } catch { return { refuse: 'Codex answered in a way BrainAI could not read.' }; }
+    if (r.code !== 0) return notFound(r) ? null : { refuse: t('tools.err.unclear', { name: 'Codex', why: why(r) }) };
+    try { return (JSON.parse(r.stdout) as { transport?: { url?: string } }).transport?.url ?? NO_ADDRESS; } catch { return { refuse: t('tools.err.unreadable', { name: 'Codex' }) }; }
   },
   async add(env) {
     const r = await run(env, 'codex', ['mcp', 'add', NAME, '--url', env.mcpUrl]);
-    if (r.code !== 0) return `Codex could not add BrainAI: ${why(r)}`;
-    approveCodexTools(env);
+    if (r.code !== 0) return t('tools.err.add', { name: 'Codex', why: why(r) });
+    // The server entry is in: a failure to set the approval is a note (connected, Codex will ask each time), not a failed Connect.
+    try { approveCodexTools(env); } catch (e) { (env.notes ??= []).push(t('tools.codex.approvalNotSet', { why: writeFailure(e).replace(/\.$/, '') })); }
     return null;
   },
   async remove(env) {
     const r = await run(env, 'codex', ['mcp', 'remove', NAME]);
-    return r.code === 0 ? null : `Codex could not remove BrainAI: ${why(r)}`;
+    return r.code === 0 ? null : t('tools.err.remove', { name: 'Codex', why: why(r) });
   },
-  rulesFile: (env) => join(env.home, '.codex', 'AGENTS.md'),
+  rulesFile: (env) => join(codexDir(env), 'AGENTS.md'),
   signIn: 'Your browser opens to sign Codex in: approve it in BrainAI. If it did not, run codex mcp login brainai in a terminal.',
   after: (env) => startDetached(env, 'codex', ['mcp', 'login', NAME]),
 };
 
-const OPENCODE_DIR = (env: ToolEnv) => join(env.home, '.config', 'opencode');
-const MANUAL_OPENCODE = 'OpenCode keeps its settings in a file BrainAI will not rewrite (comments, or not plain JSON): add it by hand from Settings › Set up an app › OpenCode.';
+const OPENCODE_DIR = (env: ToolEnv) => join(configDir(env, 'XDG_CONFIG_HOME', join(env.home, '.config')), 'opencode');
+
+/** A settings file's parsed JSON with its path, or why it cannot be changed safely. `bom`: it had a UTF-8 byte order mark, written back. */
+type Config<T extends Record<string, unknown> = Record<string, unknown>> = { path: string; json: T; bom: boolean } | { refuse: string };
+
+/** Reads a JSON settings file for a tool; `plain` is the tool's own message for anything that is not plain JSON. */
+function jsonConfig<T extends Record<string, unknown>>(path: string, plain: () => string, check?: (json: Record<string, unknown>) => void): Config<T> {
+  const f: JsonFile | null = readJsonFile(path, check);
+  if (f === null) return { path, json: {} as T, bom: false };
+  if ('refuse' in f) return { refuse: refusal(f, path, plain()) };
+  return { path, json: f.json as T, bom: f.bom };
+}
 
 /** opencode.json parsed, or why it cannot be changed safely. */
-function openCodeConfig(env: ToolEnv): { path: string; json: Record<string, unknown> } | { refuse: string } {
+function openCodeConfig(env: ToolEnv): Config {
   const dir = OPENCODE_DIR(env);
   const path = join(dir, 'opencode.json');
-  const text = read(path);
-  if (text === null) {
-    if (existsSync(join(dir, 'opencode.jsonc'))) return { refuse: MANUAL_OPENCODE };
-    return { path, json: {} };
-  }
-  try {
-    const json = JSON.parse(text) as unknown;
-    if (!json || typeof json !== 'object' || Array.isArray(json)) return { refuse: MANUAL_OPENCODE };
-    return { path, json: json as Record<string, unknown> };
-  } catch {
-    return { refuse: MANUAL_OPENCODE };
-  }
+  if (!existsSync(path) && existsSync(join(dir, 'opencode.jsonc'))) return { refuse: t('tools.refuse.opencode') };
+  return jsonConfig(path, () => t('tools.refuse.opencode'));
 }
 
 const opencode: Tool = {
@@ -295,7 +351,7 @@ const opencode: Tool = {
     const c = openCodeConfig(env);
     if ('refuse' in c) return c.refuse;
     const mcp = { ...(c.json.mcp as Record<string, unknown> | undefined), [NAME]: { type: 'remote', url: env.mcpUrl, enabled: true } };
-    writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcp }, null, 2)}\n`);
+    writeWithBackup(c.path, jsonText({ ...c.json, mcp }, c.bom));
     return null;
   },
   async remove(env) {
@@ -303,24 +359,15 @@ const opencode: Tool = {
     if ('refuse' in c) return c.refuse;
     const mcp = { ...(c.json.mcp as Record<string, unknown> | undefined) };
     delete mcp[NAME];
-    writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcp }, null, 2)}\n`);
+    writeWithBackup(c.path, jsonText({ ...c.json, mcp }, c.bom));
     return null;
   },
   rulesFile: (env) => join(OPENCODE_DIR(env), 'AGENTS.md'),
   signIn: 'In a terminal, run opencode mcp auth brainai; then approve the sign-in in BrainAI.',
 };
 
-function cursorConfig(env: ToolEnv): { path: string; json: { mcpServers?: Record<string, unknown> } & Record<string, unknown> } | { refuse: string } {
-  const path = join(env.home, '.cursor', 'mcp.json');
-  const text = read(path);
-  if (text === null) return { path, json: {} };
-  try {
-    const json = JSON.parse(text) as unknown;
-    if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('not an object');
-    return { path, json: json as Record<string, unknown> };
-  } catch {
-    return { refuse: "Cursor's ~/.cursor/mcp.json is not plain JSON: BrainAI will not rewrite it." };
-  }
+function cursorConfig(env: ToolEnv): Config<{ mcpServers?: Record<string, unknown> } & Record<string, unknown>> {
+  return jsonConfig(join(env.home, '.cursor', 'mcp.json'), () => t('tools.refuse.cursor'));
 }
 
 const cursor: Tool = {
@@ -335,7 +382,7 @@ const cursor: Tool = {
   async add(env) {
     const c = cursorConfig(env);
     if ('refuse' in c) return c.refuse;
-    writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcpServers: { ...c.json.mcpServers, [NAME]: { url: env.mcpUrl } } }, null, 2)}\n`);
+    writeWithBackup(c.path, jsonText({ ...c.json, mcpServers: { ...c.json.mcpServers, [NAME]: { url: env.mcpUrl } } }, c.bom));
     return null;
   },
   async remove(env) {
@@ -345,7 +392,7 @@ const cursor: Tool = {
     if (c.json.mcpServers?.[NAME] === undefined) return null;
     const servers = { ...c.json.mcpServers };
     delete servers[NAME];
-    writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcpServers: servers }, null, 2)}\n`);
+    writeWithBackup(c.path, jsonText({ ...c.json, mcpServers: servers }, c.bom));
     return null;
   },
   // Cursor's rules live in its own settings, not a file.
@@ -354,22 +401,14 @@ const cursor: Tool = {
 };
 
 const GEMINI_DIR = (env: ToolEnv) => join(env.home, '.gemini');
-const MANUAL_GEMINI = "Gemini CLI's ~/.gemini/settings.json is not plain JSON (comments, or a mistake): BrainAI will not rewrite it. Add it by hand from Settings › Set up an app › Gemini CLI.";
 
 /** ~/.gemini/settings.json parsed, or why it cannot be changed safely. Everything but mcpServers.brainai is kept as it is. */
-function geminiConfig(env: ToolEnv): { path: string; json: { mcpServers?: Record<string, unknown> } & Record<string, unknown> } | { refuse: string } {
-  const path = join(GEMINI_DIR(env), 'settings.json');
-  const text = read(path);
-  if (text === null) return { path, json: {} };
-  try {
-    const json = JSON.parse(text) as unknown;
-    if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('not an object');
-    const servers = (json as { mcpServers?: unknown }).mcpServers;
-    if (servers !== undefined && (!servers || typeof servers !== 'object' || Array.isArray(servers))) throw new Error('mcpServers is not an object');
-    return { path, json: json as Record<string, unknown> };
-  } catch {
-    return { refuse: MANUAL_GEMINI };
-  }
+function geminiConfig(env: ToolEnv): Config<{ mcpServers?: Record<string, unknown> } & Record<string, unknown>> {
+  return jsonConfig(join(GEMINI_DIR(env), 'settings.json'), () => t('tools.refuse.gemini'), mcpServersCheck);
+}
+function mcpServersCheck(json: Record<string, unknown>): void {
+  const servers = json.mcpServers;
+  if (servers !== undefined && (!servers || typeof servers !== 'object' || Array.isArray(servers))) throw new Error('mcpServers is not an object');
 }
 
 /**
@@ -391,7 +430,7 @@ const gemini: Tool = {
   async add(env) {
     const c = geminiConfig(env);
     if ('refuse' in c) return c.refuse;
-    writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcpServers: { ...c.json.mcpServers, [NAME]: { httpUrl: env.mcpUrl } } }, null, 2)}\n`);
+    writeWithBackup(c.path, jsonText({ ...c.json, mcpServers: { ...c.json.mcpServers, [NAME]: { httpUrl: env.mcpUrl } } }, c.bom));
     return null;
   },
   async remove(env) {
@@ -401,7 +440,7 @@ const gemini: Tool = {
     if (c.json.mcpServers?.[NAME] === undefined) return null;
     const servers = { ...c.json.mcpServers };
     delete servers[NAME];
-    writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcpServers: servers }, null, 2)}\n`);
+    writeWithBackup(c.path, jsonText({ ...c.json, mcpServers: servers }, c.bom));
     return null;
   },
   rulesFile: (env) => join(GEMINI_DIR(env), 'GEMINI.md'),
@@ -409,6 +448,8 @@ const gemini: Tool = {
 };
 
 const NEEDS_AGAIN = 'needs connecting again';
+/** server() for a Claude entry that belongs to another BrainAI: this text, the program's path, and a closing bracket. */
+const OTHER_AT = 'another BrainAI (';
 /** server() for an entry that is this brain's own but no longer works (moved program, revoked or missing key). */
 const OWN_STALE = 'own entry that needs connecting again';
 const ON_A_DISK_IMAGE = /^\/Volumes\/|\/AppTranslocation\//;
@@ -424,19 +465,8 @@ export function claudeConfigPath(env: ToolEnv): string {
   return join(env.home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
 }
 
-function claudeDesktopConfig(env: ToolEnv): { path: string; json: { mcpServers?: Record<string, unknown> } & Record<string, unknown> } | { refuse: string } {
-  const path = claudeConfigPath(env);
-  const text = read(path);
-  if (text === null) return { path, json: {} };
-  try {
-    const json = JSON.parse(text) as unknown;
-    if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('not an object');
-    const servers = (json as { mcpServers?: unknown }).mcpServers;
-    if (servers !== undefined && (!servers || typeof servers !== 'object' || Array.isArray(servers))) throw new Error('not an object');
-    return { path, json: json as Record<string, unknown> };
-  } catch {
-    return { refuse: "Claude's claude_desktop_config.json is not plain JSON: BrainAI will not rewrite it." };
-  }
+function claudeDesktopConfig(env: ToolEnv): Config<{ mcpServers?: Record<string, unknown> } & Record<string, unknown>> {
+  return jsonConfig(claudeConfigPath(env), () => t('tools.refuse.claudeDesktop'), mcpServersCheck);
 }
 
 /** The grant in the key file, or null. */
@@ -465,6 +495,17 @@ export function samePath(a: string, b: string, platform: string): boolean {
   return norm(x) === norm(y);
 }
 
+/**
+ * Whether Claude's desktop app's settings hold a BrainAI entry of the kind BrainAI writes (a bridge program), read from the settings
+ * file only: not proof that its key still works. The notice after an update uses it: the Windows installer ends Claude's bridge program, so a connected Claude has to be quit and reopened.
+ */
+export function claudeDesktopConnected(env: ToolEnv): boolean {
+  const c = claudeDesktopConfig(env);
+  if ('refuse' in c) return false;
+  const entry = c.json.mcpServers?.[NAME] as { args?: unknown } | undefined;
+  return !!entry && Array.isArray(entry.args) && entry.args[1] === 'claude-bridge';
+}
+
 /** Whether the Claude app itself is installed (its bundle on the Mac, its install folder on Windows), not just its config folder. */
 export function claudeAppPresent(env: ToolEnv): boolean {
   if (platformOf(env) === 'win32') {
@@ -490,29 +531,29 @@ const claudeDesktop: Tool = {
     const ownData = !!env.bridge && typeof theirData === 'string' && samePath(theirData, env.bridge.dataDir, platform);
     // The app was moved (or removed): its program is gone, so the entry cannot start.
     if (!existsSync(entry.command) || !existsSync(cli)) return ownData ? OWN_STALE : NEEDS_AGAIN;
-    if (!env.bridge || (!ownData && !samePath(cli, env.bridge.cli, platform))) return `another BrainAI (${cli})`;
+    if (!env.bridge || (!ownData && !samePath(cli, env.bridge.cli, platform))) return `${OTHER_AT}${cli})`;
     // Connected means the key works: the file is there and its grant is live.
     const grant = storedGrant(env);
     return grant !== null && (env.keyLive?.(grant) ?? true) ? env.mcpUrl : OWN_STALE;
   },
   async add(env) {
-    if (!env.bridge || !env.issueKey) return "BrainAI cannot connect Claude's desktop app from here.";
+    if (!env.bridge || !env.issueKey) return t('tools.desktop.cannot');
     const c = claudeDesktopConfig(env);
     if ('refuse' in c) return c.refuse;
     const keyFile = join(env.bridge.dataDir, BRIDGE_KEY_FILE);
     dropKey(env); // a key left from an earlier connection
     let key: { grantId: string; token: string };
-    try { key = env.issueKey(); } catch (e) { return `BrainAI could not make a key for Claude: ${(e as Error).message}`; }
+    try { key = env.issueKey(); } catch (e) { return t('tools.desktop.keyFailed', { error: (e as Error).message }); }
     try {
       mkdirSync(env.bridge.dataDir, { recursive: true });
       writeFileSync(keyFile, JSON.stringify({ grant: key.grantId, token: key.token }), { mode: 0o600 });
       chmodSync(keyFile, 0o600);
       const entry = { command: env.bridge.node, args: [env.bridge.cli, 'claude-bridge'], env: { BRAINAI_DATA_DIR: env.bridge.dataDir, BRAINAI_PORT_FILE: env.bridge.portFile } };
-      writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcpServers: { ...c.json.mcpServers, [NAME]: entry } }, null, 2)}\n`);
+      writeWithBackup(c.path, jsonText({ ...c.json, mcpServers: { ...c.json.mcpServers, [NAME]: entry } }, c.bom));
     } catch (e) {
       try { env.revokeKey?.(key.grantId); } catch { /* nothing more to do */ }
       rmSync(keyFile, { force: true });
-      return `BrainAI could not write ${c.path}: ${(e as Error).message}`;
+      return writeFailure(e, c.path);
     }
     return null;
   },
@@ -523,7 +564,7 @@ const claudeDesktop: Tool = {
     if (c.json.mcpServers?.[NAME] === undefined) return null;
     const servers = { ...c.json.mcpServers };
     delete servers[NAME];
-    try { writeWithBackup(c.path, `${JSON.stringify({ ...c.json, mcpServers: servers }, null, 2)}\n`); } catch (e) { return `BrainAI could not write ${c.path}: ${(e as Error).message}`; }
+    try { writeWithBackup(c.path, jsonText({ ...c.json, mcpServers: servers }, c.bom)); } catch (e) { return writeFailure(e, c.path); }
     dropKey(env);
     return null;
   },
@@ -531,7 +572,7 @@ const claudeDesktop: Tool = {
   rulesFile: () => null,
   signIn: CLAUDE_QUIT,
   otherDetail: (server) => server,
-  blocked: (env) => (env.bridge && (ON_A_DISK_IMAGE.test(env.bridge.node) || ON_A_DISK_IMAGE.test(env.bridge.cli)) ? 'Move BrainAI to Applications first, then connect Claude.' : null),
+  blocked: (env) => (env.bridge && (ON_A_DISK_IMAGE.test(env.bridge.node) || ON_A_DISK_IMAGE.test(env.bridge.cli)) ? t('tools.desktop.moveFirst') : null),
   extraTraces: (env) => !!env.bridge && existsSync(join(env.bridge.dataDir, BRIDGE_KEY_FILE)),
   cleanup: (env) => dropKey(env),
 };
@@ -557,16 +598,50 @@ async function look(tool: Tool, env: ToolEnv): Promise<Look> {
   return { server: s, block, stray };
 }
 
+/** Whether a BrainAI (an OAuth metadata document with an issuer and an authorization endpoint) answers at this address within 500 ms. */
+async function answersAsBrainAI(mcpUrl: string): Promise<boolean> {
+  try {
+    const r = await fetch(new URL('/.well-known/oauth-authorization-server', mcpUrl), { signal: AbortSignal.timeout(500), redirect: 'manual' });
+    if (!r.ok) return false;
+    const j = (await r.json()) as { issuer?: unknown; authorization_endpoint?: unknown };
+    return typeof j.issuer === 'string' && typeof j.authorization_endpoint === 'string';
+  } catch { return false; }
+}
+
+/**
+ * A port BrainAI left is only "stale, ours" while nothing answers there: if a BrainAI answers (another one took the port), an
+ * entry there belongs to that one and stays "another BrainAI". Drops the answering ones from `env.previousUrls`.
+ */
+export async function settlePrevious(env: ToolEnv): Promise<void> {
+  const urls = env.previousUrls ?? [];
+  if (urls.length === 0) return;
+  const probe = env.probe ?? answersAsBrainAI;
+  const alive = await Promise.all(urls.map((u) => probe(u)));
+  env.previousUrls = urls.filter((_, i) => !alive[i]);
+}
+
+/** Everything that has to be current before tools are looked at: the Windows Path, and which left-behind ports are really stale. */
+export async function prepareEnv(env: ToolEnv): Promise<void> {
+  await refreshToolPath(env);
+  await settlePrevious(env);
+}
+
+/** Whether an address (or host:port) is one BrainAI used before its usual port moved. */
+const previousHost = (env: ToolEnv, hostOrUrl: string | null | undefined): boolean => !!hostOrUrl && (env.previousUrls ?? []).some((u) => hostOf(u) === (hostOrUrl.includes('://') ? hostOf(hostOrUrl) : hostOrUrl));
+
 function stateFrom(tool: Tool, env: ToolEnv, l: Look): Pick<ToolState, 'state' | 'detail' | 'detailSay'> {
   const ours = hostOf(env.mcpUrl);
-  if (l.server === OWN_STALE) return { state: 'not-connected', detail: NEEDS_AGAIN };
+  if (l.server === OWN_STALE || (l.server !== null && previousHost(env, l.server))) return { state: 'not-connected', detail: NEEDS_AGAIN };
   if (l.server !== null && l.server !== env.mcpUrl) {
-    if (tool.otherDetail && l.server !== NO_ADDRESS) return { state: 'other-brainai', detail: tool.otherDetail(l.server) };
+    if (tool.otherDetail && l.server !== NO_ADDRESS) {
+      const at = l.server.startsWith(OTHER_AT) && l.server.endsWith(')') ? l.server.slice(OTHER_AT.length, -1) : null;
+      return { state: 'other-brainai', detail: tool.otherDetail(l.server), ...(at !== null ? { detailSay: { key: 'tools.detail.anotherCli' as const, params: { cli: at } } } : {}) };
+    }
     if (l.server === NO_ADDRESS) return { state: 'other-brainai', detail: `it has a brainai entry that is not this one (${NO_ADDRESS})`, detailSay: { key: 'tools.detail.noAddress' } };
     return { state: 'other-brainai', detail: `its brainai server points at ${hostOf(l.server)}`, detailSay: { key: 'tools.detail.points', params: { host: hostOf(l.server) } } };
   }
   // A block that does not name this BrainAI exactly (another host, or wording BrainAI cannot read) belongs to another brain.
-  if (l.block && l.block.host !== ours) {
+  if (l.block && l.block.host !== ours && !previousHost(env, l.block.host)) {
     return { state: 'other-brainai', detail: `its rules are for ${l.block.host ? `the BrainAI at ${l.block.host}` : 'another brain'}`, detailSay: l.block.host ? { key: 'tools.detail.rulesHost', params: { host: l.block.host } } : { key: 'tools.detail.rulesOther' } };
   }
   if (l.stray !== null) {
@@ -604,7 +679,7 @@ export async function toolStates(env: ToolEnv, tools: Tool[] = TOOLS): Promise<T
  */
 export function brainPluginInstalled(env: ToolEnv): boolean {
   try {
-    const text = read(join(env.home, '.claude', 'plugins', 'installed_plugins.json'));
+    const text = read(join(claudeDir(env), 'plugins', 'installed_plugins.json'));
     const plugins = text === null ? null : (JSON.parse(text) as { plugins?: Record<string, unknown> }).plugins;
     return !!plugins && typeof plugins === 'object' && Object.keys(plugins).some((k) => k.startsWith('brainai@') && Array.isArray(plugins[k]) && (plugins[k] as unknown[]).length > 0);
   } catch {
@@ -614,7 +689,8 @@ export function brainPluginInstalled(env: ToolEnv): boolean {
 
 export async function connect(id: ToolId, env: ToolEnv, opts: { replace?: boolean }): Promise<Outcome> {
   const tool = TOOLS.find((t) => t.id === id);
-  if (!tool || !tool.installed(env)) return { ok: false, reason: t('tools.notInstalled', { name: tool ? toolName(tool) : id, computer: computerName() }) };
+  if (!tool || !tool.installed(env)) return { ok: false, reason: `${t('tools.notInstalled', { name: tool ? toolName(tool) : id, computer: computerName() })} ${t('tools.notFoundHint')}` };
+  if (env.temporary) return { ok: false, reason: t('tools.temporaryConnect') };
   const blocked = tool.blocked?.(env);
   if (blocked) return { ok: false, reason: blocked };
   if (id === 'claude-code' && brainPluginInstalled(env)) {
@@ -631,14 +707,18 @@ export async function connect(id: ToolId, env: ToolEnv, opts: { replace?: boolea
   if (s.state === 'other-brainai' && !opts.replace) {
     return { ok: false, reason: t('tools.anotherBrainai', { name: toolName(tool), detail: detailText(s) }) };
   }
+  env.notes = [];
   let added = false;
   if (l.server !== env.mcpUrl) {
-    if (l.server !== null) {
-      const removed = await tool.remove(env);
-      if (removed) return { ok: false, reason: removed };
-    }
-    const failed = await tool.add(env);
-    if (failed) return { ok: false, reason: failed };
+    // A write that fails (read-only file, another program has it open) is a message, never an error page.
+    try {
+      if (l.server !== null) {
+        const removed = await tool.remove(env);
+        if (removed) return { ok: false, reason: removed };
+      }
+      const failed = await tool.add(env);
+      if (failed) return { ok: false, reason: failed };
+    } catch (e) { return { ok: false, reason: writeFailure(e) }; }
     added = true;
   }
   // The rules only once the server entry worked; if they cannot be written, the entry is taken back.
@@ -646,35 +726,38 @@ export async function connect(id: ToolId, env: ToolEnv, opts: { replace?: boolea
     try {
       writeWithBackup(file, putBlock(read(file) ?? '', env.rules(tool.slug)));
     } catch (e) {
-      if (added) await tool.remove(env);
-      return { ok: false, reason: t('tools.couldNotWrite', { file: file ?? '', error: (e as Error).message }) };
+      if (added) await tool.remove(env).catch(() => null);
+      return { ok: false, reason: writeFailure(e, file) };
     }
   }
   tool.after?.(env);
-  const hooksNote = installHooks(tool.id, env);
-  return { ok: true, signIn: t(`tools.signIn.${tool.id}`), ...(hooksNote ? { hooksNote } : {}) };
+  const note = [...(env.notes ?? []), installHooks(tool.id, env)].filter(Boolean).join(' ');
+  return { ok: true, signIn: t(`tools.signIn.${tool.id}`), ...(note ? { hooksNote: note } : {}) };
 }
 
 export async function disconnect(id: ToolId, env: ToolEnv): Promise<Outcome> {
   const tool = TOOLS.find((t) => t.id === id);
-  if (!tool || !tool.installed(env)) return { ok: false, reason: t('tools.notInstalled', { name: tool ? toolName(tool) : id, computer: computerName() }) };
+  if (!tool || !tool.installed(env)) return { ok: false, reason: `${t('tools.notInstalled', { name: tool ? toolName(tool) : id, computer: computerName() })} ${t('tools.notFoundHint')}` };
   const l = await look(tool, env);
   if (l.refuse) return { ok: false, reason: l.refuse };
   if (stateFrom(tool, env, l).state === 'other-brainai') {
     tool.cleanup?.(env); // our own key is ours whatever the entry says; the entry itself is left alone
     return { ok: false, reason: t('tools.usesAnother', { name: toolName(tool) }) };
   }
-  if (l.server === env.mcpUrl || l.server === OWN_STALE) {
-    const removed = await tool.remove(env);
-    if (removed) return { ok: false, reason: removed };
+  if (l.server === env.mcpUrl || l.server === OWN_STALE || (l.server !== null && previousHost(env, l.server))) {
+    try {
+      const removed = await tool.remove(env);
+      if (removed) return { ok: false, reason: removed };
+    } catch (e) { return { ok: false, reason: writeFailure(e) }; }
   }
   tool.cleanup?.(env);
   const file = tool.rulesFile(env);
   const text = file ? read(file) : null;
   try {
-    if (file && text !== null && findBlock(text)?.host === hostOf(env.mcpUrl)) writeWithBackup(file, removeBlock(text));
+    const blockHost = text !== null ? findBlock(text)?.host : undefined;
+    if (file && text !== null && (blockHost === hostOf(env.mcpUrl) || previousHost(env, blockHost))) writeWithBackup(file, removeBlock(text));
   } catch (e) {
-    return { ok: false, reason: t('tools.couldNotWrite', { file: file ?? '', error: (e as Error).message }) };
+    return { ok: false, reason: writeFailure(e, file ?? '') };
   }
   // The desktop app's key is a grant that cleanup already revoked; every other tool signed in with OAuth.
   const ended = tool.id === 'claude-desktop' ? 0 : (env.endSignIns?.(tool.name) ?? 0);
@@ -684,23 +767,41 @@ export async function disconnect(id: ToolId, env: ToolEnv): Promise<Outcome> {
 }
 
 /**
- * The `.brainai-backup` files BrainAI made beside the owner's originals (CLAUDE.md, Codex's config.toml and AGENTS.md,
- * OpenCode's opencode.json and AGENTS.md, Cursor's mcp.json, Gemini CLI's settings.json and GEMINI.md, the hook files of Codex and Cursor; not Claude Code's settings.json backup, see dropSettingsBackup) that exist now, as absolute paths. Removing BrainAI
- * moves them into the saved folder, so the owner's originals are kept in one place.
+ * The settings files whose `.brainai-backup` copy can hold other tools' API keys or tokens (Claude's settings.json, Claude
+ * desktop's claude_desktop_config.json, Cursor's mcp.json, Gemini CLI's settings.json, OpenCode's opencode.json, Codex's config.toml), as absolute
+ * paths of the originals. Their backups are never moved into the saved folder (often synced to a cloud): they stay beside the
+ * original, where the tool's own settings already are. Claude Code's settings.json one is deleted instead, see dropSettingsBackup.
+ */
+export function secretBackupOriginals(env: ToolEnv): string[] {
+  return [
+    join(claudeDir(env), 'settings.json'),
+    claudeConfigPath(env),
+    join(env.home, '.cursor', 'mcp.json'),
+    join(GEMINI_DIR(env), 'settings.json'),
+    join(OPENCODE_DIR(env), 'opencode.json'),
+    join(codexDir(env), 'config.toml'),
+  ];
+}
+
+/** Those backups that exist now, left where they are (for a note to the owner). */
+export function secretBackups(env: ToolEnv): string[] {
+  return secretBackupOriginals(env).map((f) => `${f}.brainai-backup`).filter((f) => existsSync(f));
+}
+
+/**
+ * The `.brainai-backup` files BrainAI made beside the owner's originals that are safe to keep in the saved folder: the rules
+ * files (CLAUDE.md, Codex's AGENTS.md, OpenCode's and Gemini CLI's rules) and the hook files of Codex and Cursor,
+ * as absolute paths of those that exist now. Not the settings files that can hold tokens (secretBackupOriginals). Removing
+ * BrainAI moves these into the saved folder, so the owner's originals are kept in one place.
  */
 export function backupFiles(env: ToolEnv): string[] {
   const originals = [
-    join(env.home, '.claude', 'CLAUDE.md'),
-    join(env.home, '.codex', 'config.toml'),
-    join(env.home, '.codex', 'AGENTS.md'),
-    join(OPENCODE_DIR(env), 'opencode.json'),
+    join(claudeDir(env), 'CLAUDE.md'),
+    join(codexDir(env), 'AGENTS.md'),
     join(OPENCODE_DIR(env), 'AGENTS.md'),
-    join(env.home, '.cursor', 'mcp.json'),
-    join(GEMINI_DIR(env), 'settings.json'),
     join(GEMINI_DIR(env), 'GEMINI.md'),
-    join(env.home, '.codex', 'hooks.json'),
+    join(codexDir(env), 'hooks.json'),
     join(env.home, '.cursor', 'hooks.json'),
-    claudeConfigPath(env),
   ];
   return originals.map((f) => `${f}.brainai-backup`).filter((f) => existsSync(f));
 }
@@ -711,15 +812,16 @@ export function backupFiles(env: ToolEnv): string[] {
  * the backup is deleted (settings.json keeps the owner's later changes) and the returned line says so; null if none.
  */
 export function dropSettingsBackup(env: ToolEnv): string | null {
-  const file = join(env.home, '.claude', 'settings.json.brainai-backup');
+  const file = join(claudeDir(env), 'settings.json.brainai-backup');
   if (!existsSync(file)) return null;
-  try { rmSync(file, { force: true }); } catch (e) { return `~/.claude/settings.json.brainai-backup was left where it is (it can hold tokens; delete it by hand): ${(e as Error).message}`; }
-  return 'Claude Code: BrainAI deleted its backup of ~/.claude/settings.json (it can hold tokens, so it is not in this folder). Your settings.json keeps everything except BrainAI\'s save reminders.';
+  const shown = claudeDir(env) === join(env.home, '.claude') ? '~/.claude' : claudeDir(env);
+  try { rmSync(file, { force: true }); } catch (e) { return t('tools.settingsBackup.leftByHand', { file: `${shown}/settings.json.brainai-backup`, error: (e as Error).message }); }
+  return t('tools.settingsBackup.deleted', { settings: `${shown}/settings.json` });
 }
 
 /** Whether Codex's or Cursor's config names another brain's `memory` server, whose hooks may share BrainAI's script. */
 function otherBrainEntry(id: ToolId, env: ToolEnv): boolean {
-  const file = id === 'codex' ? join(env.home, '.codex', 'config.toml') : id === 'cursor' ? join(env.home, '.cursor', 'mcp.json') : null;
+  const file = id === 'codex' ? join(codexDir(env), 'config.toml') : id === 'cursor' ? join(env.home, '.cursor', 'mcp.json') : null;
   const text = file ? read(file) : null;
   return text !== null && /\[mcp_servers\.memory\]|"memory"\s*:/.test(text);
 }
@@ -733,12 +835,12 @@ export async function tracesOfThisBrain(id: ToolId, env: ToolEnv): Promise<'yes'
   if (!tool || !tool.installed(env)) return 'no';
   const l = await look(tool, env);
   if (l.refuse !== undefined) return 'unreadable';
-  return l.server === env.mcpUrl || l.server === OWN_STALE || l.block?.host === hostOf(env.mcpUrl) || tool.extraTraces?.(env) ? 'yes' : 'no';
+  return l.server === env.mcpUrl || l.server === OWN_STALE || (l.server !== null && previousHost(env, l.server)) || l.block?.host === hostOf(env.mcpUrl) || previousHost(env, l.block?.host) || tool.extraTraces?.(env) ? 'yes' : 'no';
 }
 
 /** A brain entry (`brainai` or `memory`) in ~/.claude.json, at the top or under any project; true when unreadable. */
 function claudeJsonHasBrain(env: ToolEnv): boolean {
-  const file = join(env.home, '.claude.json');
+  const file = claudeJsonPath(env);
   if (!existsSync(file)) return false;
   try {
     const json = JSON.parse(readFileSync(file, 'utf8')) as { mcpServers?: Record<string, unknown>; projects?: Record<string, { mcpServers?: Record<string, unknown> }> };
@@ -772,7 +874,7 @@ export function dropLeftoverKey(id: ToolId, env: ToolEnv): void {
 /** Adds the save reminders to a tool that is already connected (the Tools page's "Add save reminders"). */
 export async function addReminders(id: ToolId, env: ToolEnv): Promise<Outcome> {
   const tool = TOOLS.find((t) => t.id === id);
-  if (!tool || !tool.installed(env)) return { ok: false, reason: t('tools.notInstalled', { name: tool ? toolName(tool) : id, computer: computerName() }) };
+  if (!tool || !tool.installed(env)) return { ok: false, reason: `${t('tools.notInstalled', { name: tool ? toolName(tool) : id, computer: computerName() })} ${t('tools.notFoundHint')}` };
   if (!hasHooks(id)) return { ok: false, reason: t('tools.noHooks', { name: toolName(tool) }) };
   if (!env.hooksDir) return { ok: false, reason: t('tools.noHookScripts') };
   const note = installHooks(id, env);

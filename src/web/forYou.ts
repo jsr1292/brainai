@@ -1,8 +1,8 @@
 /**
- * The "For you" card on Projects: one grouped list, in the order approvals, facts that disagree (B1), discussions waiting on you, Last week,
+ * The "For you" card on Projects: one grouped list, in the order approvals, facts that disagree (B1), discussions waiting on you, brain health,
  * suggestions. At most three rows show; the rest fold behind one closed row at the end ("3 suggestions", "2 more"),
  * so suggestions fold first and an approval never hides behind one. Only rows that need the owner carry the orange
- * dot; Last week a grey one; suggestions none. No black button: those are the screen's one loud thing elsewhere —
+ * dot; suggestions none. No black button: those are the screen's one loud thing elsewhere —
  * except the approval card, whose Approve is its own one loud thing (it opens in place under the row, a sheet on
  * the phone); two or more waiting become one row to /approvals.
  */
@@ -14,9 +14,8 @@ import { healthRow } from './healthViews.js';
 import type { Health } from '../health/health.js';
 import { html, type SafeHtml } from './html.js';
 import { t, tHtml, tKey } from '../i18n/index.js';
-import type { WeekLine } from './projectsViews.js';
 
-export type ForYouKind = 'approval' | 'disagree' | 'discussion' | 'week' | 'health' | 'suggestion';
+export type ForYouKind = 'approval' | 'disagree' | 'discussion' | 'health' | 'suggestion';
 export interface ForYouRow { kind: ForYouKind; html: SafeHtml }
 export interface ApprovalSummary {
   count: number;
@@ -43,9 +42,6 @@ const discussionRow = (waiting: { id: string; title: string }[]): SafeHtml => wa
   ? html`<a class="row" href="/discussions/${waiting[0]!.id}">${dot()}<span class="txt">${tHtml('projects.foryou.waitingOnYou', { title: html`<b>${waiting[0]!.title}</b>` })}</span>${chev}</a>`
   : html`<a class="row" href="/discussions">${dot()}<span class="txt">${t('projects.foryou.discussionsWait', { count: waiting.length })}</span>${chev}</a>`;
 
-/** Last week: the row is the Read it form's button (no GET marks anything read), Not now its own small form. */
-const weekRow = (w: WeekLine): SafeHtml => html`<div class="fy-week"><form method="post" action="/review/${w.monday}/open" class="fy-read"><button type="submit" class="row">${dot(true)}<span class="txt">${tHtml('projects.foryou.week', { label: html`<b>${t('projects.foryou.lastWeek')}</b>`, dates: w.dates, text: w.text })}</span></button></form><form method="post" action="/review/${w.monday}/dismiss" class="fy-not"><button type="submit" class="ghost sm">${t('projects.foryou.notNow')}</button></form></div>`;
-
 /** A suggestion's sentence, worded here from the service's structured fields (`kind`, `state`, `weeks`); `text` stays the English one. */
 function suggestionText(s: HomeSuggestion): SafeHtml {
   const bold = html`<b>${s.project}</b>`;
@@ -63,12 +59,11 @@ function suggestionRow(s: HomeSuggestion): SafeHtml {
   return html`<div class="row nolead fy-sug"><span class="txt">${text}</span><span class="acts">${doIt}<form method="post" action="${action(name, 'snooze')}"><button type="submit" class="ghost sm">${t('projects.foryou.notNow')}</button></form></span></div>`;
 }
 
-export function forYouRows(v: { approvals: ApprovalSummary; disagreements?: number; health?: Health; discussions: { id: string; title: string }[]; weekLine: WeekLine | null; suggestions: HomeSuggestion[] }): ForYouRow[] {
+export function forYouRows(v: { approvals: ApprovalSummary; disagreements?: number; health?: Health; discussions: { id: string; title: string }[]; suggestions: HomeSuggestion[] }): ForYouRow[] {
   const rows: ForYouRow[] = [];
   if (v.approvals.count > 0) rows.push({ kind: 'approval', html: approvalRow(v.approvals) });
   if ((v.disagreements ?? 0) > 0) rows.push({ kind: 'disagree', html: disagreeRow(v.disagreements!) });
   if (v.discussions.length > 0) rows.push({ kind: 'discussion', html: discussionRow(v.discussions) });
-  if (v.weekLine) rows.push({ kind: 'week', html: weekRow(v.weekLine) });
   const health = healthRow(v.health);
   if (health) rows.push({ kind: 'health', html: health });
   for (const s of v.suggestions) rows.push({ kind: 'suggestion', html: suggestionRow(s) });

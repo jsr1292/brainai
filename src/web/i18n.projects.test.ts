@@ -121,15 +121,14 @@ test('first steps, For you and the freshness lines have no English left under th
       const steps = firstSteps({ localMode, grants, hasMemory: false, backupElsewhere: false, canHide: true });
       assertNoEnglishLeft(firstStepsView(steps, true, localMode).value, `first steps ${localMode}`, { allow });
     }
-    const week = { monday: '2026-11-09', dates: 'Fixture dates', text: 'Fixture sentence' };
     const sugs = [
       { project: 'wildlog', kind: 'pin-late' as const, text: 'wildlog has something late: put it on the go?', state: 'open' as const, weeks: null },
       { project: 'wildlog', kind: 'park-quiet' as const, text: 'wildlog has been quiet for 6 weeks: park it?', state: 'open' as const, weeks: 6 },
       { project: 'wildlog', kind: 'reopen-active' as const, text: 'wildlog is parked but has new activity: back to open?', state: 'parked' as const, weeks: null },
     ];
-    const rows = forYouRows({ approvals: { count: 2, first: null }, discussions: [{ id: 'd1', title: 'Fixture talk' }], weekLine: week, suggestions: sugs });
-    assertNoEnglishLeft(forYouCard(rows).value, 'for you', { allow: [...allow, 'Fixture talk', 'Fixture dates', 'Fixture sentence'] });
-    const one = forYouRows({ approvals: { count: 0, first: null }, discussions: [{ id: 'd1', title: 'Fixture talk' }, { id: 'd2', title: 'Fixture two' }], weekLine: null, suggestions: [] });
+    const rows = forYouRows({ approvals: { count: 2, first: null }, discussions: [{ id: 'd1', title: 'Fixture talk' }], suggestions: sugs });
+    assertNoEnglishLeft(forYouCard(rows).value, 'for you', { allow: [...allow, 'Fixture talk'] });
+    const one = forYouRows({ approvals: { count: 0, first: null }, discussions: [{ id: 'd1', title: 'Fixture talk' }, { id: 'd2', title: 'Fixture two' }], suggestions: [] });
     assertNoEnglishLeft(forYouCard(one).value, 'for you, two discussions', { allow });
     const flag = app.deps.pages.freshness.forPage(seed.page, { hints: true })!;
     assert.ok(flag);

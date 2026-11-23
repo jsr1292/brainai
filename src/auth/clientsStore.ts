@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { InvalidClientMetadataError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
@@ -20,6 +21,10 @@ const KEPT_FIELDS = [
   'client_id', 'client_id_issued_at', 'client_secret', 'client_secret_expires_at', 'redirect_uris', 'client_name',
   'token_endpoint_auth_method', 'grant_types', 'response_types', 'scope',
 ] as const;
+
+const capExempt = new AsyncLocalStorage<boolean>();
+/** Runs a registration outside the daily cap (the desktop app's own localhost listener: only this computer can reach it, so internet callers cannot use the cap to block local sign-in). */
+export const exemptFromDailyCap = <T>(fn: () => T): T => capExempt.run(true, fn);
 
 interface Row { metadata: string; is_cimd: number; fetched_at: string | null; display_name: string | null }
 
@@ -151,7 +156,7 @@ export class ClientsStore implements OAuthRegisteredClientsStore {
     const dayAgo = new Date(this.now().getTime() - 86_400_000).toISOString();
     const recent = (this.db.prepare(`SELECT COUNT(*) AS n FROM oauth_clients WHERE is_cimd = 0 AND created_at > ?
       AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = oauth_clients.client_id)`).get(dayAgo) as { n: number }).n;
-    if (recent >= MAX_NEW_CLIENTS_PER_DAY) throw new InvalidClientMetadataError('Too many new client registrations today. Try again tomorrow.');
+    if (recent >= MAX_NEW_CLIENTS_PER_DAY && capExempt.getStore() !== true) throw new InvalidClientMetadataError('Too many new client registrations today. Try again tomorrow.');
     // The SDK register handler already generates client_id and the secret; keep them, fill in only if absent.
     const kept = Object.fromEntries(KEPT_FIELDS.filter((k) => client[k as keyof typeof client] !== undefined).map((k) => [k, client[k as keyof typeof client]]));
     const full = {

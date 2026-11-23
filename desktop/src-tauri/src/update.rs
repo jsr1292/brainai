@@ -400,15 +400,19 @@ pub fn left_over(f: &UpdateFile, app_version: &str) -> Leftover {
     Leftover::Keep
 }
 
-/// BRAINAI_UPDATE_ENDPOINT, for testing a release by hand: https anywhere, plain http only to this computer.
-/// tauri.conf.json sets `dangerousInsecureTransportProtocol` only so this http-to-127.0.0.1 test works: the configured
-/// endpoint stays https, this refuses http anywhere else, and every download must pass the signature check whatever
-/// carried it.
+/// BRAINAI_UPDATE_ENDPOINT, for testing a release by hand: https anywhere, plain http only to this computer and only in a
+/// debug build. A shipped (release) build refuses http, and tauri.conf.json no longer sets `dangerousInsecureTransportProtocol`,
+/// so the updater itself refuses an http endpoint there too (a debug build only prints a warning). Every download must pass
+/// the signature check whatever carried it.
 pub fn endpoint_override(env: Option<&str>) -> Option<Url> {
+    endpoint_override_with(env, cfg!(debug_assertions))
+}
+
+fn endpoint_override_with(env: Option<&str>, allow_http: bool) -> Option<Url> {
     let url = Url::parse(env?.trim()).ok()?;
     match url.scheme() {
         "https" => Some(url),
-        "http" if matches!(url.host_str(), Some("127.0.0.1") | Some("localhost")) => Some(url),
+        "http" if allow_http && matches!(url.host_str(), Some("127.0.0.1") | Some("localhost")) => Some(url),
         _ => None,
     }
 }
@@ -1174,14 +1178,18 @@ mod tests {
     #[test]
     fn a_test_endpoint_is_https_or_this_computer_only() {
         assert_eq!(endpoint_override(Some("https://example.com/l.json")).map(|u| u.to_string()), Some("https://example.com/l.json".into()));
-        assert!(endpoint_override(Some("http://127.0.0.1:8765/latest.json")).is_some());
-        assert!(endpoint_override(Some("http://localhost:8765/latest.json")).is_some());
+        assert!(endpoint_override_with(Some("http://127.0.0.1:8765/latest.json"), true).is_some());
+        assert!(endpoint_override_with(Some("http://localhost:8765/latest.json"), true).is_some());
         assert_eq!(endpoint_override(Some("http://example.com/l.json")), None);
         assert_eq!(endpoint_override(Some("http://127.0.0.1.example.com/l.json")), None);
         assert_eq!(endpoint_override(Some("file:///etc/passwd")), None);
         assert_eq!(endpoint_override(Some("not a url")), None);
         assert_eq!(endpoint_override(Some("")), None);
         assert_eq!(endpoint_override(None), None);
+        // A shipped build never takes plain http, not even to this computer; https still works.
+        assert_eq!(endpoint_override_with(Some("http://127.0.0.1:8765/latest.json"), false), None);
+        assert_eq!(endpoint_override_with(Some("http://localhost:8765/latest.json"), false), None);
+        assert!(endpoint_override_with(Some("https://example.com/l.json"), false).is_some());
     }
 
     #[test]

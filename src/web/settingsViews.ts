@@ -99,6 +99,8 @@ export function settingsView(v: {
   appearance?: { choice: ThemeChoice };
   /** Settings › Developer coaching: whether the brain-wide switch is on. */
   coaching?: { on: boolean };
+  /** Desktop app only: whether the Monday notification is on. */
+  weekNotice?: { on: boolean };
 }): SafeHtml {
   const here = computerName();
   const device = thisDevice(v.device);
@@ -270,7 +272,7 @@ ${devicesSection(v.devices, v.created, v.now, v.brainUrl)}
   ${sessionCards({ sessions: v.sessions, currentSessionId: v.currentSessionId })}
 </section>
 ${languagePanel(v.language?.choice ?? 'auto')}
-${appearancePanel(v.appearance?.choice ?? 'auto', v.localMode === true)}
+${appearancePanel(v.appearance?.choice ?? 'auto', v.localMode === true, v.weekNotice)}
 ${coachingPanel(v.coaching?.on ?? false)}
 ${v.localMode ? '' : thisDeviceSection}
 ${removeSection}
@@ -333,7 +335,7 @@ const themeName = (c: ThemeChoice): string => tKey(`theme.${c}` as const);
  * Settings › Appearance: Automatic / Light / Dark, per browser (the `theme` cookie, not brain data). With scripts, a choice
  * applies at once (theme.js); without, Save posts to the owner-only /settings/theme, which sets the cookie.
  */
-function appearancePanel(choice: ThemeChoice, inApp: boolean): SafeHtml {
+function appearancePanel(choice: ThemeChoice, inApp: boolean, weekNotice?: { on: boolean }): SafeHtml {
   return html`<section id="appearance" class="panel">
   <div class="panel-head"><h2>${t('theme.title')}</h2></div>
   <p class="meta">${t(inApp ? 'theme.lede' : 'theme.ledeBrowser')}</p>
@@ -343,6 +345,10 @@ function appearancePanel(choice: ThemeChoice, inApp: boolean): SafeHtml {
     </fieldset>
     <p data-theme-save><button type="submit" class="secondary">${t('theme.save')}</button></p>
   </form>
+  ${weekNotice ? html`<form method="post" action="/settings/week-notice" class="stack">
+    <p><label class="choice"><input type="checkbox" name="weekNotice" value="on"${weekNotice.on ? raw(' checked') : ''}> ${t('weekNotice.label')}<span class="sub"> · ${t('weekNotice.sub')}</span></label></p>
+    <p><button type="submit" class="secondary">${t('weekNotice.save')}</button></p>
+  </form>` : ''}
 </section>`;
 }
 

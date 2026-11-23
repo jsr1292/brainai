@@ -17,12 +17,14 @@ function report(app: Awaited<ReturnType<typeof start>>['app'], folders: Record<s
   app.deps.devices.storeReport(device.id, folders.map((x) => ({ git: true, branch: 'main', uncommitted: 0, unpushed: 0, lastCommit: null, remotes: [], ...x })) as never);
 }
 
-test('the panel shows the folder\'s git state, and the row shows the "work not safe" mark', async (t) => {
+test('the panel shows the folder\'s git state, and the row says At risk', async (t) => {
   const { app, f } = await start(t);
   report(app, [{ name: 'wildlog', uncommitted: 3, unpushed: 2, lastCommit: new Date(Date.now() - 2 * 86_400_000).toISOString() }]);
   const body = await (await f('/?project=wildlog')).text();
   assert.match(body, /<li class="gitline">Folder <code>~\/Projects\/wildlog<\/code> · main · 3 uncommitted · 2 not pushed · last commit <time[^>]*>/);
-  assert.match(body, /<span class="prow-name">wildlog<\/span>[\s\S]{0,400}<span class="pwarn" role="img" aria-label="Work not safe: not pushed"/);
+  // The health chip already says "At risk" (2 commits only on the Mac), so the "!" mark is not drawn on top of it.
+  assert.match(body, /<span class="prow-name">wildlog<\/span>[\s\S]{0,400}<span class="chip hl hl-risk" data-health="at_risk" title="2 commits are only on your Mac\.">At risk<\/span>/);
+  assert.doesNotMatch(body, /class="pwarn"/);
 });
 
 test('a folder whose git state is unknown says so instead of 0 uncommitted and 0 not pushed', async (t) => {

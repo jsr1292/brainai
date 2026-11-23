@@ -198,6 +198,7 @@ test('through the public door, a request that names localhost is still the inter
   assert.equal(cookiesOf(home.headers), '', 'no session handed out');
   assert.equal((await call(door, 'GET', `/app/hello?challenge=${'a'.repeat(64)}`, local.host)).status, 404, 'the app window\'s endpoints are not on the door');
   assert.equal((await call(door, 'POST', '/app/ticket', local.host, { 'X-App-Key': 'x' })).status, 404);
+  assert.equal((await call(door, 'GET', '/app/week-note', local.host, { 'X-App-Key': 'x' })).status, 404);
   assert.equal((await listTools(door, local.host, localToken)).status, 401, 'a local token is not accepted through the door');
   const prm = JSON.parse((await call(door, 'GET', '/.well-known/oauth-protected-resource/mcp', local.host)).body);
   assert.equal(prm.resource, `${PUBLIC}/mcp`, 'the door always speaks as the public address');

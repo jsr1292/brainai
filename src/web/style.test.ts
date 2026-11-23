@@ -166,11 +166,6 @@ test('placeholders (the only visible label on the idea box and the header search
 /** overflow-wrap is not inherited from body here (only p and headings set it), so each container must break long words. */
 const wraps = (selector: string, media = '') => prop(selector, 'overflow-wrap', media) === 'anywhere';
 
-test('the Last week row keeps its whole focus ring inside the card', () => {
-  assert.equal(prop('.group > li > .fy-week > form > button.row:focus-visible', 'outline-offset'), '-2px');
-  assert.equal(prop('.group > li:first-child > .fy-week > form > button.row', 'border-radius'), '13px 13px 0 0');
-  assert.equal(prop('.group > li:last-child > .fy-week > form > button.row', 'border-radius'), '0 0 13px 13px');
-});
 test('Archive sits in the pill row, and Manage lines up with the panel headings', () => {
   assert.equal(prop('.danger', 'margin-top'), undefined);
   assert.equal(prop('form.danger', 'margin-top'), '0.75rem');

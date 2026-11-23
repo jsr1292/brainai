@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { realpathSync, chmodSync, copyFileSync, existsSync, mkdirSync, symlinkSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -66,6 +66,8 @@ function setup() {
   writeFileSync(join(bin, 'docker'), `#!/bin/sh
 echo "$@" >> "${root}/docker-calls"
 case " $* " in
+  *" ps "*) [ -f "${root}/app-down" ] || echo abc123; exit 0;;
+  *" stop "*) [ -f "${root}/stopfail" ] && { echo "cannot stop" >&2; exit 1; }; exit 0;;
   *" down "*) [ -f "${root}/downfail" ] && { echo "daemon not running" >&2; exit 1; }; exit 0;;
   *" run "*)
     [ -f "${root}/savefail" ] && { echo "disk full" >&2; exit 1; }
@@ -98,9 +100,12 @@ esac\n`);
     input,
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, APP_DIR: appDir, GIT_DIR_ROOT: gitRoot, EXPORT_DIR: exportDir, SKIP_MOUNT_CHECK: '1', OFFSITE_REMOTE: 'gdrive:memory-backups', COPY_DIRS: '', GIT_COPY_DIRS: '', ...env },
   });
+  const child = (env: Record<string, string> = {}) => spawn('bash', [join(appDir, 'scripts', 'remove.sh')], {
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, APP_DIR: appDir, GIT_DIR_ROOT: gitRoot, EXPORT_DIR: exportDir, SKIP_MOUNT_CHECK: '1', OFFSITE_REMOTE: 'gdrive:memory-backups', COPY_DIRS: '', GIT_COPY_DIRS: '', ...env },
+  });
   writeFileSync(join(appDir, 'scripts', 'remove.sh'), readFileSync(join('scripts', 'remove.sh')));
   const calls = () => (existsSync(join(root, 'docker-calls')) ? readFileSync(join(root, 'docker-calls'), 'utf8') : '');
-  return { root, home, appDir, remote, gitRoot, exportDir, crontab, calls, run };
+  return { root, home, appDir, remote, gitRoot, exportDir, crontab, calls, run, child };
 }
 
 const GO = '\nremove\n';
@@ -151,7 +156,7 @@ test('the save always runs in a one-off container, into a folder of the home mou
     const r = run('\nno\n');
     const mount = new RegExp(`^compose -f \\S+ run --rm -v ${join(home, '.brainai-save.')}[A-Za-z0-9]{6}:/saved app node dist/cli\\.js save-copy /saved$`, 'm');
     assert.match(calls(), mount, r.stdout + r.stderr);
-    assert.ok(!/ exec | ps /.test(calls()));
+    assert.ok(!/ exec /.test(calls()));
     // The real save-copy wrote the folder; the script moved it to the home folder and removed the temporary one.
     assert.match(readFileSync(join(home, SAVED, 'README.txt'), 'utf8'), /2 facts/);
     assert.deepEqual(readdirSync(home).filter((n) => n.startsWith('.brainai-save.')), []);
@@ -164,7 +169,7 @@ test('a failed save leaves no temporary folder behind', () => {
   try {
     writeFileSync(join(root, 'savefail'), '');
     const r = run(GO);
-    assert.match(r.stdout, /The save failed\.\nNothing was removed\./);
+    assert.match(r.stdout, /The save failed\.\nBrainAI is running again\.\nNothing was removed\./);
     assert.deepEqual(readdirSync(home).filter((n) => n.startsWith('.brainai-save.') || n.startsWith('BrainAI saved')), []);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -486,5 +491,75 @@ test('a folder of the export that is a link leading elsewhere never lets the del
     const r = run(GO);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.ok(existsSync(join(outside, 'x.md')) && existsSync(join(outside, 'apps', 'x.md')));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the app stops before the copy; "no" starts it again, "remove" leaves it stopped', () => {
+  for (const answer of ['no', 'remove']) {
+    const { root, calls, run } = setup();
+    try {
+      const r = run(`\n${answer}\n`);
+      const c = calls().split('\n').filter(Boolean);
+      const idx = (re: RegExp) => c.findIndex((l) => re.test(l));
+      const stopAt = idx(/ stop app$/), saveAt = idx(/save-copy/);
+      assert.ok(stopAt >= 0 && saveAt > stopAt, calls());
+      assert.match(r.stdout, /Stopping BrainAI so nothing is saved after the copy/);
+      if (answer === 'no') {
+        assert.ok(idx(/ start$/) > saveAt, calls());
+        assert.match(r.stdout, /BrainAI is running again\./);
+        assert.ok(idx(/ down /) < 0);
+      } else {
+        assert.ok(idx(/ start$/) < 0, calls());
+        assert.ok(idx(/ down /) > saveAt, calls());
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test('a failed save starts the app again', () => {
+  const { root, calls, run } = setup();
+  try {
+    writeFileSync(join(root, 'savefail'), '');
+    const r = run(GO);
+    assert.equal(r.status, 1);
+    assert.match(r.stdout, /BrainAI is running again\./);
+    assert.match(calls(), / stop app\n[\s\S]*save-copy[\s\S]* start\n/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('if stopping the app fails, it says so, does not try to start it, and changes nothing', () => {
+  const { root, calls, run } = setup();
+  try {
+    writeFileSync(join(root, 'stopfail'), '');
+    const r = run(GO);
+    assert.equal(r.status, 1);
+    assert.match(r.stdout, /Stopping BrainAI failed/);
+    assert.doesNotMatch(r.stdout, /Could not start|running again/);
+    assert.ok(!/save-copy| start$| down /m.test(calls()), calls());
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('an app that was not running is not started by a cancel', () => {
+  const { root, calls, run } = setup();
+  try {
+    writeFileSync(join(root, 'app-down'), '');
+    const r = run('\nno\n');
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!/ start$/m.test(calls()), calls());
+    assert.doesNotMatch(r.stdout, /running again/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a TERM while it waits at the prompt starts the app again and leaves no temporary folder', async () => {
+  const { root, home, calls, child } = setup();
+  try {
+    const c = child();
+    let out = '';
+    c.stdout.on('data', (b) => { out += b; if (/Press Enter once/.test(out)) c.kill('SIGTERM'); });
+    const code = await new Promise<number | null>((resolve) => c.on('close', resolve));
+    assert.equal(code, 143, out);
+    assert.match(calls(), / stop app\n[\s\S]*save-copy[\s\S]* start\n/);
+    assert.ok(!/ down /.test(calls()));
+    assert.deepEqual(readdirSync(home).filter((n) => n.startsWith('.brainai-save.')), []);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

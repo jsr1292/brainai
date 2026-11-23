@@ -72,6 +72,7 @@ export const data = {
   'data.remove.pageTitle': 'Remove BrainAI',
   'data.remove.title': 'Remove BrainAI from {computer}',
   'data.remove.lede': 'BrainAI first saves a copy of everything, then takes itself out of your tools. Nothing is removed unless the copy is saved.',
+  'data.remove.busy': 'BrainAI is still saving; try again in a moment.',
   'data.remove.failed': 'Nothing was removed: {reason}',
   'data.remove.order': 'What happens, in this order',
   'data.remove.s1docs': 'A saved copy of every memory and page is made in your Documents folder.',
@@ -98,6 +99,8 @@ export const data = {
   'data.todo.tunnel': 'Cloudflare: delete the tunnel and the public address{address} (Zero Trust › Networks › Tunnels)',
   'data.todo.uptime': 'Your uptime alert, if you set one up',
   'data.todo.offsiteKey': 'The off-site key on your own computer (memory-offsite-key.txt), once you no longer need the Google Drive copies',
+  'data.todo.copies': 'Your second backup folder still has copies of your brain: {folder}',
+  'data.remove.keptCopies': 'Only the saved copy, anything the last page lists as left in place, and your second backup folder {folder}, which still has copies of your brain: BrainAI does not delete it. Everything else BrainAI keeps on {computer} goes.',
   'data.todo.dns': 'Cloudflare: the name {host} still exists in your DNS; delete it there.',
   'data.removed.finish': 'Finish removing BrainAI',
   'data.remove.out.disconnected': '{name}: disconnected',
@@ -106,6 +109,8 @@ export const data = {
   'data.finishing.title': 'BrainAI is finishing',
   'data.finishing.head': 'BrainAI is finishing…',
   'data.finishing.text': 'BrainAI is finishing: it is stopping, deleting its data folder and removing itself. Your saved copy is where the last page said.',
+  'data.removing.title': 'BrainAI is being removed',
+  'data.removing.text': 'BrainAI is being removed, so nothing can be saved or changed any more. You can still read.',
 
   // ---- Moved from Outline ----
   'data.moved.title': 'Moved from Outline',

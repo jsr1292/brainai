@@ -4,6 +4,62 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Version shows the version you run.
 
+## 1.10.2 (2026-11-23)
+
+Updating: on the desktop app it downloads in the background and installs when you restart; on a server, the usual
+`git pull && docker compose up -d --build`. Two things to do once afterwards:
+- **Paste the setup text into your apps again.** It is now setup 4 (the text no longer points assistants at an editable
+  page); Settings shows which apps are out of date.
+- **If Claude Code or Codex says "Invalid client_id"** when signing in to the desktop app, clear its sign-in once: in
+  Claude Code, /mcp → brainai → Clear authentication; for Codex, `codex mcp logout brainai`, then
+  `codex mcp login brainai`.
+
+- **Project health.** Every open project shows Needs you, At risk, Stuck or On track, worked out by BrainAI from its
+  roadmap, its status and your folder report, never typed in by an assistant. Assistants see it in project_brief.
+- **Your week, on Monday.** Last week's review is a card at the top of Projects with three numbers, and the desktop app
+  can tell you at 9:00 on Monday (Settings › Appearance has the switch).
+- **Bringing a saved copy back keeps your pictures.** In the desktop app you choose the folder that holds the copy;
+  BrainAI shows what it found before bringing it back, and keeps the brain it replaces.
+- **Connecting Codex works in the desktop app, and signing in needs no internet.**
+- **Uninstalling on Windows is safe.** With "Delete the application data" ticked, a copy goes to Documents first; the
+  uninstaller finds and disconnects your tools where BrainAI connected them, and only once BrainAI is closing.
+- **Connections hold.** A busy port at login no longer moves BrainAI for good, newly installed tools are found without
+  a restart, settings files are written in one safe step, and connection errors are in Spanish too.
+- **Removing BrainAI keeps everything saved up to the end**, and assistants' disagreement notes no longer appear inside
+  your approved profile.
+
+### All changes
+
+
+- If the usual port ever does move (after three starts in a row without it), tools still connected at the old port show "needs connecting again" instead of "another BrainAI", and Disconnect, Remove and the uninstaller clean them up. The Windows uninstaller uses the usual port, not a temporary one.
+- Claude Code's hooks are found and removed in the folder `CLAUDE_CONFIG_DIR` names, and only when they are BrainAI's own scripts there. On the Mac, those variables are read from your login shell too, so they work when BrainAI is opened from the Finder.
+- A settings file that is read-only, or that another program has open, now gives a clear message (English and Spanish) instead of an error page; on Windows the write is retried for a moment first.
+- Remove BrainAI says where the backups that can hold other apps' keys stayed (beside their originals), including Codex's `config.toml`.
+- A busy port at login no longer moves BrainAI for good: the desktop app remembers the port your apps were connected to and tries it first at every start. If it is busy, that run uses another port (the Tools page says "BrainAI is on a temporary address this time; your apps reconnect when it's back" and does not call your own entries "another BrainAI"); the usual port changes only after three starts in a row without it.
+- The Tools page and Connect on Windows read the current Path again each time (plus the Node folder), so a tool installed after BrainAI started is found without restarting it; "not found" now says to quit BrainAI from the tray and open it again if you just installed it.
+- Removing BrainAI no longer moves the backups of Claude's `claude_desktop_config.json`, Cursor's `mcp.json`, Gemini CLI's `settings.json` and OpenCode's `opencode.json` into the saved folder: like `settings.json`, they can hold other tools' keys, so they stay beside the original files.
+- Connect errors are now in Spanish too, and Connect writes each settings file in one safe step, keeps a UTF-8 byte order mark, refuses a UTF-16 file with advice on saving it as UTF-8, and refreshes the `.brainai-backup` when you have changed the file since without BrainAI.
+- Connect, Disconnect and Add save reminders only work from the app window on this computer, never through the public address.
+- Connect follows `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `XDG_CONFIG_HOME` when you have moved those folders.
+- Choosing the folder that holds your BrainAI saved folders now works when restoring: BrainAI looks one level down in folders named "BrainAI saved ...".
+- The shipped app no longer enables the updater's insecure-transport flag: plain http update endpoints (for testing) work only in debug builds.
+- After an update on Windows, Home tells you once to quit Claude completely and open it again if Claude's desktop app is connected, since the installer ends its connection.
+- Signing in Claude Code and Codex to the desktop app no longer needs internet access. On the app's own localhost address BrainAI stops advertising client-ID metadata documents (the sign-in documents Claude Code and Codex host on claude.ai and chatgpt.com), so those tools register with BrainAI directly instead of BrainAI fetching a page from their site; offline, or behind a proxy that asks for a login, sign-in used to fail with "Invalid client_id". Tools already signed in keep working, and signing in through Reach and on a server work as before. If Claude Code still says Invalid client_id, run /mcp → brainai → Clear authentication once, then sign in again (Codex: `codex mcp logout brainai`, then `codex mcp login brainai`).
+- Uninstalling BrainAI from Windows Settings with "Delete the application data" ticked can no longer destroy your memory without a copy: the uninstaller first saves a `BrainAI saved <date>` folder to Documents, and if that copy cannot be made it keeps your data and says so. docs/DESKTOP.md no longer tells people to tick the box. Needs a real Windows check (the installer script cannot run here).
+- The Windows uninstaller now looks for your coding tools on the same PATH the app connected them on (including `~\.local\bin`, npm and WinGet), so Claude Code installed there is disconnected too; it also ends the tools' sign-ins, removes the save reminders of Codex and Cursor, and Claude Code's hooks even if its server entry was removed by hand. It never deletes the `.brainai-backup` copies beside your tools' settings; Remove BrainAI moves only the plain-text ones into the saved folder and leaves those of settings files that can hold tokens beside their originals. The uninstaller's copy also works when Tauri's setup.exe runs the uninstaller in place.
+- The Windows uninstaller disconnects your tools only after BrainAI is known to be closing (Cancel on "BrainAI is running" leaves everything connected) and stops this install's own node.exe so it is not left locked.
+- Remove BrainAI names the second backup folder (Settings › Backups) as still holding copies of your brain, on its first page, its last page and the saved README, instead of promising everything else goes. The false "Claude Code's BrainAI hooks were left in place" line no longer appears when Claude Code isn't installed. Cancelling the app's last removal dialog now lands on Settings › Tools with a one-time note of what was already taken out (tools disconnected, Reach off, hooks removed) and that Connect brings the tools back. A file outside the home folder goes into the saved folder under a flat safe name. docs/DESKTOP.md documents deleting BrainAI by hand on Windows.
+- Connecting Codex in the desktop app works again: its sign-in was refused with "Invalid client_id", because Codex names itself with a document on chatgpt.com and the desktop brain never allowed that site. Connect now allows it, as Allow on Set up an app does on a server, and a brain that connected Codex earlier gets it once at its next start. If Codex still says "one step left", run `codex mcp login brainai` once.
+- Every open project now has a health label, worked out by BrainAI and never set by an assistant: Needs you (something waiting on you is late or due within 3 days), At risk (work that is only on your Mac), Stuck (nothing finished and no status for more than 14 days, with work still to do) or On track. It shows on the Projects list and tiles (with the reasons on hover and for screen readers) and at the top of a project; project_brief and whats_left return it to assistants too. No update step needed.
+- The Monday summary is now a card at the top of Projects, above For you, instead of a grey row you could miss: "Your week, 26 Oct – 1 Nov", the one-sentence summary, three numbers (steps done last week, things waiting on you now, projects stuck now) and Read it / Not now. It shows under the same conditions as the old row.
+- The desktop app can tell you on Monday when last week's review is ready: a notification at 9:00 (or the first time the app runs later that week) with the same numbers as the Monday card in one line, shown once a week and only when the Monday card would show. It is on by default; Settings › Appearance has a switch ("Tell me on Monday when my week is ready"). Reading the line never marks the review as read.
+- Removing BrainAI no longer loses anything saved after the copy. On a server, the app is stopped before the copy is taken (and started again if you cancel or the copy fails). On the desktop app, from the start of the removal the dashboard and assistants cannot save anything, and the last page of the removal has no links back into your brain.
+- Bringing a saved copy back in the desktop app now starts with choosing the folder that holds it: BrainAI finds the newest copy there, shows what it holds (facts, pages, and how many pictures sit beside it) and only then brings it back, with the pictures. Pictures a restore could not bring back are never deleted from the second backup folder. A restore keeps the brain it replaces as `memory-before-restore-<date>.db`, treats a brain with skills or discussions as not empty, and stages the copy so a half-finished one is never swapped in.
+- Assistants are now reminded about Growth (with developer coaching on) when they finish a step, so they note what stood out about how you work.
+- The empty Growth page now explains how it fills and what to ask an assistant.
+- load_profile no longer shows an assistant's reason for a disagreement inside the owner-approved profile: profile facts in dispute are marked, and the reasons come in a separate block labelled as not approved by the owner.
+- The setup texts (English and Spanish) and the Claude Code plugin no longer tell assistants to follow rules from the editable page "How this brain is organised"; they point only at the brain's own instructions. Setup number 4: re-paste the setup text to pick this up.
+
 ## 1.10.1 (2026-11-20)
 
 Updating needs nothing from you. On the desktop app it downloads in the background and installs when you restart.

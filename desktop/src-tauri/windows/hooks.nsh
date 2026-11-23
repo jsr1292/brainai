@@ -41,17 +41,67 @@
   Delete "$INSTDIR\updating"
 !macroend
 
-; Uninstalling for good: take BrainAI's entries out of the owner's AI tools first, with the server's own command, which
-; reads the port from the data folder. It must not run when this uninstaller is only the first half of an upgrade:
-; Tauri sets $UpdateMode only for its own /UPDATE, but a newer setup.exe ("Uninstall before installing") runs the old
-; uninstaller in place (_?=$INSTDIR, so $EXEDIR equals $INSTDIR). An uninstall from Windows Settings, or the app's own
-; `uninstall.exe /S`, first copies itself to %TEMP%, so $EXEDIR differs: only then are the tools disconnected. This
-; hook runs before Tauri's "BrainAI is running" check. Hidden, and whatever the command answers is ignored, so it
-; can never stop the uninstall.
+; Uninstalling for good. Everything here is skipped when $UpdateMode = 1 (Tauri's own /UPDATE, the first half of an upgrade).
+; There are two ways a real uninstall reaches here, and both must be safe:
+;   * Windows Settings, or the app's own `uninstall.exe /S`: the uninstaller first copies itself to %TEMP%, so
+;     $EXEDIR differs from $INSTDIR.
+;   * Tauri's setup.exe ("Uninstall BrainAI" on the same version, "Uninstall before installing" on an upgrade) runs the
+;     old uninstaller IN PLACE (_?=$INSTDIR, so $EXEDIR equals $INSTDIR) with its full window, where the delete-data box
+;     can be ticked, and the template then deletes the data when $DeleteAppDataCheckboxState = 1 and $UpdateMode <> 1.
+; So the tools are disconnected when $EXEDIR differs, or whenever the box is ticked (the brain is going away); and the
+; copy depends on the box alone. Order (this hook runs BEFORE the template's own CheckIfAppIsRunning, which we do first,
+; so a Cancel on "BrainAI is running" leaves BrainAI connected and its tools untouched):
+;   1. the running check (Restart Manager; its OK/Cancel dialog, or forced when silent);
+;   2. this folder's node.exe (the server) stopped, so it is not left locked and the database is quiet;
+;   3. BrainAI's entries taken out of the owner's AI tools with the server's own command (it reads the port from the data
+;      folder, looks for the tools on the same PATH the app connected them on, ends their sign-ins, removes the hooks);
+;   4. only when "Delete the application data" was ticked: a saved copy of the brain into Documents FIRST (the same
+;      folder Settings > Remove BrainAI makes). If no copy can be made, the checkbox state is cleared so the template
+;      does NOT delete the data, and a message says so. With no database there is nothing to copy and deletion goes on.
+; $DeleteAppDataCheckboxState is set in un.ConfirmLeave, long before Section Uninstall; it stays 0 in silent (/S) and
+; passive (/P) runs, where that page is skipped, so those never copy and never delete data.
+; Paths go to the programs in environment variables, never inside a command line (an apostrophe or a space in a user
+; name would break a quoted string), and no cmd.exe is involved. Hidden throughout; the one message box is a failed copy.
 !macro NSIS_HOOK_PREUNINSTALL
   ${If} $UpdateMode <> 1
-  ${AndIf} $EXEDIR != $INSTDIR
-    nsExec::Exec `cmd /c set "DATA_DIR=$LOCALAPPDATA\io.github.jsr1292.brainai" && "$INSTDIR\node.exe" "$INSTDIR\server\dist\cli.js" disconnect-tools`
-    Pop $0
+    ${If} $EXEDIR != $INSTDIR
+    ${OrIf} $DeleteAppDataCheckboxState = 1
+      !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+      ; Only this folder's node.exe, never another one on this computer. The answer is not needed: whatever it is, the
+      ; uninstall goes on.
+      System::Call 'kernel32::SetEnvironmentVariableW(w "BRAINAI_NODE", w "$INSTDIR\node.exe")'
+      nsExec::Exec `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$mine = { Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -eq $$env:BRAINAI_NODE } }; & $$mine | Stop-Process -Force -ErrorAction SilentlyContinue; for ($$i = 0; $$i -lt 20; $$i++) { if (-not (& $$mine)) { exit 0 }; Start-Sleep -Milliseconds 250 }; exit 1"`
+      Pop $0
+      System::Call 'kernel32::SetEnvironmentVariableW(w "DATA_DIR", w "$LOCALAPPDATA\io.github.jsr1292.brainai")'
+      nsExec::Exec `"$INSTDIR\node.exe" "$INSTDIR\server\dist\cli.js" disconnect-tools`
+      Pop $0
+    ${EndIf}
+    ${If} $DeleteAppDataCheckboxState = 1
+    ${AndIf} ${FileExists} "$LOCALAPPDATA\io.github.jsr1292.brainai\data\memory.db"
+      ; The user's own Documents (it may have moved, e.g. into OneDrive), whatever the install mode's shell context is,
+      ; without a trailing backslash.
+      SetShellVarContext current
+      StrCpy $R8 "$DOCUMENTS"
+      !insertmacro SetContext
+      StrCpy $R9 $R8 1 -1
+      ${If} $R9 == "\"
+        StrCpy $R8 $R8 -1
+      ${EndIf}
+      ; The server's data folder is the "data" folder inside the app data folder. Exit code 0 means the copy is whole
+      ; (the CLI checks the archive before it leaves the folder); anything else, including "error", means no copy.
+      System::Call 'kernel32::SetEnvironmentVariableW(w "DATA_DIR", w "$LOCALAPPDATA\io.github.jsr1292.brainai\data")'
+      System::Call 'kernel32::SetEnvironmentVariableW(w "BRAINAI_COPY_TO", w "$R8")'
+      nsExec::Exec `"$INSTDIR\node.exe" "$INSTDIR\server\dist\cli.js" save-copy --app`
+      Pop $0
+      ${If} $0 != "0"
+        StrCpy $DeleteAppDataCheckboxState 0
+        ; 1034 is Spanish (LANG_SPANISH is only defined when the installer includes that language).
+        ${If} $LANGUAGE = 1034
+          MessageBox MB_OK|MB_ICONEXCLAMATION|MB_TOPMOST "No se pudo guardar una copia de tu memoria en Documentos, por eso BrainAI ha conservado tus datos sin borrarlos. Siguen en $LOCALAPPDATA\io.github.jsr1292.brainai." /SD IDOK
+        ${Else}
+          MessageBox MB_OK|MB_ICONEXCLAMATION|MB_TOPMOST "BrainAI could not save a copy of your memory to Documents, so your data was kept and not deleted. It is in $LOCALAPPDATA\io.github.jsr1292.brainai." /SD IDOK
+        ${EndIf}
+      ${EndIf}
+    ${EndIf}
   ${EndIf}
 !macroend

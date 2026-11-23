@@ -8,7 +8,7 @@ import { chooseLocale, UI_LANGUAGE_SWITCH } from '../i18n/uiLanguage.js';
  * device messages are protocol text. `/authorize` is NOT here: its consent page is for the owner and is localised.
  */
 /** Endpoints that browsers' scripts, the desktop shell and OAuth clients call (CSRF-exempt, no Origin). `/authorize` is for the owner. */
-export const CLIENT_ENDPOINTS = ['/mcp', '/authorize', '/token', '/register', '/revoke', '/app/hello', '/app/bridge-hello', '/app/ticket', '/app/removed/ready', '/app/backup-now', '/api/folder-report', '/api/image-upload', '/api/skills/report', '/api/skills/upload'];
+export const CLIENT_ENDPOINTS = ['/mcp', '/authorize', '/token', '/register', '/revoke', '/app/hello', '/app/bridge-hello', '/app/ticket', '/app/removed/ready', '/app/removed/cancel', '/app/backup-now', '/welcome/restore/find', '/api/folder-report', '/api/image-upload', '/api/skills/report', '/api/skills/upload'];
 /** Machine paths: every client endpoint except /authorize, plus the files and APIs a browser or program fetches. */
 const MACHINE_PATHS = [...CLIENT_ENDPOINTS.filter((p) => p !== '/authorize'), '/api', '/static', '/images', '/.well-known', '/sw.js', '/favicon.ico', '/app/open'];
 const escapeRe = (p: string): string => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

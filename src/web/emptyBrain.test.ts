@@ -20,7 +20,7 @@ test('an empty brain looks right', async (t) => {
     ['/approvals', /Nothing waits for you\. Suggestions from assistants, facts that disagree, possible tidy-ups and discussions that need your answer land here\./],
     ['/review', /There is no finished week yet\./],
     ['/review/now', /No changes yet this week\./],
-    ['/growth', /Nothing noticed yet\./],
+    ['/growth', /Nothing yet\. Assistants add an entry/],
   ] as const) {
     const res = await empty.f(path);
     assert.equal(res.status, 200, path);

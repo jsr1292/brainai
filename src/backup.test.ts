@@ -4,7 +4,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import { backupNow, runBackup } from './backup.js';
+import { backupNow, runBackup, syncPictures } from './backup.js';
 import { readBackupStatus } from './backupStatus.js';
 import { openDb } from './db.js';
 import { seedSignIn } from './testing/helpers.js';
@@ -255,4 +255,29 @@ test('a link planted at the backup\'s temporary name is never followed', async (
   const path = await backupNow(db, main, 2, new Date('2026-10-20T08:00:00Z'));
   assert.equal(readFileSync(target, 'utf8'), 'precious');
   assert.ok(lstatSync(path).isFile());
+});
+
+test("a careful picture sync never deletes a picture a restore left out (removed_by = 'restore'), however old", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'brain-pics-restore-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dataDir = join(root, 'data');
+  const dir = join(root, 'copy');
+  mkdirSync(dataDir, { recursive: true });
+  const db = openDb(join(dataDir, 'memory.db'));
+  t.after(() => db.close());
+  const now = new Date('2026-11-20T08:00:00Z');
+  const old = new Date(now.getTime() - 90 * 86400_000).toISOString();
+  const row = db.prepare("INSERT INTO images(id, type, bytes, width, height, created_at, created_by, removed_at, removed_by) VALUES (?, 'png', 3, 1, 1, '2026-08-01', 'owner', ?, ?)");
+  const restored = 'a'.repeat(24);
+  const owner = 'b'.repeat(24);
+  row.run(restored, old, 'restore');
+  row.run(owner, old, 'owner');
+  mkdirSync(join(dataDir, 'images'), { recursive: true });
+  for (const id of [restored, owner]) {
+    mkdirSync(join(dir, 'images', id.slice(0, 2)), { recursive: true });
+    writeFileSync(join(dir, 'images', id.slice(0, 2), `${id}.png`), id);
+  }
+  syncPictures(db, dataDir, dir, now, true);
+  assert.ok(existsSync(join(dir, 'images', 'aa', `${restored}.png`)), 'kept: a restore could not bring it back');
+  assert.ok(!existsSync(join(dir, 'images', 'bb', `${owner}.png`)), 'an owner deletion is still pruned');
 });

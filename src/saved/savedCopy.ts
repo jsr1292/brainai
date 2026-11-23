@@ -113,7 +113,10 @@ export function moveIntoSaved(folder: string, files: string[], home: string = ho
     let stat;
     try { stat = lstatSync(file); } catch { continue; }
     if (!stat.isFile()) continue;
-    const below = relative(home, file).split(sep).join('/');
+    const rel = relative(home, file);
+    // A file outside the home folder (a redirected APPDATA, another drive) gets a flat name that cannot climb out of the folder.
+    const outside = rel === '' || rel.startsWith('..') || isAbsolute(rel);
+    const below = outside ? `outside-home-${file.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+/, '')}` : rel.split(sep).join('/');
     const dest = join(folder, 'Original tool settings', ...below.split('/'));
     mkdirSync(dirname(dest), { recursive: true, mode: 0o700 });
     moveAcrossDisks(file, dest);

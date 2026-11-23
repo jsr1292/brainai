@@ -15,8 +15,8 @@ test("the texts' hash (English then Spanish) is pinned to the version", () => {
   assert.equal(hash, SETUP_HASH, `A setup text changed: raise SETUP_VERSION and set SETUP_HASH to ${hash}`);
 });
 
-test('the English texts are byte for byte what version 2 had (only the number moved)', () => {
-  const v2 = setupApps().map((a) => ({ app: a, text: setupText(a.slug, 'https://HOST/mcp', { version: 2, extra: {} }) }));
+test('the English texts are what version 2 had, minus the clause that pointed to an editable page; otherwise only the number changed', () => {
+  const v2 = setupApps().map((a) => ({ app: a, text: setupText(a.slug, 'https://HOST/mcp').replace(new RegExp(`(setup:? )${SETUP_VERSION}`, 'g'), '$12').replace(/(page rules in the brain's instructions)\./, '$1 and its page "How this brain is organised".') }));
   assert.equal(hashOf(v2), '00f4311ac905e1625bdee2035015c3b8d62e664c9a09505f7d4a10eb2319bd1c');
 });
 
@@ -28,7 +28,8 @@ test('every app has a Spanish text, with the same address, tool names, setup num
     assert.notEqual(text, e, app.slug);
     assert.match(text, /\(host\)/, app.slug);
     assert.deepEqual(tools(text), tools(e), app.slug);
-    assert.equal(text.includes('How this brain is organised'), e.includes('How this brain is organised'), app.slug);
+    assert.doesNotMatch(text, /How this brain is organised/, app.slug);
+    assert.doesNotMatch(e, /How this brain is organised/, app.slug);
     assert.equal(/^<!-- brain setup \d+ -->\n[\s\S]*\n<!-- \/brain setup -->$/.test(text), app.file, app.slug);
     assert.equal(text.split('\n').length, e.split('\n').length, app.slug);
     assert.equal(looksLikeSecret(text), null, app.slug);
@@ -92,6 +93,8 @@ test('an overlay adds its lines before the closing ask, per app and for every co
   const o = loadSetupOverlay(dir)!;
   assert.equal(currentSetupVersion(o), 7);
   assert.equal(currentSetupVersion(undefined), SETUP_VERSION);
+  assert.equal(currentSetupVersion({ version: 2, extra: {} }), SETUP_VERSION, 'an older overlay number never hides the built-in one');
+  assert.equal(currentSetupVersion({ version: SETUP_VERSION + 3, extra: {} }), SETUP_VERSION + 3);
   const codex = setupText('codex', 'https://HOST/mcp', o);
   assert.match(codex, /- Skip memory for plan tasks\.\n- Push to the backup remote\.\n\nWhen you call load_profile, pass setup: 7\.|- Push to the backup remote\.\n- Skip memory for plan tasks\.\n\nWhen you call load_profile, pass setup: 7\./);
   assert.doesNotMatch(setupText('chatgpt', 'https://HOST/mcp', o), /backup remote/);

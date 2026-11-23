@@ -447,6 +447,52 @@ for (const hint of document.querySelectorAll('[data-nothing-yet]')) {
 
 // The welcome's "I have a saved BrainAI folder": the chosen file goes up as the raw body, and the answer says where to go
 // next (the desktop app watches for that navigation) or why the file was refused.
+// The preview's "Bring it back": the same way as the upload. The answer says where to go next (the app watches for that
+// navigation) or why the copy was refused.
+for (const form of document.querySelectorAll('[data-restore-confirm]')) {
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = form.querySelector('[data-restore-error]');
+    const busy = form.querySelector('[data-restore-busy]');
+    const button = form.querySelector('button[type=submit]');
+    err.hidden = true;
+    busy.hidden = false;
+    button.disabled = true;
+    try {
+      const r = await fetch(form.action, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(new FormData(form)), credentials: 'same-origin' });
+      const answer = await r.json();
+      if (answer.next) { location.href = answer.next; return; }
+      err.textContent = answer.error || T('client.restore.failed', 'The saved file could not be brought in.');
+    } catch {
+      err.textContent = T('client.restore.failed', 'The saved file could not be brought in.');
+    }
+    err.hidden = false;
+    busy.hidden = true;
+    button.disabled = false;
+  });
+}
+// Choosing a folder: a short "looking" line while the app searches the folder. If no navigation follows (the picker is
+// still open, or it was cancelled without a page change), the line goes away again after a few seconds.
+for (const pick of document.querySelectorAll('[data-restore-pick]')) {
+  pick.addEventListener('click', () => {
+    const looking = document.querySelector('[data-restore-looking]');
+    if (!looking) return;
+    looking.hidden = false;
+    setTimeout(() => { looking.hidden = true; }, 5000);
+  });
+}
+
+// In the desktop app the folder picker is the way in; the upload form stays behind a small link (a browser sees only the form).
+if (typeof window !== 'undefined' && window.__brainaiApp === true) {
+  const panel = document.querySelector('[data-restore-app]');
+  const upload = document.querySelector('[data-restore-form]');
+  if (panel && upload) {
+    panel.hidden = false;
+    upload.hidden = true;
+    const link = panel.querySelector('[data-restore-upload-link]');
+    if (link) link.addEventListener('click', (e) => { e.preventDefault(); upload.hidden = false; link.hidden = true; });
+  }
+}
 for (const form of document.querySelectorAll('[data-restore-form]')) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();

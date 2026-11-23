@@ -1,8 +1,8 @@
 import type { AreaState, HandbookTopic } from '../learning/types.js';
 import type { PageHeader } from '../pages/types.js';
 import { isStatus } from '../memory/brief.js';
-import { checkRoadmap, formatRoadmap, parseRoadmap, type Roadmap } from '../memory/roadmap.js';
-import { notPushed, type FolderMatch } from '../folders/match.js';
+import { checkRoadmap, DUE, formatRoadmap, parseRoadmap, type Roadmap } from '../memory/roadmap.js';
+import { freshNotPushed, notPushed, type FolderMatch } from '../folders/match.js';
 import type { FolderState } from '../folders/report.js';
 import { LIST_CHANGED, MAX_ROADMAP, QUIET_DAYS, type MemoryService } from '../memory/service.js';
 import type { MemoryStore } from '../memory/store.js';
@@ -10,6 +10,7 @@ import type { Supersession } from '../memory/supersessions.js';
 import type { Memory } from '../memory/types.js';
 import type { Disagreement } from '../memory/disagreements.js';
 import { localDay, shortDay } from '../timezone.js';
+import { projectHealth, waitingNow, type Health } from './health.js';
 import type { ProjectStore } from './store.js';
 import { MAX_PINNED, ProjectError, type Area, type Project, type ProjectStateName } from './types.js';
 
@@ -41,6 +42,8 @@ export interface ProjectCard {
   dot: Dot;
   /** The learning layer's "work is safe" warning (not pushed, or not in git): the one mark the home page shows. */
   safeWarning: boolean;
+  /** The computed health label (src/projects/health.ts); null unless the project is open. */
+  health: Health | null;
 }
 export type Dot = 'on' | 'wait' | 'quiet';
 /** One area's part of the Projects page: its live projects as tiles, the rest folded (spec 2026-11-11). */
@@ -111,13 +114,14 @@ export interface Home {
   suggestions: HomeSuggestion[];
   /** Folders in the latest report that no project matched ("Not in the brain yet"), and where the report came from. */
   folders: { unmatched: FolderState[]; receivedAt: string | null; device: string | null };
+  /** The Monday card's live numbers, over the cards above (open projects only have a health). */
+  healthCounts: { waiting: number; stuck: number };
 }
 
 /** "Today", late and Done dates follow the owner's calendar, not UTC (src/timezone.ts). */
 const day = localDay;
 const addDays = (d: Date, n: number): Date => new Date(d.getTime() + n * DAY_MS);
 const newestFirst = (a: ProjectCard, b: ProjectCard) => b.lastTouched.localeCompare(a.lastTouched);
-const DUE_IN_TEXT = /\s*\(by (\d{4}-\d{2}-\d{2})\)\s*$/i;
 
 /**
  * A Personal project that isn't on the go is an area of life (finances, health…), not a project: folded away on the
@@ -185,7 +189,57 @@ export class ProjectsService {
     return this.folders?.match() ?? { byProject: new Map(), unmatched: [], receivedAt: null, device: null };
   }
 
-  private card(p: Project, now: Date, folders: FolderMatch = this.match(), owner: Set<string> = this.needingOwner()): ProjectCard {
+  /** The computed health of an open project; the Mac's report counts only while it is fresh (`freshNotPushed`). `statusAt`: its latest status time. */
+  private healthOf(p: Project, roadmap: Roadmap | null, now: Date, folders: FolderMatch, statusAt: string | null): Health | null {
+    if (p.state !== 'open') return null;
+    const f = folders.byProject.get(p.name);
+    const unsafe = f !== undefined && freshNotPushed(f, folders.receivedAt, now);
+    return projectHealth({
+      state: p.state, roadmap, statusAt, createdAt: p.createdAt, lifeArea: isLifeArea(p),
+      notPushed: unsafe ? { count: f.unpushed ?? 0, uncommitted: f.uncommitted ?? 0 } : null,
+    }, day(now));
+  }
+
+  /** The health of every open project with something in it, by name: one folder match, one registry read, one status query. */
+  healthAll(now: Date): Map<string, Health> {
+    const folders = this.match();
+    const statuses = this.store.latestStatusTimes();
+    const out = new Map<string, Health>();
+    for (const p of this.registry.list()) {
+      if (p.state !== 'open' || this.isEmpty(p)) continue;
+      const memory = this.memories.roadmapOf(p.name);
+      const h = this.healthOf(p, memory ? parseRoadmap(memory.content) : null, now, folders, statuses.get(p.name) ?? null);
+      if (h) out.set(p.name, h);
+    }
+    return out;
+  }
+
+  /** A project's health by name (aliases followed), for the assistants' tools; null when it has none. */
+  healthFor(name: string, now: Date): Health | null {
+    const p = this.registry.get(this.memories.projectNamed(name));
+    if (!p) return null;
+    const memory = this.memories.roadmapOf(p.name);
+    return this.healthOf(p, memory ? parseRoadmap(memory.content) : null, now, this.match(), this.store.latestStatusTimes().get(p.name) ?? null);
+  }
+
+  /** The Monday card's two live numbers (items waiting on the owner now, projects stuck now) over a set of healths. */
+  static countHealth(healths: Iterable<Health | null>): { waiting: number; stuck: number } {
+    let waiting = 0;
+    let stuck = 0;
+    for (const h of healths) {
+      waiting += waitingNow(h);
+      if (h?.reasons.some((x) => x.kind === 'stuck')) stuck++;
+    }
+    return { waiting, stuck };
+  }
+
+  /** The same two numbers without building the home (for the desktop note). */
+  healthCounts(now: Date): { waiting: number; stuck: number } {
+    return ProjectsService.countHealth(this.healthAll(now).values());
+  }
+
+  /** `statusAt`: the project's latest status time (null when it has none); a caller that has the whole list passes `home()`'s single query's answer. */
+  private card(p: Project, now: Date, statusAt: string | null, folders: FolderMatch = this.match(), owner: Set<string> = this.needingOwner()): ProjectCard {
     const memory = this.memories.roadmapOf(p.name);
     const roadmap = memory ? parseRoadmap(memory.content) : null;
     const lastTouched = this.lastTouched(p, folders);
@@ -207,9 +261,10 @@ export class ProjectsService {
       soonestDue: dues[0] ?? null,
       newActivity: (p.state === 'parked' || p.state === 'done') && (this.lastAiChange(p) ?? '') > this.acknowledged(p),
       // Done projects too: finished work that exists only on the Mac is exactly what must not go unseen.
-      notPushed: folders.byProject.has(p.name) && notPushed(folders.byProject.get(p.name)!, now),
+      notPushed: folders.byProject.has(p.name) && freshNotPushed(folders.byProject.get(p.name)!, folders.receivedAt, now),
       dot: waiting.length > 0 || owner.has(p.name) ? 'wait' : p.state === 'open' && (p.pinnedAt !== null || days < QUIET_DAYS) ? 'on' : 'quiet',
       safeWarning: this.learning?.safeWarning(p.name, folders) ?? false,
+      health: this.healthOf(p, roadmap, now, folders, statusAt),
     };
   }
 
@@ -217,7 +272,8 @@ export class ProjectsService {
   home(now: Date, opts: { holdBackPark?: ReadonlySet<string> } = {}): Home {
     const folders = this.match();
     const owner = this.needingOwner();
-    const cards = this.registry.list().filter((p) => !this.isEmpty(p)).map((p) => this.card(p, now, folders, owner));
+    const statuses = this.store.latestStatusTimes();
+    const cards = this.registry.list().filter((p) => !this.isEmpty(p)).map((p) => this.card(p, now, statuses.get(p.name) ?? null, folders, owner));
     const by = (f: (c: ProjectCard) => boolean) => cards.filter(f).sort(newestFirst);
     const personal = (c: ProjectCard) => isLifeArea(c.project);
     const pinnedFirst = (a: ProjectCard, b: ProjectCard) =>
@@ -247,6 +303,7 @@ export class ProjectsService {
       done: by((c) => c.project.state === 'done' || c.project.state === 'archived'),
       suggestions: this.suggestions(cards, now, cards.filter((c) => c.project.state === 'open' && c.project.pinnedAt !== null).length, opts.holdBackPark),
       folders: { unmatched: folders.unmatched, receivedAt: folders.receivedAt, device: folders.device },
+      healthCounts: ProjectsService.countHealth(cards.map((c) => c.health)),
     };
   }
 
@@ -268,13 +325,14 @@ export class ProjectsService {
     const p = this.registry.get(this.memories.projectNamed(name));
     if (!p) return undefined;
     const folders = this.match();
-    const card = this.card(p, now, folders);
+    const leftOff = this.store.list({ project: p.name }).find(isStatus) ?? null;
+    const card = this.card(p, now, leftOff?.updatedAt ?? null, folders);
     const today = day(now);
     const soonEnd = day(addDays(now, SOON_DAYS));
     const r = card.roadmap;
     return {
       card,
-      leftOff: this.store.list({ project: p.name }).find(isStatus) ?? null,
+      leftOff,
       waiting: (r?.waiting ?? []).map((w, index) => ({ index, text: w.text, due: w.due, late: w.due !== null && w.due < today, soon: w.due !== null && w.due >= today && w.due <= soonEnd })),
       doneToday: this.ownerTickedToday(p.name, r, today),
       nextSteps: r?.nextSteps ?? [],
@@ -392,7 +450,7 @@ export class ProjectsService {
     const done = parsed.done[index];
     if (!done || done.text !== text || done.date !== day(now)) throw new ProjectError('invalid', LIST_CHANGED, { key: 'err.listChanged' });
     parsed.done.splice(index, 1);
-    const due = DUE_IN_TEXT.exec(done.text);
+    const due = DUE.exec(done.text);
     parsed.waiting.push(due ? { text: done.text.slice(0, due.index).trim(), due: due[1]! } : { text: done.text, due: null });
     await this.saveRoadmap(id, content, parsed);
   }

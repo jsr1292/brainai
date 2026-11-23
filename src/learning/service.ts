@@ -7,7 +7,7 @@
 import { SayableError, type Say } from '../i18n/errors.js';
 import type { Clock } from '../clock.js';
 import type { DB } from '../db.js';
-import { notPushed, type FolderMatch } from '../folders/match.js';
+import { notPushed, REPORT_FRESH_DAYS, type FolderMatch } from '../folders/match.js';
 import { looksLikeInstruction } from '../memory/instructionLike.js';
 import { looksLikeSecret } from '../memory/secrets.js';
 import { isLifeArea } from '../projects/service.js';
@@ -21,8 +21,6 @@ import {
 const DAY_MS = 86_400_000;
 /** The handbook's own project: it holds what was learned, so it is never checked against the five areas itself. */
 export const HANDBOOK_PROJECT = 'developer-handbook';
-/** A folder report older than this says nothing about work being safe now: unknown, never done. */
-const REPORT_FRESH_DAYS = 7;
 /** How bad a status is, for "the worse of the report and the hand status wins". */
 const SEVERITY: Record<CheckStatus, number> = { not_needed: 0, done: 1, look: 2, todo: 3 };
 

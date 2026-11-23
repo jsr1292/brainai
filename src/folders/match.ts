@@ -18,11 +18,20 @@ export interface FolderMatch {
 
 export const DAY_MS = 86_400_000;
 
+/** A folder report older than this says nothing about work being safe now. */
+export const REPORT_FRESH_DAYS = 7;
+
 /** Work that isn't on any remote: unpushed commits, or uncommitted changes a day after the last commit. */
 export function notPushed(f: FolderState, now: Date): boolean {
   if (!f.git) return false;
   if (f.unpushed !== null && f.unpushed > 0) return true;
   return f.uncommitted !== null && f.uncommitted > 0 && f.lastCommit !== null && now.getTime() - Date.parse(f.lastCommit) > DAY_MS;
+}
+
+/** `notPushed` for a project's folder, but only from a report no older than REPORT_FRESH_DAYS (an old one says nothing about now). */
+export function freshNotPushed(f: FolderState, receivedAt: string | null, now: Date): boolean {
+  const at = f.reportedAt ?? receivedAt;
+  return at !== null && now.getTime() - Date.parse(at) <= REPORT_FRESH_DAYS * DAY_MS && notPushed(f, now);
 }
 
 /**

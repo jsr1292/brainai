@@ -2,7 +2,7 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -14,7 +14,7 @@ import { backupHealth } from '../backupStatus.js';
 import { latestSchema } from '../db.js';
 import { handTar, tarOf } from './testArchives.js';
 import { restoredRowsProblem } from './rowChecks.js';
-import { applyPendingRestore, isEmptyBrain, restoreInto, stageRestore } from './restore.js';
+import { applyPendingRestore, isEmptyBrain, restoreInto, stageRestore, swapIn } from './restore.js';
 
 const T = new Date('2026-11-06T10:00:00Z');
 const me = { type: 'owner' } as const;
@@ -578,4 +578,166 @@ test('an unreadable picture beside a backup file does not fail the restore and a
   applyPendingRestore(dir);
   assert.equal(existsSync(join(dir, 'images', '00', `${'0'.repeat(24)}.png`)), true);
   assert.equal(existsSync(join(dir, 'images', '33')), false, 'a file the database does not list is not copied');
+});
+
+const insertProfile = (dir: string, id: string) => {
+  const db = openDb(join(dir, 'memory.db'));
+  db.prepare(`INSERT INTO memories(id, kind, content, project, tags, keys, embedding, created_at, created_by, updated_at, updated_by)
+    VALUES (?,'profile','The owner is Alex',NULL,'[]','',x'00','2026-11-06','owner','2026-11-06','owner')`).run(id);
+  db.close();
+};
+
+test('isEmptyBrain allows one owner profile fact, but not two', (t) => {
+  const dir = emptyData(t);
+  insertProfile(dir, 'p1');
+  assert.equal(isEmptyBrain(join(dir, 'memory.db')), true);
+  insertProfile(dir, 'p2');
+  assert.equal(isEmptyBrain(join(dir, 'memory.db')), false);
+});
+
+test('isEmptyBrain counts a live skill or discussion as content, a deleted one not', (t) => {
+  const dir = emptyData(t);
+  const file = join(dir, 'memory.db');
+  const db = openDb(file);
+  db.prepare(`INSERT INTO skills(id, name, description, body, enabled, origin, version, created_at, created_by, updated_at, updated_by, deleted_at)
+    VALUES ('s1','how','d','b',0,'owner',1,'2026-11-06','owner','2026-11-06','owner','2026-11-07')`).run();
+  db.close();
+  assert.equal(isEmptyBrain(file), true, 'a deleted skill does not count');
+  const db2 = openDb(file);
+  db2.prepare("UPDATE skills SET deleted_at = NULL").run();
+  db2.close();
+  assert.equal(isEmptyBrain(file), false, 'a live skill counts');
+  const db3 = openDb(file);
+  db3.prepare("DELETE FROM skills").run();
+  db3.prepare(`INSERT INTO discussions(id, title, question, opened_by, opened_model, opened_at) VALUES ('d1','t','q','owner','m','2026-11-06')`).run();
+  db3.close();
+  assert.equal(isEmptyBrain(file), false, 'a live discussion counts');
+});
+
+test('a restore keeps the brain it replaces as memory-before-restore-<stamp>.db, and the backup code ignores that name', async (t) => {
+  const archive = await saved(t);
+  const dir = emptyData(t);
+  insertProfile(dir, 'p1');
+  writeFileSync(join(dir, 'memory.db-wal'), 'wal');
+  writeFileSync(join(dir, 'memory.db-shm'), 'shm');
+  await stageRestore(archive, dir);
+  applyPendingRestore(dir);
+  const kept = readdirSync(dir).filter((n) => /^memory-before-restore-\d{8}-\d{6}\.db/.test(n)).sort();
+  // The side files moved with it (opening the kept file to strip its sign-in data then folded them in).
+  assert.equal(kept.filter((n) => n.endsWith('.db')).length, 1, kept.join(', '));
+  assert.match(kept[0]!, /^memory-before-restore-\d{8}-\d{6}\.db$/);
+  assert.ok(!existsSync(join(dir, 'memory.db-shm')));
+  assert.equal(counts(join(dir, kept[0]!)).facts, 1, 'the old brain is intact');
+  assert.deepEqual(counts(join(dir, 'memory.db')), { facts: 2, pages: 1 });
+  assert.ok(!existsSync(join(dir, 'memory.db-wal')));
+  // Neither backup regex takes it for a dated backup.
+  assert.doesNotMatch(kept[0]!, /^memory-\d{4}-\d{2}-\d{2}\.db$/);
+});
+
+test('the CLI restore keeps the replaced brain too', async (t) => {
+  const archive = await saved(t);
+  const dir = emptyData(t);
+  await restoreInto(archive, dir);
+  assert.equal(readdirSync(dir).filter((n) => /^memory-before-restore-\d{8}-\d{6}\.db$/.test(n)).length, 1);
+});
+
+test('staging is atomic: a leftover tmp folder is never swapped in and is cleaned up', async (t) => {
+  const archive = await saved(t);
+  const dir = emptyData(t);
+  await stageRestore(archive, dir);
+  assert.deepEqual(readdirSync(dir).filter((n) => n.startsWith('restore-pending')), ['restore-pending'], 'no tmp folder after a good staging');
+  // What a crash between unpacking and the final rename leaves: a complete-looking database in a tmp folder.
+  const stray = join(dir, 'restore-pending.tmp-abcdef0123456789');
+  renameSync(join(dir, 'restore-pending'), stray);
+  assert.equal(applyPendingRestore(dir), null);
+  assert.ok(!existsSync(stray), 'the stray folder is removed at startup');
+  assert.deepEqual(counts(join(dir, 'memory.db')), { facts: 0, pages: 0 }, 'nothing was swapped in');
+});
+
+test('a failed unpack (after unpacking started) leaves no restore-pending and no tmp folder', async (t) => {
+  const dir = emptyData(t);
+  const archive = craftedArchive(t, (c) => addSkill(c, BAD));
+  await assert.rejects(stageRestore(archive, dir), /names BrainAI would never write/);
+  assert.deepEqual(readdirSync(dir).filter((n) => n.startsWith('restore-pending')), []);
+});
+
+test('startup also removes a stray restore-upload-<hex>.tmp file', (t) => {
+  const dir = emptyData(t);
+  writeFileSync(join(dir, 'restore-upload-0123abcd.tmp'), 'half an upload');
+  writeFileSync(join(dir, 'restore-upload-keep.txt'), 'not ours');
+  applyPendingRestore(dir);
+  assert.ok(!existsSync(join(dir, 'restore-upload-0123abcd.tmp')));
+  assert.ok(existsSync(join(dir, 'restore-upload-keep.txt')));
+});
+
+test('pictures an earlier restore left out come back when their file is beside the copy this time', async (t) => {
+  const { file } = await backupFile(t, 2);
+  const src = new Database(file);
+  src.prepare("UPDATE images SET removed_at = '2026-11-01T00:00:00.000Z', removed_by = 'restore' WHERE id = '000000000000000000000000'").run();
+  src.prepare("UPDATE images SET removed_at = '2026-11-01T00:00:00.000Z', removed_by = 'owner' WHERE id = '111111111111111111111111'").run();
+  src.close();
+  const beside = join(file, '..');
+  for (const id of ['000000000000000000000000', '111111111111111111111111']) {
+    mkdirSync(join(beside, 'images', id.slice(0, 2)), { recursive: true });
+    writeFileSync(join(beside, 'images', id.slice(0, 2), `${id}.png`), 'png');
+  }
+  const dir = emptyData(t);
+  assert.deepEqual(await stageRestore(file, dir), { facts: 2, pages: 1, pictures_missing: 0 });
+  applyPendingRestore(dir);
+  const db = new Database(join(dir, 'memory.db'));
+  t.after(() => db.close());
+  const rows = db.prepare('SELECT id, removed_at, removed_by FROM images ORDER BY id').all() as { id: string; removed_at: string | null; removed_by: string | null }[];
+  assert.equal(rows[0]!.removed_at, null, 'the one a restore left out is live again');
+  assert.equal(rows[1]!.removed_by, 'owner', 'a picture the owner deleted stays deleted');
+  assert.ok(existsSync(join(dir, 'images', '00', '000000000000000000000000.png')));
+  assert.ok(!existsSync(join(dir, 'images', '11')), 'and its file is not brought back');
+});
+
+test('after a good swap the kept copy of the old brain has no sign-in data', async (t) => {
+  const archive = await saved(t);
+  const dir = emptyData(t);
+  const old = new Database(join(dir, 'memory.db'));
+  old.pragma('foreign_keys = OFF');
+  old.prepare("INSERT INTO owner(id, password_hash, totp_secret, totp_last_step) VALUES (1, 'hash', 'secret', 0)").run();
+  old.close();
+  await stageRestore(archive, dir);
+  applyPendingRestore(dir);
+  const kept = readdirSync(dir).find((n) => /^memory-before-restore-\d{8}-\d{6}\.db$/.test(n))!;
+  assert.equal(signInRows(join(dir, kept)).owner, 0);
+});
+
+/** A data folder with a brain that has a sign-in row, plus -wal and -shm files, and a `from` folder with a database. */
+function swapSetup(t: TestContext, withDb: boolean) {
+  const dir = emptyData(t);
+  const old = new Database(join(dir, 'memory.db'));
+  old.pragma('foreign_keys = OFF');
+  old.prepare("INSERT INTO owner(id, password_hash, totp_secret, totp_last_step) VALUES (1, 'hash', 'secret', 0)").run();
+  old.close();
+  writeFileSync(join(dir, 'memory.db-wal'), 'wal');
+  writeFileSync(join(dir, 'memory.db-shm'), 'shm');
+  const from = tmp(t);
+  if (withDb) copyFileSync(join(dir, 'memory.db'), join(from, 'memory.db'));
+  return { dir, from };
+}
+const noKept = (dir: string) => readdirSync(dir).filter((n) => n.startsWith('memory-before-restore'));
+
+test('swapIn: when the final rename fails, memory.db and its side files are back under their names', (t) => {
+  const { dir, from } = swapSetup(t, false);
+  assert.throws(() => swapIn(from, dir));
+  assert.deepEqual(noKept(dir), []);
+  assert.ok(existsSync(join(dir, 'memory.db-wal')) && existsSync(join(dir, 'memory.db-shm')));
+  assert.equal(signInRows(join(dir, 'memory.db')).owner, 1);
+});
+
+test('swapIn: a failure part-way through moving the old brain aside rolls back everything already moved', (t) => {
+  const { dir, from } = swapSetup(t, true);
+  const failing = ((a: string, b: string) => {
+    if (String(b).includes('memory-before-restore') && String(b).endsWith('-wal')) throw new Error('disk trouble');
+    return renameSync(a, b);
+  }) as typeof renameSync;
+  assert.throws(() => swapIn(from, dir, failing), /disk trouble/);
+  assert.deepEqual(noKept(dir), []);
+  assert.ok(existsSync(join(dir, 'memory.db-wal')) && existsSync(join(dir, 'memory.db-shm')));
+  assert.equal(signInRows(join(dir, 'memory.db')).owner, 1);
+  assert.ok(existsSync(join(from, 'memory.db')), 'the staged copy was not used');
 });

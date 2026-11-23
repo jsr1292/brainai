@@ -128,3 +128,18 @@ test('the folder and the archive are named by the local day, as the moving file 
   assert.equal(r.day, '2026-11-13');
   assert.match(readFileSync(join(r.folder, 'README.txt'), 'utf8'), /^BrainAI saved 2026-11-13\n/);
 });
+
+test('moveIntoSaved gives a file outside home a flat safe name, never a path that climbs out of the folder', (t) => {
+  const home = join(tmp(t), 'home');
+  mkdirSync(home);
+  const elsewhere = tmp(t);
+  const file = join(elsewhere, 'mcp.json.brainai-backup');
+  writeFileSync(file, 'original');
+  const folder = join(tmp(t), 'BrainAI saved 2026-11-12');
+  mkdirSync(folder);
+  const moved = moveIntoSaved(folder, [file], home);
+  assert.equal(moved.length, 1);
+  assert.doesNotMatch(moved[0]!, /^\.\.|\/|\\/);
+  assert.equal(readFileSync(join(folder, 'Original tool settings', moved[0]!), 'utf8'), 'original');
+  assert.equal(existsSync(file), false);
+});

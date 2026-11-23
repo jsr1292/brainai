@@ -131,7 +131,7 @@ export const review_es: Record<keyof typeof review, Entry> = {
   'review.growth.evidence': 'Pruebas',
   'review.growth.meta': 'Lo que tus asistentes han notado hasta ahora.',
   'review.growth.lede': 'La página completa de Crecimiento, con tus puntos fuertes y lo que puedes mejorar, llegará cuando haya unas semanas de observaciones.',
-  'review.growth.empty': 'Todavía no se ha notado nada. Los asistentes añaden observaciones mientras trabajan contigo.',
+  'review.growth.empty': 'Todavía nada. Los asistentes añaden una entrada cuando notan algo sobre tu forma de trabajar, normalmente al terminar un paso. También puedes pedírselo directamente: «Anota lo que has observado hoy sobre mi forma de trabajar».',
   'review.growth.strengths': 'Puntos fuertes',
   'review.growth.noStrengths': 'Todavía no hay puntos fuertes anotados.',
   'review.growth.noImprove': 'Todavía no hay nada que mejorar anotado.',

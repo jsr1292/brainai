@@ -6,7 +6,7 @@ import { html, type SafeHtml } from './html.js';
 import { factsAndPagesText, whereChoice } from './savedViews.js';
 
 /** `mac`: the folder report exists only on the Mac, so only there is it named. */
-export function removePage(v: { documents: string; synced: 'iCloud' | 'OneDrive' | null; home: string; said: string | null; mac: boolean }): SafeHtml {
+export function removePage(v: { documents: string; synced: 'iCloud' | 'OneDrive' | null; home: string; said: string | null; mac: boolean; /** The second backup folder, when one is set: it is not deleted. */ copies?: string | null }): SafeHtml {
   return html`<div class="narrow">
 <h1>${t('data.remove.title', { computer: computerName() })}</h1>
 <p class="lede">${t('data.remove.lede')}</p>
@@ -22,7 +22,7 @@ ${v.said ? html`<p class="notice" role="alert">${v.said}</p>` : ''}
 <li>${t('data.remove.s7', { computer: computerName() })}</li>
 </ol>
 <h2>${t('data.remove.kept')}</h2>
-<p>${t('data.remove.keptText', { computer: computerName() })}</p>
+<p>${v.copies ? tHtml('data.remove.keptCopies', { computer: computerName(), folder: html`<code class="path">${v.copies}</code>` }) : t('data.remove.keptText', { computer: computerName() })}</p>
 ${whereChoice({ ...v, action: '/settings/remove', start: true })}
 </div>`;
 }
@@ -43,6 +43,8 @@ export function checklistText(line: string): string {
   if (web) return t('data.todo.webApp', { name: web[1]! });
   const tunnel = /^Cloudflare: delete the tunnel and the public address(?: (\S+))? \(Zero Trust › Networks › Tunnels\)$/.exec(line);
   if (tunnel) return t('data.todo.tunnel', { address: tunnel[1] ? ` ${tunnel[1]}` : '' });
+  const copies = /^Your second backup folder still has copies of your brain: (.+)$/.exec(line);
+  if (copies) return t('data.todo.copies', { folder: copies[1]! });
   const dns = /^Cloudflare: the name (\S+) still exists in your DNS; delete it there\.$/.exec(line);
   return dns ? t('data.todo.dns', { host: dns[1]! }) : line;
 }

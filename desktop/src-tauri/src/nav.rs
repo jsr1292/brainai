@@ -111,6 +111,18 @@ pub fn theme_choice(url: &str, port: u16) -> Option<&'static str> {
     ["auto", "light", "dark"].into_iter().find(|c| *c == rest)
 }
 
+/// The welcome's "Choose the folder with your copy…": the window going there means "open the system folder picker for
+/// a saved copy". The link is cancelled (the page stays). Exact match, like the theme addresses.
+pub fn restore_pick(url: &str, port: u16) -> bool {
+    url == format!("http://localhost:{port}/app/restore/pick")
+}
+
+/// Where the window goes after the picker: the preview of the copy the server found, or back to the choice when the
+/// picker was cancelled (or the server found nothing: it says why there).
+pub fn restore_page(port: u16, found: bool) -> String {
+    format!("http://localhost:{port}/welcome?restore={}", if found { "found" } else { "1" })
+}
+
 /// The saved choice (`ui-theme.json`, `{"theme":"auto|light|dark"}`): "light" or "dark" when forced, None for auto,
 /// a missing file or anything unreadable.
 pub fn saved_theme(content: Option<&str>) -> Option<&'static str> {
@@ -178,6 +190,11 @@ pub fn not_saved_text() -> String {
     crate::lang::tr("remove.not_saved")
 }
 
+/// Said when the owner cancelled the removal but the server could not be told to accept saves again.
+pub fn not_reopened_text() -> String {
+    crate::lang::tr("remove.not_reopened")
+}
+
 /// The `.app` bundle a Mac executable lives in: `/Applications/BrainAI.app` for `/Applications/BrainAI.app/Contents/MacOS/brainai`.
 pub fn app_bundle(exe: &str) -> Option<&str> {
     let end = exe.rfind(".app/Contents/")? + ".app".len();
@@ -219,6 +236,25 @@ mod tests {
         assert_eq!(theme_choice("http://127.0.0.1:3100/app/theme/dark", 3100), None, "another host");
         assert_eq!(theme_choice("https://evil.example/app/theme/dark", 3100), None);
         assert_eq!(theme_choice("http://localhost:3100/settings/theme", 3100), None);
+    }
+
+    #[test]
+    fn the_restore_pick_address_is_exact_and_on_the_apps_own_port() {
+        assert!(restore_pick("http://localhost:3100/app/restore/pick", 3100));
+        assert!(!restore_pick("http://localhost:3100/app/restore/pick?x=1", 3100), "a query string");
+        assert!(!restore_pick("http://localhost:3100/app/restore/pick/", 3100));
+        assert!(!restore_pick("http://localhost:3100/app/restore/pickle", 3100));
+        assert!(!restore_pick("http://localhost:3101/app/restore/pick", 3100), "another port");
+        assert!(!restore_pick("http://127.0.0.1:3100/app/restore/pick", 3100), "another host");
+        assert!(!restore_pick("https://evil.example/app/restore/pick", 3100));
+        assert!(!restore_pick("http://localhost:3100/app/restore", 3100));
+        assert!(!restore_pick("http://localhost:3100/app/choose-folder", 3100));
+    }
+
+    #[test]
+    fn the_restore_page_is_the_preview_or_the_choice() {
+        assert_eq!(restore_page(3100, true), "http://localhost:3100/welcome?restore=found");
+        assert_eq!(restore_page(3100, false), "http://localhost:3100/welcome?restore=1");
     }
 
     #[test]

@@ -88,6 +88,17 @@ export class GrowthService {
     return { status: 'saved', observation: this.store.insert({ kind, area, project, summary: what, practise, embedding, by, client }) };
   }
 
+  /**
+   * Whether a Growth reminder to this assistant would be pointless: it saved a new observation or added evidence in the last
+   * `hours` hours (by connection when it has an id, else by name; evidence is by name only), or it is at today's cap.
+   */
+  notedRecently(by: string, client: string | undefined, hours: number): boolean {
+    const created = (since: string) => (client === undefined ? this.store.createdBySince(by, since) : this.store.createdByClientSince(client, by, since));
+    const since = new Date(this.now().getTime() - hours * 3_600_000).toISOString();
+    const dayAgo = new Date(this.now().getTime() - DAY_MS).toISOString();
+    return created(since) > 0 || this.store.evidenceBySince(by, since) > 0 || created(dayAgo) >= DAILY_CAP;
+  }
+
   /** The owner's reaction to an observation; null clears it. */
   react(id: string, reaction: Reaction | null): Observation {
     if (reaction !== null && !(REACTIONS as readonly string[]).includes(reaction)) throw invalid(`The reaction must be one of: ${REACTIONS.join(', ')}`);

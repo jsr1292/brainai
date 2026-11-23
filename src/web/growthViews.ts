@@ -51,8 +51,7 @@ export function growthView(items: { observation: Observation; evidence: Evidence
   <p class="meta">${t('review.growth.meta')}</p>
   ${weekNav('growth', html`<a href="/review/all">${t('review.allWeeks')}</a>`)}
 </div>
-<p class="lede">${t('review.growth.lede')}</p>
 ${items.length === 0
     ? html`<p class="quiet">${t('review.growth.empty')}</p>`
-    : html`${section(t('review.growth.strengths'), 'strength', t('review.growth.noStrengths'))}${section(t('review.obs.improve'), 'improve', t('review.growth.noImprove'))}`}</div>`;
+    : html`<p class="lede">${t('review.growth.lede')}</p>${section(t('review.growth.strengths'), 'strength', t('review.growth.noStrengths'))}${section(t('review.obs.improve'), 'improve', t('review.growth.noImprove'))}`}</div>`;
 }

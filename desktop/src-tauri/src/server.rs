@@ -265,7 +265,15 @@ pub fn runtime_found(file: &str, dirs: &[std::path::PathBuf], system32: &std::pa
 }
 
 /// The system variables a Windows server and its tools need, in this order; each only if it is set.
-pub const WINDOWS_VARS: [&str; 11] = ["USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SystemRoot", "windir", "COMSPEC", "PATHEXT"];
+pub const WINDOWS_VARS: [&str; 13] = ["USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SystemRoot", "windir", "COMSPEC", "PATHEXT", "ProgramFiles", "ProgramData"];
+
+/// Where the owner moved a coding tool's settings (every platform): the server edits the files there and tells the tools' commands.
+pub const CONFIG_VARS: [&str; 3] = ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME"];
+
+/// Those of CONFIG_VARS that are set to something (and nothing else of the owner's environment).
+pub fn config_dirs(from: impl Fn(&str) -> Option<String>) -> Vec<(String, String)> {
+    CONFIG_VARS.iter().filter_map(|k| from(k).filter(|v| !v.is_empty()).map(|v| (k.to_string(), v))).collect()
+}
 
 pub fn windows_system_env(from: impl Fn(&str) -> Option<String>) -> Vec<(String, String)> {
     WINDOWS_VARS.iter().filter_map(|k| from(k).map(|v| (k.to_string(), v))).collect()
@@ -273,11 +281,14 @@ pub fn windows_system_env(from: impl Fn(&str) -> Option<String>) -> Vec<(String,
 
 /// Where Connect looks for the coding tools on Windows: this session's PATH first (an app started from the Start
 /// menu has the person's own), then where npm, installers and winget put command-line tools.
-pub fn windows_tool_path(path: Option<String>, home: &str, appdata: &str, localappdata: &str) -> String {
+pub fn windows_tool_path(path: Option<String>, home: &str, appdata: &str, localappdata: &str, program_files: &str) -> String {
     let mut parts: Vec<String> = path.into_iter().filter(|p| !p.is_empty()).collect();
     parts.push(format!("{appdata}\\npm"));
     parts.push(format!("{home}\\.local\\bin"));
     parts.push(format!("{localappdata}\\Microsoft\\WinGet\\Links"));
+    if !program_files.is_empty() {
+        parts.push(format!("{program_files}\\nodejs"));
+    }
     parts.join(";")
 }
 
@@ -294,9 +305,25 @@ pub fn fallback_path(home: &str) -> String {
     format!("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{home}/.local/bin")
 }
 
-/// Runs a command and returns the PATH from its `BRAINAI_PATH=` line as soon as that line arrives, never waiting for
-/// the command to finish (something a .zshrc starts may keep its output open) and never longer than `limit`.
-pub fn path_from_command(program: &str, args: &[&str], limit: Duration) -> Option<String> {
+/// What the owner's login shell holds that BrainAI needs: the PATH, and the folders the owner moved the tools' settings to.
+#[derive(Debug, PartialEq, Default)]
+pub struct LoginEnv {
+    pub path: String,
+    pub config: Vec<(String, String)>,
+}
+
+/// One `BRAINAI_ENV_<NAME>=value` line for a name in CONFIG_VARS (anywhere in the line, like the PATH line); empty values are not set.
+pub fn login_config_var(line: &str) -> Option<(String, String)> {
+    CONFIG_VARS.iter().find_map(|name| {
+        let key = format!("BRAINAI_ENV_{name}=");
+        line.find(&key).map(|i| (name.to_string(), line[i + key.len()..].trim().to_string())).filter(|(_, v)| !v.is_empty())
+    })
+}
+
+/// Runs a command and returns what its `BRAINAI_ENV_*=` lines and its `BRAINAI_PATH=` line say, as soon as the PATH line
+/// arrives (it is printed last), never waiting for the command to finish (something a .zshrc starts may keep its output open)
+/// and never longer than `limit`.
+pub fn login_from_command(program: &str, args: &[&str], limit: Duration) -> Option<LoginEnv> {
     use std::io::BufRead;
     let mut child = std::process::Command::new(program)
         .args(args)
@@ -315,12 +342,16 @@ pub fn path_from_command(program: &str, args: &[&str], limit: Duration) -> Optio
         }
     });
     let until = Instant::now() + limit;
+    let mut config = Vec::new();
     let mut found = None;
     while let Some(left) = until.checked_duration_since(Instant::now()) {
         match rx.recv_timeout(left) {
             Ok(line) => {
+                if let Some(v) = login_config_var(&line) {
+                    config.push(v);
+                }
                 if let Some(p) = login_path(&line) {
-                    found = Some(p);
+                    found = Some(LoginEnv { path: p, config });
                     break;
                 }
             }
@@ -332,20 +363,38 @@ pub fn path_from_command(program: &str, args: &[&str], limit: Duration) -> Optio
     found
 }
 
+/// The PATH alone (see login_from_command).
+pub fn path_from_command(program: &str, args: &[&str], limit: Duration) -> Option<String> {
+    login_from_command(program, args, limit).map(|l| l.path)
+}
+
+/// The shell command that prints the config folders, then the PATH last.
+fn login_script() -> String {
+    let vars: String = CONFIG_VARS.iter().map(|n| format!("printf 'BRAINAI_ENV_{n}=%s\\n' \"${n}\"; ")).collect();
+    format!("{vars}printf 'BRAINAI_PATH=%s\\n' \"$PATH\"")
+}
+
 /// The owner's login-shell PATH, with the usual folders after it as a safety net: a Mac app opened from the Finder
-/// gets a short PATH that misses Homebrew, npm and ~/.local/bin, where the coding tools usually are.
-pub fn tool_path() -> String {
+/// gets a short PATH that misses Homebrew, npm and ~/.local/bin, where the coding tools usually are. The same call also asks
+/// for CLAUDE_CONFIG_DIR, CODEX_HOME and XDG_CONFIG_HOME, which a Finder-opened app does not have either; the app's own
+/// environment wins when it has them (a terminal launch).
+pub fn login_env() -> LoginEnv {
     if cfg!(windows) {
         let var = |k: &str| std::env::var(k).unwrap_or_default();
-        return windows_tool_path(std::env::var("PATH").ok(), &var("USERPROFILE"), &var("APPDATA"), &var("LOCALAPPDATA"));
+        return LoginEnv { path: windows_tool_path(std::env::var("PATH").ok(), &var("USERPROFILE"), &var("APPDATA"), &var("LOCALAPPDATA"), &var("ProgramFiles")), config: Vec::new() };
     }
     let home = std::env::var("HOME").unwrap_or_default();
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     // Interactive too: many people add ~/.local/bin and the like in .zshrc, which a login shell alone skips.
-    match path_from_command(&shell, &["-l", "-i", "-c", "printf 'BRAINAI_PATH=%s\\n' \"$PATH\""], Duration::from_secs(5)) {
-        Some(p) => format!("{p}:{}", fallback_path(&home)),
-        None => fallback_path(&home),
+    match login_from_command(&shell, &["-l", "-i", "-c", &login_script()], Duration::from_secs(5)) {
+        Some(l) => LoginEnv { path: format!("{}:{}", l.path, fallback_path(&home)), config: l.config },
+        None => LoginEnv { path: fallback_path(&home), config: Vec::new() },
     }
+}
+
+/// The PATH alone (kept for callers and tests that want only it).
+pub fn tool_path() -> String {
+    login_env().path
 }
 
 /// The IANA name in the target of /etc/localtime (…/zoneinfo/Europe/Berlin → Europe/Berlin).
@@ -448,6 +497,26 @@ pub fn removal_ready(port: u16, secret: &str) -> Option<String> {
     body.get("folder").and_then(|v| v.as_str()).filter(|f| !f.is_empty()).map(str::to_string)
 }
 
+/// The owner said no to the last confirmation of a removal: tells the server (POST /app/removed/cancel with X-App-Key)
+/// to accept saves again (it stopped accepting them when the removal began). True when the server answered 200.
+pub fn removal_cancel(port: u16, secret: &str) -> bool {
+    agent().post(&format!("http://localhost:{port}/app/removed/cancel")).set("X-App-Key", secret).call().map(|r| r.status() == 200).unwrap_or(false)
+}
+
+/// The welcome's folder picker found a folder: tells the server (POST /welcome/restore/find with X-App-Key, the folder as
+/// JSON) to look for the newest saved copy in it. True only when the server answered 200 (a copy is waiting for the
+/// owner's confirm); the server keeps the reason for any other answer and the page says it. Only called once the server
+/// proved it is ours.
+pub fn restore_find(port: u16, secret: &str, folder: &str) -> bool {
+    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(120)).redirects(0).build();
+    agent
+        .post(&format!("http://localhost:{port}/welcome/restore/find"))
+        .set("X-App-Key", secret)
+        .send_json(serde_json::json!({ "path": folder }))
+        .map(|r| r.status() == 200)
+        .unwrap_or(false)
+}
+
 /// Before an update is installed: a backup now (POST /app/backup-now with X-App-Key). A large brain can take a while,
 /// hence the long wait. Err carries the server's own plain sentence, or a fixed one when it did not answer. Only called
 /// once the server proved it is ours.
@@ -467,6 +536,20 @@ pub fn backup_now_within(port: u16, secret: &str, limit: Duration) -> Result<(),
             Err(said.unwrap_or("The backup did not finish.").to_string())
         }
         Err(ureq::Error::Transport(_)) => Err(NO_ANSWER.into()),
+    }
+}
+
+/// The Monday notice's text (GET /app/week-note with X-App-Key): Some((monday, line)) for 200, None for 204 (nothing worth saying).
+/// Only called once the server proved it is ours.
+pub fn week_note(port: u16, secret: &str) -> Result<Option<(String, String)>, String> {
+    match agent().get(&format!("http://localhost:{port}/app/week-note")).set("X-App-Key", secret).call() {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.into_string().map_err(|e| e.to_string())?;
+            Ok(crate::week_note::note_of(status, &body))
+        }
+        Err(ureq::Error::Status(code, _)) => Err(format!("the server answered {code}")),
+        Err(ureq::Error::Transport(e)) => Err(e.to_string()),
     }
 }
 
@@ -541,10 +624,36 @@ mod tests {
     #[test]
     fn on_windows_tools_are_looked_for_on_the_path_then_where_npm_and_installers_put_them() {
         assert_eq!(
-            windows_tool_path(Some("C:\\Windows\\System32;C:\\Program Files\\nodejs".into()), "C:\\Users\\Ana", "C:\\Users\\Ana\\AppData\\Roaming", "C:\\Users\\Ana\\AppData\\Local"),
-            "C:\\Windows\\System32;C:\\Program Files\\nodejs;C:\\Users\\Ana\\AppData\\Roaming\\npm;C:\\Users\\Ana\\.local\\bin;C:\\Users\\Ana\\AppData\\Local\\Microsoft\\WinGet\\Links"
+            windows_tool_path(Some("C:\\Windows\\System32;C:\\Program Files\\nodejs".into()), "C:\\Users\\Ana", "C:\\Users\\Ana\\AppData\\Roaming", "C:\\Users\\Ana\\AppData\\Local", "C:\\Program Files"),
+            "C:\\Windows\\System32;C:\\Program Files\\nodejs;C:\\Users\\Ana\\AppData\\Roaming\\npm;C:\\Users\\Ana\\.local\\bin;C:\\Users\\Ana\\AppData\\Local\\Microsoft\\WinGet\\Links;C:\\Program Files\\nodejs"
         );
-        assert_eq!(windows_tool_path(None, "C:\\U", "C:\\R", "C:\\L"), "C:\\R\\npm;C:\\U\\.local\\bin;C:\\L\\Microsoft\\WinGet\\Links");
+        assert_eq!(windows_tool_path(None, "C:\\U", "C:\\R", "C:\\L", ""), "C:\\R\\npm;C:\\U\\.local\\bin;C:\\L\\Microsoft\\WinGet\\Links");
+    }
+
+    #[test]
+    fn the_login_shell_gives_the_moved_settings_folders_and_the_path_in_one_call() {
+        assert_eq!(login_config_var("BRAINAI_ENV_CLAUDE_CONFIG_DIR=/Users/a/cfg"), Some(("CLAUDE_CONFIG_DIR".into(), "/Users/a/cfg".into())));
+        assert_eq!(login_config_var("\u{1b}]0;t\u{7}BRAINAI_ENV_CODEX_HOME=/c"), Some(("CODEX_HOME".into(), "/c".into())));
+        assert_eq!(login_config_var("BRAINAI_ENV_CODEX_HOME="), None, "unset in the shell");
+        assert_eq!(login_config_var("BRAINAI_ENV_HOME=/x"), None, "only the three names");
+        let got = login_from_command(
+            "/bin/sh",
+            &["-c", "echo noise; printf 'BRAINAI_ENV_CLAUDE_CONFIG_DIR=%s\\n' /k; printf 'BRAINAI_ENV_CODEX_HOME=%s\\n' ''; printf 'BRAINAI_PATH=%s\\n' /x/bin:/usr/bin; sleep 20"],
+            Duration::from_secs(5),
+        );
+        assert_eq!(got, Some(LoginEnv { path: "/x/bin:/usr/bin".into(), config: vec![("CLAUDE_CONFIG_DIR".into(), "/k".into())] }));
+        assert!(login_script().ends_with("\"$PATH\""), "the PATH is printed last, so the reader has every folder by then");
+    }
+
+    #[test]
+    fn a_moved_tool_folder_is_passed_on_and_nothing_else_of_the_environment() {
+        let got = config_dirs(|k| match k {
+            "CLAUDE_CONFIG_DIR" => Some("/x/claude".to_string()),
+            "CODEX_HOME" => Some(String::new()),
+            "HOME" => Some("/h".to_string()),
+            _ => None,
+        });
+        assert_eq!(got, vec![("CLAUDE_CONFIG_DIR".to_string(), "/x/claude".to_string())]);
     }
 
     use super::*;
@@ -672,6 +781,16 @@ mod tests {
         assert_eq!(removal_ready(answer_once("200 OK", "not json"), "k"), None);
         let free = TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
         assert_eq!(removal_ready(free, "k"), None, "nothing listening");
+    }
+
+    #[test]
+    fn a_cancelled_removal_is_told_to_the_server_with_the_apps_key() {
+        let (port, seen) = answer_once_seen("200 OK", r#"{"ok":true}"#);
+        assert!(removal_cancel(port, "k"));
+        let request = seen.recv().unwrap().to_lowercase();
+        assert!(request.starts_with("post /app/removed/cancel "), "{request}");
+        assert!(request.contains("x-app-key: k\r\n"), "the app's key goes with it");
+        assert!(!removal_cancel(answer_once("404 Not Found", "{}"), "k"));
     }
 
     #[test]

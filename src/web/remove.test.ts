@@ -14,6 +14,7 @@ import { fakeHome } from '../testing/fakeTools.js';
 import { loggedIn, startTestApp } from '../testing/helpers.js';
 import { toolEnv } from './desktopRoutes.js';
 import { removeSeams } from './removeRoutes.js';
+import { beginWrite, endWrite, isRemoving, setRemoving } from '../desktop/removing.js';
 import { decodeEntities, withoutClientCatalog } from '../testing/entities.js';
 
 const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
@@ -26,7 +27,8 @@ async function desktop(t: TestContext, o: { platform?: NodeJS.Platform; extraPat
   const statusDir = mkdtempSync(join(tmpdir(), 'brainai-remove-data-'));
   const path = `${home.bin}:${o.extraPath ? `${o.extraPath}:` : ''}${dirname(process.execPath)}:/usr/bin:/bin`;
   const app = await startTestApp({ localMode: true, appSecret: KEY, statusDir, tools: { home: home.home, path, apps: home.apps, platform: o.platform ?? 'linux' } });
-  t.after(() => { app.close(); home.cleanup(); });
+  setRemoving(false); // a finished removal leaves the process-wide state set, as in the app (which then quits)
+  t.after(() => { setRemoving(false); app.close(); home.cleanup(); });
   const shown: string[] = [];
   app.deps.reveal = (p) => { shown.push(p); };
   return { app, home, statusDir, shown, f: await loggedIn(app), env: toolEnv(app.deps)! };
@@ -146,10 +148,10 @@ test('a tool that fails to disconnect is named on the done page and in the READM
   chmodSync(join(home.home, '.claude/CLAUDE.md'), 0o444);
   assert.equal((await post(f)).status, 303);
   const done = await doneText(f);
-  assert.match(done, /Claude Code: failed: BrainAI could not write/);
+  assert.match(done, /Claude Code: failed: .* is read-only/);
   assert.match(done, /Still to do by hand/);
   const folder = join(home.home, 'Documents', savedFolders(home.home)[0]!);
-  assert.match(readFileSync(join(folder, 'README.txt'), 'utf8'), /Claude Code: BrainAI could not write/);
+  assert.match(readFileSync(join(folder, 'README.txt'), 'utf8'), /Claude Code: .* is read-only/);
 });
 
 test("a config BrainAI cannot read is reported as not checked, with removal wording, never 'add it'", async (t) => {
@@ -388,4 +390,111 @@ test('/app/removed/ready is 409 once the saved folder is gone', async (t) => {
   assert.equal((await post(f)).status, 303);
   rmSync(join(home.home, 'Documents', savedFolders(home.home)[0]!), { recursive: true });
   assert.equal((await ready(app.baseUrl, KEY)).status, 409);
+});
+
+test('while a removal is under way nothing can be written, the done page has no way back, and cancelling opens writes again', async (t) => {
+  t.after(() => setRemoving(false));
+  const { f } = await desktop(t);
+  assert.equal(isRemoving(), false);
+  const r = await post(f);
+  assert.equal(r.status, 303);
+  assert.equal(isRemoving(), true);
+  // A dashboard write is refused with a short page; reads still work.
+  const write = await f('/settings/pause', { method: 'POST', headers: FORM, body: '' });
+  assert.equal(write.status, 503);
+  assert.match(await write.text(), /BrainAI is being removed/);
+  assert.equal((await f('/facts')).status, 200);
+  // The removal's own steps still answer, and the done page links nowhere into the brain.
+  const doneHtml = await (await f('/settings/remove/done')).text();
+  assert.doesNotMatch(doneHtml, /<nav|class="tabs"|class="sidebar|href="\/(settings|facts|search|review|pages|)"/);
+  assert.match(doneHtml, /href="\/app\/removed"/);
+  assert.equal((await f('/settings/remove/show', { method: 'POST', headers: FORM, body: '' })).status, 303);
+  // Only the app, with its key, can cancel.
+  assert.equal((await f('/app/removed/cancel', { method: 'POST', headers: FORM, body: '' })).status, 404);
+  assert.equal(isRemoving(), true);
+  const cancel = await f('/app/removed/cancel', { method: 'POST', headers: { 'X-App-Key': KEY }, body: '' });
+  assert.equal(cancel.status, 200);
+  assert.equal(isRemoving(), false);
+  assert.equal((await f('/settings/pause/resume', { method: 'POST', headers: FORM, body: '' })).status, 303);
+});
+
+test('a removal that fails before its end lets writes through again', async (t) => {
+  t.after(() => setRemoving(false));
+  const { f, home } = await desktop(t);
+  writeFileSync(join(home.home, 'Documents'), 'not a folder');
+  assert.equal((await post(f)).status, 500);
+  assert.equal(isRemoving(), false);
+  assert.equal((await f('/settings/pause/resume', { method: 'POST', headers: FORM, body: '' })).status, 303);
+});
+
+test('a removal waits for a save in progress before it takes the copy, and gives up with a message if it does not end', async (t) => {
+  t.after(() => { setRemoving(false); removeSeams.drainMs = undefined; });
+  const { f, home } = await desktop(t);
+  beginWrite();
+  let ended = false;
+  setTimeout(() => { ended = true; endWrite(); }, 200);
+  const r = await post(f);
+  assert.equal(r.status, 303);
+  assert.equal(ended, true, 'the copy waited for the save');
+  assert.equal(savedFolders(home.home).length, 1);
+  // One that never ends: the removal fails, saves nothing, and writes open again.
+  const second = await desktop(t);
+  removeSeams.drainMs = 100;
+  beginWrite();
+  try {
+    const bad = await post(second.f);
+    assert.equal(bad.status, 500);
+    assert.match(await bad.text(), /BrainAI is still saving; try again in a moment\./);
+    assert.equal(isRemoving(), false);
+    assert.deepEqual(existsSync(join(second.home.home, 'Documents')) ? savedFolders(second.home.home) : [], []);
+  } finally { endWrite(); }
+});
+
+test('the second backup folder is named on the first page, the last page and in the README, never promised away', async (t) => {
+  const { f, home, app } = await desktop(t, { tools: [] });
+  const second = mkdtempSync(join(tmpdir(), 'brainai-second-'));
+  t.after(() => rmSync(second, { recursive: true, force: true }));
+  app.deps.backupCopy!.set(second);
+  const first = decodeEntities(await (await f('/settings/remove')).text());
+  assert.match(first, /your second backup folder[\s\S]*which still has copies of your brain: BrainAI does not delete it/);
+  assert.ok(first.includes(second));
+  assert.equal((await post(f)).status, 303);
+  const done = await doneText(f);
+  assert.match(done, new RegExp(`Your second backup folder still has copies of your brain: ${second.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  const folder = join(home.home, 'Documents', savedFolders(home.home)[0]!);
+  assert.match(readFileSync(join(folder, 'README.txt'), 'utf8'), /Your second backup folder still has copies of your brain: /);
+});
+
+test('no second backup folder: the page keeps its plain promise and nothing is listed', async (t) => {
+  const { f } = await desktop(t, { tools: [] });
+  assert.doesNotMatch(await (await f('/settings/remove')).text(), /second backup folder/);
+  assert.equal((await post(f)).status, 303);
+  assert.doesNotMatch(await doneText(f), /second backup folder/);
+});
+
+test('Claude Code not installed and no BrainAI hooks anywhere: no false "hooks were left in place" line', async (t) => {
+  const { f } = await desktop(t, { tools: ['codex'] });
+  assert.equal((await post(f)).status, 303);
+  assert.doesNotMatch(await doneText(f), /hooks were left in place/);
+});
+
+test('cancelling the last dialog leaves a one-time notice on Settings > Tools listing what was already taken out', async (t) => {
+  const { f, env } = await desktop(t);
+  assert.equal((await connect('claude-code', env, {})).ok, true);
+  assert.equal((await post(f)).status, 303);
+  assert.equal((await f('/app/removed/cancel', { method: 'POST', headers: { 'X-App-Key': KEY }, body: '' })).status, 200);
+  const tools = decodeEntities(await (await f('/settings/tools')).text());
+  assert.match(tools, /You stopped the removal, but BrainAI had already taken this out: .*Connect on a tool brings its connection back/);
+  assert.doesNotMatch(decodeEntities(await (await f('/settings/tools')).text()), /You stopped the removal/, 'shown once');
+});
+
+test('Remove never moves secret-bearing backups (Cursor mcp.json, Codex config.toml) into the saved folder: they stay beside their originals', async (t) => {
+  const { f, home } = await desktop(t, { tools: [] });
+  home.write('.cursor/mcp.json.brainai-backup', '{"token":"x"}');
+  home.write('.codex/config.toml.brainai-backup', 'token = "x"');
+  home.write('.claude/CLAUDE.md.brainai-backup', 'plain');
+  assert.equal((await post(f)).status, 303);
+  assert.equal(home.read('.cursor/mcp.json.brainai-backup'), '{"token":"x"}');
+  assert.equal(home.read('.codex/config.toml.brainai-backup'), 'token = "x"');
+  assert.equal(home.read('.claude/CLAUDE.md.brainai-backup'), null, 'the plain one moved into the saved folder');
 });

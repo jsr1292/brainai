@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Removes a BrainAI install from a server, after keeping one saved copy of the brain. Order: save a copy (a failed
-# save stops everything), show what will go and ask for the word "remove", remove it, then ask about each outside copy
+# Removes a BrainAI install from a server, after keeping one saved copy of the brain. Order: stop the app (so nothing is saved after the copy), save a copy (a failed
+# save stops everything and starts the app again), show what will go and ask for the word "remove", remove it, then ask about each outside copy
 # one at a time (default keep), then print the checklist of what only the owner can remove. It only ever touches
 # what BrainAI wrote: its own crontab lines, containers, its git folder and the files it exported. Answers come
 # from stdin (prompts print even when it is not a terminal). It deletes its own folder, so it first runs again from a
@@ -32,7 +32,20 @@ TMP_ROOT="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)"
   && [ "$(cd "$(dirname "$REMOVE_TMP")" 2>/dev/null && pwd -P)" = "$TMP_ROOT" ]; } || refuse "this is not the temporary copy made for this run."
 case "$(basename "$REMOVE_TMP")" in brainai-remove.??????) ;; *) refuse "this is not the temporary copy made for this run." ;; esac
 trap 'rm -rf "$REMOVE_TMP"' EXIT
-stop() { echo "$1"; echo "Nothing was removed."; exit "${2:-1}"; }
+# The app is stopped while the copy is taken and the owner decides, so nothing is saved after the copy. Whenever the run
+# ends without removing (a failed save, "no", an interrupt), it starts the app again and says so.
+APP_STOPPED=0
+restart_app() {
+  [ "$APP_STOPPED" = 1 ] || return 0
+  APP_STOPPED=0
+  # No service name: whatever depends on the app (the tunnel) comes back with it.
+  if "${COMPOSE[@]}" start </dev/null >/dev/null 2>&1; then
+    echo "BrainAI is running again."
+  else
+    echo "Could not start BrainAI again: run docker compose start in $APP_DIR."
+  fi
+}
+stop() { echo "$1"; restart_app; echo "Nothing was removed."; exit "${2:-1}"; }
 [ -n "${REMOVE_APP_DIR:-}" ] && [ -d "$REMOVE_APP_DIR" ] || stop "Refusing: the clone to remove is missing."
 APP_DIR="$(cd "$REMOVE_APP_DIR" && pwd -P)"
 cmp -s "$APP_DIR/scripts/remove.sh" "$SELF" || stop "Refusing: $APP_DIR does not hold this script."
@@ -69,10 +82,22 @@ ask() { # question -> true only for y or Y
 # (/app/data in the container), so it writes into a fresh folder of the home mounted at /saved: the container runs as
 # PUID:PGID, so the files are the owner's, and the later move is a rename on the same disk. Always a one-off
 # container, whether the app runs or not (SQLite takes two processes on one database).
+echo "Stopping BrainAI so nothing is saved after the copy..."
+# The restart on the way out is in place before anything is stopped. It only brings the app back if it was running.
+SAVE_TMP=""
+# Only ever removed while empty: a save that fails cleans up after itself, and a copy that could not be moved stays.
+trap 'restart_app; rm -rf "$REMOVE_TMP"; if [ -n "$SAVE_TMP" ]; then rmdir "$SAVE_TMP" 2>/dev/null; fi' EXIT
+trap 'exit 130' INT HUP
+trap 'exit 143' TERM
+WAS_RUNNING=0
+[ -n "$("${COMPOSE[@]}" ps --status running -q app </dev/null 2>/dev/null)" ] && WAS_RUNNING=1
+APP_STOPPED="$WAS_RUNNING"
+if ! "${COMPOSE[@]}" stop app </dev/null; then
+  APP_STOPPED=0
+  stop "Stopping BrainAI failed, so nothing was changed."
+fi
 echo "Saving a copy of your brain first..."
 SAVE_TMP="$(mktemp -d "$HOME/.brainai-save.XXXXXX")" || stop "Could not make a folder in $HOME for the save."
-# Only ever removed while empty: a save that fails cleans up after itself, and a copy that could not be moved stays.
-trap 'rm -rf "$REMOVE_TMP"; rmdir "$SAVE_TMP" 2>/dev/null' EXIT
 OUT="$("${COMPOSE[@]}" run --rm -v "$SAVE_TMP:/saved" app node dist/cli.js save-copy /saved </dev/null)" || stop "The save failed."
 # The last line is the folder as the container saw it (/saved/<name>).
 NAME="$(basename "$(printf '%s\n' "$OUT" | tail -n 1)")"
@@ -142,6 +167,9 @@ printf 'Type remove to go ahead: '
 ANSWER=""
 read -r ANSWER || true
 [ "$ANSWER" = "remove" ] || { echo; stop "That was not the word remove." 0; }
+
+# Confirmed: the app stays stopped from here on (the containers go next).
+APP_STOPPED=0
 
 # 3. Removing, in this order. The containers go before anything that is needed to go on (the clone holds the compose
 # file), so a failed `down` stops here with a way to finish.

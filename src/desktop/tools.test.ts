@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fakeHome, type FakeHome } from '../testing/fakeTools.js';
 import { setupText } from '../setup/texts.js';
-import { backupFiles, brainPluginInstalled, tracesOfThisBrain, childEnv, commandLine, claudeAppPresent, connect, disconnect, findCommand, toolStates, withCodexApproval, type Tool, type ToolEnv } from './tools.js';
+import { backupFiles, secretBackups, brainPluginInstalled, tracesOfThisBrain, childEnv, commandLine, claudeAppPresent, connect, disconnect, findCommand, toolStates, withCodexApproval, type Tool, type ToolEnv } from './tools.js';
 import { findBlock } from './rulesBlock.js';
 
 const URL_ = 'http://localhost:3100/mcp';
@@ -235,7 +235,9 @@ test('Gemini CLI: its files are among those Remove BrainAI keeps a backup of', a
   const { f, env } = gemWorld(t);
   f.write('.gemini/settings.json', '{}');
   await connect('gemini', env, {});
-  assert.ok(backupFiles(env).includes(join(f.home, '.gemini', 'settings.json.brainai-backup')));
+  // settings.json can hold other tools' tokens: its backup stays beside it and is never moved into the saved folder.
+  assert.ok(!backupFiles(env).includes(join(f.home, '.gemini', 'settings.json.brainai-backup')));
+  assert.ok(secretBackups(env).includes(join(f.home, '.gemini', 'settings.json.brainai-backup')));
 });
 
 test('Cursor: connect writes only ~/.cursor/mcp.json, keeping the servers already there', async (t) => {
@@ -482,7 +484,8 @@ test("Claude (desktop app): disconnect removes only brainai, revokes the stored 
   assert.deepEqual(c.log.revoked, ['grant-1']);
   assert.equal(existsSync(c.keyFile), false);
   assert.equal((await stateOf(c.env, 'claude-desktop')).state, 'not-connected');
-  assert.ok(backupFiles(c.env).includes(join(c.f.home, `${CLAUDE_CONFIG}.brainai-backup`)));
+  assert.ok(!backupFiles(c.env).includes(join(c.f.home, `${CLAUDE_CONFIG}.brainai-backup`)), 'it can hold other apps\' keys: never moved');
+  assert.ok(secretBackups(c.env).includes(join(c.f.home, `${CLAUDE_CONFIG}.brainai-backup`)));
 });
 
 test("disconnect asks to end a tool's sign-in by its name, except for Claude's desktop app, whose key is revoked already", async (t) => {

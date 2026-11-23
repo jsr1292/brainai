@@ -1,9 +1,9 @@
 import { LearningError } from '../learning/service.js';
 import { CHECK_AREAS, CHECK_STATUSES, type CheckArea, type CheckStatus } from '../learning/types.js';
 import { Router, type Request, type Response } from 'express';
-import { backupHealth, readBackupStatus } from '../backupStatus.js';
+import { readBackupStatus } from '../backupStatus.js';
 import { folderKey } from '../folders/report.js';
-import { backupProblems, errorText } from './errorText.js';
+import { errorText } from './errorText.js';
 import { t } from '../i18n/index.js';
 import { LIST_CHANGED, MemoryError } from '../memory/service.js';
 import type { Memory } from '../memory/types.js';
@@ -14,7 +14,8 @@ import { requireOwner } from './authRoutes.js';
 import { nextHref, safeBack, withBackError } from './back.js';
 import { html, page } from './html.js';
 import type { ApprovalSummary } from './forYou.js';
-import { needsWelcome, nextCardFor } from './desktopRoutes.js';
+import { needsWelcome, nextCardFor, toolEnv } from './desktopRoutes.js';
+import { claudeDesktopConnected } from '../desktop/tools.js';
 import { noteDecision, takeStatusLine } from './inboxUndo.js';
 import { makeInbox } from './inboxPage.js';
 import { healthOf } from './healthData.js';
@@ -25,8 +26,8 @@ import { laterVersion, offsiteNudgeDue, offsiteNudgeHidden, readJustUpdated, rea
 import { viaDoor } from '../desktop/publicDoor.js';
 import { BRAIN_VERSION } from '../version.js';
 import { firstSteps, firstStepsDue, firstStepsHidden, firstStepsView, hideFirstSteps } from './firstSteps.js';
-import { projectList, projectsHomeView, type HomeViewInput, type WeekLine } from './projectsViews.js';
-import { lineSentenceOf, weekRange } from './reviewViews.js';
+import { projectList, projectsHomeView, type HomeViewInput } from './projectsViews.js';
+import { backupProblemOf, holdBackParkOf, mondayCard, weekCandidate } from './mondayCard.js';
 import { deskSideView, projectLately } from './deskSide.js';
 
 const STATE_CHOICES: readonly ProjectStateName[] = ['open', 'parked', 'done', 'archived'];
@@ -46,30 +47,6 @@ const panelHref = (name: string): string => `/?project=${encodeURIComponent(name
 export function projectRoutes(d: AppDeps): Router {
   const router = Router();
   const owner = requireOwner(d.sessions);
-
-  /**
-   * The Monday line: last week's review, built here if it isn't stored yet, while neither Read it nor Not now was
-   * pressed, the week had something in it and no backup warning shows. It is an optional nudge: a failed build is
-   * logged and the page renders without it (nothing was stored, so the next load tries again).
-   */
-  const weekLine = (backupProblem: string | null): { line: WeekLine | null; holdBackPark: Set<string> } => {
-    const none = { line: null, holdBackPark: new Set<string>() };
-    if (backupProblem) return none;
-    const monday = d.reviews.lastMonday();
-    try {
-      const stored = d.reviews.ensure(monday, 'owner');
-      if (!stored || stored.openedAt !== null || stored.dismissedAt !== null) return none;
-      const view = d.reviews.present(stored, 'last', { kind: 'owner' });
-      if (view.empty) return none;
-      return {
-        line: { monday, dates: weekRange(monday), text: lineSentenceOf(view) },
-        holdBackPark: new Set([...view.quiet.shown, ...view.quiet.folded].map((q) => q.project)),
-      };
-    } catch (e) {
-      console.error(`weekly review ${monday} failed: ${e instanceof Error ? e.message : String(e)}`);
-      return none;
-    }
-  };
 
   /** How many changes wait for approval; when exactly one does, the whole card for the For-you sheet. */
   const approvalSummary = (): ApprovalSummary => {
@@ -93,12 +70,13 @@ export function projectRoutes(d: AppDeps): Router {
   };
   /** Everything the Projects screen is drawn from: the home, its list, and the open project when one is asked for. */
   const homeData = (asked: string | undefined, error?: string, req?: Request): HomeViewInput => {
-    const backups = d.statusDir === undefined ? undefined : backupHealth(readBackupStatus(d.statusDir), d.now(), { offsite: !d.localMode, jobs: !d.localMode });
-    const backupProblem = backups && !backups.ok ? backupProblems(backups)[0] ?? null : null;
-    const week = weekLine(backupProblem);
+    const backupProblem = backupProblemOf(d);
+    const candidate = weekCandidate(d, backupProblem);
+    const home = d.projects.home(d.now(), { holdBackPark: candidate ? holdBackParkOf(candidate) : undefined });
     return {
-      home: d.projects.home(d.now(), { holdBackPark: week.holdBackPark }),
-      weekLine: week.line,
+      home,
+      // The card's live numbers come from the cards the home just built.
+      monday: candidate ? mondayCard(d, candidate, home.healthCounts) : null,
       selected: asked === undefined ? undefined : d.projects.detail(asked, d.now()),
       approvals: approvalSummary(),
       discussionsWaiting: d.discussions.waitingOnOwner(),
@@ -114,7 +92,10 @@ export function projectRoutes(d: AppDeps): Router {
       justUpdated: (() => {
         if (!d.localMode || !d.statusDir || (req && viaDoor(req))) return undefined;
         const j = readJustUpdated(d.statusDir, BRAIN_VERSION);
-        return j ? justUpdatedLine(j) : undefined;
+        if (!j) return undefined;
+        // The Windows installer ends Claude desktop's bridge: say once that it needs a full quit and reopen.
+        const env = toolEnv(d);
+        return justUpdatedLine(j, { claude: !!env && (env.platform ?? process.platform) === 'win32' && claudeDesktopConnected(env) });
       })(),
       nextStep: req && viaDoor(req) ? undefined : nextCardFor(d),
       firstSteps: (() => {

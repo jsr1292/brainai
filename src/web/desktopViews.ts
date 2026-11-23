@@ -30,7 +30,7 @@ function toolRow(tool: ToolState, back: 'welcome' | null = null): SafeHtml {
     html`<form method="post" action="/settings/tools/${tool.id}/${what}" class="inline">${backField}${extra}<button type="submit" class="${cls}">${label}</button></form>`;
   const status = !tool.installed ? html`<span class="meta">${t('setup.tool.notOn', { computer: computerName() })}</span>`
     : tool.state === 'not-connected' && tool.detail ? html`<span class="attention">${t('setup.tool.again')}</span>`
-    : tool.state === 'connected' && tool.signedIn === false ? html`<span class="attention"><span class="dot attention" aria-hidden="true"></span> ${t('setup.tool.added', { signIn: tKey(`tools.signIn.${tool.id}`) })}</span>`
+    : tool.state === 'connected' && tool.signedIn === false ? html`<span class="attention"><span class="dot attention" aria-hidden="true"></span> ${t('setup.tool.added', { signIn: tKey(`tools.signIn.${tool.id}`) })}${tool.id === 'claude-code' || tool.id === 'codex' ? html` ${t(`setup.tool.addedHint.${tool.id}` as const)}` : html``}</span>`
     : tool.state === 'connected' ? html`<span class="ok">${t('setup.tool.connected')}</span>`
     : tool.state === 'other-brainai' ? html`<span class="attention">${t('setup.tool.other', { detail: detailText(tool) })}</span>`
     : html`<span class="meta">${t('setup.tool.notConnected')}</span>`;
@@ -54,13 +54,16 @@ function chatgptRow(windows: boolean): SafeHtml {
   return html`<li class="tool"><div><strong>ChatGPT</strong><br><span class="meta note">${tHtml('setup.chatgpt.note', { next })}</span></div><div></div></li>`;
 }
 
-export function toolsPage(v: { tools: ToolState[]; windows: boolean; said: string | null; cursorRules: string }): SafeHtml {
+/** `temporary`: BrainAI runs on another port this time, so the apps connected to its usual address cannot reach it now. */
+export function toolsPage(v: { tools: ToolState[]; windows: boolean; said: string | null; cursorRules: string; temporary?: boolean }): SafeHtml {
   const cursor = v.tools.find((x) => x.id === 'cursor');
   return html`<div class="narrow">
 <h1>${t('setup.toolsOn', { computer: computerName() })}</h1>
 <p class="lede">${t('setup.tools.lede')}</p>
 ${v.said ? html`<p class="notice" role="status">${v.said}</p>` : ''}
+${v.temporary ? html`<p class="notice" role="status">${t('tools.temporaryAddress')}</p>` : ''}
 <ul class="group tools">${v.tools.map((x) => toolRow(x))}${chatgptRow(v.windows)}</ul>
+${v.tools.some((x) => !x.installed) ? html`<p class="meta">${t('tools.notFoundHint')}</p>` : ''}
 <p class="meta">${tHtml('setup.tools.note', { code: html`<code class="nowrap">.brainai-backup</code>` })}</p>
 ${cursor?.installed ? html`<h2>${t('setup.tools.cursorHead')}</h2><p>${t('setup.tools.cursorHow')}</p>${copyBox(v.cursorRules, 'setup.copy.cursorRules')}` : ''}
 </div>`;
@@ -174,7 +177,7 @@ export function updateCard(u: UpdateFile, later: string | null): SafeHtml {
  * The small line on Home at the first start after an update (the app only): "Updated to 1.7.2 · What's new". What's new
  * opens the notes in place (untrusted plain text, list items escaped by `html`); Dismiss deletes just-updated.json.
  */
-export function justUpdatedLine(j: { version: string; notes: string }): SafeHtml {
+export function justUpdatedLine(j: { version: string; notes: string }, o: { claude?: boolean } = {}): SafeHtml {
   const items = noteItems(j.notes);
   const said = html`<strong>${t('setup.update.justUpdated', { version: j.version })}</strong>`;
   return html`<div class="conn-setup just-updated" role="status">
@@ -182,6 +185,7 @@ export function justUpdatedLine(j: { version: string; notes: string }): SafeHtml
     ? html`<details class="just-updated-notes"><summary>${said} · <span class="just-updated-more">${t('setup.update.whatsNew')}</span></summary><ul>${items.map((i) => html`<li>${i}</li>`)}</ul></details>`
     : html`<span>${said}</span>`}
   <form method="post" action="/app/update/dismiss" class="inline"><button type="submit">${t('setup.update.dismiss')}</button></form></div>
+  ${o.claude ? html`<p class="meta">${t('tools.updatedClaude')}</p>` : ''}
 </div>`;
 }
 
@@ -339,14 +343,43 @@ export function welcomePage(v: {
   /** The search models' progress line (steps 4 and 5). */
   modelsLine?: SafeHtml; tools: ToolState[]; windows: boolean; said: string | null; cursorRules: string;
   /** Only an empty brain can take a saved copy: 'offer' shows the link on step 1, 'choose' the file step. */
-  restore?: 'offer' | 'choose' | null;
+  restore?: 'offer' | 'choose' | 'found' | null;
+  /** The copy the app found in the picked folder ('found'), and why the last find or confirm failed (shown on 'choose'). */
+  found?: { name: string; date: string; facts: number; pages: number; pictures: { total: number; found: number } | null; skipped?: { name: string; why: string } | null; token: string } | null;
+  restoreProblem?: string | null;
   /** What the restart found, shown once on step 4. */
   restored?: { facts: number; pages: number; pictures_missing?: number } | { refused: string } | null;
 }): SafeHtml {
-  if (v.step === 1 && v.restore === 'choose') {
+  if (v.step === 1 && v.restore === 'found' && v.found) {
+    const f = v.found;
+    const summary = factsAndPagesText(f.facts, f.pages);
+    const missing = f.pictures ? f.pictures.total - f.pictures.found : 0;
+    return setupFrame(1, html`<h1>${t('setup.restore.found.title')}</h1>
+<div class="card" data-restore-found>
+  <p><strong>${f.name}</strong><br><span class="meta">${t('setup.restore.found.date', { date: f.date })}</span></p>
+  <p>${f.pictures && f.pictures.total > 0 ? tHtml('setup.restore.found.counts', { summary, found: String(f.pictures.found), count: f.pictures.total }) : summary}</p>
+</div>
+${f.skipped ? html`<p class="notice" role="status">${t('setup.restore.found.newer', { name: f.skipped.name, why: f.skipped.why })}</p>` : ''}
+${missing > 0 ? html`<p class="notice" role="status">${t('setup.restore.found.missing', { count: missing })}</p>` : ''}
+<form method="post" action="/welcome/restore/confirm" class="stack" data-restore-confirm>
+  <input type="hidden" name="token" value="${f.token}">
+  <p class="notice error" role="alert" data-restore-error hidden></p>
+  <p class="notice" role="status" data-restore-busy hidden>${t('setup.restore.busy')}</p>
+  <p class="notice" role="status" data-restore-looking hidden>${t('setup.restore.looking')}</p>
+  <p class="setup-actions"><a href="/app/restore/pick" data-restore-pick>${t('setup.restore.found.another')}</a> <button type="submit" class="primary">${t('setup.restore.go')}</button></p>
+</form>`);
+  }
+  if (v.step === 1 && (v.restore === 'choose' || v.restore === 'found')) {
     return setupFrame(1, html`<h1>${t('setup.restore.title')}</h1>
-<p>${tHtml('setup.restore.choose', { saved: html`<code>brainai-saved-….tar.gz</code>`, backup: html`<code>memory-….db</code>` })}</p>
+${v.restoreProblem ? html`<p class="notice error" role="alert">${v.restoreProblem}</p>` : ''}
+<div data-restore-app hidden>
+  <p>${tHtml('setup.restore.pickHint', { saved: html`<code>brainai-saved-….tar.gz</code>`, backup: html`<code>memory-….db</code>` })}</p>
+  <p class="notice" role="status" data-restore-looking hidden>${t('setup.restore.looking')}</p>
+  <p class="setup-actions"><a href="/welcome">${t('setup.restore.cancel')}</a> <a class="button primary" href="/app/restore/pick" data-restore-pick>${t('setup.restore.pick')}</a></p>
+  <p class="meta"><a href="#restore-file" data-restore-upload-link>${t('setup.restore.uploadInstead')}</a></p>
+</div>
 <form class="stack" data-restore-form>
+  <p>${tHtml('setup.restore.choose', { saved: html`<code>brainai-saved-….tar.gz</code>`, backup: html`<code>memory-….db</code>` })}</p>
   <label for="restore-file">${t('setup.restore.file')}</label>
   <input id="restore-file" type="file" accept=".gz,.db" required>
   <p class="notice error" role="alert" data-restore-error hidden></p>

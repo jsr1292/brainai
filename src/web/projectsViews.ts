@@ -1,6 +1,7 @@
 import { CHECK_STATUSES, MAX_NOTE, type CheckArea, type CheckStatus, type ShownStatus } from '../learning/types.js';
 import { t, tHtml, tKey } from '../i18n/index.js';
 import type { Health } from '../health/health.js';
+import type { Health as ProjectHealth, HealthReason } from '../projects/health.js';
 import type { AreaSection, Home, HomeSuggestion, PanelDiscussion, ProjectCard, ProjectDetail } from '../projects/service.js';
 import { localDay, longDate, shortDay } from '../timezone.js';
 import { AREAS, type Area, type Project } from '../projects/types.js';
@@ -12,9 +13,10 @@ import { forYouCard, forYouRows, type ApprovalSummary } from './forYou.js';
 import { disagreeGroup } from './disagreeViews.js';
 import { staleChip } from './freshnessViews.js';
 import { metaLine } from './metaLine.js';
+import type { MondayCard } from './mondayCard.js';
 import { coachingShown } from './sideStatus.js';
 import { stripProjectPrefix } from './stripProject.js';
-import { dueChip, pastLabel, timeAgo } from './when.js';
+import { calendar, dueChip, pastLabel, timeAgo } from './when.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const ALSO_OPEN_SHOWN = 6;
@@ -59,11 +61,51 @@ const safeMark = (c: ProjectCard): SafeHtml => {
   return html`<span class="pwarn" role="img" aria-label="${why}" title="${why}">!</span>`;
 };
 
+const HEALTH_CLASS = { needs_you: 'hl-needs', at_risk: 'hl-risk', stuck: 'hl-stuck', on_track: 'hl-ok' } as const;
+/** One reason as a plain sentence in the owner's language. */
+export function healthReason(r: HealthReason, now: Date): string {
+  // A due date is a calendar day with no zone: formatted as one (like dueLabel), never as an instant.
+  const date = (due: string): string => calendar(due, Number(day(now).slice(0, 4)));
+  switch (r.kind) {
+    case 'needs_you': return r.days < 0 ? t('projects.health.r.late', { text: r.text, date: date(r.due) }) : t('projects.health.r.due', { text: r.text, date: date(r.due) });
+    case 'at_risk': return r.count > 0 ? t('projects.health.r.unpushed', { count: r.count }) : t('projects.health.r.uncommitted', { count: r.uncommitted });
+    case 'stuck': return t('projects.health.r.stuck', { days: r.days, next: r.next });
+  }
+}
+/**
+ * The health label: a small chip with its reasons as the tooltip (a screen reader gets them from `healthWhy`, below, or from
+ * the lines beside it on the project page). "On track" has no reasons and is drawn quietly (no fill). Nothing for a project
+ * that has no health (not open).
+ */
+export function healthChip(h: ProjectHealth | null, now: Date): SafeHtml {
+  if (h === null) return html``;
+  const label = tKey(`projects.health.${h.state}`);
+  if (h.reasons.length === 0) return html`<span class="hl ${HEALTH_CLASS[h.state]}" data-health="${h.state}">${label}</span>`;
+  const why = h.reasons.map((r) => healthReason(r, now));
+  return html`<span class="chip hl ${HEALTH_CLASS[h.state]}" data-health="${h.state}" title="${why.join('\n')}">${label}</span>`;
+}
+/**
+ * For a list row or tile (the whole thing is one link): the reasons as a hidden text the link is described by, so the link's
+ * own name stays the project's name. `attr` goes on the link, `node` inside it.
+ */
+function healthWhy(c: ProjectCard, now: Date): { attr: SafeHtml; node: SafeHtml } {
+  if (!c.health || c.health.reasons.length === 0) return { attr: html``, node: html`` };
+  const id = `hw-${c.project.name}`;
+  return { attr: html` aria-describedby="${id}"`, node: html`<span id="${id}" hidden>${c.health.reasons.map((r) => healthReason(r, now)).join(' ')}</span>` };
+}
+const has = (c: ProjectCard, kind: HealthReason['kind']): boolean => c.health?.reasons.some((r) => r.kind === kind) ?? false;
+/** The health chip already says it: a late or soon waiting item (needs you), and work only on the Mac (at risk). */
+const waitShown = (c: ProjectCard, now: Date, only = false): SafeHtml => (c.health?.state === 'needs_you' ? html`` : only ? dueOnly(c, now) : waitChip(c, now));
+const markShown = (c: ProjectCard): SafeHtml => (c.notPushed && has(c, 'at_risk') ? html`` : safeMark(c));
+/** The project page's header: the label and each reason as its own short line. */
+const healthLines = (h: ProjectHealth | null, now: Date): SafeHtml => h === null ? html`` : html`<div class="phealth">${healthChip(h, now)}${h.reasons.length > 0 ? html`<ul class="phealth-why plain-list">${h.reasons.map((r) => html`<li>${healthReason(r, now)}</li>`)}</ul>` : ''}</div>`;
+
 /** A live project as a tile: dot and name (and the warning mark), the one-liner, the next step. */
 function tile(c: ProjectCard, now: Date, selected: string | undefined): SafeHtml {
   const p = c.project;
-  return html`<li><a class="pcard ptile${selected === p.name ? ' is-selected' : ''}" href="${panelHref(p.name)}"${selected === p.name ? html` aria-current="true"` : ''}>
-  <span class="ptile-head">${stateDot(c)}<span class="pcard-name">${p.name}</span>${dueOnly(c, now)}${safeMark(c)}</span>
+  const why = healthWhy(c, now);
+  return html`<li><a class="pcard ptile${selected === p.name ? ' is-selected' : ''}" href="${panelHref(p.name)}"${selected === p.name ? html` aria-current="true"` : ''}${why.attr}>
+  <span class="ptile-head">${stateDot(c)}<span class="pcard-name">${p.name}</span>${healthChip(c.health, now)}${waitShown(c, now, true)}${markShown(c)}</span>${why.node}
   ${p.oneLiner ? html`<span class="pcard-one">${p.oneLiner}</span>` : ''}
   ${c.next ? html`<span class="pcard-line">${c.next}</span>` : ''}
 </a></li>`;
@@ -77,10 +119,10 @@ function row(c: ProjectCard, now: Date, selected: string | undefined, one = fals
   const p = c.project;
   const note = c.newActivity ? html`<span class="row-note">${t('projects.newActivity')}</span>`
     : c.quietDays !== null ? html`<span class="row-note">${c.quietDays < 21 ? t('projects.quietDays', { count: c.quietDays }) : t('projects.quietWeeks', { count: Math.floor(c.quietDays / 7) })}</span>` : html``;
-  const wait = waitChip(c, now);
-  // The waiting chip and the work-not-safe mark side by side: the mark is the one signal never dropped.
-  const chip = html`${wait}${safeMark(c)}`;
-  return html`<li><a class="row prow${selected === p.name ? ' is-selected' : ''}" href="${panelHref(p.name)}"${selected === p.name ? html` aria-current="true"` : ''}>${stateDot(c)}<span class="prow-name">${p.name}</span>${one ? html`<span class="prow-one" hidden>${p.oneLiner ?? ''}</span>` : ''}<span class="prow-next">${c.next ?? p.oneLiner ?? (c.roadmap ? '' : html`<span class="quiet">${t('projects.noRoadmap')}</span>`)}${note}</span><span class="prow-chip">${chip}</span><span class="prow-when">${pastLabel(c.lastTouched, now)}</span></a></li>`;
+  // The waiting chip and the work-not-safe mark side by side: the mark is the one signal never dropped (unless the health chip already says it).
+  const chip = html`${healthChip(c.health, now)}${waitShown(c, now)}${markShown(c)}`;
+  const why = healthWhy(c, now);
+  return html`<li><a class="row prow${selected === p.name ? ' is-selected' : ''}" href="${panelHref(p.name)}"${selected === p.name ? html` aria-current="true"` : ''}${why.attr}>${why.node}${stateDot(c)}<span class="prow-name">${p.name}</span>${one ? html`<span class="prow-one" hidden>${p.oneLiner ?? ''}</span>` : ''}<span class="prow-next">${c.next ?? p.oneLiner ?? (c.roadmap ? '' : html`<span class="quiet">${t('projects.noRoadmap')}</span>`)}${note}</span><span class="prow-chip">${chip}</span><span class="prow-when">${pastLabel(c.lastTouched, now)}</span></a></li>`;
 }
 
 /** A shelf's last line (desktop, 1920 px and up; hidden below): "N more" past the three names it shows, else "Open". */
@@ -118,6 +160,16 @@ function areaSection(sec: AreaSection, now: Date, selected: string | undefined, 
     : html`<ul class="group prows">${sec.live.map((c) => row(c, now, selected))}</ul>`;
   return html`<section class="parea" aria-labelledby="pa-${key}"><h2 id="pa-${key}">${areaRing(sec.area)}${label}${sec.live.length > 0 ? html` <span class="n">${sec.live.length}</span>` : ''}</h2>
   ${live}${areaFolds(sec, now, selected)}</section>`;
+}
+
+/** The Monday card: "Your week, 26 Oct – 1 Nov", the one-sentence summary, three numbers, and Read it / Not now (both POSTs, nothing is marked by a GET). */
+function mondayCard(m: MondayCard): SafeHtml {
+  const stat = (n: number, key: 'done' | 'waiting' | 'stuck') => html`<div class="mc-stat"><dt class="mc-l">${tKey(`projects.monday.${key}`, { count: n })}</dt><dd class="mc-n">${n}</dd></div>`;
+  return html`<section class="monday-card" aria-labelledby="monday-h"><h2 id="monday-h">${t('projects.monday.title', { dates: m.dates })}</h2>
+  <p class="mc-text">${m.text}</p>
+  <dl class="mc-stats">${stat(m.done, 'done')}${stat(m.waiting, 'waiting')}${stat(m.stuck, 'stuck')}</dl>
+  <div class="mc-actions"><form method="post" action="/review/${m.monday}/open"><button type="submit" class="secondary">${t('projects.monday.read')}</button></form><form method="post" action="/review/${m.monday}/dismiss"><button type="submit" class="ghost">${t('projects.foryou.notNow')}</button></form></div>
+</section>`;
 }
 
 /**
@@ -234,6 +286,7 @@ function panel(d: ProjectDetail, now: Date, error?: string): SafeHtml {
   <h2 id="panel-title">${p.name}</h2>
   ${errorBlock(error)}
   ${metaLine([p.oneLiner ?? t('projects.noOneLiner'), html`${areaDot(p)} ${areaName(p)}`, state, d.card.notPushed ? html`<span class="chip plain">${t('projects.notPushed')}</span>` : null], { big: true })}
+  ${healthLines(d.card.health, now)}
   ${jump}
   <h3>${t('projects.leftOff')}${d.leftOff ? html` <span class="quiet">· ${pastLabel(d.leftOff.updatedAt, now)}</span>` : ''}</h3>
   ${d.leftOff ? leftOff(d.leftOff.content) : d.card.roadmap?.now ? html`<p class="leftoff">${d.card.roadmap.now}</p>` : html`<p class="quiet">${t('projects.noStatus')}</p>`}
@@ -290,13 +343,12 @@ ${ignored.length > 0 ? html`<h3 class="nib-ignored">${t('projects.nib.ignored')}
 </details></li>`;
 }
 
-/** The Monday line: last week in one sentence, with Read it and Not now. */
-export interface WeekLine { monday: string; dates: string; text: string }
 
 /** What the Projects screen is drawn from. */
 export interface HomeViewInput {
   home: Home; selected: ProjectDetail | undefined; approvals: ApprovalSummary; discussionsWaiting?: { id: string; title: string }[]; backupProblem: string | null; now: Date; error?: string;
-  weekLine?: WeekLine | null;
+  /** The Monday card, at the top of the page, while last week's review is unread (src/web/mondayCard.ts). */
+  monday?: MondayCard | null;
   /** Folders the owner ignored, each with an Undo under "Not in the brain yet". */
   ignored?: { key: string; name: string }[];
   /** Every discussion, in the Discussions list's order: the All discussions shelf on a wide screen. */
@@ -340,7 +392,7 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   const sel = v.selected?.card.project.name;
   // System problems only, one at most: the backup warning. Approvals and discussions are For-you rows.
   const banner = v.backupProblem ? html`<div class="banner warn"><span class="dot attention" aria-hidden="true"></span><span class="txt">${v.backupProblem}</span><a class="button sm" href="/settings#health">${t('projects.look')}</a></div>` : '';
-  const forYou = forYouCard(forYouRows({ approvals: v.approvals, disagreements: v.disagreements ?? 0, health: v.health, discussions: v.discussionsWaiting ?? [], weekLine: v.weekLine ?? null, suggestions: home.suggestions }));
+  const forYou = forYouCard(forYouRows({ approvals: v.approvals, disagreements: v.disagreements ?? 0, health: v.health, discussions: v.discussionsWaiting ?? [], suggestions: home.suggestions }));
   const empty = home.sections.length === 0;
   const plain = mode === 'home';
   // The plain home reaches the map and the discussions through its links row: its card of the same two rows would only repeat them.
@@ -352,6 +404,7 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   return html`<div class="plist">
   <h1>${t('projects.title')}${plain ? html`<span class="phome-date" hidden>${longDate(now)}</span>` : ''}</h1>
   ${errorBlock(v.error)}
+  ${v.monday ? mondayCard(v.monday) : ''}
   ${banner}${v.justUpdated ?? ''}${v.nextStep ?? ''}${v.updateCard ?? ''}${plain && v.firstSteps ? v.firstSteps : v.offsiteCard ?? ''}${v.modelsLine ?? ''}
   <form method="post" action="/projects/ideas" class="idea"><label class="visually-hidden" for="idea-text">${t('projects.idea.label')}</label><input id="idea-text" name="text" maxlength="140" placeholder="${t('projects.idea.placeholder')}" autocomplete="off"><button type="submit" class="primary">${t('projects.idea.add')}</button></form>
   ${forYou.value === '' ? '' : html`<h2 class="fy-h" id="foryou" hidden>${t('projects.forYou')}</h2>`}${forYou}

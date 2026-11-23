@@ -235,8 +235,8 @@
   .phome.has-panel > .plist .prow-name { font-weight: 600; }
   .phome.has-panel > .plist .prow-next { font-size: var(--t-sub); }
   .phome.has-panel > .plist .row.prow :is(.prow-when, .row-note) { display: none; }
-  /* Of the chips, only the "work not safe" mark stays in the narrow list (spec 2026-11-11: the one mark the list shows). */
-  .phome.has-panel > .plist .row.prow .prow-chip > :not(.pwarn) { display: none; }
+  /* Of the chips, only the "work not safe" mark and the health label stay in the narrow list. */
+  .phome.has-panel > .plist .row.prow .prow-chip > :not(.pwarn, .hl) { display: none; }
   /* The areas sit closer in the narrow list than on the home. */
   .phome.has-panel > .plist .pareas { gap: 18px; }
 
@@ -257,8 +257,6 @@
   /* For you rows: the dot, the sentence on up to two lines. */
   .phome.has-panel > .plist .foryou .row { grid-template-columns: 8px minmax(0, 1fr) auto; }
   .phome.has-panel > .plist .foryou .row.nolead { grid-template-columns: minmax(0, 1fr) auto; }
-  .phome.has-panel > .plist .fy-week button.row { padding-right: 84px; }
-  .phome.has-panel > .plist .fy-week .fy-not { right: 4px; }
 
   /* The sheet without JavaScript: the server's panel as one white card, 10 px off the edges, its own scroll. */
   .phome.has-panel > .ppanel { align-self: stretch; min-height: 0; margin: 10px 10px 10px 0; padding: 20px 36px 48px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; container-type: inline-size; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); }

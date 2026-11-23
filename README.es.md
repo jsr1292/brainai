@@ -206,7 +206,7 @@ Todo lo personal vive en `overlay/`, que nunca se sube a git ni lo toca una actu
 
 - `setup.json` añade tus propias líneas al texto de configuración que recibe cada app. `extra` admite una app
   (`claude`, `chatgpt`, `grok`, `grok-build`, `claude-code`, `codex`, `opencode`) o `coding` (todas las herramientas de
-  programación) y una lista de líneas. Sube `version` cuando lo cambies, y Ajustes muestra qué apps siguen con el
+  programación) y una lista de líneas. Cuando cambies tus líneas, sube `version` por encima del número de configuración integrado actual (las apps informan del mayor de los dos). Ajustes muestra qué apps siguen con el
   texto antiguo.
 - `scripts.env` contiene los ajustes de los scripts nocturnos: adónde se copian las copias de seguridad y el nombre
   que aparece en los commits de la exportación.

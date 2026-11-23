@@ -12,7 +12,8 @@ import { ImageStore } from '../images/store.js';
 import { UploadLinks } from '../images/uploadLinks.js';
 import { DiagramChecks } from '../pages/diagramChecks.js';
 import { makeGrowth, makePages, makeService } from '../testing/helpers.js';
-import { buildMcpServer, CHANGES_PAUSED, DELETE_HELD_FOR_REVIEW, HELD_FOR_REVIEW, PAGE_EDITS_PAUSED, SAVES_PAUSED, WRITE_TOOLS } from './server.js';
+import { buildMcpServer, CHANGES_PAUSED, DELETE_HELD_FOR_REVIEW, HELD_FOR_REVIEW, PAGE_EDITS_PAUSED, SAVES_PAUSED, WRITE_TOOLS, BEING_REMOVED } from './server.js';
+import { setRemoving, writesInFlight } from '../desktop/removing.js';
 
 const NOW = new Date('2026-11-18T10:00:00Z');
 
@@ -258,4 +259,57 @@ test('every write tool the full connection serves is in WRITE_TOOLS: a new tool 
   const unknown = served.filter((t) => !WRITE_TOOLS.has(t) && !readOnly.has(t));
   assert.deepEqual(unknown, [], 'a served tool is neither in WRITE_TOOLS nor in the read-only list');
   for (const t of ['remember', 'write_page', 'begin_image_upload', 'add_page_image', 'flag_disagreement']) assert.ok(served.includes(t), `${t} is served`);
+});
+
+test('a desktop removal in progress: write tools say so and store nothing (even for a connection whose saves wait); reads work', async () => {
+  const s = setup();
+  const { call } = await s.connect();
+  const fact = (await s.service.remember({ kind: 'decision', project: 'brainai', content: 'A fact that exists' }, OWNER)) as any;
+  const page = await s.pages.create({ title: 'brainai — overview', project: 'brainai', body: 'Lead.\n\n## Stack\nSomething.' }, 'owner');
+  setRemoving(true);
+  try {
+    s.waiting.add('g1');
+    for (const [tool, a] of [
+      ['remember', { kind: 'decision', project: 'brainai', content: 'Too late' }],
+      ['update_memory', { id: fact.memory.id, content: 'Changed' }],
+      ['write_page', { title: 'brainai — more', project: 'brainai', body: 'x' }],
+      ['suggest_memories', { session: 's', items: [{ kind: 'decision', project: 'brainai', content: 'Too late too' }] }],
+    ] as const) {
+      const r = await call(tool, a as never);
+      assert.equal(r.text, BEING_REMOVED, tool);
+      assert.equal(r.isError, true, tool);
+    }
+    assert.equal(BEING_REMOVED, 'BrainAI is being removed; nothing can be saved.');
+    assert.equal(s.service.get(fact.memory.id)!.content, 'A fact that exists');
+    assert.equal(s.service.pendingSuggestions().length, 0, 'nothing waits in the Inbox either');
+    assert.equal(s.service.listProjects().find((p) => p.project === 'brainai')?.count, 1);
+    assert.equal(s.pages.list().length, 1);
+    for (const [tool, a] of [['recall', { query: 'a fact' }], ['project_brief', { project: 'brainai' }], ['list_pages', {}], ['read_page', { id: page.id }]] as const) {
+      const r = await call(tool, a as never);
+      assert.notEqual(r.text, BEING_REMOVED, tool);
+      assert.equal(r.isError, false, tool);
+    }
+  } finally { setRemoving(false); s.cleanup(); }
+});
+
+test('a write tool in progress is counted until it ends, even when it fails', async () => {
+  const s = setup();
+  const { call } = await s.connect();
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  const real = s.service.remember.bind(s.service);
+  (s.service as any).remember = async (...a: any[]) => { await held; return (real as any)(...a); };
+  try {
+    assert.equal(writesInFlight(), 0);
+    const pending = call('remember', { kind: 'decision', project: 'brainai', content: 'Slow one' });
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(writesInFlight(), 1);
+    release();
+    await pending;
+    assert.equal(writesInFlight(), 0);
+    // A refused write is never counted.
+    setRemoving(true);
+    await call('remember', { kind: 'decision', project: 'brainai', content: 'Refused' });
+    assert.equal(writesInFlight(), 0);
+  } finally { setRemoving(false); s.cleanup(); }
 });

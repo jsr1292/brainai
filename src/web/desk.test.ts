@@ -816,8 +816,8 @@ test('the desktop home: the areas in the main column, For you and the extras in 
   assert.doesNotMatch(deskCss, /#ongo\)|#alsoopen|\.pf-h|shelf-names/, 'nothing of the old layout is left but the On the go hint');
 });
 
-test('beside an open project the rows keep only the "work not safe" mark of the chips', () => {
-  assert.equal(propIn(deskRules, '.phome.has-panel > .plist .row.prow .prow-chip > :not(.pwarn)', 'display', D), 'none');
+test('beside an open project the rows keep only the "work not safe" mark and the health label of the chips', () => {
+  assert.equal(propIn(deskRules, '.phome.has-panel > .plist .row.prow .prow-chip > :not(.pwarn, .hl)', 'display', D), 'none');
   assert.equal(propIn(deskRules, '.phome.has-panel > .plist .row.prow :is(.prow-when, .row-note)', 'display', D), 'none');
 });
 

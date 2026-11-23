@@ -33,6 +33,8 @@ export function mcpServerFor(d: AppDeps, o: { actorName: string; access: Access;
     tidy: d.tidy,
     savesWait: (id) => d.provider.grantSavesWait(id),
     health: () => healthOf(d, d.now()),
+    projectHealth: (name) => d.projects.healthFor(name, d.now()),
+    allProjectHealth: () => d.projects.healthAll(d.now()),
     // Read for each connection, so flipping the switch applies to the next one without a restart.
     coaching: coachingOn(d.store),
   });

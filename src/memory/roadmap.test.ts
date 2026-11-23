@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkRoadmap, formatRoadmap, keepTicked, parseRoadmap } from './roadmap.js';
+import { checkRoadmap, formatRoadmap, itemKey, keepTicked, parseRoadmap } from './roadmap.js';
 
 test('a roadmap reads as Now, Next, Later and the items waiting on the owner', () => {
   const r = parseRoadmap('Now: design refresh, tasks 3–15\nNext: final review, merge, install\nWaiting on you: device checklist; reinstall before the profiles expire (by 2026-10-27)');
@@ -111,4 +111,18 @@ test('filler such as none, N/A or a dash is not read as a step or as something w
   // Real steps that merely start with one of those words are kept.
   assert.deepEqual(parseRoadmap('Now: x\nWaiting on you: nothing to add to the form? check it').waiting.length, 1);
   assert.deepEqual(parseRoadmap('Now: x\nNext: none of the old tests should fail').nextSteps, ['none of the old tests should fail']);
+});
+
+test('a due date is read with inner spaces, any case, "due", and a closing full stop; anything else stays undated', () => {
+  const w = (item: string) => parseRoadmap(`Now: x\nWaiting on you: ${item}`).waiting[0];
+  assert.deepEqual(w('sign it (by 2026-11-25)'), { text: 'sign it', due: '2026-11-25' });
+  assert.deepEqual(w('sign it ( by 2026-11-25 )'), { text: 'sign it', due: '2026-11-25' });
+  assert.deepEqual(w('sign it (By 2026-11-25)'), { text: 'sign it', due: '2026-11-25' });
+  assert.deepEqual(w('sign it (due 2026-11-25)'), { text: 'sign it', due: '2026-11-25' });
+  assert.deepEqual(w('sign it (DUE 2026-11-25).'), { text: 'sign it', due: '2026-11-25' });
+  assert.deepEqual(parseRoadmap('Now: x\nWaiting on you: a (by 2026-11-25); b (by 2026-11-26).').waiting.map((x) => x.due), ['2026-11-25', '2026-11-26']);
+  assert.deepEqual(w('sign it by 2026-11-25'), { text: 'sign it by 2026-11-25', due: null });
+  assert.deepEqual(w('sign it (by 2026-13-45)'), { text: 'sign it (by 2026-13-45)', due: null });
+  assert.deepEqual(w('sign it (by friday)'), { text: 'sign it (by friday)', due: null });
+  assert.equal(itemKey('Sign it (due 2026-11-25).'), 'sign it');
 });

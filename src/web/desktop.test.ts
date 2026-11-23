@@ -77,6 +77,17 @@ test('Settings › Tools on this Mac lists the tools and connects and disconnect
   assert.deepEqual(f.servers('claude'), {});
 });
 
+test('Connect on Codex allows its sign-in site (chatgpt.com), so its sign-in is not refused as an unknown client', async (t) => {
+  const { app } = await start(t);
+  const { cookie } = await openPage(app.baseUrl, '/settings');
+  assert.equal(app.deps.allowlist.isAllowed('https://chatgpt.com/oauth/codex/'), true, 'allowed once at the first start, for brains that connected Codex earlier');
+  app.deps.allowlist.remove('https://chatgpt.com/oauth/codex/');
+  assert.equal(app.deps.allowlist.isAllowed('https://chatgpt.com/oauth/codex/'), false);
+  assert.equal((await post(app.baseUrl, '/settings/tools/codex/connect', cookie)).status, 303);
+  assert.equal(app.deps.allowlist.isAllowed('https://chatgpt.com/oauth/codex/'), true);
+  assert.ok(app.deps.allowlist.originAllowed('https://chatgpt.com'), 'its client document can be fetched');
+});
+
 test('Connect writes the rules in Spanish when the owner\'s language is Spanish, and English otherwise; Replace later rewrites them', async (t) => {
   const { app, f } = await start(t);
   const { findBlock } = await import('../desktop/rulesBlock.js');

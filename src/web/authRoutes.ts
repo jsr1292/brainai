@@ -1,3 +1,5 @@
+import { dirname, join } from 'node:path';
+import { temporaryHomePort } from '../desktop/homePort.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { InvalidRequestError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
@@ -160,7 +162,12 @@ ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
     const grant = typeof req.query.grant === 'string' ? req.query.grant : '';
     const challenge = typeof req.query.challenge === 'string' ? req.query.challenge : '';
     if (!d.localMode || !/^[0-9a-f]{64}$/.test(challenge)) return next();
-    const proof = d.provider.bridgeProof(grant, new URL('/mcp', d.publicUrl).href, challenge, d.publicUrl.port);
+    // A key made at the usual address still works on a temporary port: the proof is looked up for either address (and /mcp
+    // accepts such a token on this computer too, see localVerifier in app.ts).
+    const running = new URL('/mcp', d.publicUrl);
+    const home = d.statusDir ? temporaryHomePort(join(dirname(d.statusDir), 'brainai.json'), Number(d.publicUrl.port)) : null;
+    const homeUrl = home !== null ? (() => { const u = new URL(running); u.port = String(home); return u.href; })() : null;
+    const proof = d.provider.bridgeProof(grant, running.href, challenge, d.publicUrl.port) ?? (homeUrl ? d.provider.bridgeProof(grant, homeUrl, challenge, d.publicUrl.port) : null);
     // No live key for this grant (revoked, expired or unknown): the bridge tells the person to connect again.
     if (!proof) return res.status(410).set('Cache-Control', 'no-store').json({ state: 'not_connected' });
     res.set('Cache-Control', 'no-store').json({ proof });

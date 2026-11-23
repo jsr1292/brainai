@@ -43,6 +43,11 @@ pub const TABLE: &[(&str, &str, &str)] = &[
         "BrainAI can't confirm a saved copy for this removal, so nothing was removed. Run Remove BrainAI again from Settings.",
         "BrainAI no puede confirmar que haya una copia guardada para esta eliminación, así que no se ha quitado nada. Vuelve a ejecutar Quitar BrainAI desde Ajustes.",
     ),
+    (
+        "remove.not_reopened",
+        "BrainAI still can't save anything after the cancelled removal. Quit BrainAI and open it again.",
+        "BrainAI sigue sin poder guardar nada tras cancelar la eliminación. Sal de BrainAI y vuelve a abrirlo.",
+    ),
     ("remove.data_failed", "BrainAI could not delete its data folder {path} ({error}); delete it yourself.", "BrainAI no ha podido borrar su carpeta de datos {path} ({error}); bórrala tú."),
     ("remove.trash_failed", "BrainAI could not move itself to the Trash: drag {path} there yourself.", "BrainAI no ha podido moverse a la papelera: arrastra {path} hasta ella tú."),
     ("remove.drag_trash", "Drag BrainAI to the Trash to finish.", "Arrastra BrainAI a la papelera para terminar."),
@@ -68,6 +73,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("common.cancel", "Cancel", "Cancelar"),
     // The folder picker.
     ("folder.pick_title", "Choose a folder for the second copy", "Elige una carpeta para la segunda copia"),
+    ("restore.pick_title", "Choose the folder with your saved copy", "Elige la carpeta con tu copia guardada"),
     // Start-up and running problems.
     (
         "err.vcredist",
@@ -91,8 +97,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ),
     (
         "err.port_changed",
-        "Another program is using port {old}, so BrainAI now uses port {port}.\n\nApps you connected to http://localhost:{old} need connecting again: Settings › Set up an app.",
-        "Otro programa está usando el puerto {old}, así que BrainAI usa ahora el puerto {port}.\n\nLas aplicaciones que conectaste a http://localhost:{old} hay que volver a conectarlas: Ajustes › Configurar una aplicación.",
+        "Another program is using port {old}, so BrainAI now uses port {port}.\n\nApps you connected to http://localhost:{old} need connecting again: open Settings › Tools and press Connect.",
+        "Otro programa está usando el puerto {old}, así que BrainAI usa ahora el puerto {port}.\n\nLas aplicaciones que conectaste a http://localhost:{old} hay que volver a conectarlas: abre Ajustes › Herramientas y pulsa Conectar.",
     ),
     // Updates.
     (

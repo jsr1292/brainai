@@ -28,7 +28,7 @@ const esDayYear = new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'sho
 const spanishDay = (y: number, m: number, d: number, withYear: boolean): string => (withYear ? esDayYear : esDay).format(new Date(Date.UTC(y, m - 1, d, 12)));
 
 /** "26 Oct", with the year when it is not `thisYear`. */
-function calendar(ymd: string, thisYear: number): string {
+export function calendar(ymd: string, thisYear: number): string {
   const [y, m, d] = ymd.split('-').map(Number) as [number, number, number];
   if (currentLanguage() === 'es') return pseudoWrap(spanishDay(y, m, d, y !== thisYear));
   return pseudoWrap(y === thisYear ? `${d} ${MONTHS[m - 1]}` : `${d} ${MONTHS[m - 1]} ${y}`);

@@ -128,6 +128,15 @@ export class MemoryStore {
       WHERE settled_at IS NULL AND NOT (${live('a')} AND ${live('b')})`).run(this.ts()).changes;
   }
 
+  /** Each project's newest live, current status time in one query; the predicate is `isStatus` (src/memory/brief.ts). */
+  latestStatusTimes(): Map<string, string> {
+    const rows = this.db.prepare(`SELECT m.project AS project, max(m.updated_at) AS at FROM memories m
+      WHERE m.deleted_at IS NULL AND m.project IS NOT NULL AND NOT ${replacedSql('m')}
+        AND (m.kind = 'summary' OR (m.kind NOT IN ('roadmap', 'profile') AND EXISTS (SELECT 1 FROM json_each(m.tags) j WHERE j.value = 'status')))
+      GROUP BY m.project`).all() as { project: string; at: string }[];
+    return new Map(rows.map((r) => [r.project, r.at]));
+  }
+
   /** Brain health: each project's newest live, current status (kind summary, or decision tagged status), in one query. */
   statusTimes(): Map<string, string> {
     const rows = this.db.prepare(`SELECT m.project AS project, m.kind AS kind, m.tags AS tags, m.updated_at AS at FROM memories m

@@ -1,11 +1,13 @@
 import type { LearningService } from '../learning/service.js';
 import { dirname, join } from 'node:path';
+import { temporaryHomePort } from '../desktop/homePort.js';
 import { fileURLToPath } from 'node:url';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
 import { createOAuthMetadata, getOAuthProtectedResourceMetadataUrl, mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { ClientsStore } from '../auth/clientsStore.js';
+import { exemptFromDailyCap } from '../auth/clientsStore.js';
 import type { LoginLimiter } from '../auth/loginLimiter.js';
 import type { OwnerAuth } from '../auth/owner.js';
 import type { MemoryOAuthProvider } from '../auth/provider.js';
@@ -18,9 +20,11 @@ import { BackupCopy } from '../desktop/backupCopy.js';
 import { PublicDoor, viaDoor } from '../desktop/publicDoor.js';
 import { movedTo } from '../desktop/move.js';
 import { desktopRoutes } from './desktopRoutes.js';
+import { weekNoteRoutes } from './weekNote.js';
 import { reachRoutes } from './reachRoutes.js';
 import { moveRoutes } from './moveRoutes.js';
 import { savedRoutes } from './savedRoutes.js';
+import { isRemoving } from '../desktop/removing.js';
 import { removeRoutes } from './removeRoutes.js';
 import type { SessionStore } from '../auth/sessions.js';
 import type { Clock } from '../clock.js';
@@ -344,7 +348,7 @@ export function createApp(d: AppDeps): express.Express {
       ...(app ? [{ key: 'shell.goto.reach' as const, href: '/settings/reach', alias: 'Reach' }] : []),
       ...(app && d.models ? [{ key: 'shell.goto.search' as const, href: '/settings#search' }] : []),
       { key: 'lang.goto', href: '/settings#language', alias: 'Language Idioma' },
-      { key: 'theme.goto', href: '/settings#appearance', alias: 'Appearance Apariencia Theme Dark mode Light Tema Modo oscuro claro' },
+      { key: 'theme.goto', href: '/settings#appearance', alias: 'Appearance Apariencia Theme Dark mode Light Tema Modo oscuro claro Notification Notificación' },
       { key: 'coaching.goto', href: '/settings#coaching', alias: 'Developer coaching Aprendizaje' },
       { key: 'shell.goto.backups', href: '/settings#health' },
       { key: 'shell.goto.version', href: '/settings#version', alias: 'Check for updates' },
@@ -368,15 +372,20 @@ export function createApp(d: AppDeps): express.Express {
   // 2. Our authorization server metadata (adds CIMD support); registered first so it wins over the SDK's.
   // Callbacks carry RFC 9207 `iss`, but authorization_response_iss_parameter_supported is not advertised: Grok Build
   // (rmcp) then requires `iss` on every callback and its sign-in failed.
-  const metadataFor = (origin: URL) => ({
+  // CIMD (client_id_metadata_document_supported) makes Claude Code and Codex name themselves with documents on
+  // claude.ai / chatgpt.com, which this server must fetch: sign-in then needs internet (offline or behind a proxy it
+  // fails with "Invalid client_id"). On the desktop app's own localhost address it is not advertised, so those tools
+  // register dynamically (POST /register), which needs nothing outside this computer. The public address and a
+  // server keep it. Clients already signed in with a CIMD id are unaffected: getClient still resolves them.
+  const metadataFor = (origin: URL, cimd: boolean) => ({
     ...createOAuthMetadata({ provider: d.provider, issuerUrl: origin, scopesSupported: SCOPES }),
-    client_id_metadata_document_supported: true,
+    ...(cimd ? { client_id_metadata_document_supported: true } : {}),
   });
-  const metadata = metadataFor(d.publicUrl);
+  const metadata = metadataFor(d.publicUrl, d.localMode !== true);
   // The address a request came in at: the public one for everything through the public door (D4), never by Host.
   const onPublic = (req: express.Request) => viaDoor(req) && reachUrl() !== null;
-  app.get('/.well-known/oauth-authorization-server', (req, res) => {
-    res.set('Access-Control-Allow-Origin', '*').json(onPublic(req) ? metadataFor(reachUrl()!) : metadata);
+  app.get(['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/mcp'], (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*').json(onPublic(req) ? metadataFor(reachUrl()!, true) : metadata);
   });
 
   // 3. OAuth endpoints, each with its own per-IP rate limit; registration (it adds rows) gets a stricter one.
@@ -384,10 +393,10 @@ export function createApp(d: AppDeps): express.Express {
   const registrationRateLimit = { windowMs: 60 * 60_000, limit: 20, keyGenerator: rateLimitKey };
   // Parsed here with a small limit (oversize → 413); the SDK's own JSON parser then skips the parsed body.
   const refused = new RefusedRedirects(d.now);
-  app.use('/register', express.json({ limit: '8kb' }), logRejectedRegistration(d.now, refused, d.allowlist));
+  app.use('/register', (req, _res, next) => (d.localMode && !viaDoor(req) ? exemptFromDailyCap(next) : next()), express.json({ limit: '8kb' }), logRejectedRegistration(d.now, refused, d.allowlist));
   // One auth router and one token check per address: each answers with its own issuer and resource, and a token
   // is accepted only at the address it was issued for.
-  const authFor = (origin: URL) => {
+  const authFor = (origin: URL, verifier: Pick<typeof d.provider, 'verifyAccessToken'> = d.provider) => {
     const resource = new URL('/mcp', origin);
     // An app that names no resource gets this address's (the provider alone would give it localhost's).
     const provider = new Proxy(d.provider, {
@@ -413,10 +422,31 @@ export function createApp(d: AppDeps): express.Express {
         clientRegistrationOptions: { rateLimit: registrationRateLimit, clientSecretExpirySeconds: 0 },
         revocationOptions: { rateLimit },
       }),
-      bearer: requireBearerAuth({ verifier: d.provider, resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resource), expectedResource: resource }),
+      bearer: requireBearerAuth({ verifier, resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resource), expectedResource: resource }),
     };
   };
-  const localAuth = authFor(d.publicUrl);
+  // On this computer only (never through the public door): while the app runs on a temporary port, a key made at the usual
+  // address (Claude desktop's) is accepted too, as a key for this one. Read from brainai.json, kept for a few seconds.
+  let homeAt = 0;
+  let homeUrl: string | null = null;
+  const usualResource = (): string | null => {
+    if (!d.localMode || !d.statusDir) return null;
+    if (Date.now() - homeAt > 3_000) {
+      homeAt = Date.now();
+      const home = temporaryHomePort(join(dirname(d.statusDir), 'brainai.json'), Number(d.publicUrl.port));
+      if (home === null) homeUrl = null;
+      else { const u = new URL('/mcp', d.publicUrl); u.port = String(home); homeUrl = u.href; }
+    }
+    return homeUrl;
+  };
+  const localVerifier = {
+    verifyAccessToken: async (token: string) => {
+      const info = await d.provider.verifyAccessToken(token);
+      const home = usualResource();
+      return home && info.resource?.href === home ? { ...info, resource: new URL('/mcp', d.publicUrl) } : info;
+    },
+  };
+  const localAuth = authFor(d.publicUrl, localVerifier);
   // The public address's pieces are built when the address is saved (at start, or when Reach is switched on), never
   // while answering a request.
   let publicAuth: { href: string; auth: ReturnType<typeof authFor> } | null = null;
@@ -489,7 +519,15 @@ export function createApp(d: AppDeps): express.Express {
   const ownersImportForms: RequestHandler = (req, res, next) => (d.sessions.isValid(readCookie(req, SESSION_COOKIE)) ? importForms(req, res, next) : next());
   app.use('/import', ownersImportForms, importFormTooLarge(d));
   app.use(express.urlencoded({ extended: false }));
+  // What the removal itself and the app's own window still call (the app's ticket for its window, its cancel).
+  const REMOVAL_FLOW = new Set(['/settings/remove', '/settings/remove/show', '/app/removed/cancel', '/app/ticket']);
   app.use(authRoutes(d));
+  // A desktop removal in progress: nothing is saved from here on (the copy is already taken or being taken), except the
+  // removal's own steps and the app's own calls. Reads keep working.
+  app.use((req, res, next) => {
+    if (!isRemoving() || ['GET', 'HEAD', 'OPTIONS'].includes(req.method) || REMOVAL_FLOW.has(req.path)) return next();
+    res.status(503).type('html').send(page(t('data.removing.title'), html`<div class="narrow"><h1>${t('data.removing.title')}</h1><p>${t('data.removing.text')}</p></div>`, { tab: null, plain: true }));
+  });
 
   // 7. Static assets.
   // Public on purpose (before the owner guard): the manifest, icons and service worker must load without a session or install fails.
@@ -518,6 +556,7 @@ export function createApp(d: AppDeps): express.Express {
   app.use(pictureReviewRoutes(d));
   app.use(setupRoutes(d, refused));
   app.use(desktopRoutes(d));
+  app.use(weekNoteRoutes(d));
   app.use(reachRoutes(d));
   app.use(moveRoutes(d));
   app.use(savedRoutes(d));

@@ -69,8 +69,9 @@ export function syncPictures(db: DB, dataDir: string, dir: string, now: Date, ca
       }
     }
   }
+  // A picture a restore could not bring back (removed_by = 'restore') is never deleted from the copy: it may be the only one left.
   const before = new Date(now.getTime() - PICTURE_KEEP_DAYS * 86400_000).toISOString();
-  const gone = db.prepare("SELECT id, type FROM images WHERE removed_at IS NOT NULL AND removed_at < ?").all(before) as { id: string; type: string }[];
+  const gone = db.prepare("SELECT id, type FROM images WHERE removed_at IS NOT NULL AND removed_at < ? AND (removed_by IS NULL OR removed_by <> 'restore')").all(before) as { id: string; type: string }[];
   for (const g of gone) {
     const path = join(dir, 'images', g.id.slice(0, 2), `${g.id}.${g.type === 'jpeg' ? 'jpg' : g.type}`);
     if (careful) {

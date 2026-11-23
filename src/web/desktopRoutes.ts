@@ -1,19 +1,24 @@
 /** The Mac app's pages (D3), in local mode only: Settings › Tools on this Mac. */
-import { Router, type RequestHandler } from 'express';
-import { createWriteStream, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { takeCancelNotice } from '../desktop/removing.js';
+import express, { Router, type RequestHandler } from 'express';
+import { createWriteStream, existsSync, readFileSync, lstatSync, rmSync, writeFileSync } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { dirname, join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { addedNotSignedIn, withSignIn } from './toolSignIn.js';
-import { addReminders, connect, disconnect, foundToolIds, toolStates, type ToolEnv, type ToolId } from '../desktop/tools.js';
-import { setupText } from '../setup/texts.js';
+import { addReminders, connect, disconnect, foundToolIds, prepareEnv, toolStates, type ToolEnv, type ToolId } from '../desktop/tools.js';
+import { applyToolPath } from '../desktop/toolPath.js';
+import { readPorts } from '../desktop/homePort.js';
+import { setupApps, setupText } from '../setup/texts.js';
 import type { AppDeps } from './app.js';
 import { appKeyCheck, requireOwner } from './authRoutes.js';
 import { html, page, type SafeHtml } from './html.js';
 import { viaDoor } from '../desktop/publicDoor.js';
 import { isEmptyBrain, stageRestore } from '../saved/restore.js';
 import { kindOfFile } from '../saved/backupFile.js';
+import { findCopy, NothingFound, type Found } from '../saved/findCopy.js';
 import { addedToolsLine } from './dashboardViews.js';
 import type { AppsStep } from './desktopViews.js';
 import { nextStepCard } from './yourAppsViews.js';
@@ -35,7 +40,8 @@ const OWNER = { type: 'owner' } as const;
 const DONE_FILE = 'welcome-done';
 /** The biggest saved file the welcome takes: a brain with many pictures is large, but not without end. */
 const MAX_UPLOAD = 4 * 1024 ** 3;
-const UPLOAD_FILE = 'restore-upload.tar.gz';
+/** A copy the owner picked in the app waits this long for the confirm. */
+const CHOICE_MS = 15 * 60_000;
 const UPLOAD_TYPES = ['application/gzip', 'application/octet-stream', 'application/vnd.sqlite3', 'application/x-sqlite3'];
 const notASavedFile = () => t('setup.err.notSaved');
 let doneInMemory = false;
@@ -87,7 +93,7 @@ export function toolEnv(d: AppDeps): ToolEnv | null {
   const mcpUrl = new URL('/mcp', d.publicUrl).href;
   const { bridgeCli, ...tools } = d.tools;
   const env: ToolEnv = { hooksDir: fileURLToPath(new URL('../hooks/', import.meta.url)), ...tools, mcpUrl, // Connect writes the rules in the language the owner has when they press it (their Language setting, else the system's; English outside a request). A tool connected in English keeps English rules until it is reconnected.
-    rules: (slug) => setupText(slug, mcpUrl, d.setupOverlay, currentLanguage()) };
+    rules: (slug) => setupText(slug, env.mcpUrl, d.setupOverlay, currentLanguage()) };
   // Disconnect ends a tool's sign-in too, through the same revoke as Settings › Connections (the rows stay, marked revoked).
   env.endSignIns = (toolName) => {
     const live = d.provider.listGrants().filter((g) => !g.revokedAt && g.clientName.toLowerCase().startsWith(toolName.toLowerCase()));
@@ -102,20 +108,44 @@ export function toolEnv(d: AppDeps): ToolEnv | null {
     };
     env.issueKey = () => d.provider.issueLocalGrant({ name: 'Claude (desktop app)', clientName: 'Claude (desktop app)' });
     env.revokeKey = (grantId) => d.provider.revokeGrant(grantId);
-    env.keyLive = (grantId) => d.provider.isLocalGrantLive(grantId, mcpUrl);
+    env.keyLive = (grantId) => d.provider.isLocalGrantLive(grantId, env.mcpUrl);
   }
+  applyHome(d, env);
+  applyToolPath(env);
   return env;
+}
+
+/**
+ * Running on a temporary port this time (the usual one was busy at login)? The app writes brainai.json after the server is up,
+ * so this is read again for every look: the apps are connected to the usual address, so that is the address a tool's entry is
+ * compared with (its entry there is ours, not "another BrainAI"), and Connect is refused until the app is back on it.
+ */
+export function applyHome(d: AppDeps, env: ToolEnv): void {
+  const u = new URL('/mcp', d.publicUrl);
+  env.mcpUrl = u.href;
+  env.temporary = false;
+  const running = Number(u.port);
+  const ports = env.bridge ? readPorts(env.bridge.portFile) : null;
+  const home = ports && running > 0 && ports.home !== null && ports.home !== running ? ports.home : null;
+  if (home !== null) {
+    u.port = String(home);
+    env.mcpUrl = u.href;
+    env.temporary = true;
+  }
+  // Ports the usual one moved away from: an entry there is this brain's own, stale.
+  env.previousUrls = (ports?.previous ?? []).filter((p) => p !== Number(new URL(env.mcpUrl).port)).map((p) => { const x = new URL('/mcp', d.publicUrl); x.port = String(p); return x.href; });
 }
 
 /** The tools' looks start their CLIs (up to 30 s each): the answer is kept for a short while and shared by Settings › Tools and the Settings line. */
 const STATES_MS = 30_000;
 const stateCache = new WeakMap<AppDeps, { at: number; grants: string; states: Promise<Awaited<ReturnType<typeof toolStates>>> }>();
 export function cachedToolStates(d: AppDeps, env: ToolEnv): Promise<Awaited<ReturnType<typeof toolStates>>> {
+  applyHome(d, env);
   // A sign-in granted or revoked elsewhere (Settings › Connections) changes what a look says, so it ends the kept answer too.
-  const grants = d.provider.listGrants().map((g) => `${g.id}:${g.revokedAt ?? ''}`).join(',');
+  const grants = `${env.mcpUrl}|${d.provider.listGrants().map((g) => `${g.id}:${g.revokedAt ?? ''}`).join(',')}`;
   const hit = stateCache.get(d);
   if (hit && hit.grants === grants && d.now().getTime() - hit.at < STATES_MS) return hit.states;
-  const states = toolStates(env);
+  const states = prepareEnv(env).then(() => toolStates(env));
   stateCache.set(d, { at: d.now().getTime(), grants, states });
   states.catch(() => { if (stateCache.get(d)?.states === states) stateCache.delete(d); });
   return states;
@@ -130,10 +160,22 @@ export async function addedToolNames(d: AppDeps): Promise<string[]> {
   try { return addedNotSignedIn(withSignIn(await cachedToolStates(d, env), d.provider.listGrants())).map((t) => t.name); } catch { return []; }
 }
 
+/**
+ * The sign-in sites a tool's setup page would allow. Looked up by setup slug, which equals the tool id for every tool
+ * that has such sites today (codex); a tool whose slug differs (gemini → gemini-cli) has none, and would need a map.
+ */
+const allowFor = (id: string): readonly string[] => setupApps().find((a) => a.slug === id)?.allow ?? [];
+
 export function desktopRoutes(d: AppDeps): Router {
   const router = Router();
   const env = toolEnv(d);
   if (!env) return router;
+  // A brain that connected Codex before Connect allowed its sign-in site never got it: allowed once here, and remembered,
+  // so an owner who later removes it is not overruled at every start.
+  if (d.store.switchValue('codex_site_allowed') === null) {
+    for (const e of allowFor('codex')) d.allowlist.add(e);
+    d.store.setSwitch('codex_site_allowed', '1');
+  }
   const owner = requireOwner(d.sessions);
   // The last result for each tool, shown once on the page it returns to. Kept here, never taken from the URL, so a
   // link from another site cannot make the page say anything (D3 review).
@@ -153,17 +195,32 @@ export function desktopRoutes(d: AppDeps): Router {
     res.set('Cache-Control', 'no-store').type('html').send(addedToolsLine(names).value);
   });
 
+  /** The one-time line after the owner said no to the last removal dialog: what had already been taken out. */
+  const cancelledText = (): string | null => {
+    const n = takeCancelNotice();
+    if (!n) return null;
+    const done = [...(n.tools.length > 0 ? [t('setup.tools.cancelled.tools', { names: n.tools.join(', ') })] : []), ...(n.reach ? [t('setup.tools.cancelled.reach')] : []), ...(n.hooks ? [t('setup.tools.cancelled.hooks')] : [])];
+    return t('setup.tools.cancelled', { done: done.join('; ') });
+  };
+
   router.get('/settings/tools', owner, async (req, res) => {
-    const said = resultFor(req.query.tool);
-    res.type('html').send(page(t('setup.toolsOn', { computer: computerName() }), toolsPage({ tools: withSignIn(await cachedToolStates(d, env), d.provider.listGrants()), windows: windows(env), said, cursorRules: env.rules('claude-code') }),
+    const said = resultFor(req.query.tool) ?? cancelledText();
+    const states = withSignIn(await cachedToolStates(d, env), d.provider.listGrants()); // also brings env's address up to date
+    res.type('html').send(page(t('setup.toolsOn', { computer: computerName() }), toolsPage({ tools: states, windows: windows(env), said, cursorRules: env.rules('claude-code'), temporary: env.temporary === true }),
       { nav: true, tab: null, back: { href: '/settings#connections', labelKey: 'shell.nav.settings' } }));
   });
 
   for (const what of ['connect', 'disconnect'] as const) {
-    router.post(`/settings/tools/:id/${what}`, owner, async (req, res, next) => {
+    // Writes the owner's tool settings: only from the window on this computer, never through the public door.
+    router.post(`/settings/tools/:id/${what}`, sameComputer, owner, async (req, res, next) => {
       const id = req.params.id as string;
       if (!isId(id)) return next();
       const replace = (req.body as Record<string, unknown> | undefined)?.replace === '1';
+      // Pressing Connect is the owner's say-so for that app's sign-in sites, as Allow is on Set up an app: Codex names
+      // itself with a document on chatgpt.com, refused ("Invalid client_id") until that site is allowed.
+      if (what === 'connect') for (const e of allowFor(id)) d.allowlist.add(e);
+      applyHome(d, env);
+      await prepareEnv(env);
       const r = what === 'connect' ? await connect(id, env, { replace }) : await disconnect(id, env);
       forgetToolStates(d);
       if (r.ok) await d.refreshAskCommands?.().catch(() => {});
@@ -174,9 +231,11 @@ export function desktopRoutes(d: AppDeps): Router {
       res.redirect(303, back + id);
     });
   }
-  router.post('/settings/tools/:id/reminders', owner, async (req, res, next) => {
+  router.post('/settings/tools/:id/reminders', sameComputer, owner, async (req, res, next) => {
     const id = req.params.id as string;
     if (!isId(id)) return next();
+    applyHome(d, env);
+    await prepareEnv(env);
     const r = await addReminders(id, env);
     forgetToolStates(d);
     results.set(id, { text: r.ok ? `${t('setup.said.reminders')}${r.hooksNote ? ` ${r.hooksNote}` : ''}` : r.reason, at: Date.now() });
@@ -185,6 +244,9 @@ export function desktopRoutes(d: AppDeps): Router {
   // The restore pages exist only on this computer, never through the public door.
   const here: RequestHandler = (req, _res, next) => (viaDoor(req) ? next('router') : next());
   const dataDir = d.statusDir;
+  const fromApp = appKeyCheck(d);
+  /** One staging at a time: the upload and the confirm both unpack a whole copy. */
+  let staging = false;
   const emptyBrain = () => !!dataDir && isEmptyBrain(join(dataDir, 'memory.db'));
   // An import replaces the whole database, so an app connected here would lose its connection without being told.
   const appConnected = () => d.provider.listGrants().some((g) => !g.revokedAt);
@@ -202,10 +264,26 @@ export function desktopRoutes(d: AppDeps): Router {
     } catch { return null; }
   };
 
+  /** The one copy found in the folder the owner picked, waiting for the confirm; replaced by every find, gone after 15 minutes. */
+  let choice: { found: Found; at: number } | null = null;
+  /** Why the last find or confirm failed, said once on the choose page. */
+  let problem: { key: 'setup.err.find.none' | 'setup.err.find.invalid' | 'setup.err.find.gone' | 'setup.err.find.unreadable' | 'setup.err.find.changed' | 'setup.err.busy' | 'setup.err.notEmpty' | 'setup.err.connected'; why?: string } | null = null;
+  const currentChoice = (): Found | null => {
+    if (choice && d.now().getTime() - choice.at > CHOICE_MS) choice = null;
+    return choice?.found ?? null;
+  };
+
   router.get('/welcome', here, owner, async (req, res) => {
     const step = (['2', '3', '4', '5'] as const).map(Number).find((n) => String(n) === req.query.step) as 2 | 3 | 4 | 5 | undefined ?? 1;
     const said = resultFor(req.query.tool);
-    const restore = step === 1 && canRestore() ? (req.query.restore === '1' ? 'choose' as const : 'offer' as const) : null;
+    const can = step === 1 && canRestore();
+    const pick = can && req.query.restore === 'found' ? currentChoice() : null;
+    let restoreProblem: string | null = null;
+    if (can && req.query.restore !== undefined && req.query.restore !== 'offer' && !pick) {
+      restoreProblem = problem ? t(problem.key, { why: problem.why ?? '' }) : req.query.restore === 'found' ? t('setup.err.find.gone') : null;
+      problem = null;
+    }
+    const restore = !can ? null : pick ? 'found' as const : req.query.restore === '1' || req.query.restore === 'found' ? 'choose' as const : 'offer' as const;
     const restored = step === 4 ? takeRestored() : null;
     const answer = readAnswer(d.store);
     const reachOn = (d.reach?.url() ?? null) !== null;
@@ -217,7 +295,7 @@ export function desktopRoutes(d: AppDeps): Router {
     res.type('html').send(page(t('setup.welcome.title'), welcomePage({
       step, apps, chosen: step === 5 ? answer?.apps : undefined, yours: step === 4 ? { answer, found, reachOn } : undefined,
       nextCard: step === 5 ? nextCardFor(d, true) : undefined,
-      tools: step >= 4 ? withSignIn(await cachedToolStates(d, env), d.provider.listGrants()) : [], windows: windows(env), said, cursorRules: env.rules('claude-code'), restore, restored,
+      tools: step >= 4 ? withSignIn(await cachedToolStates(d, env), d.provider.listGrants()) : [], windows: windows(env), said, cursorRules: env.rules('claude-code'), restore, restored, found: pick ? { ...pick, token: choice!.found.token, skipped: pick.skipped ? { name: pick.skipped.name, why: clean(pick.skipped.why) } : null } : null, restoreProblem,
       models: step === 3 && d.models ? { hardware: await (d.hardware ?? (() => readHardware(dataDir ?? process.cwd())))(), installed: await d.models.installedIds() } : undefined,
       modelsLine: step >= 4 && d.models ? modelsLine(d.models.status(), { dataDir }) : undefined,
     }),
@@ -234,7 +312,9 @@ export function desktopRoutes(d: AppDeps): Router {
     if (!UPLOAD_TYPES.includes(type)) return res.status(415).json({ error: notASavedFile() });
     if (!emptyBrain()) return res.status(409).json({ error: t('setup.err.notEmpty') });
     if (appConnected()) return res.status(409).json({ error: t('setup.err.connected') });
-    const file = join(dataDir, UPLOAD_FILE);
+    if (staging) return res.status(409).json({ error: t('setup.err.busy') });
+    staging = true;
+    const file = join(dataDir, `restore-upload-${randomBytes(8).toString('hex')}.tmp`);
     let bytes = 0;
     const tooBig = t('setup.err.tooBig');
     const limit = new Transform({
@@ -253,7 +333,65 @@ export function desktopRoutes(d: AppDeps): Router {
       res.status(422).json({ error: e instanceof Error ? e.message : String(e) });
     } finally {
       rmSync(file, { force: true });
+      staging = false;
     }
+  });
+
+  /**
+   * The desktop app's folder picker found a folder (POST with the app's key, never through the public door): looks for
+   * the newest saved copy directly inside it and remembers it for the confirm. The app then opens the preview.
+   */
+  router.post('/welcome/restore/find', here, express.json({ limit: '16kb' }), async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!dataDir || !fromApp(req)) return res.status(403).json({ error: 'Not allowed.' });
+    const folder = (req.body as Record<string, unknown> | undefined)?.path;
+    if (typeof folder !== 'string' || folder === '' || folder.length > 4096 || folder.includes('\0') || !isAbsolute(folder)) {
+      return res.status(400).json({ error: t('setup.err.find.none') });
+    }
+    const fail = (status: number, p: NonNullable<typeof problem>) => { choice = null; problem = p; return res.status(status).json({ error: t(p.key, { why: p.why ?? '' }) }); };
+    if (!emptyBrain()) return fail(409, { key: 'setup.err.notEmpty' });
+    if (appConnected()) return fail(409, { key: 'setup.err.connected' });
+    try {
+      const found = await findCopy(folder);
+      choice = { found, at: d.now().getTime() };
+      problem = null;
+      res.json({ ok: true });
+    } catch (e) {
+      if (e instanceof NothingFound && e.why === 'invalid') return fail(422, { key: 'setup.err.find.invalid', why: clean(e.message) });
+      if (e instanceof NothingFound && e.why === 'unreadable') return fail(422, { key: 'setup.err.find.unreadable' });
+      return fail(422, { key: 'setup.err.find.none' });
+    }
+  });
+
+  /** The owner's "Bring it back" on the preview: stages the chosen copy from its real place (pictures beside it come along) and restarts. */
+  router.post('/welcome/restore/confirm', here, owner, async (req, res) => {
+    if (!dataDir) return res.status(404).end();
+    const json = (req.get('accept') ?? '').includes('application/json');
+    const refuse = (status: number, p: NonNullable<typeof problem>) => {
+      if (json) return res.status(status).json({ error: t(p.key, { why: p.why ?? '' }), back: '/welcome?restore=1' });
+      problem = p;
+      return res.redirect(303, '/welcome?restore=1');
+    };
+    if (staging) return refuse(409, { key: 'setup.err.busy' });
+    const found = currentChoice();
+    if (!found) return refuse(409, { key: 'setup.err.find.gone' });
+    const given = (req.body as Record<string, unknown> | undefined)?.token;
+    let same = false;
+    try { const st = lstatSync(found.path); same = st.isFile() && st.size === found.size && st.mtimeMs === found.mtimeMs; } catch { /* gone */ }
+    if (typeof given !== 'string' || given !== found.token || !same) { choice = null; return refuse(409, { key: 'setup.err.find.changed' }); }
+    if (!emptyBrain()) return refuse(409, { key: 'setup.err.notEmpty' });
+    if (appConnected()) return refuse(409, { key: 'setup.err.connected' });
+    staging = true;
+    try {
+      await stageRestore(found.path, dataDir);
+    } catch (e) {
+      return refuse(422, { key: 'setup.err.find.invalid', why: clean(e instanceof Error ? e.message : String(e)) });
+    } finally {
+      staging = false;
+    }
+    choice = null;
+    if (json) return res.json({ next: '/app/restart' });
+    res.redirect(303, '/app/restart');
   });
 
   /** Shown if the desktop app did not intercept the navigation (it normally restarts the server and moves on). */
@@ -265,7 +403,15 @@ export function desktopRoutes(d: AppDeps): Router {
   router.post('/welcome/name', owner, async (req, res) => {
     const raw = (req.body as Record<string, unknown> | undefined)?.name;
     const name = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
-    if (name !== '') await d.service.remember({ kind: 'profile', content: `The owner is called ${name}.` }, OWNER);
+    if (name !== '') {
+      // The welcome keeps one name fact: a second submit (Back, then Next) changes it instead of adding another.
+      // Only a fact of exactly the welcome's shape is changed; a longer one the owner wrote by hand is left alone.
+      const rows = (d.db?.prepare("SELECT id, content FROM memories WHERE deleted_at IS NULL AND kind = 'profile' AND created_by = 'owner' AND content LIKE 'The owner is called %' ORDER BY created_at DESC").all() ?? []) as { id: string; content: string }[];
+      const earlier = rows.find((r) => /^The owner is called [^.]{1,80}\.$/.test(r.content));
+      const content = `The owner is called ${name}.`;
+      if (earlier) await d.service.update(earlier.id, { content }, OWNER);
+      else await d.service.remember({ kind: 'profile', content }, OWNER);
+    }
     res.redirect(303, '/welcome?step=2');
   });
 
@@ -314,7 +460,6 @@ export function desktopRoutes(d: AppDeps): Router {
   const clean = (t: string) => [dataDir, d.backupDir].reduce<string>((s, p) => (p ? s.replaceAll(p, 'the data folder') : s), t);
 
   /** The shell's call before it installs an update: a backup now. Only the app's key passes; anything else is the unknown page. */
-  const fromApp = appKeyCheck(d);
   router.post('/app/backup-now', here, async (req, res, next) => {
     if (!fromApp(req)) return next('router');
     res.set('Cache-Control', 'no-store');

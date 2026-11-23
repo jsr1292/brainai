@@ -33,6 +33,7 @@ test('/growth lists strengths and things to improve with their evidence, escaped
   assert.equal(res.status, 200);
   const body = await res.text();
   assert.match(body, /<title>Growth<\/title>/);
+  assert.match(body, /class="lede"/);
   const s = body.indexOf('<h2>Strengths <span class="n">');
   const i = body.indexOf('<h2>To improve <span class="n">');
   assert.ok(s > 0 && i > s, `${s} ${i}`);
@@ -54,9 +55,11 @@ test('/growth lists strengths and things to improve with their evidence, escaped
   for (const label of ['Agree', 'Disagree', 'Dismiss']) assert.match(body, new RegExp(`>${label}</button>`));
 });
 
-test('the empty Growth list says nothing has been noticed yet', async (t) => {
+test('the empty Growth list explains how it fills and what to ask, and has no lede', async (t) => {
   const { f } = await start(t);
-  assert.match(await (await f('/growth')).text(), /Nothing noticed yet\. Assistants add observations as they work with you\./);
+  const body = await (await f('/growth')).text();
+  assert.match(body, /Nothing yet\. Assistants add an entry when they notice something about how you work, usually as they finish a step\. You can also ask one directly: “Note what you noticed about how I work today\.”/);
+  assert.doesNotMatch(body, /class="lede"/);
 });
 
 test('Growth heads like the other two Week views: a date-style line under the title, then the control with All weeks', async (t) => {

@@ -27,7 +27,8 @@ export interface Roadmap {
 }
 
 const LABEL = /^\s*(done|now|next|later|waiting on you)\s*:\s*(.*)$/i;
-const DUE = /\s*\(by (\d{4}-\d{2}-\d{2})\)\s*$/i;
+/** "(by 2026-11-25)" at the end of an item; also "(due …)", inner spaces, any case, and a closing full stop. Anything else stays undated. */
+export const DUE = /\s*\(\s*(?:by|due)\s+(\d{4}-\d{2}-\d{2})\s*\)\s*[.;]?\s*$/i;
 const DATE = /\s*\((\d{4}-\d{2}-\d{2})\)\s*$/;
 const PROGRESS = /\s*\((\d+)\s*\/\s*(\d+)\)\s*$/;
 /** A real calendar date in YYYY-MM-DD (2026-13-45 is not one). */
@@ -110,9 +111,8 @@ export function formatRoadmap(r: Roadmap): string {
     .filter((line): line is string => line !== null).join('\n');
 }
 
-const BY_DATE = /\s*\(by \d{4}-\d{2}-\d{2}\)\s*$/i;
 /** How a waiting item is recognised across versions: lower-cased, with its "(by …)" date left out. */
-export const itemKey = (text: string): string => text.replace(BY_DATE, '').trim().toLowerCase();
+export const itemKey = (text: string): string => text.replace(DUE, '').trim().toLowerCase();
 
 /**
  * An assistant's new roadmap written from an older copy would put back items the owner has since ticked off. A waiting

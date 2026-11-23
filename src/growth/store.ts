@@ -110,4 +110,9 @@ export class GrowthStore {
     return (this.db.prepare('SELECT count(*) c FROM observations WHERE (created_by_client = ? OR (created_by_client IS NULL AND created_by = ?)) AND created_at >= ?')
       .get(client, by, since) as { c: number }).c;
   }
+
+  /** How many times an assistant added evidence (a repeat merged into an earlier observation, not the evidence saved with a new one) since `since`. */
+  evidenceBySince(by: string, since: string): number {
+    return (this.db.prepare('SELECT count(*) c FROM observation_evidence e WHERE added_by = ? AND added_at >= ? AND id > (SELECT min(id) FROM observation_evidence WHERE observation_id = e.observation_id)').get(by, since) as { c: number }).c;
+  }
 }

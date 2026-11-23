@@ -8,9 +8,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Locale } from '../i18n/core.js';
 
-export const SETUP_VERSION = 3;
+export const SETUP_VERSION = 4;
 /** sha256 of every text, English then Spanish (not the menu lines), rendered at host HOST; texts.test.ts prints the new value when a text changes. */
-export const SETUP_HASH = '5d21fab583a5a79f3b8584dac0f9e6a689c312d4dc0d60267587c03ddc15e800';
+export const SETUP_HASH = '854be61918f135b39ab56ca85290b18aa35801972b559aabd2f5aacb221410bc';
 
 export interface SetupApp {
   slug: string;
@@ -73,7 +73,7 @@ const layers = `The brain has two layers. Facts are short: decisions, statuses, 
 - When we produce something long that will matter later, write it as a page (write_page, or edit_page_section for one part) and save a one-line fact pointing to it.
 - Keep live status and to-dos in facts, never in a page. If the two disagree, the facts win.
 - Never put passwords, keys or tokens in either.
-- Follow the page rules in the brain's instructions and its page "How this brain is organised".`;
+- Follow the page rules in the brain's instructions.`;
 
 const chatLayers = 'Facts are short (decisions, statuses, roadmaps, my profile); pages are long documents (read_page, write_page). Keep live status in facts. Never save passwords, keys or tokens.';
 
@@ -85,7 +85,7 @@ const layersEs = `La memoria tiene dos capas. Los datos son breves: decisiones, 
 - Cuando produzcamos algo largo que importará más adelante, escríbelo como una página (write_page, o edit_page_section para una parte) y guarda un dato de una línea que apunte a ella.
 - El estado en curso y las tareas pendientes van en los datos, nunca en una página. Si ambos discrepan, mandan los datos.
 - No pongas nunca contraseñas, claves ni tokens en ninguno de los dos.
-- Sigue las reglas de páginas de las instrucciones de la memoria y de su página "How this brain is organised".`;
+- Sigue las reglas sobre las páginas que dan las instrucciones de la memoria.`;
 
 const chatLayersEs = 'Los datos son breves (decisiones, estados, hojas de ruta, mi perfil); las páginas son documentos largos (read_page, write_page). Guarda el estado en curso en los datos. No guardes nunca contraseñas, claves ni tokens.';
 
@@ -112,8 +112,11 @@ export function loadSetupOverlay(dir: string): SetupOverlay | undefined {
   return { version: o.version as number, extra };
 }
 
-/** The setup number apps report: the overlay's when the owner has one, else the code's. */
-export const currentSetupVersion = (o?: SetupOverlay): number => o?.version ?? SETUP_VERSION;
+/**
+ * The setup number apps report: the higher of the overlay's and the code's, so an overlay with an older number can
+ * never hide a built-in bump. When you change your overlay lines, raise its version above the built-in number.
+ */
+export const currentSetupVersion = (o?: SetupOverlay): number => (o ? Math.max(o.version, SETUP_VERSION) : SETUP_VERSION);
 
 const CODING = new Set(['grok-build', 'claude-code', 'codex', 'gemini-cli']);
 

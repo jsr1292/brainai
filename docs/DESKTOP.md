@@ -232,8 +232,8 @@ use the BrainAI app. To bring what the zip holds into the app:
 3. Remove the Windows zip install: in `%LOCALAPPDATA%\WorkMemory` run
    `powershell -ExecutionPolicy Bypass -File .\uninstall.ps1` and type `delete` when it asks. It also writes a Markdown
    export to Documents and disconnects Codex and Claude Code.
-4. If the BrainAI app is already on this computer from trying it, uninstall it first with "Delete the application
-   data" ticked: an import only fills an empty brain. Save a copy first if it holds memories you want.
+4. If the BrainAI app is already on this computer from trying it, remove it first with **Remove BrainAI** in the app
+   (it saves a copy to Documents, then removes the data): an import only fills an empty brain.
 5. Install the BrainAI app, choose **I have a saved BrainAI folder** on the welcome and pick that file.
 6. Connect your tools on the next step.
 
@@ -331,8 +331,19 @@ The same app, with the tray icon (by the clock) instead of the menu bar. What di
   a server.
 - **Removing it:** use **Remove BrainAI** in the app (see "Leaving BrainAI"): it saves a copy, then runs the uninstaller
   silently and deletes the data folder. Uninstalling from Settings › Apps › BrainAI also disconnects your coding tools
-  (it does not when an update replaces the app). It saves no copy: the data folder stays unless you tick "Delete the
-  application data", and the kept folder is your copy. Start at login is removed with the app.
+  (it does not when an update replaces the app), looking for them where the app connected them, and ends their sign-ins, takes
+  out the save reminders and deletes the backups of their settings that BrainAI made. The data folder stays. The uninstaller
+  has a box, "Delete the application data": do not tick it unless you mean to leave nothing behind. When it is ticked,
+  the uninstaller first saves a copy of your memory to Documents (the same `BrainAI saved <date>` folder Remove BrainAI
+  makes); if that copy cannot be made, it keeps your data and says so instead of deleting it. It is silent when run with
+  `/S` and then never deletes data. Start at login is removed with the app.
+- **Deleting it by hand:** if you delete the install folder and the data folder yourself, instead of uninstalling,
+  nothing takes BrainAI out of your tools. What is left: the `brainai` entry, the BrainAI rules block and the save
+  reminders in Claude Code, Codex, OpenCode, Cursor and Gemini CLI, the entry in Claude's desktop app, their sign-ins
+  in the brain (which goes with the data folder), `.brainai-backup` files beside your tools' settings, and the start-at-login entry.
+  Remove those by hand, or reinstall BrainAI over the kept data folder (`%LOCALAPPDATA%\io.github.jsr1292.brainai`): its
+  Settings › Tools shows what is still connected and Disconnect or Connect repairs each tool. Deleting the data folder
+  without a copy deletes your memory for good.
 
 ## How it works
 

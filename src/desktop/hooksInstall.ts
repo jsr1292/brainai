@@ -9,8 +9,10 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { t } from '../i18n/core.js';
-import { removeHooks, matcherFor, withoutOurHooks, writeAtomic } from './leftovers.js';
-import { findCommand, type ToolEnv, type ToolId } from './tools.js';
+import { removeHooks, matcherFor, withoutOurHooks } from './leftovers.js';
+import { claudeHookCommand } from './configDirs.js';
+import { claudeDir, codexDir, findCommand, hasBrainAI, writeFailure, WriteError, writeWithBackup, type ToolEnv, type ToolId } from './tools.js';
+import { BOM, readJsonFile } from './configFile.js';
 
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -20,36 +22,38 @@ interface Wiring {
   config: (env: ToolEnv) => string;
   /** Built script (in hooksDir) -> where it is installed. */
   scripts: (env: ToolEnv) => { from: string; to: string }[];
-  /** Which commands in the config are BrainAI's. */
-  ours: RegExp;
+  /** Which commands in the config are BrainAI's (for Claude Code: those in this Claude folder's hooks folder). */
+  ours: (env: ToolEnv) => RegExp;
   /** Cursor keeps flat entries ({command}) under each event; the others nest them ({hooks:[{type,command}]}). */
   flat: boolean;
   /** event -> the script (an installed file name) and the argument it is run with. */
   events: { event: string; script: string; arg?: string }[];
 }
 
-const claudeHooks = (env: ToolEnv) => join(env.home, '.claude', 'hooks');
+const claudeHooks = (env: ToolEnv) => join(claudeDir(env), 'hooks');
 const brainHooks = (env: ToolEnv) => join(env.home, '.brainai', 'hooks');
 const NUDGE_SCRIPT = { from: 'memoryNudge.js', to: 'memory-nudge.mjs' };
 const NUDGE_ONLY = /\.brainai[\\/]hooks[\\/]memory-nudge\.mjs/;
 
 const WIRING: Partial<Record<ToolId, Wiring>> = {
   'claude-code': {
-    config: (env) => join(env.home, '.claude', 'settings.json'),
+    config: (env) => join(claudeDir(env), 'settings.json'),
     scripts: (env) => [{ from: 'memoryStart.js', to: join(claudeHooks(env), 'memory-start.mjs') }, { from: 'memorySave.js', to: join(claudeHooks(env), 'memory-save.mjs') }],
-    ours: /\.claude[\\/]hooks[\\/]memory-(?:start|save)\.mjs/, flat: false,
+    // The hooks folder of this Claude folder (CLAUDE_CONFIG_DIR, else ~/.claude), and the legacy .claude form: a memory-save.mjs
+    // in another folder belongs to another brain.
+    ours: claudeHookCommand, flat: false,
     events: [{ event: 'SessionStart', script: 'memory-start.mjs' }, { event: 'Stop', script: 'memory-save.mjs' }, { event: 'PreCompact', script: 'memory-save.mjs' }],
   },
   codex: {
-    config: (env) => join(env.home, '.codex', 'hooks.json'),
+    config: (env) => join(codexDir(env), 'hooks.json'),
     scripts: (env) => [{ from: NUDGE_SCRIPT.from, to: join(brainHooks(env), NUDGE_SCRIPT.to) }],
-    ours: NUDGE_ONLY, flat: false,
+    ours: () => NUDGE_ONLY, flat: false,
     events: [{ event: 'PostToolUse', script: 'memory-nudge.mjs', arg: 'codex' }, { event: 'Stop', script: 'memory-nudge.mjs', arg: 'codex' }],
   },
   cursor: {
     config: (env) => join(env.home, '.cursor', 'hooks.json'),
     scripts: (env) => [{ from: NUDGE_SCRIPT.from, to: join(brainHooks(env), NUDGE_SCRIPT.to) }],
-    ours: NUDGE_ONLY, flat: true,
+    ours: () => NUDGE_ONLY, flat: true,
     events: [{ event: 'postToolUse', script: 'memory-nudge.mjs', arg: 'cursor' }, { event: 'stop', script: 'memory-nudge.mjs', arg: 'cursor' }],
   },
 };
@@ -58,23 +62,13 @@ const WIRING: Partial<Record<ToolId, Wiring>> = {
 export const hasHooks = (id: ToolId): boolean => WIRING[id] !== undefined;
 
 const read = (path: string): string | null => (existsSync(path) ? readFileSync(path, 'utf8') : null);
-function writeWithBackup(path: string, text: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  if (existsSync(path) && !existsSync(`${path}.brainai-backup`)) copyFileSync(path, `${path}.brainai-backup`);
-  writeAtomic(path, text);
-}
 
-/** The tool's hook config parsed, or why it cannot be changed safely. */
-function readConfig(path: string): { json: Json } | { refuse: string } {
-  const text = read(path);
-  if (text === null) return { json: {} };
-  try {
-    const json = JSON.parse(text) as unknown;
-    if (!isObject(json) || (json.hooks !== undefined && !isObject(json.hooks))) throw new Error('not an object');
-    return { json };
-  } catch {
-    return { refuse: `${path} is not plain JSON: BrainAI will not rewrite it` };
-  }
+/** The tool's hook config parsed (BOM kept for the write), or why it cannot be changed safely. */
+function readConfig(path: string): { json: Json; bom: boolean } | { refuse: string } {
+  const f = readJsonFile(path, (json) => { if (json.hooks !== undefined && !isObject(json.hooks)) throw new Error('hooks is not an object'); });
+  if (f === null) return { json: {}, bom: false };
+  if ('refuse' in f) return { refuse: f.refuse === 'utf16' ? t('tools.refuse.utf16', { file: path }) : t('tools.hooks.notJson', { file: path }) };
+  return { json: f.json, bom: f.bom };
 }
 
 const quote = (s: string) => `"${s}"`;
@@ -98,9 +92,9 @@ function interpreterOf(command: string): string {
 }
 
 /** Adds or updates the entry for one event; true when the config changed. */
-function put(hooks: Json, w: Wiring, event: string, command: string): boolean {
+function put(hooks: Json, w: Wiring, env: ToolEnv, event: string, command: string): boolean {
   const groups = Array.isArray(hooks[event]) ? [...(hooks[event] as unknown[])] : [];
-  const mine = matcherFor(w.ours);
+  const mine = matcherFor(w.ours(env));
   let found = false;
   let changed = false;
   const next = groups.map((g) => {
@@ -126,7 +120,7 @@ export function hooksState(id: ToolId, env: ToolEnv): 'on' | 'off' | 'none' {
   const c = readConfig(w.config(env));
   if ('refuse' in c || !isObject(c.json.hooks)) return 'off';
   const hooks = c.json.hooks;
-  const mine = matcherFor(w.ours);
+  const mine = matcherFor(w.ours(env));
   const ourCommands = (event: string): string[] => (Array.isArray(hooks[event]) ? (hooks[event] as unknown[]) : []).flatMap((g) => {
     if (!isObject(g)) return [];
     const inner = Array.isArray(g.hooks) ? g.hooks.filter(isObject).map((h) => h.command) : [];
@@ -155,12 +149,12 @@ export function installHooks(id: ToolId, env: ToolEnv): string | null {
     for (const s of scripts) { mkdirSync(dirname(s.to), { recursive: true }); copyFileSync(join(env.hooksDir, s.from), s.to); }
     const hooks: Json = isObject(c.json.hooks) ? { ...c.json.hooks } : {};
     let changed = false;
-    for (const e of w.events) changed = put(hooks, w, e.event, commandFor(env, id, e.script, dirname(scripts.find((s) => s.to.endsWith(e.script))!.to), e.arg)) || changed;
+    for (const e of w.events) changed = put(hooks, w, env, e.event, commandFor(env, id, e.script, dirname(scripts.find((s) => s.to.endsWith(e.script))!.to), e.arg)) || changed;
     if (changed || read(w.config(env)) === null) {
-      writeWithBackup(w.config(env), `${JSON.stringify({ ...(id === 'cursor' && c.json.version === undefined ? { version: 1 } : {}), ...c.json, hooks }, null, 2)}\n`);
+      writeWithBackup(w.config(env), `${c.bom ? BOM : ''}${JSON.stringify({ ...(id === 'cursor' && c.json.version === undefined ? { version: 1 } : {}), ...c.json, hooks }, null, 2)}\n`, (x) => hasBrainAI(x) || w.ours(env).test(x));
     }
   } catch (e) {
-    return t('tools.hooks.failed', { name: name ?? id, why: e instanceof Error ? e.message : String(e) });
+    return t('tools.hooks.failed', { name: name ?? id, why: (e instanceof WriteError ? writeFailure(e) : e instanceof Error ? e.message : String(e)).replace(/\.$/, '') });
   }
   return id === 'codex' ? t('tools.hooks.codexTrust') : null;
 }
@@ -179,7 +173,7 @@ export function removeToolHooks(id: ToolId, env: ToolEnv, otherBrain = false): s
   if (otherBrain) return t('tools.hooks.leftInPlace');
   try {
     if (isObject(c.json.hooks)) {
-      const next = withoutOurHooks(c.json.hooks, matcherFor(w.ours));
+      const next = withoutOurHooks(c.json.hooks, matcherFor(w.ours(env)));
       if (next) {
         const { hooks: _old, ...others } = c.json;
         const left = Object.keys(next).length > 0;
@@ -187,7 +181,7 @@ export function removeToolHooks(id: ToolId, env: ToolEnv, otherBrain = false): s
         // A hooks.json BrainAI created (no backup was ever made of it) that now holds nothing is deleted; any other goes back to
         // what it was, without our entries.
         if (empty && !existsSync(`${path}.brainai-backup`)) rmSync(path, { force: true });
-        else writeWithBackup(path, `${JSON.stringify(left ? { ...others, hooks: next } : others, null, 2)}\n`);
+        else writeWithBackup(path, `${c.bom ? BOM : ''}${JSON.stringify(left ? { ...others, hooks: next } : others, null, 2)}\n`, (x) => hasBrainAI(x) || w.ours(env).test(x));
       }
     }
     // The script is shared by Codex and Cursor: deleted only once neither config names it. The other config's raw text is

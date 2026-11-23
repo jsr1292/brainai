@@ -189,7 +189,7 @@ Anything personal lives in `overlay/`, which is never committed and never touche
 
 - `setup.json` adds your own lines to the setup text each app gets. `extra` takes an app (`claude`, `chatgpt`,
   `grok`, `grok-build`, `claude-code`, `codex`, `opencode`) or `coding` (all the coding tools) and a list of lines.
-  Raise `version` when you change it, and Settings shows which apps still have the old text.
+  When you change your lines, raise `version` above the current built-in setup number (the apps report the higher of the two). Settings shows which apps still have the old text.
 - `scripts.env` holds the settings of the nightly scripts: where backups are copied, and the name on the export's
   commits.
 

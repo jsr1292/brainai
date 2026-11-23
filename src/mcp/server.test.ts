@@ -578,6 +578,98 @@ test('note_observation saves an observation and says so; a repeat says it was ad
   assert.equal((db.prepare('SELECT created_by FROM observations').get() as { created_by: string }).created_by, 'Claude Code');
 });
 
+const HINT = /note_observation/;
+/** Moves every observation, and the evidence rows saved with it, 5 hours into the past. */
+function ageObservations(db: ReturnType<typeof makeService>['db']) {
+  const old = new Date(Date.now() - 5 * 3_600_000).toISOString();
+  db.prepare('UPDATE observations SET created_at = ?').run(old);
+  db.prepare('UPDATE observation_evidence SET added_at = ?').run(old);
+}
+let statusCount = 0;
+/** Saves a status on a fresh project, checks it was saved, and returns its reply. */
+async function saveStatus(c: Awaited<ReturnType<typeof connect>>) {
+  const project = `proj${++statusCount}`;
+  c.registry.create(project, { state: 'open' }, 'owner');
+  const r = await c.call('remember', { kind: 'summary', content: `${project}: finished the cork import step`, project });
+  assert.equal(r.isError, false, r.text);
+  assert.match(r.text, /^Saved/, r.text);
+  return r;
+}
+const noteOne = (c: Awaited<ReturnType<typeof connect>>, area = 'planning') => c.call('note_observation', { kind: 'strength', area, what: `Wrote a clear plan before the ${area} step` });
+
+test('a status save reminds about Growth; decisions, roadmaps and coaching off do not', async () => {
+  const c = await connect('Claude Code', { clientId: 'c1' });
+  assert.match((await saveStatus(c)).text, HINT);
+  c.registry.create('wildlog', { state: 'open' }, 'owner');
+  const dec = await c.call('remember', { kind: 'decision', content: 'wildlog uses SwiftUI', project: 'wildlog' });
+  assert.match(dec.text, /^Saved/);
+  assert.doesNotMatch(dec.text, HINT);
+  const road = await c.call('remember', { kind: 'roadmap', content: 'Now: cork import. Next: export. Done: none.', project: 'wildlog' });
+  assert.match(road.text, /^Saved/);
+  assert.doesNotMatch(road.text, HINT);
+  assert.doesNotMatch((await saveStatus(await connect('Claude Code', { coaching: false }))).text, HINT);
+});
+
+test('the Growth reminder ends the reply and stays quiet for 4 hours after this assistant records an observation', async () => {
+  const c = await connect('Claude Code', { clientId: 'c1' });
+  const first = await saveStatus(c);
+  assert.match(first.text, /Skip it if nothing stood out\.\nStored memory data/);
+  assert.equal((await noteOne(c)).isError, false);
+  assert.doesNotMatch((await saveStatus(c)).text, HINT);
+  ageObservations(c.db);
+  assert.match((await saveStatus(c)).text, HINT);
+});
+
+test('a repeat merged into an earlier observation counts as noting', async () => {
+  const c = await connect('Claude Code', { clientId: 'c1' });
+  assert.equal((await noteOne(c)).isError, false);
+  ageObservations(c.db);
+  assert.match((await saveStatus(c)).text, HINT);
+  const again = await noteOne(c);
+  assert.match(again.text, /^Already noted/);
+  assert.doesNotMatch((await saveStatus(c)).text, HINT);
+});
+
+test('no reminder when the assistant is at the daily cap', async () => {
+  const c = await connect('Claude Code', { clientId: 'c1' });
+  for (const area of ['planning', 'briefing', 'testing', 'reviewing']) assert.equal((await noteOne(c, area)).isError, false);
+  ageObservations(c.db);
+  assert.doesNotMatch((await saveStatus(c)).text, HINT);
+});
+
+test('another client of the same name still gets the reminder; without a client id the name counts', async () => {
+  const given = makeService();
+  const one = await connect('Claude', { clientId: 'c1' }, given);
+  assert.equal((await noteOne(one)).isError, false);
+  assert.doesNotMatch((await saveStatus(one)).text, HINT);
+  const two = await connect('Claude', { clientId: 'c2' }, given);
+  assert.match((await saveStatus(two)).text, HINT);
+  const bare = await connect('Claude', {}, given);
+  assert.doesNotMatch((await saveStatus(bare)).text, HINT);
+  const other = await connect('Codex', {}, given);
+  assert.match((await saveStatus(other)).text, HINT);
+});
+
+test('update_memory of a status with new content gets the reminder; a keys-only edit does not', async () => {
+  const c = await connect('Claude Code', { clientId: 'c1' });
+  const id = dataOf((await saveStatus(c)).text)[0].id;
+  assert.ok(id, 'the saved status has an id');
+  const keys = await c.call('update_memory', { id, keys: 'cork import' });
+  assert.match(keys.text, /^Updated/, keys.text);
+  assert.doesNotMatch(keys.text, HINT);
+  const content = await c.call('update_memory', { id, content: 'proj: finished the cork import and tests' });
+  assert.match(content.text, /^Updated/, content.text);
+  assert.match(content.text, HINT);
+});
+
+test('a held save gets no reminder', async () => {
+  const c = await connect('Claude Code', { grantId: 'g1', savesWait: () => true });
+  c.registry.create('wildlog', { state: 'open' }, 'owner');
+  const r = await c.call('remember', { kind: 'summary', content: 'wildlog: finished the cork import step', project: 'wildlog' });
+  assert.doesNotMatch(r.text, /^Saved/);
+  assert.doesNotMatch(r.text, HINT);
+});
+
 test('a read-only connection has no note_observation tool', async () => {
   const ro = await readOnly();
   assert.ok(!(await ro.client.listTools()).tools.some((x) => x.name === 'note_observation'));

@@ -162,9 +162,11 @@ export function setConsentPoller(on: boolean): void {
   consentPoller = on;
 }
 
-export function page(title: string, body: SafeHtml, opts: { nav?: boolean; /** Which place the desktop sidebar lights, when it is not `tab` (the phone bar keeps using `tab`). */ sideTab?: Tab | null; query?: string; tab?: Tab | null; section?: Section; back?: BackTarget; crumb?: boolean; /** The app's first-run setup: its own frame, with the brand in its step list. */ shell?: 'setup' } = {}): string {
+export function page(title: string, body: SafeHtml, opts: { nav?: boolean; /** Which place the desktop sidebar lights, when it is not `tab` (the phone bar keeps using `tab`). */ sideTab?: Tab | null; query?: string; tab?: Tab | null; section?: Section; back?: BackTarget; crumb?: boolean; /** No link out of the page (the brand is plain text): the removal's last pages. */ plain?: boolean; /** The app's first-run setup: its own frame, with the brand in its step list. */ shell?: 'setup' } = {}): string {
   const theme = currentTheme();
-  const brand = html`<a class="brand" href="/"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></a>`;
+  const brand = opts.plain
+    ? html`<span class="brand"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></span>`
+    : html`<a class="brand" href="/"><span class="brand-dot" aria-hidden="true"></span><span>${memoryName()}</span></a>`;
   const phoneTab = opts.nav ? phoneTabOf(opts.tab, sideTabOf(opts)) : null;
   const waiting = opts.nav ? sideStatus().needsYouCount : 0;
   const link = (tb: { href: string; label: Key; tab: Tab }) =>

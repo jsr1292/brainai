@@ -128,7 +128,7 @@ export const review = {
   'review.growth.evidence': 'Evidence',
   'review.growth.meta': 'What your assistants noticed so far.',
   'review.growth.lede': 'The full Growth page, with your top strengths and what to improve, comes once there are a few weeks of these.',
-  'review.growth.empty': 'Nothing noticed yet. Assistants add observations as they work with you.',
+  'review.growth.empty': 'Nothing yet. Assistants add an entry when they notice something about how you work, usually as they finish a step. You can also ask one directly: “Note what you noticed about how I work today.”',
   'review.growth.strengths': 'Strengths',
   'review.growth.noStrengths': 'No strengths noted yet.',
   'review.growth.noImprove': 'Nothing to improve noted yet.',
