@@ -32,11 +32,11 @@ export interface EditForm {
 function fields(v: EditForm): SafeHtml {
   if (v.mode === 'section') return html``;
   const placeholder = v.project ? t('pages.ed.titlePlaceholder', { project: v.project }) : t('pages.ed.titleLabel');
-  // The title input is the editor's heading: it reads like the page's own h1. Project and Area are Details, folded away
+  // The title field is the editor's heading: it reads like the page's own h1. Project and Area are Details, folded away
   // once the page has them (only a new page opens them). Area exists only for a page without a project: it is not
   // rendered for a project page, and Task 3's script hides it (data-area-for-no-project) when a project is chosen.
   const open = v.mode === 'new' ? html` open` : '';
-  return html`<input name="title" class="ptitle-input" aria-label="${t('pages.ed.titleLabel')}" maxlength="140" required value="${v.title}" placeholder="${placeholder}">
+  return html`<textarea name="title" class="ptitle-input" rows="1" enterkeyhint="done" aria-label="${t('pages.ed.titleLabel')}" maxlength="140" required placeholder="${placeholder}">${v.title}</textarea>
 <details class="pdetails"${open}><summary>${t('pages.ed.details')}<span class="chev"></span></summary><div class="pdetails-body">
 <label>${t('pages.ed.project')} <select name="project"><option value=""${v.project === '' ? html` selected` : ''}>${t('pages.ed.noProject')}</option>${v.projects.map((p) => html`<option value="${p}"${p === v.project ? html` selected` : ''}>${p}</option>`)}</select></label>
 ${v.project === '' ? html`<label>${t('pages.ed.area')} <select name="area" data-area-for-no-project>${PAGE_AREAS.map((a) => html`<option value="${a}"${a === v.area ? html` selected` : ''}>${pageAreaLabel(a)}</option>`)}</select></label>` : ''}
@@ -46,10 +46,11 @@ ${v.project === '' ? html`<label>${t('pages.ed.area')} <select name="area" data-
 function editor(v: EditForm): SafeHtml {
   const action = v.mode === 'new' ? '/pages' : `/pages/${v.pageId}`;
   const cancel = v.mode === 'new' ? '/pages' : `/pages/${v.pageId}${v.section ? `#${v.section.anchor}` : ''}`;
-  // Enter in the Title field (or a phone's Go key) sends the form's first submit button: this hidden Save, not the Write tab.
+  // Enter in the Title field (or a phone's Go key) sends the form's first submit button: this hidden Save, not the Write tab
+  // (the title is a textarea so it wraps; editor-cm.js sends it on Enter, and the server turns a newline in a title into a space).
   // Adding pictures needs editor-pics.js (an upload without script would lose the unsaved text), so its button and
   // status line stay hidden until that script shows them.
-  return html`<form method="post" action="${action}" class="peditor" data-pics="${asset('editor-pics.js')}" data-cm="${asset('editor-cm.js')}">
+  return html`<form method="post" action="${action}" class="peditor" data-pics="${asset('editor-pics.js')}" data-cm="${asset('editor-cm.js')}" data-own-submit>
 <button type="submit" name="intent" value="save" class="visually-hidden" tabindex="-1" aria-hidden="true">${t('pages.ed.save')}</button>
 ${v.base !== undefined ? html`<input type="hidden" name="base" value="${v.base}">` : ''}
 ${v.section ? html`<input type="hidden" name="section" value="${v.section.anchor}">` : ''}
@@ -69,7 +70,9 @@ ${v.mode === 'page' && v.pageId ? deletePageFold(v.pageId) : ''}`;
 /** The editor (mockup pages-edit.html): a new page, the whole page or one section. */
 export function editView(nav: NavEntry[], v: EditForm): SafeHtml {
   void nav; // the editor has no pages tree; the column is its own (UI round, task 2)
-  const heading = v.mode === 'section' ? html`<h1>${t('pages.ed.editing', { heading: v.section!.heading || t('pages.ed.introduction') })}</h1>` : html``;
+  // The whole-page editor's title is a field, so its heading is for a screen reader only: "Editing <title>" (or "New page").
+  const heading = v.mode === 'section' ? html`<h1>${t('pages.ed.editing', { heading: v.section!.heading || t('pages.ed.introduction') })}</h1>`
+    : html`<h1 class="visually-hidden">${v.mode === 'new' ? t('pages.newPage') : t('pages.ed.editingTitle', { title: v.title })}</h1>`;
   const sub = v.mode === 'section' ? metaLine([v.pageTitle, t('pages.ed.versionN', { version: v.base ?? '' }), html`<a href="/pages/${v.pageId}/edit">${t('pages.ed.wholeInstead')}</a>`]) : '';
   return editWrap(html`${heading}${sub}${errorBlock(v.error)}${editor(v)}`);
 }

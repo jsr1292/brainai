@@ -10,7 +10,7 @@ import type { Device } from '../folders/devices.js';
 import { DAY_MS } from '../folders/match.js';
 import { timeOfDay } from '../timezone.js';
 import { searchSection, type SearchSectionInput } from './desktopViews.js';
-import { backupsPanel, errorBlock, grantCards, sessionCards, when } from './dashboardViews.js';
+import { backupsPanel, errorBlock, okMark, grantCards, sessionCards, when } from './dashboardViews.js';
 
 import { basename } from 'node:path';
 import { fmt } from '../i18n/fmt.js';
@@ -189,7 +189,7 @@ ${quietAppsBlock(v.quiet?.apps, v.quiet?.local ?? false) ?? ''}`;
   const dailyLine = (): SafeHtml => {
     const n = v.backups?.status.nightly;
     const state = !n ? html`<span class="quiet">${t('settings.daily.notYet')}</span>`
-      : n.ok ? html`${when(n.at)} <span class="place">✓</span>` : html`${when(n.at)} <span class="place bad">${t('settings.daily.failed')}</span>`;
+      : n.ok ? html`${when(n.at)} <span class="place">${okMark('copied')}</span>` : html`${when(n.at)} <span class="place bad"><span aria-hidden="true">✗</span> ${t('settings.daily.failed')}</span>`;
     return html`<p class="daily"><span class="label-inline">${t('settings.daily.label')}</span> ${state}</p><p class="meta">${tHtml('settings.daily.where', { here: computerName() })}</p>${v.backups && !v.backups.health.ok ? html`<ul class="problems">${backupProblems(v.backups.health).map((p) => html`<li>${p}</li>`)}</ul>` : ''}`;
   };
   const backupActions = v.backupNow

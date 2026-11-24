@@ -69,7 +69,7 @@ export const settings = {
   'settings.runbook': 'see the runbook',
   'settings.daily.label': 'Daily backup:',
   'settings.daily.notYet': 'not yet',
-  'settings.daily.failed': 'failed ✗',
+  'settings.daily.failed': 'failed',
   'settings.daily.where': "Every night, in BrainAI's own folder on {here}.",
   'settings.backupNow': 'Back up now',
   'settings.showFinder': 'Show in Finder',

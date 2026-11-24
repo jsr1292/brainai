@@ -57,6 +57,8 @@ export function pageRoutes(d: AppDeps): Router {
   // ---- Writing ----
 
   const field = (req: Request, name: string): string => (typeof req.body?.[name] === 'string' ? req.body[name] as string : '');
+  /** A posted title is one line: a newline (a textarea without script) becomes a space. */
+  const titleOf = (req: Request): string => field(req, 'title').replace(/\s*[\r\n]+\s*/g, ' ').trim();
   const projectNames = () => d.registry.list().map((p) => p.name).sort();
   const live = (id: string): Page | undefined => { const p = d.pages.get(id); return p && p.deletedAt === null ? p : undefined; };
   /** A section's own lines, heading included, as the editor shows them. */
@@ -80,7 +82,7 @@ export function pageRoutes(d: AppDeps): Router {
   });
 
   router.post('/pages', owner, async (req, res) => {
-    const v: EditForm = { mode: 'new', title: field(req, 'title'), project: field(req, 'project'), area: field(req, 'area'), body: field(req, 'body'), projects: projectNames() };
+    const v: EditForm = { mode: 'new', title: titleOf(req), project: field(req, 'project'), area: field(req, 'area'), body: field(req, 'body'), projects: projectNames() };
     const intent = field(req, 'intent');
     if (intent !== 'save') return send(res, 200, 'newPage', t('pages.newPage'), editView(nav(), { ...v, preview: intent === 'preview' ? preview(v.body) : undefined }));
     try {
@@ -188,7 +190,7 @@ export function pageRoutes(d: AppDeps): Router {
       return send(res, 409, 'page', t('pages.ed.editingTitle', { title: p.title }), conflictView(nav(), { ...whole, base, savedBy: p.updatedBy, version: p.version, theirs: p.body, mine: field(req, 'body') }), { href: `/pages/${p.id}`, label: p.title });
     }
     const v: EditForm = anchor === undefined
-      ? { ...shown, base, title: field(req, 'title'), project: field(req, 'project'), area: field(req, 'area'), body: field(req, 'body') }
+      ? { ...shown, base, title: titleOf(req), project: field(req, 'project'), area: field(req, 'area'), body: field(req, 'body') }
       : { ...shown, base, body: field(req, 'body') };
     const intent = field(req, 'intent');
     if (intent !== 'save') return send(res, 200, 'page', t('pages.ed.editingTitle', { title: v.title }), editView(nav(), { ...v, preview: intent === 'preview' ? preview(v.body) : undefined }), { href: `/pages/${p.id}`, label: p.title });

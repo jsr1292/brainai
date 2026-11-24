@@ -275,7 +275,7 @@ test('Read it opens the review and Not now goes home, both safe to send twice', 
   const first = app.deps.reviews.ensure('2026-10-26', 'owner')!.openedAt;
   assert.ok(first);
   const dismiss = await post(f, '/review/2026-10-26/dismiss');
-  assert.deepEqual([dismiss.status, dismiss.headers.get('location')], [303, '/']);
+  assert.deepEqual([dismiss.status, dismiss.headers.get('location')], [303, '/?weekHidden=2026-10-26']);
   assert.equal((await post(f, '/review/2026-10-26/dismiss')).status, 303);
   assert.equal(app.deps.reviews.ensure('2026-10-26', 'owner')!.openedAt, first);
   assert.equal((await post(f, '/review/2026-09-28/open')).status, 404);

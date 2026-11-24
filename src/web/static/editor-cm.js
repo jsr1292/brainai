@@ -13,6 +13,8 @@
 
 const T = typeof globalThis.T === 'function' ? globalThis.T : (key, english, params) => { const s = english !== undefined ? english : key; return params ? s.replace(/\{(\w+)\}/g, (m, n) => (Object.prototype.hasOwnProperty.call(params, n) ? String(params[n]) : m)) : s; };
 
+import { draftKey, draftStorage, readDraft, writeDraft, clearDraft, differs, sweepDrafts } from './draft.js';
+
 const CM = '/static/vendor/codemirror-6.43.15/editor.mjs';
 
 /** Two texts are the same when they read the same, whatever the line endings. */
@@ -253,7 +255,10 @@ export async function mountEditor(textarea) {
         ]),
         // Every change goes into the textarea, right away: what is saved is what is on the screen.
         cm.EditorView.updateListener.of((u) => {
-          if (u.docChanged) textarea.value = u.state.doc.toString();
+          if (u.docChanged) {
+            textarea.value = u.state.doc.toString();
+            textarea.dispatchEvent(new CustomEvent('cm:change'));
+          }
         }),
       ],
     }),
@@ -279,6 +284,8 @@ export async function mountEditor(textarea) {
     },
     focus() { view.focus(); },
     getValue() { return view.state.doc.toString(); },
+    /** Replaces the whole text (a saved draft put back). */
+    setValue(text) { view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: String(text) } }); },
     /** The editor's own DOM, for the picture handler, which pastes and drops into it. */
     dom: view.contentDOM,
   };
@@ -306,10 +313,35 @@ function wireArea(form) {
 export async function setUpEditor(form) {
   const textarea = form.querySelector('textarea[name="body"][data-editor]');
   if (!textarea) return;
-  const title = form.querySelector('input[name="title"]');
+  const title = form.querySelector('[name="title"]');
   const startText = textarea.value;
   const startTitle = title ? title.value : '';
-  let submitting = false;
+
+  // The title is a one-line field that wraps (a long name is shown whole): Enter saves, as it did when this was an input (not
+  // while an IME is composing), a newline never gets in, and the box grows with its text where the browser has no field-sizing.
+  if (title && title.tagName === 'TEXTAREA') {
+    const sizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
+    const grow = () => { title.style.height = 'auto'; title.style.height = title.scrollHeight + 'px'; };
+    title.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      const save = form.querySelector('button[name="intent"][value="save"]');
+      if (typeof form.requestSubmit === 'function') form.requestSubmit(save ?? undefined); else form.submit();
+    });
+    title.addEventListener('input', () => {
+      if (/[\r\n]/.test(title.value)) {
+        const at = title.selectionStart;
+        title.value = title.value.replace(/\s*[\r\n]+\s*/g, ' ');
+        if (typeof at === 'number') title.setSelectionRange(at, at);
+      }
+      if (!sizing) grow();
+    });
+    if (!sizing) {
+      grow();
+      window.addEventListener('resize', grow);
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(grow);
+    }
+  }
 
   try {
     await mountEditor(textarea);
@@ -317,24 +349,155 @@ export async function setUpEditor(form) {
     return; // no CodeMirror (offline, an old browser): the plain box from task 2 stays and works.
   }
 
-  const dirty = () => isDirty(startText, textarea.value) || (title ? title.value !== startTitle : false);
+  editorGuard(form, textarea, title, {
+    win: window, doc: document, storage: draftStorage(), now: () => Date.now(), startText, startTitle,
+    fromPost: document.body.dataset.fresh === 'off', confirm: (m) => window.confirm(m),
+  });
+
+  wireArea(form);
+}
+
+/** "14:02", or the day and time for a copy from another day. */
+function draftTime(at, doc, now) {
+  const lang = (doc.documentElement && doc.documentElement.lang) || undefined;
+  const d = new Date(at);
+  const today = new Date(now);
+  const sameDay = d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
+  try {
+    return sameDay ? d.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }) : d.toLocaleString(lang, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  } catch { return d.toISOString().slice(11, 16); }
+}
+
+/**
+ * What keeps the editor's text safe, with the DOM and storage passed in (so it runs in node):
+ * - a question before leaving with unsaved text (the window closing, or Cancel). A page the server sent back after a
+ *   Preview, a refused save or a conflict (data-fresh="off") starts out as unsaved: its text is a draft only it has;
+ * - one submit at a time: the pressed button shows it is busy and a second send does nothing (for 10 s, then it lets go);
+ * - a draft copy on this device (draft.js), written as you type and when you send, cleared once the server confirmed the
+ *   save (app.js, on the page it lands on) and offered back, in place, when the editor opens and the copy differs.
+ */
+export function editorGuard(form, textarea, title, env) {
+  const { win, doc, storage, now, startText, startTitle, fromPost, confirm } = env;
+  sweepDrafts(storage, now());
+  // A runtime mark for app.js's global post guard: this form is guarded here, so that guard leaves it alone (without CodeMirror it has no mark and is covered there).
+  if (form.dataset) form.dataset.guarded = '1';
+  const action = form.getAttribute('action') || '';
+  const sectionField = form.querySelector('input[name="section"]');
+  const key = draftKey(action, sectionField ? sectionField.value : '');
+  const baseField = form.querySelector('input[name="base"]');
+  let base = baseField ? Number(baseField.value) || 0 : 0;
+  let submitting = false;
+  let sentAt = 0;
+  let busy = null;
+  let offered = false;
+  let leaving = false;
+  /** A repeat send is stopped for this long; after it the lock lets go (a stopped navigation never fires pageshow). */
+  const LOCK_MS = 10000;
+  const locked = () => submitting && now() - sentAt <= LOCK_MS;
+
+  const titleNow = () => (title ? title.value : '');
+  const dirty = () => fromPost || isDirty(startText, textarea.value) || titleNow() !== startTitle;
+  const keep = (saving) => writeDraft(storage, key, { title: titleNow(), body: textarea.value, base, saving }, now());
+
+  // Typing keeps the copy up to date (after a short pause), unless the offered copy has not been answered yet.
+  let timer = null;
+  const later = () => {
+    if (offered || locked() || leaving) return;
+    win.clearTimeout(timer);
+    timer = win.setTimeout(() => {
+      if (offered || locked() || leaving) return;
+      if (dirty()) keep(false); else clearDraft(storage, key);
+    }, 400);
+  };
+  textarea.addEventListener('cm:change', later);
+  textarea.addEventListener('input', later);
+  if (title) title.addEventListener('input', later);
+  win.addEventListener('pagehide', () => { if (!offered && !locked() && !leaving && dirty()) { win.clearTimeout(timer); keep(false); } });
+
+  // The offer: a copy from before (a save that never arrived) that differs from what the editor opened with.
+  const found = readDraft(storage, key, now());
+  if (differs(found, titleNow(), textarea.value)) {
+    offered = true;
+    // A page drawn from a POST is the server saying nothing was saved: the copy is not "sent" any more.
+    if (fromPost && found.saving) writeDraft(storage, key, { ...found, saving: false }, found.at);
+    const line = doc.createElement('p');
+    line.className = 'draft-line';
+    line.setAttribute('role', 'status');
+    const note = doc.createElement('span');
+    note.textContent = T('client.draft.line', 'You have unsaved text from {time}.', { time: draftTime(found.at, doc, now()) }) + ' ';
+    const put = doc.createElement('button');
+    put.type = 'button';
+    put.className = 'quiet-btn';
+    put.textContent = T('client.draft.restore', 'Put it back');
+    const drop = doc.createElement('button');
+    drop.type = 'button';
+    drop.className = 'quiet-btn';
+    drop.textContent = T('client.draft.discard', 'Discard');
+    line.append(note, put, doc.createTextNode(' \u00b7 '), drop);
+    const anchor = form.querySelector('section.ed');
+    if (anchor && typeof anchor.before === 'function') anchor.before(line); else form.prepend(line);
+    put.addEventListener('click', () => {
+      offered = false;
+      // The text was written on an older version: send that version, so a page saved since answers with the conflict screen.
+      // (On a page drawn from a POST the owner has already seen both texts: keep its base, or it would loop on the conflict.)
+      if (!fromPost && baseField && found.base && found.base !== base) { baseField.value = String(found.base); base = found.base; }
+      if (title) { title.value = found.title; title.dispatchEvent(new Event('input')); }
+      if (textarea.editorApi && typeof textarea.editorApi.setValue === 'function') textarea.editorApi.setValue(found.body); else textarea.value = found.body;
+      line.remove();
+      keep(false);
+      if (textarea.editorApi) textarea.editorApi.focus();
+    });
+    drop.addEventListener('click', () => {
+      offered = false;
+      clearDraft(storage, key);
+      line.remove();
+      if (textarea.editorApi) textarea.editorApi.focus();
+    });
+  } else if (fromPost) {
+    keep(false); // a Preview, a refused save or a conflict: the text on this page is a draft only this page has
+  }
 
   // Leaving the page asks, but only when there is something to lose.
-  window.addEventListener('beforeunload', (e) => {
-    if (submitting || !dirty()) return;
+  win.addEventListener('beforeunload', (e) => {
+    if (leaving || locked() || !dirty()) return;
     e.preventDefault();
     e.returnValue = '';
   });
-  form.addEventListener('submit', () => { submitting = true; });
+
+  // Leaving on purpose (a confirmed Cancel, "Discard mine"): no second question, and the text is not kept.
+  // An offered copy nobody answered stays: only Discard throws it away.
+  const leave = (force) => { leaving = true; win.clearTimeout(timer); if (force === true || !offered) clearDraft(storage, key); };
+
+  // One submit at a time. The copy is written as the form goes; a save that the server confirms clears it (app.js).
+  form.addEventListener('submit', (e) => {
+    if (locked()) { e.preventDefault(); return; }
+    submitting = true;
+    sentAt = now();
+    win.clearTimeout(timer);
+    // ⌘S and Enter in the title send with the hidden Save button: the busy state goes on the one that is shown.
+    const shown = form.querySelector('.psavebar button[name="intent"][value="save"]');
+    const sub = e.submitter;
+    busy = sub && !(sub.classList && sub.classList.contains('visually-hidden')) ? sub : shown || sub || null;
+    if (busy) busy.setAttribute('aria-busy', 'true');
+    const intent = sub && sub.value ? sub.value : 'save';
+    keep(intent === 'save');
+  });
+  // Back to this page from a failed send (the page kept in memory): the form can be sent again.
+  win.addEventListener('pageshow', () => {
+    submitting = false;
+    if (busy) { busy.removeAttribute('aria-busy'); busy = null; }
+  });
 
   // Cancel asks too, in plain words.
   const cancel = form.querySelector('.psavebar a[href]');
   if (cancel) {
     cancel.addEventListener('click', (e) => {
-      if (!dirty()) return;
-      if (!window.confirm(T('client.editor.leave', 'This page has changes that are not saved. Leave without saving?'))) e.preventDefault();
+      if (dirty() && !confirm(T('client.editor.leave', 'This page has changes that are not saved. Leave without saving?'))) { e.preventDefault(); return; }
+      leave(false);
     });
   }
-
-  wireArea(form);
+  // The conflict page's "Discard mine" is a choice already made: it leaves without a question.
+  const discardMine = doc.querySelector ? doc.querySelector('.conflict .actions a[href]') : null;
+  if (discardMine) discardMine.addEventListener('click', () => leave(true));
+  return { dirty, key };
 }

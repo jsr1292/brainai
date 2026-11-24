@@ -58,6 +58,13 @@ export class SkillSync {
   private ts(): string { return this.now().toISOString(); }
   /** A brain skill's files as the Mac holds them: SKILL.md first, then its own. */
   brainFiles(s: Skill): SkillFile[] { return [{ path: 'SKILL.md', text: this.skills.skillMd(s) }, ...s.files]; }
+  /** A skill brought back after a delete: one shared from a device is linked to that device's copy again (the delete dropped the link). */
+  relinkRestored(s: Skill): void {
+    const m = /^device:(.+)$/.exec(s.origin);
+    const row = m ? this.row(m[1]!, s.name) : undefined;
+    if (m && row) this.setLink({ skill_id: s.id, device_id: m[1]!, mac_name: s.name, mac_hash: row.hash, brain_hash: this.brainHash(s) });
+  }
+
   private brainHash(s: Skill): string { return contentHash(this.brainFiles(s)); }
 
   private links(deviceId: string): LinkRow[] { return this.db.prepare('SELECT * FROM skill_links WHERE device_id = ?').all(deviceId) as LinkRow[]; }

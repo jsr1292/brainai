@@ -326,6 +326,18 @@ test('a failed download says why in the status and leaves the brain on keywords'
   assert.equal(h.embedder.ready(), false);
 });
 
+test('retry runs the current choice again after a failure, and does nothing with no choice', async () => {
+  const h = harness({ fail: 'could not reach Hugging Face or GitHub' });
+  await h.manager.retry();
+  assert.deepEqual(h.manager.status().progress, [], 'no choice: nothing started');
+  writeChoice(h.dataDir, { search: 'gemma', rerank: 'mminilm' });
+  await assert.rejects(h.manager.start(), /could not reach/);
+  assert.equal(h.manager.status().problem, 'could not reach Hugging Face or GitHub');
+  await assert.rejects(h.manager.retry(), /could not reach/);
+  assert.deepEqual(states(h.manager.status().progress), ['gemma:failed']);
+  assert.deepEqual(readChoice(h.dataDir), { search: 'gemma', rerank: 'mminilm' });
+});
+
 /** A brain with two facts by the made-up Gemma (stamped gemma), its files installed, and e5 chosen but not downloaded. */
 async function onGemmaChoosingE5(h: ReturnType<typeof harness>) {
   const base = fakeGemma();
@@ -518,4 +530,14 @@ test('a new run clears the earlier check until its own passes', async () => {
   open();
   await run;
   assert.notEqual(gated.manager.status().checked, undefined);
+});
+
+test('choosing models removes half-downloaded files of models that are not chosen, and keeps the chosen ones', async () => {
+  const h = harness();
+  const partial = (id: ModelId) => join(modelDirOf(h.modelsDir, entry(id)), 'onnx/model.bin.partial');
+  for (const id of ['e5', 'gemma'] as ModelId[]) { mkdirSync(dirname(partial(id)), { recursive: true }); writeFileSync(partial(id), 'half'); }
+  install(h.modelsDir, 'e5');
+  await h.manager.choose({ search: 'e5', rerank: null }).catch(() => {});
+  assert.equal(existsSync(partial('gemma')), false);
+  assert.equal(existsSync(partial('e5')), true);
 });

@@ -332,6 +332,37 @@ document.addEventListener('click', (e) => {
   } catch { location.href = link.href; }
 });
 
+// A failed send's page (a 500 or 413 after a form POST) offers the way back to the typed text: the browser's Back, with the form as it was.
+document.addEventListener('click', (e) => {
+  const link = e.target && e.target.closest ? e.target.closest('a[data-go-back]') : null;
+  if (!link) return;
+  e.preventDefault();
+  if (history.length > 1) history.back(); else location.href = '/';
+});
+
+// The editor's local draft copies (draft.js): dropped after a day on every page load, and all of them at an explicit logout
+// (the server's Clear-Site-Data does the same, but only in secure contexts). Inline: a logout form submits right away.
+const DRAFT_PREFIX = 'brain-draft:';
+const DRAFT_DAY = 24 * 60 * 60 * 1000;
+function purgeDrafts(all) {
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k !== null && k.startsWith(DRAFT_PREFIX)) keys.push(k); }
+    for (const k of keys) {
+      let old = all;
+      if (!old) { try { const d = JSON.parse(localStorage.getItem(k)); old = !d || typeof d.at !== 'number' || Date.now() - d.at > DRAFT_DAY; } catch { old = true; } }
+      if (old) localStorage.removeItem(k);
+    }
+    return keys.length;
+  } catch { return 0; /* storage off */ }
+}
+const draftsKept = typeof localStorage !== 'undefined' ? purgeDrafts(false) : 0;
+
+// The reading page of a page the server saved: the editor's local draft copy for it is done (draft.js). Only loaded when a copy exists.
+for (const art of draftsKept > 0 ? document.querySelectorAll('article[data-draft]') : []) {
+  try { import(art.dataset.draft).then((m) => m.clearConfirmed(m.draftStorage(), art.dataset.page, art.dataset.version, art.dataset.title, art.dataset.by), () => {}); } catch { /* no module loader */ }
+}
+
 // The editor's pictures (round 2 section 12): editor-pics.js shows the Add picture button and handles the file
 // input, paste and drop. Without it (no modules, or the import fails) the editor works as before, without pictures.
 for (const form of document.querySelectorAll('form.peditor[data-pics]')) {
@@ -379,13 +410,19 @@ const dropKept = () => new Promise((resolve) => {
   } catch { resolve(); }
   setTimeout(resolve, 1000);
 });
-for (const form of (typeof indexedDB !== 'undefined' ? document.querySelectorAll('form[action="/logout"]') : [])) {
-  form.addEventListener('submit', (e) => {
-    if (form.dataset.dropped === '1') return;
-    e.preventDefault();
-    dropKept().then(() => { form.dataset.dropped = '1'; form.submit(); });
-  });
-}
+// One capture listener for every logging-out form, also one a script adds later: the Log out of this device (data-logout)
+// and /logout. The editor's draft copies go first, then the drawn diagrams, then the form posts.
+document.addEventListener('submit', (e) => {
+  const form = e.target;
+  if (!form || !form.matches || !form.matches('form[action="/logout"], form[data-logout]')) return;
+  if (form.dataset.dropped === '1') return;
+  // Offline: nothing can be sent, and the editor's draft copies are the text an offline person needs (the offline block below says why).
+  if (document.documentElement && document.documentElement.dataset && document.documentElement.dataset.offline !== undefined) { e.preventDefault(); return; }
+  purgeDrafts(true);
+  if (typeof indexedDB === 'undefined') return;
+  e.preventDefault();
+  dropKept().then(() => { form.dataset.dropped = '1'; form.submit(); });
+}, true);
 if (typeof location !== 'undefined' && location.pathname === '/login' && typeof indexedDB !== 'undefined') dropKept();
 
 // Guided setup (round 2 §17b): a setup page's check line refreshes itself while the page is open.
@@ -431,7 +468,7 @@ for (const box of document.querySelectorAll('[data-added-tools]')) {
 // answer of the Settings line (the tools' CLIs can be slow, so it is a request of its own) is empty when none was.
 for (const step of document.querySelectorAll('[data-step-added]')) {
   fetch('/settings/tools/added', { headers: { accept: 'text/html' }, credentials: 'same-origin', redirect: 'manual' })
-    .then(async (r) => { if (r.ok && !r.redirected && (await r.text()).trim() !== '') step.classList.add('is-done'); })
+    .then(async (r) => { if (r.ok && !r.redirected && (await r.text()).trim() !== '') { step.classList.add('is-done'); const c = step.closest('.first-steps')?.querySelector('.fs-count'); if (c) { c.dataset.done = String(Number(c.dataset.done) + 1); c.textContent = T('client.firstSteps.progress', '{done} of {total} done', { done: c.dataset.done, total: c.dataset.total }); } } })
     .catch(() => { /* the step stays open */ });
 }
 
@@ -527,6 +564,7 @@ for (const line of document.querySelectorAll('[data-models-progress]')) {
     text.textContent = a.line;
     line.querySelector('.models-ok')?.remove();
     line.querySelector('a')?.remove();
+    line.querySelector('.models-retry')?.remove();
     if (a.ready) {
       const ok = document.createElement('span');
       ok.className = 'ok models-ok';
@@ -538,6 +576,18 @@ for (const line of document.querySelectorAll('[data-models-progress]')) {
       link.href = '/settings#search';
       link.textContent = T('client.models.settingsLink', 'Look in Settings › Search');
       text.after(' ', link);
+      if (a.retry) {
+        // The same post as the server-drawn button: the current choice is run again.
+        const form = document.createElement('form');
+        form.method = 'post';
+        form.action = '/models/retry';
+        form.className = 'inline models-retry';
+        const button = document.createElement('button');
+        button.type = 'submit';
+        button.textContent = T('client.models.retry', 'Try again');
+        form.append(button);
+        link.after(' ', form);
+      }
     }
     let bar = line.querySelector('.models-bar');
     if (a.bar) {
@@ -565,9 +615,9 @@ for (const line of document.querySelectorAll('[data-models-progress]')) {
         if (!a.busy) return;
       } else errors++;
     } catch { errors++; /* offline for a moment */ }
-    // Every 2 s; after repeated errors slower (up to 30 s), and after 10 in a row it stops.
-    if (errors >= 10) return;
-    setTimeout(tick, Math.min(30_000, 2000 * 2 ** Math.max(0, errors - 2)));
+    // Every 2 s; after repeated errors slower (up to 30 s), and it never gives up: when the server answers again the
+    // line catches up (a stopped server or a sleeping computer must not leave the last bar frozen).
+    setTimeout(tick, Math.min(30_000, 2000 * 2 ** Math.min(10, Math.max(0, errors - 2))));
   };
   if (line.hasAttribute('data-busy')) setTimeout(tick, 2000);
 }
@@ -844,4 +894,183 @@ if (document.body && document.body.dataset && document.body.dataset.consentsWait
     setTimeout(tick, 3000);
   };
   tick();
+}
+
+// ---- Feedback and state (UX states review, 2026-11-23). Four small blocks, each self-contained. ----
+
+// Plain form posts (finding 4): a pressed form answers at once and cannot be sent twice. The pressed button is marked
+// aria-busy, every other submit button is held (data-held + aria-disabled: held, not disabled, so nothing can be left
+// dead by a browser that restores disabled), and a second submit is dropped. A form has one owner: forms desk.js takes by
+// fetch call preventDefault first and are skipped; the page editor's form (data-own-submit) is owned by editor-cm.js once
+// its guard has set data-guarded, and only then (without CodeMirror the editor has no guard and is covered here). The
+// sender is never disabled: a disabled submitter would drop its name and value from the post.
+// Released on pageshow (Back from the bfcache shows the page as it was left). An ordinary post has no timer: it may run
+// for minutes (Backup now, Connect) and a second send would start it again. Only a download form (data-download), which
+// never leaves the page, lets go after 60 s.
+{
+  let busy = null; // { submitter, held: [buttons], timer }
+  const SUBMITS = 'button:not([type="button"]):not([type="reset"]), input[type="submit"]';
+  const release = () => {
+    if (!busy) return;
+    clearTimeout(busy.timer);
+    if (busy.submitter) busy.submitter.removeAttribute('aria-busy');
+    for (const b of busy.held) { b.removeAttribute('data-held'); b.removeAttribute('aria-disabled'); }
+    busy = null;
+  };
+  if (typeof document.addEventListener === 'function') {
+    document.addEventListener('submit', (e) => {
+      const form = e.target;
+      if (e.defaultPrevented || !form || String(form.method).toLowerCase() !== 'post') return;
+      if (form.hasAttribute && form.hasAttribute('data-own-submit') && form.dataset && form.dataset.guarded === '1') return;
+      const target = form.getAttribute ? form.getAttribute('target') : null;
+      if (target && target !== '_self') return;
+      if (busy) { e.preventDefault(); return; }
+      const submitter = e.submitter || (form.querySelector ? form.querySelector(SUBMITS) : null);
+      const download = !!(form.hasAttribute && form.hasAttribute('data-download'));
+      const held = [];
+      if (!download) {
+        for (const b of typeof document.querySelectorAll === 'function' ? document.querySelectorAll(SUBMITS) : []) {
+          // The editor's own buttons are its own (editor-cm.js): a post cancelled at the leave question would otherwise leave Save held.
+          if (b === submitter || b.disabled || (b.closest && b.closest('form[data-guarded]'))) continue;
+          b.setAttribute('data-held', '');
+          b.setAttribute('aria-disabled', 'true');
+          held.push(b);
+        }
+      }
+      if (submitter) submitter.setAttribute('aria-busy', 'true');
+      busy = { submitter, held, timer: download ? setTimeout(release, 60000) : 0 };
+    });
+  }
+  if (typeof addEventListener === 'function') addEventListener('pageshow', release);
+}
+
+// Offline (finding 10): the calm bar under the top bar (direction §5): "Offline. Changes can't be sent", never red. It
+// shows only when the browser says offline AND the server did not answer two probes in a row (a timeout is "try again",
+// not "offline"), and never on a page that comes from this machine (the desktop window's own server is local). While it
+// shows the server is probed again every 10 s, and it goes on the first answer or on `online`. Submit buttons of posting
+// forms are held and every POST is stopped (a native post offline ends on the browser's error page and the typed text is
+// lost), the editor's included. The logout listener above runs first and checks the offline flag itself, so it neither purges drafts nor posts offline.
+// The probe is a HEAD on /sw.js: that file must stay out of any service-worker cache, or a cached answer would hide a
+// real offline.
+{
+  let bar = null, shown = false, probing = 0, fails = 0, again = 0, every = 0;
+  const POSTS = 'form[method="post" i] button:not([type="button"]):not([type="reset"]), form[method="post" i] input[type="submit"]';
+  const local = typeof location !== 'undefined' && ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+  const hold = (on) => {
+    if (typeof document.querySelectorAll !== 'function') return;
+    for (const b of document.querySelectorAll(POSTS)) {
+      if (on && !b.disabled) { b.disabled = true; b.setAttribute('data-offline', ''); }
+      else if (!on && b.hasAttribute('data-offline')) { b.disabled = false; b.removeAttribute('data-offline'); }
+    }
+  };
+  // The bar is made empty and hidden first, and its words are put in after it is shown: a live region that appears with
+  // its text already inside is not reliably announced.
+  const make = () => {
+    if (bar) return;
+    bar = document.createElement('div');
+    bar.className = 'offline-bar';
+    bar.setAttribute('role', 'status');
+    bar.hidden = true;
+    const top = typeof document.querySelector === 'function' ? document.querySelector('body > header.top') : null;
+    if (top && typeof top.after === 'function') top.after(bar); else if (document.body && typeof document.body.prepend === 'function') document.body.prepend(bar);
+  };
+  const show = (on) => {
+    if (on === shown) return;
+    shown = on;
+    clearInterval(every); every = 0;
+    clearTimeout(again);
+    if (on) {
+      make();
+      const top = typeof document.querySelector === 'function' ? document.querySelector('body > header.top') : null;
+      bar.style.top = (top && top.getClientRects && top.getClientRects().length ? top.offsetHeight : 0) + 'px';
+      bar.hidden = false;
+      setTimeout(() => {
+        if (!shown) return;
+        const ring = document.createElement('span');
+        ring.className = 'offline-ring';
+        ring.setAttribute('aria-hidden', 'true');
+        const b = document.createElement('b');
+        b.textContent = T('client.offline.title', 'Offline.');
+        bar.append(ring, b, ' ' + T('client.offline.body', 'Changes can’t be sent'));
+      }, 50);
+      if (typeof setInterval === 'function') every = setInterval(() => { if (!document.hidden) probe().then((ok) => { if (ok) { fails = 0; show(false); } }); }, 10000);
+    } else if (bar) {
+      bar.hidden = true;
+      bar.replaceChildren();
+    }
+    if (document.documentElement && document.documentElement.dataset) { if (on) document.documentElement.dataset.offline = ''; else delete document.documentElement.dataset.offline; }
+    hold(on);
+  };
+  const probe = async () => {
+    if (typeof fetch !== 'function') return false;
+    try {
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = ctl ? setTimeout(() => ctl.abort(), 4000) : 0;
+      const r = await fetch('/sw.js', { method: 'HEAD', cache: 'no-store', credentials: 'same-origin', signal: ctl ? ctl.signal : undefined });
+      clearTimeout(timer);
+      return !!r;
+    } catch { return false; }
+  };
+  const check = async () => {
+    if (local) return;
+    make();
+    const mine = ++probing;
+    const ok = await probe();
+    if (mine !== probing || navigator.onLine !== false) return;
+    if (ok) { fails = 0; show(false); return; }
+    if (++fails >= 2) show(true);
+    else again = setTimeout(check, 3000);
+  };
+  if (typeof addEventListener === 'function') {
+    addEventListener('offline', () => { fails = 0; check(); });
+    addEventListener('online', () => { probing++; fails = 0; show(false); });
+  }
+  if (typeof document.addEventListener === 'function') {
+    document.addEventListener('submit', (e) => {
+      if (shown && e.target && String(e.target.method).toLowerCase() === 'post') { e.preventDefault(); e.stopImmediatePropagation(); }
+    }, true);
+  }
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) check();
+}
+
+// Landing on a #section (finding 8, after a section save): the heading gets focus (tabindex -1, no scroll) once, and as late
+// content settles (a diagram above it draws later and pushes it down) the section is brought back into view, instantly.
+// It all stops at the first wheel, touch, key or press (the reader has taken over) or after 5 s, with or without diagrams.
+if (typeof location !== 'undefined' && location.hash && typeof document.getElementById === 'function') {
+  let id = location.hash.slice(1);
+  try { id = decodeURIComponent(id); } catch { /* as written */ }
+  const isHeading = (n) => n && /^H[1-6]$/i.test(String(n.tagName)) && typeof n.focus === 'function';
+  if (id && isHeading(document.getElementById(id))) {
+    let taken = false, ro = null;
+    // Looked up again each time: desk.js builds the sheet from the page after load, and the heading is then another node.
+    const focusIt = () => {
+      const h = document.getElementById(id);
+      if (!isHeading(h)) return null;
+      h.setAttribute('tabindex', '-1');
+      if (document.activeElement !== h) h.focus({ preventScroll: true });
+      return h;
+    };
+    const stop = () => { taken = true; if (ro) ro.disconnect(); };
+    focusIt();
+    // desk.js builds its panes after load and says so once; the focus is put back on the new heading that one time.
+    document.addEventListener('desk:ready', () => { if (!taken) focusIt(); }, { once: true });
+    const holder = typeof document.querySelector === 'function' ? document.querySelector('[data-diagrams]') : null;
+    if (holder && typeof ResizeObserver === 'function') {
+      ro = new ResizeObserver(() => { const h = taken ? null : document.getElementById(id); if (h && typeof h.scrollIntoView === 'function') h.scrollIntoView({ block: 'start', behavior: 'instant' }); });
+      ro.observe(holder);
+    }
+    for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) addEventListener(type, stop, { once: true, passive: true });
+    setTimeout(stop, 5000);
+  }
+}
+
+// Confirmations with Undo (finding 11): after Approve or Reject (and Not now on the week card) the page comes back with
+// its one-line answer in place; focus goes to that line so Undo is one Tab away, not back at the top of the page.
+if (typeof document.querySelector === 'function') {
+  const undo = document.querySelector('main form[action="/inbox/undo"], main form[action$="/undismiss"]');
+  const line = undo && typeof undo.closest === 'function' ? undo.closest('.notice') : null;
+  if (line && typeof line.focus === 'function') {
+    line.setAttribute('tabindex', '-1');
+    line.focus();
+  }
 }

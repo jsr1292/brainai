@@ -110,6 +110,23 @@ export class SkillService {
     this.store.remove(id);
   }
 
+  /** Deleted skills, newest deletion first: they can be brought back (see `undelete`). */
+  deleted(): (Skill & { deletedAt: string })[] { return this.store.deleted(); }
+  deletedOne(id: string): (Skill & { deletedAt: string }) | undefined { return this.store.deletedOne(id); }
+
+  /**
+   * Brings a deleted skill back, with its text, files and history, switched Off: a skill is instructions assistants
+   * follow, so one that returns never reaches them again until the owner turns it On. Refused when a skill with the
+   * same name was made since.
+   */
+  undelete(id: string, by: string): Skill {
+    const gone = this.store.deletedOne(id);
+    if (!gone) throw new SkillError('not_found', 'No such skill.', { key: 'err.skill.noSuch' });
+    if (this.store.byName(gone.name)) throw new SkillError('invalid', `A skill named ${gone.name} already exists.`, { key: 'err.skill.nameTaken', params: { name: gone.name } });
+    this.store.undelete(id, by);
+    return this.must(id);
+  }
+
   get(id: string): Skill | undefined { return this.store.get(id); }
   byName(name: string): Skill | undefined { return this.store.byName(name); }
   list(): Skill[] { return this.store.list(); }

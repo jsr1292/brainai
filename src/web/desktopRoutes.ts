@@ -454,7 +454,21 @@ export function desktopRoutes(d: AppDeps): Router {
       searchReady: s.searchReady,
       ...(s.problem !== undefined ? { problem: clean(s.problem) } : {}),
       line: line.text, busy: line.busy, failed: line.failed, bar: line.bar, ready: line.ready,
+      retry: line.failed && s.choice !== null,
     });
+  });
+
+  /** "Try again" on a failed download: the current choice is run again (same session and same-origin check as the other posts here). */
+  router.post('/models/retry', here, owner, (req, res) => {
+    if (!d.models) return res.status(404).end();
+    d.models.retry().catch(() => {});
+    // Back to the page the button was on (a same-origin Referer's path only, never an app link), else Settings › Search.
+    let to = '/settings#search';
+    try {
+      const u = new URL(req.get('referer') ?? '');
+      if (u.origin === new URL(req.protocol + '://' + req.get('host')).origin && u.pathname.startsWith('/') && !u.pathname.startsWith('//') && !u.pathname.includes('\\') && !/^\/(app|models)\//.test(u.pathname)) to = u.pathname + u.search + (u.pathname === '/settings' ? '#search' : '');
+    } catch { /* no Referer */ }
+    res.redirect(303, to);
   });
 
   const clean = (t: string) => [dataDir, d.backupDir].reduce<string>((s, p) => (p ? s.replaceAll(p, 'the data folder') : s), t);

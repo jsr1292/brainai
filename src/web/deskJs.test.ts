@@ -465,3 +465,70 @@ test('opening a project in the sheet stays at its top: #panel and #notyet only n
   assert.equal(d.sheetScrollId('/pages/p1#run-and-deploy'), 'run-and-deploy');
   assert.equal(d.sheetScrollId('/pages/p1#caf%C3%A9'), 'café');
 });
+
+// ---- Feedback and state (UX states review, 2026-11-23) ----
+
+test('palNext: Enter while a search is pending waits and then runs the first fresh row; typing again, a failed search or closing drops the wait', () => {
+  let st: any = { pending: false, want: null };
+  const go = (ev: any) => { const r = d.palNext(st, ev); st = r.state; return r.choose; };
+  assert.deepEqual(go({ type: 'enter', own: false }), { own: false, at: 'active' }, 'nothing pending: the active row runs');
+  go({ type: 'input', empty: false });
+  assert.equal(st.pending, true);
+  assert.equal(go({ type: 'enter', own: true }), undefined, 'pending: nothing stale runs');
+  assert.deepEqual(st.want, { own: true });
+  go({ type: 'search', empty: false });
+  assert.deepEqual(st.want, { own: true }, 'the search starting keeps the wait');
+  assert.deepEqual(go({ type: 'results', failed: false }), { own: true, at: 'first' }, 'the fresh first row runs, as ⌘↵ asked');
+  assert.deepEqual(st, { pending: false, want: null });
+  go({ type: 'input', empty: false }); go({ type: 'enter', own: false });
+  go({ type: 'input', empty: false });
+  assert.equal(st.want, null, 'more typing drops the Enter');
+  go({ type: 'enter', own: false });
+  assert.equal(go({ type: 'results', failed: true }), undefined, 'never after a failed search');
+  go({ type: 'input', empty: false }); go({ type: 'enter', own: false });
+  go({ type: 'close' });
+  assert.deepEqual(st, { pending: false, want: null });
+  go({ type: 'input', empty: false });
+  go({ type: 'input', empty: true });
+  assert.equal(st.pending, false, 'an emptied box is drawn at once: nothing to wait for');
+  const src = fnBody('palRender');
+  assert.ok(/palSelect\(palItems\.length && !idle \? 0 : -1\)/.test(src) && /desk-pal-live/.test(src), 'idle: no active row, and the line is announced');
+  assert.ok(/!palState\.pending && palAt !== i/.test(fnBody('palRender')), 'no hover selection while searching');
+});
+
+test('saveFailAction: only a plain server error offers Try again; unknown outcomes, conflicts and refusals offer Check again', () => {
+  const a = (s: any, on = true) => d.saveFailAction(s, on);
+  assert.deepEqual(a(500), { why: 'server', offline: false, action: 'retry' });
+  assert.deepEqual(a('threw'), { why: 'unknown', offline: false, action: 'check' });
+  assert.deepEqual(a('threw', false), { why: 'unknown', offline: true, action: 'check' }, 'the connection dropped mid-request: unknown, with the offline sentence');
+  for (const s of [502, 503, 504]) assert.deepEqual(a(s), { why: 'unknown', offline: false, action: 'check' }, String(s));
+  for (const s of [409, 412]) assert.equal(a(s).why, 'conflict');
+  for (const s of [400, 403, 404, 413]) assert.deepEqual(a(s), { why: 'rejected', offline: false, action: 'check' }, String(s));
+  assert.equal(a(501).action, 'retry');
+  assert.equal(a(409, false).offline, false, 'an answer came, so it is not the connection');
+  const submit = fnBody('onSubmit');
+  assert.ok(/saveFailLine\(form, e\.submitter \?\? null, 'threw'\)/.test(submit) && /saveFailLine\(form, e\.submitter \?\? null, res\.status\)/.test(submit));
+  const line = fnBody('saveFailLine');
+  assert.ok(!/replaceChildren/.test(line), 'the sheet is not emptied');
+  assert.ok(/if \(!check && form\.isConnected\) \{ form\.requestSubmit/.test(line) && !/line\.remove\(\);\s*if \(!check/.test(line), 'Try again keeps the line until the resend goes (onSubmit removes it)');
+  assert.ok(/focus: 'heading'/.test(line) && /putBack\(kept, action\)/.test(line), 'Check again focuses the heading and puts the typed values back');
+  assert.ok(/client\.desk\.failed'/.test(fnBody('failLine')), 'a failed load keeps its words');
+});
+
+test('opening a project from the overview answers at once: the pressed row is aria-busy until the panes are in or it failed, and a second press on it is dropped', () => {
+  const mount = fnBody('mountPanes');
+  assert.ok(/setAttribute\('aria-busy', 'true'\)/.test(mount) && /finally \{ link\?\.removeAttribute\('aria-busy'\)/.test(mount));
+  assert.ok(/link\?\.getAttribute\('aria-busy'\) === 'true'\) return/.test(mount));
+  assert.ok(mount.indexOf("setAttribute('aria-busy'") < mount.indexOf('mountPanesNow'), 'marked before any request goes out');
+});
+
+test('Edit details leaves the Manage menu for a fold in the sheet, so Save is never inside a box that scrolls', () => {
+  const menu = fnBody('manageMenu');
+  assert.ok(/node\.append\(info\)/.test(menu) && /info\.replaceWith\(go\)/.test(menu));
+  assert.ok(/info\.open = true/.test(menu) && /closeMenu\(\)/.test(menu));
+});
+
+test('a held button (aria-disabled while another post is under way) sends nothing through the desk', () => {
+  const submit = fnBody('onSubmit');
+  assert.match(submit.slice(0, 400), /e\.submitter\.getAttribute\('aria-disabled'\) === 'true'\) \{ e\.preventDefault\(\); return; \}/);
+});

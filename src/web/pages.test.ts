@@ -97,19 +97,19 @@ test('a page reads with its sections, anchors, edit links and the aside', async 
   assert.match(body, /<p class="crumb">Apps › <a href="\/\?project=wildlog#panel">wildlog<\/a><\/p>/);
   assert.match(body, /<h1>wildlog — wine cellar<\/h1>/);
   assert.match(body, /<ul class="meta-line"><li>Written by <span class="writer w-you">You<\/span><\/li><li>Updated <time[^>]*>[^<]+<\/time><\/li><li>1 version<\/li><\/ul>/);
-  const main = body.slice(body.indexOf('<main'), body.indexOf('<aside'));
+  const main = body.slice(body.indexOf('<main'), body.indexOf('<section class="paside"'));
   assert.doesNotMatch(main, /\/history">History</, 'the page meta has no second History link; the rail keeps it');
   assert.match(body, /<div class="plead" id="top">[\s\S]*The wine cellar app for the iPhone\./);
   assert.match(body, /<div class="sec-head l2"><h2 id="stack">Stack<\/h2> <a class="sec-edit" href="\/pages\/[^"]+\/edit\?section=stack" aria-label="Edit Stack">Edit<\/a><\/div>/);
   assert.match(body, /<div class="sec-head l3"><h3 id="build">Build<\/h3>/);
   assert.match(body, new RegExp(`<a class="wikilink" href="/pages/${sp.id}">Start page</a>`));
-  const aside = body.slice(body.indexOf('<aside'));
+  const aside = body.slice(body.indexOf('<section class="paside"'));
   assert.match(aside, /On this page[\s\S]*href="#stack">Stack<[\s\S]*href="#build">Build<[\s\S]*href="#key-decisions">Key decisions</);
   assert.match(aside, new RegExp(`Related facts[\\s\\S]*href="/memories/${fact.id}\\?from=%2Fpages%2F${page.id}"`));
   assert.match(aside, new RegExp(`href="/pages/${page.id}/edit">Edit</a>`));
   assert.match(aside, new RegExp(`href="/pages/${page.id}/history">History</a>`));
   const linked = await (await f(`/pages/${sp.id}`)).text();
-  assert.match(linked.slice(linked.indexOf('<aside')), new RegExp(`Linked from[\\s\\S]*href="/pages/${page.id}">wildlog — wine cellar<`));
+  assert.match(linked.slice(linked.indexOf('<section class="paside"')), new RegExp(`Linked from[\\s\\S]*href="/pages/${page.id}">wildlog — wine cellar<`));
 });
 
 test('the live box shows Now, Next and the waiting items as tick forms that come back to the page', async (t) => {
@@ -250,7 +250,7 @@ test('headings show their inline Markdown, and references defined at the bottom 
   const body = await (await f(`/pages/${p.id}`)).text();
   assert.match(body, /<h2 id="run-npm-start">Run <code>npm start<\/code><\/h2> <a class="sec-edit"/);
   assert.match(body, /<a href="https:\/\/docs\.example">the docs<\/a>/);
-  assert.match(body.slice(body.indexOf('<aside')), /href="#run-npm-start">Run <code>npm start<\/code><\/a>/);
+  assert.match(body.slice(body.indexOf('<section class="paside"')), /href="#run-npm-start">Run <code>npm start<\/code><\/a>/);
 });
 
 test('a section heading is named by its own text: the Edit link sits beside it, not inside it', async (t) => {
@@ -282,7 +282,7 @@ test("the page's whole-page Edit, History and 'Ask an AI to update' open the rig
   for (let i = 0; i < 6; i++) await app.deps.service.remember({ kind: 'decision', content: `wildlog decision number ${i + 1} about the cellar`, project: 'wildlog' }, owner);
   const p = await app.deps.pages.create({ title: 'wildlog — long runbook', project: 'wildlog', body: `Intro.\n\n${sections}` }, 'owner');
   const body = await (await f(`/pages/${p.id}`)).text();
-  const rail = body.slice(body.indexOf('<aside class="paside"><div class="sticky">'), body.indexOf('</aside>'));
+  const rail = body.slice(body.indexOf('<section class="paside" aria-label="About this page"><div class="sticky">'), body.indexOf('</div></section><nav class="pnav"'));
   const at = (s: string) => { const i = rail.indexOf(s); assert.ok(i >= 0, s); return i; };
   const edit = at(`<a class="button primary" href="/pages/${p.id}/edit">Edit</a>`);
   const ask = at('<details class="asknote"');
@@ -300,7 +300,7 @@ test('on every page screen the page itself comes before the Pages list, so keybo
     assert.deepEqual([...at].sort((a, b) => a - b), at, marks.join(' < '));
   };
   const reading = await (await f(`/pages/${page.id}`)).text();
-  order(reading, '<div class="pmain">', '<h1>', '<aside class="paside">', '<nav class="pnav"');
+  order(reading, '<div class="pmain">', '<h1>', '<section class="paside"', '<nav class="pnav"');
   order(await (await f('/pages')).text(), '<div class="pmain">', '<h1>', '<nav class="pnav"');
   order(await (await f(`/pages/${page.id}/history`)).text(), '<div class="pmain">', '<h1>', '<nav class="pnav"');
   // The editor is a column of its own: no pages tree, and the title input is its heading (UI round, task 2).
@@ -375,7 +375,7 @@ test('the live box is a quiet eyebrow, full on a desktop and one line on a phone
 test('the rail has one black pill, Edit; History and Ask an AI are plain links', async (t) => {
   const { f, page } = await start(t);
   const body = await (await f(`/pages/${page.id}`)).text();
-  const aside = body.slice(body.indexOf('<aside class="paside">'), body.indexOf('</aside>'));
+  const aside = body.slice(body.indexOf('<section class="paside"'), body.indexOf('</div></section><nav class="pnav"'));
   assert.equal((aside.match(/\bprimary\b/g) ?? []).length, 1);
   assert.match(aside, /<a class="button primary" href="\/pages\/[^"]+\/edit">Edit<\/a>/);
   assert.match(aside, /href="\/pages\/[^"]+\/history">History<\/a><span class="n">\d+ versions?<\/span>/);
@@ -402,7 +402,7 @@ test('every related fact stays reachable from the rail: past the first three the
   const more: string[] = [];
   for (const n of [1, 2, 3, 4]) more.push((await app.deps.service.remember({ kind: 'decision', content: `wildlog decision number ${n} about the cellar`, project: 'wildlog' }, owner) as { memory: { id: string } }).memory.id);
   const body = await (await f(`/pages/${page.id}`)).text();
-  const aside = body.slice(body.indexOf('<aside'));
+  const aside = body.slice(body.indexOf('<section class="paside"'));
   for (const id of [fact.id, ...more]) assert.match(aside, new RegExp(`href="/memories/${id}\\?from=%2Fpages%2F${page.id}"`), `fact ${id} has a link`);
   // The rest may include decisions from other projects found by meaning, so a /facts?project= list would miss them.
   assert.doesNotMatch(aside, /href="\/facts\?project=/);
@@ -667,7 +667,7 @@ test('a page with a diagram loads the drawer and the viewer; a page without one 
   const withOne = await app.deps.pages.create({ title: 'Flow', area: 'apps', body: 'Lead.\n\n```mermaid\nflowchart TD\n a-->b\n```' }, 'owner');
   const without = await app.deps.pages.create({ title: 'Prose', area: 'apps', body: 'Just words.' }, 'owner');
   const a = await (await f(`/pages/${withOne.id}`)).text();
-  assert.match(a, /<article class="art" data-viewer="\/static\/viewer\.js\?v=[0-9a-f]{10}" data-diagrams="\/static\/diagrams\.js\?v=[0-9a-f]{10}" data-renderer="\/static\/diagram-frame\.js\?v=[0-9a-f]{10}" data-page="[^"]+" data-version="1">/);
+  assert.match(a, /<article class="art" data-viewer="\/static\/viewer\.js\?v=[0-9a-f]{10}" data-diagrams="\/static\/diagrams\.js\?v=[0-9a-f]{10}" data-renderer="\/static\/diagram-frame\.js\?v=[0-9a-f]{10}" data-page="[^"]+" data-version="1" data-draft="\/static\/draft\.js\?v=[0-9a-f]{10}" data-title="[^"]*" data-by="[^"]+">/);
   const b = await (await f(`/pages/${without.id}`)).text();
   assert.doesNotMatch(b, /data-diagrams|data-viewer/);
   const preview = await (await f(`/pages/${withOne.id}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ body: '```mermaid\nflowchart TD\n a-->b\n```', title: 'Flow', area: 'apps', base: '1', intent: 'preview' }) })).text();

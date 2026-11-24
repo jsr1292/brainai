@@ -301,6 +301,7 @@ export const setup_es: Record<keyof typeof setup, Entry> = {
   'setup.models.getting': 'Preparando los modelos de búsqueda… la búsqueda por palabras clave ya funciona',
   'setup.models.barLabel': 'Progreso de la descarga de los modelos de búsqueda',
   'setup.models.look': 'Mira en Ajustes › Búsqueda',
+  'setup.models.retry': 'Intentarlo de nuevo',
   'setup.search.pageTitle': 'Ajustes › Búsqueda',
   'setup.search.notChanged': 'Sin cambios',
   'setup.search.backTo': 'Volver a Ajustes › Búsqueda',

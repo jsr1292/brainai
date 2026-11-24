@@ -1,5 +1,6 @@
 import { DEVICE_DAYS } from './auth/sessions.js';
 import Database from 'better-sqlite3';
+import { busy } from './busyMarker.js';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -827,6 +828,10 @@ const PRE_MIGRATE_KEEP = 3;
  * good name. Then only the newest PRE_MIGRATE_KEEP copies (schema updates and re-embeds together) are kept.
  */
 function checkedCopy(db: DB, path: string, prefix: string): void {
+  busy('copying the brain before an update', () => checkedCopyWork(db, path, prefix));
+}
+
+function checkedCopyWork(db: DB, path: string, prefix: string): void {
   const dir = join(dirname(path), 'pre-migrate');
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
   const target = join(dir, `${prefix}-${stamp}.db`);

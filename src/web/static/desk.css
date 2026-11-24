@@ -49,8 +49,10 @@
   .side-subs { gap: 1px; margin-top: 1px; }
   .side-place { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: var(--r-pill); color: var(--ink2); font-size: var(--t-sub); font-weight: 500; line-height: 1; }
   .side-place[aria-current] { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
+  /* A place whose section is the page you are on is only the heading of it; the section carries the one black pill. */
+  .side-place[aria-current="true"] { background: none; color: var(--fg); font-weight: 600; }
   .side-sub { display: flex; align-items: center; height: 30px; margin-left: 12px; padding: 0 12px; border-radius: var(--r-pill); color: var(--muted); font-size: var(--t-sub); font-weight: 500; line-height: 1; }
-  .side-sub[aria-current="page"] { background: var(--raised); color: var(--fg); font-weight: 600; }
+  .side-sub[aria-current="page"] { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
   /* The Inbox counts what waits for the owner. On the black pill it inverts, so the number still reads. */
   .side-count { flex: none; margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box; border-radius: var(--r-pill); background: var(--accent); color: var(--primary-fg); font-size: var(--t-label); font-weight: 700; line-height: 20px; text-align: center; }
   .side-place[aria-current] .side-count { background: var(--primary-fg); color: var(--primary); }
@@ -109,19 +111,25 @@
    discussions in a right column. Tiles keep the phone's look, in a wider grid. ---- */
 @media (min-width: 1100px) {
   .phome:not(.has-panel) { max-width: none; }
-  /* Rows: 1 title and idea, 2 error, 3 banner, 4–6 the right column (For you heading, For you, the extras), 7 the 1fr
-     row the areas' span crosses, so a long areas column never stretches the right column's rows. */
-  .phome:not(.has-panel) > .plist { display: grid; grid-template-columns: minmax(0, 1fr) var(--desk-right); grid-template-rows: repeat(6, auto) 1fr; column-gap: 28px; row-gap: 0; align-items: start; }
+  /* Rows: 1 title and idea, 2 error, 3 the week card (or its Undo line), 4 the system blocks (backup warning, updates, models),
+     5-7 the right column (For you heading, For you, the extras), 8 the 1fr row the left block (First steps, the empty line, the
+     areas: .pleft) spans down to, so a long left column never stretches the right column's rows and neither opens a gap in the other. */
+  .phome:not(.has-panel) > .plist { display: grid; grid-template-columns: minmax(0, 1fr) var(--desk-right); grid-template-rows: repeat(7, auto) 1fr; column-gap: 28px; row-gap: 0; align-items: start; }
   .phome:not(.has-panel) > .plist > h1 { grid-row: 1; grid-column: 1; justify-self: start; margin-bottom: 22px; }
   .phome:not(.has-panel) > .plist > form.idea { grid-row: 1; grid-column: 1 / -1; justify-self: end; margin-bottom: 22px; }
   .phome:not(.has-panel) > .plist > .error { grid-row: 2; grid-column: 1 / -1; margin-bottom: 22px; }
-  .phome:not(.has-panel) > .plist > .banner { grid-row: 3; grid-column: 1 / -1; margin-bottom: 22px; }
-  .phome:not(.has-panel) > .plist > .fy-h { grid-row: 4; grid-column: 2; }
-  .phome:not(.has-panel) > .plist > .foryou { grid-row: 5; grid-column: 2; }
-  .phome:not(.has-panel) > .plist > .pextra { grid-row: 6; grid-column: 2; margin-top: 28px; }
-  .phome:not(.has-panel) > .plist:not(:has(> .foryou)) > .pextra { grid-row: 4; margin-top: 0; }
-  .phome:not(.has-panel) > .plist > .empty { grid-row: 4; grid-column: 1; }
-  .phome:not(.has-panel) > .plist > .pareas { grid-row: 4 / span 4; grid-column: 1; gap: 28px; }
+  .phome:not(.has-panel) > .plist > :is(.monday-card, .notice-undo) { grid-row: 3; grid-column: 1; }
+  .phome:not(.has-panel) > .plist > .pnotes { grid-row: 4; grid-column: 1 / -1; display: flex; flex-direction: column; gap: 22px; margin-bottom: 22px; }
+  .phome:not(.has-panel) > .plist > .pnotes > * { margin-top: 0; margin-bottom: 0; }
+  .phome:not(.has-panel) > .plist > .fy-h { grid-row: 5; grid-column: 2; }
+  .phome:not(.has-panel) > .plist > .foryou { grid-row: 6; grid-column: 2; }
+  .phome:not(.has-panel) > .plist > .pextra { grid-row: 7; grid-column: 2; margin-top: 28px; }
+  .phome:not(.has-panel) > .plist:not(:has(> .foryou)) > .pextra { grid-row: 5; margin-top: 0; }
+  .phome:not(.has-panel) > .plist > .pleft { grid-row: 5 / span 4; grid-column: 1; min-width: 0; display: flex; flex-direction: column; gap: 28px; }
+  .phome:not(.has-panel) > .plist > .pleft > .first-steps { max-width: 44rem; margin: 0; }
+  .phome:not(.has-panel) > .plist .fs-fold h2 { margin: 0; }
+  /* The week card is followed by its next block with the section gap (spacing scale). */
+  .phome:not(.has-panel) > .plist > .monday-card { margin: 24px 0 var(--s7); }
   .phome:not(.has-panel) > .plist h2 { margin-bottom: 12px; }
   /* The date after the title, and a For you heading (desktop only) so both columns start on one line. */
   .phome:not(.has-panel) .phome-date[hidden] { display: inline; margin-left: 14px; font-size: var(--t-sub); font-weight: 400; color: var(--muted); letter-spacing: 0; }
@@ -231,9 +239,10 @@
   .phome.has-panel > .plist :is(.pcard-one, .pcard-foot) { display: none; }
 
   /* Also open and the fold rows: one line, the ring, the name and Next with an ellipsis. */
-  .phome.has-panel > .plist .row.prow { grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr) auto; min-height: 0; gap: 8px; }
+  .phome.has-panel > .plist .row.prow { grid-template-columns: 8px minmax(0, 1fr) auto; min-height: 0; gap: 8px; }
+  /* The list beside an open project is too narrow for the next step: two letters of it are noise, and the panel shows it whole. */
+  .phome.has-panel > .plist .prow-next { display: none; }
   .phome.has-panel > .plist .prow-name { font-weight: 600; }
-  .phome.has-panel > .plist .prow-next { font-size: var(--t-sub); }
   .phome.has-panel > .plist .row.prow :is(.prow-when, .row-note) { display: none; }
   /* Of the chips, only the "work not safe" mark and the health label stay in the narrow list. */
   .phome.has-panel > .plist .row.prow .prow-chip > :not(.pwarn, .hl) { display: none; }
@@ -779,27 +788,12 @@
   }
 }
 
-/* ---- Home layout pass (2026-11-18): the first-steps checklist takes a row of its own under the banner, and everything
-   below moves down one; the dot key sits in the areas column; the links row closes the right column. ---- */
+/* ---- Home layout pass (2026-11-18, revised 2026-11-23): the links row closes the right column; an empty brain has no right
+   column, so its line lines up with the heading and the links row sits under it on the left. ---- */
 @media (min-width: 1100px) {
-  .phome:not(.has-panel) > .plist > .first-steps { grid-row: 4; grid-column: 1 / -1; max-width: 44rem; margin: 0 0 28px; }
-  .phome:not(.has-panel) > .plist:has(> .first-steps) { grid-template-rows: repeat(7, auto) 1fr; }
-  .phome:not(.has-panel) > .plist:has(> .first-steps) > .fy-h { grid-row: 5; }
-  .phome:not(.has-panel) > .plist:has(> .first-steps) > .foryou { grid-row: 6; }
-  .phome:not(.has-panel) > .plist:has(> .first-steps) > .pextra { grid-row: 7; }
-  .phome:not(.has-panel) > .plist:has(> .first-steps):not(:has(> .foryou)) > .pextra { grid-row: 5; }
-  .phome:not(.has-panel) > .plist:has(> .first-steps) > .empty { grid-row: 5; }
-  .phome:not(.has-panel) > .plist:has(> .first-steps) > .pareas { grid-row: 5 / span 4; }
-  .phome:not(.has-panel) > .plist > .home-links { grid-row: 7; grid-column: 2; margin: 14px 4px 0; }
-  .phome:not(.has-panel) > .plist:has(> .foryou) > .home-links { grid-row: 7; }
-  .phome:not(.has-panel) > .plist:not(:has(> .foryou)) > .home-links { grid-row: 5; }
-  .phome:not(.has-panel) > .plist:has(> .first-steps):not(:has(> .foryou)) > .home-links { grid-row: 6; }
-  .phome:not(.has-panel) > .plist:has(> .first-steps):has(> .foryou) > .home-links { grid-row: 8; }
-  /* An empty brain has no right column: "No projects yet" lines up with the heading, and the links row sits under it on the left. */
-  .phome:not(.has-panel) > .plist > .empty { text-align: left; margin-left: 0; }
-  .phome:not(.has-panel) > .plist:has(> .empty) > .home-links { grid-column: 1; margin-left: 0; }
-  .phome:not(.has-panel) > .plist:has(> .empty):not(:has(> .first-steps)):not(:has(> .foryou)) > .home-links { grid-row: 5; }
-  .phome:not(.has-panel) > .plist:has(> .empty):has(> .first-steps):not(:has(> .foryou)) > .home-links { grid-row: 6; }
+  .phome:not(.has-panel) > .plist > .home-links { grid-row: 8; grid-column: 2; margin: 14px 4px 0; }
+  .phome:not(.has-panel) > .plist:not(:has(> .foryou)) > .home-links { grid-row: 6; }
+  .phome:not(.has-panel) > .plist > .pleft > .empty { text-align: left; margin-left: 0; }
 }
 /* The Five areas row keeps its bold name and its words on one line of text beside an open project (a line-clamped box
    would split them into two columns). */
@@ -865,4 +859,20 @@
 /* ---- Settings › Assistants › Change: the buttons keep their own width beside a small field or box (QA 9) ---- */
 @media (min-width: 1100px) {
   .conn-change .actions button { flex: none; width: auto; }
+}
+
+/* ==== Feedback and state (UX states review, 2026-11-23): a pressed row, a failed save, Edit details as a fold, the offline bar's room ==== */
+@media (min-width: 1100px) {
+  /* A project pressed in the overview while its panes load: the row answers at once, with no motion. */
+  main > .phome:not(.has-panel) a[aria-busy="true"] { background: var(--raised); cursor: progress; }
+  /* A save that did not go through: the sheet stays, this line sits at its top. */
+  .desk-save-fail { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--r-inset); background: var(--raised); color: var(--fg); }
+  .desk-save-fail:focus { outline: none; }
+  .desk-save-fail .linklike { min-height: 0; padding: 0; border: 0; border-radius: 0; background: none; color: var(--fg); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+  /* Edit details: one row in the Manage menu; the form itself is a fold at the foot of the sheet. */
+  .desk-menu > .desk-menu-edit { display: flex; align-items: center; width: 100%; min-height: 40px; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+  /* The offline bar takes its row from the panes, which are exactly one window high. */
+  html[data-offline] body.app:has(main > .phome.has-panel) main,
+  html[data-offline] body.app:has(main > .desk-panes) main,
+  html[data-offline] body.app:has(main > .inbox) main { height: calc(100dvh - 2.25rem); }
 }

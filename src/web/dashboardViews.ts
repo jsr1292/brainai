@@ -19,7 +19,7 @@ import type { Supersession, SupersessionStore } from '../memory/supersessions.js
 import { shortDay } from '../timezone.js';
 
 export type ReplacedItem = ReturnType<SupersessionStore['replacedList']>[number];
-import { backupProblems, reasonText } from './errorText.js';
+import { backupProblems, reasonText, type FactField } from './errorText.js';
 import { html, type SafeHtml } from './html.js';
 import { metaLine } from './metaLine.js';
 import { heldMetaLines, metaFields, pastChip, sourceLine, validLine } from './factMetaViews.js';
@@ -32,7 +32,9 @@ export const PAGE_SIZE = 50;
 const EXCERPT = 160;
 
 /** `base`: the updatedAt of the memory the form was filled from, so a save from a stale page is refused. */
-export interface MemoryFormValues { kind: string; content: string; project: string; tags: string; keys?: string; base?: string; validUntil?: string; source?: string; sourceBy?: string | null; sourceNote?: string; origValidUntil?: string; origSource?: string; origSourceNote?: string }
+export interface MemoryFormValues { kind: string; content: string; project: string; tags: string; keys?: string; base?: string; validUntil?: string; source?: string; sourceBy?: string | null; sourceNote?: string; origValidUntil?: string; origSource?: string; origSourceNote?: string;
+  /** The field a refused save was about: its message is shown under it (see `memoryForm`). */
+  errorField?: FactField }
 export interface ActivityItem { at: string; by: string; action: ActivityRow['action']; memoryId: string; content: string }
 
 export const when = (iso: string): SafeHtml => timeAgo(iso, viewNow());
@@ -142,15 +144,17 @@ const placeName = (where: string): string => (where.startsWith('gdrive:')
   ? 'Google Drive'
   : where.replace(/^\/mnt\//, '').replace(/\/memory-backups\/?$/, '') || where);
 
+/** A run's ✓ or ✗ for the eye, with the same thing in words for a screen reader (the glyph alone reads "check mark" or "ballot X"). */
+export const okMark = (r: 'copied' | 'skipped' | 'failed'): SafeHtml => html`<span aria-hidden="true">${r === 'copied' ? '✓' : '✗'}</span><span class="visually-hidden">${r === 'copied' ? t('inbox.settings.mark.ok') : r === 'skipped' ? t('backup.p.result.skipped') : t('backup.p.result.failed')}</span>`;
+
 export function backupsPanel(b: { status: BackupStatus; health: { ok: boolean; problems: string[]; say?: Say[] }; offsite: boolean; jobs?: boolean }, opts: { id?: string; title?: string; extra?: SafeHtml; /** After the runs: what follows them in the section. */ after?: SafeHtml } = {}): SafeHtml {
   const { nightly, offsite } = b.status;
-  const job = (label: string, r: SimpleRun | undefined) => html`<li><span class="label-inline">${label}</span> ${r ? html`${when(r.at)} <span class="place${r.ok ? '' : ' bad'}">${r.ok ? '✓' : '✗'}</span>` : html`<span class="quiet">${t('inbox.settings.notYet')}</span>`}</li>`;
+  const job = (label: string, r: SimpleRun | undefined) => html`<li><span class="label-inline">${label}</span> ${r ? html`${when(r.at)} <span class="place${r.ok ? '' : ' bad'}">${okMark(r.ok ? 'copied' : 'failed')}</span>` : html`<span class="quiet">${t('inbox.settings.notYet')}</span>`}</li>`;
   const run = (label: string, r: BackupRun | undefined, places: SafeHtml) => html`<li><span class="label-inline">${label}</span> ${r ? html`${when(r.at)} ${places}` : html`<span class="quiet">${t('inbox.settings.notYet')}</span>`}</li>`;
-  const mark = (ok: boolean) => (ok ? '✓' : '✗');
   const nightlyPlaces = nightly?.ok
-    ? html`${(nightly.copies ?? []).map((c) => html`<span class="place${c.result === 'copied' ? '' : ' bad'}">${placeName(c.where)} ${mark(c.result === 'copied')}</span>`)}`
-    : html`<span class="place bad">${t('inbox.settings.failed')}</span>`;
-  const offsitePlaces = html`<span class="place${offsite?.ok ? '' : ' bad'}">${placeName(offsite?.where ?? '')} ${mark(offsite?.ok === true)}</span>`;
+    ? html`${(nightly.copies ?? []).map((c) => html`<span class="place${c.result === 'copied' ? '' : ' bad'}">${placeName(c.where)} ${okMark(c.result)}</span>`)}`
+    : html`<span class="place bad"><span aria-hidden="true">✗</span> ${t('inbox.settings.failed')}</span>`;
+  const offsitePlaces = html`<span class="place${offsite?.ok ? '' : ' bad'}">${placeName(offsite?.where ?? '')} ${okMark(offsite?.ok === true ? 'copied' : 'failed')}</span>`;
   return html`<section${opts.id ? html` id="${opts.id}"` : ''} class="panel backups${b.health.ok ? '' : ' attention'}">
   <div class="panel-head"><h2>${opts.title ?? t('inbox.settings.backups')}</h2></div>
   ${opts.extra ?? ''}
@@ -497,19 +501,28 @@ ${v.filter.q === undefined && (v.page > 1 || v.hasNext) ? html`<p class="pager">
 </div>`;
 }
 
-function memoryForm(action: string, values: MemoryFormValues, opts: { kindEditable: boolean; submit: string; from?: string; meta?: boolean }): SafeHtml {
+function memoryForm(action: string, values: MemoryFormValues, opts: { kindEditable: boolean; submit: string; from?: string; meta?: boolean; error?: string }): SafeHtml {
+  // A refusal about one field shows under it: the field points at the message (aria-describedby), is marked invalid and
+  // takes the focus when the page opens (autofocus), so a screen reader and the keyboard land where the fix is.
+  const bad = opts.error && values.errorField ? values.errorField : undefined;
+  const aria = (f: FactField): SafeHtml => (bad === f ? html` aria-invalid="true" aria-describedby="fact-${f}-error" autofocus` : html``);
+  const fieldError = (f: FactField): SafeHtml => (bad === f ? html`<p class="error" id="fact-${f}-error">${opts.error}</p>` : html``);
+  const two = bad === 'tags' || bad === 'project' ? html`${fieldError('project')}${fieldError('tags')}` : '';
   return html`<form method="post" action="${action}" class="editor">
   ${values.base ? html`<input type="hidden" name="base" value="${values.base}">` : ''}
   ${opts.from ? html`<input type="hidden" name="from" value="${opts.from}">` : ''}
   ${opts.kindEditable
     ? html`<label>${t('inbox.facts.formKind')} <select name="kind">${KINDS.map((k) => html`<option value="${k}"${k === values.kind ? ' selected' : ''}>${kindLabel(k)}</option>`)}</select></label>`
     : ''}
-  <label>${t('inbox.facts.formMemory')} <textarea name="content" rows="6" maxlength="${opts.kindEditable || values.kind === 'roadmap' ? MAX_ROADMAP : MAX_CONTENT}" required>${values.content}</textarea></label>
+  <label>${t('inbox.facts.formMemory')} <textarea name="content" rows="6" maxlength="${opts.kindEditable || values.kind === 'roadmap' ? MAX_ROADMAP : MAX_CONTENT}" required${aria('content')}>${values.content}</textarea></label>
+  ${fieldError('content')}
   <div class="two">
-    <label>${t('inbox.facts.formProject')} <input type="text" name="project" value="${values.project}" maxlength="63"></label>
-    <label>${t('inbox.facts.formTags')} <input type="text" name="tags" value="${values.tags}"></label>
+    <label>${t('inbox.facts.formProject')} <input type="text" name="project" value="${values.project}" maxlength="63"${aria('project')}></label>
+    <label>${t('inbox.facts.formTags')} <input type="text" name="tags" value="${values.tags}"${aria('tags')}></label>
   </div>
-  <label>${t('inbox.facts.formKeys')} <input type="text" name="keys" value="${values.keys ?? ''}" maxlength="200"></label>
+  ${two}
+  <label>${t('inbox.facts.formKeys')} <input type="text" name="keys" value="${values.keys ?? ''}" maxlength="200"${aria('keys')}></label>
+  ${fieldError('keys')}
   ${opts.meta ? metaFields(values) : ''}
   <div class="actions"><button type="submit" class="primary">${opts.submit}</button></div>
 </form>`;
@@ -518,8 +531,8 @@ function memoryForm(action: string, values: MemoryFormValues, opts: { kindEditab
 export function newView(values: MemoryFormValues, error?: string): SafeHtml {
   return html`<div class="narrow">
 <h1>${t('inbox.facts.newFact')}</h1>
-${errorBlock(error)}
-${memoryForm('/memories', values, { kindEditable: true, submit: t('inbox.facts.save'), meta: true })}
+${errorBlock(values.errorField ? undefined : error)}
+${memoryForm('/memories', values, { kindEditable: true, submit: t('inbox.facts.save'), meta: true, error })}
 <p class="label">${t('inbox.facts.profileNow')}</p></div>`;
 }
 
@@ -538,13 +551,13 @@ export function detailView(m: Memory, history: HistoryEntry[], values: MemoryFor
   // One level only: a link drawn on this page carries the page's own plain path; the origin (extra.from) is kept by
   // the forms and the picker's "Show all", which reopens this same fact.
   const self = `/memories/${m.id}`;
-  const editor = html`${memoryForm(self, values, { kindEditable: false, submit: t('inbox.facts.saveChanges'), from: extra.from, meta: true })}
+  const editor = html`${memoryForm(self, values, { kindEditable: false, submit: t('inbox.facts.saveChanges'), from: extra.from, meta: true, error })}
 <form method="post" action="/memories/${m.id}/delete" class="danger">${extra.from ? html`<input type="hidden" name="from" value="${extra.from}">` : ''}<button type="submit" class="secondary">${t('inbox.facts.delete')}</button>
 <p class="meta">${t('inbox.facts.deleteNote')}</p></form>`;
   const where = extra.where;
   const whereShown = where && (where.project !== null || where.pages.length > 0 || where.discussion);
   return html`<div class="narrow">
-${errorBlock(error)}
+${errorBlock(values.errorField ? undefined : error)}
 ${replaced ? replacedNote(story!, now, self) : ''}
 <p class="eyebrow fact-kind">${kindMark(m.kind)}${m.project ? html` · ${projectLink(m.project)}` : ''}${replaced ? html` · <span class="chip plain">${t('inbox.facts.replacedChip')}</span>` : ''}</p>
 <h1 class="fact-text${replaced ? ' rep' : ''}">${(m.kind === 'roadmap' ? roadmapLine(m.content) : null) ?? m.content}</h1>
@@ -615,9 +628,10 @@ export function grantCards(v: { grants: GrantInfo[]; projects?: string[]; status
   <p class="meta">${t('inbox.settings.savesWaitNote')}</p>`;
   const row = (g: GrantInfo) => html`<li class="conn">
   <div class="conn-row"><span class="conn-name">${writer(g.clientName)}</span><span class="conn-access">${accessLabel(g, v.projects ?? [])}${g.savesWait ? ` · ${t('inbox.settings.access.savesWait')}` : ''}</span><span class="meta">${g.lastUsedAt ? tHtml('inbox.settings.used', { when: when(g.lastUsedAt) }) : t('inbox.settings.usedNever')}</span>
-  <form method="post" action="/clients/${g.id}/revoke"><button type="submit" class="secondary" aria-label="${t('inbox.settings.revokeName', { name: g.clientName })}">${t('inbox.settings.revoke')}</button></form></div>
+  </div>
   ${v.status?.get(g.id) ? setupLine(v.status.get(g.id)!) : ''}
   <details class="conn-change"><summary>${t('inbox.settings.change')}<span class="visually-hidden"> ${g.clientName}</span><span class="chev"></span></summary>${forms(g)}<p class="meta">${tHtml('inbox.settings.connected', { when: when(g.createdAt) })}</p></details>
+  <details class="pg-danger"><summary>${t('inbox.settings.revokeFold', { name: g.clientName })}<span class="chev"></span></summary><p class="meta">${t('inbox.settings.revokeHelp')}</p><form method="post" action="/clients/${g.id}/revoke"><button type="submit" class="secondary" aria-label="${t('inbox.settings.revokeName', { name: g.clientName })}">${t('inbox.settings.revoke')}</button></form></details>
 </li>`;
   const revokedRow = (g: GrantInfo) => html`<li class="conn-old">${writer(g.clientName)} <span class="meta">${tHtml('inbox.settings.connectedRevoked', { when: when(g.createdAt), when2: when(g.revokedAt!) })}</span></li>`;
   const active = v.grants.filter((g) => !g.revokedAt);
@@ -633,7 +647,7 @@ export function sessionCards(v: { sessions: SessionInfo[]; currentSessionId: str
   const session = (s: SessionInfo) => html`<li class="card">
   <p><strong>${deviceLabel(s.userAgent)}</strong>${s.id === v.currentSessionId ? html` <span class="badge">${t('inbox.settings.thisDevice')}</span>` : ''}</p>
   ${metaLine([tHtml('inbox.settings.loggedIn', { when: when(s.createdAt) }), tHtml('inbox.settings.lastSeen', { when: when(s.lastSeenAt) })])}
-  <form method="post" action="/sessions/${s.id}/revoke"><button type="submit" class="secondary">${t('inbox.settings.logOut')}</button></form>
+  <details class="pg-danger"><summary>${t('inbox.settings.logOutFold')}<span class="visually-hidden"> ${deviceLabel(s.userAgent)}</span><span class="chev"></span></summary><p class="meta">${t(s.id === v.currentSessionId ? 'inbox.settings.logOutHelpHere' : 'inbox.settings.logOutHelp')}</p><form method="post" action="/sessions/${s.id}/revoke"${s.id === v.currentSessionId ? html` data-logout` : ''}><button type="submit" class="secondary">${t('inbox.settings.logOut')}</button></form></details>
 </li>`;
   return v.sessions.length === 0 ? html`<p class="quiet">${t('inbox.settings.noDevices')}</p>` : html`<ul class="cards">${v.sessions.map(session)}</ul>`;
 }

@@ -24,6 +24,18 @@ export function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** The fact form's field a refusal is about, so the screen can show it under that field. `undefined`: no single field. */
+export type FactField = 'content' | 'tags' | 'project' | 'keys';
+export function errorField(e: unknown): FactField | undefined {
+  const key = e instanceof MemoryError ? e.key : undefined;
+  if (key === undefined) return undefined;
+  if (key === 'err.secret' || key.startsWith('err.fact.content')) return 'content';
+  if (key.startsWith('err.fact.tag')) return 'tags';
+  if (key === 'err.fact.project') return 'project';
+  if (key.startsWith('err.fact.keys') || key === 'err.keysSecret' || key === 'err.keysInstruction') return 'keys';
+  return undefined;
+}
+
 /** The stored English reasons of a held save or a refused line (instruction-like, mixed source, close to, deleted, replaced) as catalog keys. */
 const HELD_REASONS: Record<string, Key> = {
   'asks to ignore instructions': 'data.reason.ignore', 'speaks to the assistant directly': 'data.reason.speaks', 'keeps something from the owner': 'data.reason.secret',

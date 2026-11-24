@@ -209,3 +209,19 @@ test('turning a skill Off before the Mac confirmed the write still removes it th
   assert.deepEqual(sync.report('mac', [there]).actions.map((a) => [a.kind, a.expect]), [['remove', there.hash]]);
   assert.deepEqual(sync.report('mac', []).actions, []);
 });
+
+test('a skill shared from a Mac and then deleted is linked to that Mac again once it is brought back', () => {
+  const { sync, skills } = make();
+  const a = macSkill('codex-delegation', 'Plan, then delegate.');
+  sync.report('mac', [a.item]);
+  sync.upload('mac', [{ name: a.item.name, hash: a.item.hash, files: a.files }]);
+  const s = sync.share('mac', 'codex-delegation');
+  skills.remove(s.id, 'owner');
+  sync.report('mac', [a.item]);
+  assert.deepEqual(sync.stateFor(s.id), [], 'the delete dropped the link');
+  const back = skills.undelete(s.id, 'owner');
+  sync.relinkRestored(back);
+  sync.report('mac', [a.item]);
+  assert.deepEqual(sync.stateFor(s.id).map((x) => x.state), ['same']);
+  assert.equal(skills.get(s.id)!.enabled, false);
+});

@@ -794,3 +794,216 @@ test('following a restart stops at once on a redirect (signed out) or an opaque 
     assert.equal(r.timers.length, 0, `status ${status}`);
   }
 });
+
+// ---- Feedback and state (UX states review, 2026-11-23) ----
+
+/** A page for the feedback blocks: listeners are recorded so a test can fire them, buttons are plain objects, timers run by hand. */
+function feedbackPage(opts: { onLine?: boolean; fetch?: unknown; hostname?: string; lang?: 'es'; storage?: unknown } = {}) {
+  const script = readFileSync(new URL('./static/app.js', import.meta.url), 'utf8');
+  const docL: Record<string, { fn: (e: any) => void; capture: boolean }[]> = {};
+  const winL: Record<string, ((e?: any) => void)[]> = {};
+  const mkButton = (name: string) => { const b = new FakeElement('button') as FakeElement & { disabled: boolean; name: string }; b.disabled = false; b.name = name; (b as any).hasAttribute = (n: string) => n in b.attrs; return b; };
+  const buttons = [mkButton('a'), mkButton('b'), mkButton('c')];
+  const header = new FakeElement('header');
+  const html: any = { dataset: {} };
+  const created: FakeElement[] = [];
+  const document: any = {
+    body: new FakeElement('body'), documentElement: html, hidden: false,
+    querySelectorAll: (s: string) => (s.includes('button') ? buttons : []),
+    querySelector: (s: string) => (s === 'body > header.top' ? header : null),
+    getElementById: () => null,
+    createElement: (tag: string) => { const e: any = new FakeElement(tag); e.style = {}; e.replaceChildren = () => { e.children = []; }; created.push(e); return e; },
+    addEventListener: (type: string, fn: (e: any) => void, capture?: boolean | object) => { (docL[type] ??= []).push({ fn, capture: capture === true }); },
+  };
+  const timers: { fn: () => void; ms: number; id: number; every: boolean }[] = [];
+  const context: any = {
+    document, navigator: { onLine: opts.onLine ?? true }, Element: FakeElement, Intl, Date, Number, String, Promise,
+    setTimeout: (fn: () => void, ms: number) => { timers.push({ fn, ms, id: timers.length + 1, every: false }); return timers.length; }, clearTimeout: (id: number) => { const t = timers.find((x) => x.id === id); if (t) t.fn = () => {}; },
+    setInterval: (fn: () => void, ms: number) => { timers.push({ fn, ms, id: timers.length + 1, every: true }); return timers.length; }, clearInterval: (id: number) => { const t = timers.find((x) => x.id === id); if (t) t.fn = () => {}; },
+    addEventListener: (type: string, fn: (e?: any) => void) => { (winL[type] ??= []).push(fn); },
+    matchMedia: () => ({ matches: false }), fetch: opts.fetch, location: { pathname: '/', hash: '', search: '', href: 'https://b.test/', hostname: opts.hostname ?? 'brain.example' },
+    localStorage: opts.storage,
+  };
+  if (opts.lang === 'es') context.T = (key: string, english: string) => ({ 'client.offline.title': 'Sin conexión.', 'client.offline.body': 'Los cambios no se pueden enviar' } as Record<string, string>)[key] ?? english;
+  runInNewContext(script, context);
+  const submit = (form: any, submitter: any, capture = false) => {
+    const e = { target: form, submitter, defaultPrevented: false, stopped: false, preventDefault() { this.defaultPrevented = true; }, stopImmediatePropagation() { this.stopped = true; } };
+    for (const l of docL.submit ?? []) if (l.capture === capture) { l.fn(e); if (e.stopped) break; }
+    return e;
+  };
+  /** Runs (once) the pending timers with this delay, then lets promises settle. */
+  const tick = async (ms: number) => { for (const t of timers.filter((x) => x.ms === ms)) t.fn(); for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+  return { buttons, header, html, created, docL, winL, submit, timers, context, tick };
+}
+const postForm = (extra: Record<string, unknown> = {}, attrs: string[] = []) => ({ method: 'post', dataset: {} as Record<string, string>, getAttribute: () => null, hasAttribute: (n: string) => attrs.includes(n), querySelector: () => null, ...extra });
+
+test('a plain post marks the pressed button busy, holds (not disables) the others, drops a second send, and lets go on pageshow', () => {
+  const p = feedbackPage();
+  const [a, b, c] = p.buttons as any[];
+  const first = p.submit(postForm(), a);
+  assert.equal(first.defaultPrevented, false, 'the first send goes');
+  assert.equal(a.getAttribute('aria-busy'), 'true');
+  assert.equal(a.disabled, false, 'the sender is never disabled: its name and value are part of the post');
+  for (const x of [b, c]) { assert.equal(x.disabled, false, 'held, never disabled: a browser that restores disabled would leave them dead'); assert.notEqual(x.getAttribute('data-held'), null); assert.equal(x.getAttribute('aria-disabled'), 'true'); }
+  assert.equal(p.submit(postForm(), b).defaultPrevented, true, 'a second send is dropped');
+  for (const f of p.winL.pageshow) f({ persisted: true });
+  assert.equal(a.getAttribute('aria-busy'), null);
+  for (const x of [b, c]) { assert.equal(x.getAttribute('data-held'), null); assert.equal(x.getAttribute('aria-disabled'), null); }
+  assert.equal(p.submit(postForm(), a).defaultPrevented, false, 'after Back it can be sent again');
+});
+
+test('an ordinary post has no release timer (it may run for minutes); a download form lets go after 60 s without holding anything', async () => {
+  const p = feedbackPage();
+  const [a, b] = p.buttons as any[];
+  p.submit(postForm(), a);
+  assert.equal(p.timers.length, 0 + p.timers.filter((t) => t.ms !== 0).length, 'nothing is scheduled for it');
+  assert.equal(p.timers.some((t) => t.ms === 60000 || t.ms === 15000), false);
+  assert.equal(p.submit(postForm(), b).defaultPrevented, true, 'still dropped long after');
+  const d = feedbackPage();
+  d.submit(postForm({}, ['data-download']), d.buttons[0]);
+  assert.equal(d.buttons[0].getAttribute('aria-busy'), 'true');
+  assert.equal(d.buttons[1].getAttribute('data-held'), null, 'other buttons are not held for a download');
+  await d.tick(60000);
+  assert.equal(d.buttons[0].getAttribute('aria-busy'), null);
+});
+
+test('GET forms, forms the desk took, and the editor form once its own guard is on are left alone; without the guard mark the editor is covered here', () => {
+  const q = feedbackPage();
+  q.submit({ ...postForm(), method: 'get' }, q.buttons[0]);
+  assert.equal(q.buttons[0].getAttribute('aria-busy'), null, 'a search is not a save');
+  const e = { target: postForm(), submitter: q.buttons[1], defaultPrevented: true, preventDefault() {} };
+  for (const l of q.docL.submit) if (!l.capture) l.fn(e);
+  assert.equal(q.buttons[1].getAttribute('aria-busy'), null, 'desk.js posted it by fetch and already prevented the default');
+  const own = postForm({ dataset: { guarded: '1' } }, ['data-own-submit']);
+  q.submit(own, q.buttons[2]);
+  assert.equal(q.buttons[2].getAttribute('aria-busy'), null, 'editor-cm.js owns its form: no second busy, no held buttons');
+  assert.equal(q.buttons[0].getAttribute('data-held'), null);
+  q.submit(postForm({}, ['data-own-submit']), q.buttons[2]);
+  assert.equal(q.buttons[2].getAttribute('aria-busy'), 'true', 'no guard mark (CodeMirror failed): covered here');
+});
+
+test('offline: never on this machine, and not on one slow or failed probe', async () => {
+  const local = feedbackPage({ onLine: false, fetch: () => Promise.reject(new Error('x')), hostname: 'localhost' });
+  for (const f of local.winL.offline) await f();
+  await local.tick(3000);
+  assert.equal(local.created.length, 0, 'a page from localhost never shows the bar');
+  const p = feedbackPage({ onLine: false, fetch: () => Promise.reject(new Error('x')) });
+  for (const f of p.winL.offline) await f();
+  await p.tick(0);
+  assert.equal(p.html.dataset.offline, undefined, 'one failed probe is not enough');
+  assert.ok(p.timers.some((t) => t.ms === 3000), 'it asks once more');
+});
+
+test('offline: after two failed probes the bar shows (empty first, its words a moment later), holds post buttons and posts, probes every 10 s, and goes on the first answer', async () => {
+  let up = false;
+  const p = feedbackPage({ onLine: false, fetch: () => (up ? Promise.resolve({ ok: true }) : Promise.reject(new Error('offline'))), lang: 'es' });
+  for (const f of p.winL.offline) await f();
+  await p.tick(0);
+  await p.tick(3000);
+  const bar: any = p.created.find((x) => x.className === 'offline-bar')!;
+  assert.ok(bar, 'the bar exists');
+  assert.equal(bar.hidden, false);
+  assert.equal(bar.getAttribute('role'), 'status');
+  assert.equal(bar.children.length, 0, 'announced: the live region is shown empty first');
+  assert.equal(bar.style.top, '0px');
+  await p.tick(50);
+  const text = bar.children.map((c: any) => (typeof c === 'string' ? c : c.textContent)).join('');
+  assert.match(text, /Sin conexión\./);
+  assert.match(text, /Los cambios no se pueden enviar/);
+  assert.equal(p.header.nextElementSibling, bar, 'right under the top bar');
+  assert.equal(p.html.dataset.offline, '');
+  for (const b of p.buttons as any[]) { assert.equal(b.disabled, true); assert.notEqual(b.getAttribute('data-offline'), null); }
+  const sent = p.submit(postForm(), p.buttons[0], true);
+  assert.equal(sent.defaultPrevented, true, 'no post goes out while offline');
+  assert.equal(sent.stopped, true, 'and the desk never starts one');
+  assert.ok(p.timers.some((t) => t.every && t.ms === 10000), 'probed again every 10 s while shown');
+  await p.tick(10000);
+  assert.equal(bar.hidden, false, 'still unreachable: still shown');
+  up = true;
+  await p.tick(10000);
+  assert.equal(bar.hidden, true, 'the server answered: no waiting for an online event that may never come');
+  assert.equal('offline' in p.html.dataset, false);
+  for (const b of p.buttons as any[]) { assert.equal(b.disabled, false); assert.equal(b.getAttribute('data-offline'), null); }
+  assert.equal(p.submit(postForm(), p.buttons[0], true).defaultPrevented, false);
+});
+
+test('offline: the online event hides the bar at once', async () => {
+  const p = feedbackPage({ onLine: false, fetch: () => Promise.reject(new Error('offline')) });
+  for (const f of p.winL.offline) await f();
+  await p.tick(0);
+  await p.tick(3000);
+  const bar: any = p.created.find((x) => x.className === 'offline-bar')!;
+  p.context.navigator.onLine = true;
+  for (const f of p.winL.online) f();
+  assert.equal(bar.hidden, true);
+  assert.equal(p.buttons.some((b: any) => b.disabled), false);
+});
+
+test('offline: when the server still answers nothing shows', async () => {
+  const p = feedbackPage({ onLine: false, fetch: () => Promise.resolve({ ok: true }) });
+  for (const f of p.winL.offline) await f();
+  await p.tick(0);
+  await p.tick(3000);
+  assert.equal(p.html.dataset.offline, undefined);
+  assert.equal((p.buttons[0] as any).disabled, false);
+});
+
+test('offline: logging out neither purges the draft copies nor posts', async () => {
+  const removed: string[] = [];
+  const storage = { length: 1, key: () => 'brain-draft:x', getItem: () => JSON.stringify({ at: Date.now() }), removeItem: (k: string) => removed.push(k) };
+  const p = feedbackPage({ onLine: false, fetch: () => Promise.reject(new Error('offline')), storage });
+  for (const f of p.winL.offline) await f();
+  await p.tick(0);
+  await p.tick(3000);
+  const logout = { ...postForm(), matches: () => true, dataset: {} as Record<string, string>, submit() { throw new Error('posted'); } };
+  const e = p.submit(logout, null, true);
+  assert.equal(e.defaultPrevented, true);
+  assert.deepEqual(removed, [], 'the drafts are the text an offline person needs');
+});
+
+test('landing on a #section: the heading takes focus without scrolling, and the section is brought back into view as late content settles, until the reader takes over', () => {
+  const script = readFileSync(new URL('./static/app.js', import.meta.url), 'utf8');
+  const calls: unknown[][] = [];
+  const heading: any = { tagName: 'H2', attrs: {} as Record<string, string>, setAttribute(k: string, v: string) { this.attrs[k] = v; }, focus(o: unknown) { calls.push(['focus', o]); doc.activeElement = heading; }, scrollIntoView: (o: unknown) => calls.push(['scroll', o]) };
+  let resize: (() => void) | undefined;
+  let disconnected = false;
+  const winL: Record<string, (() => void)[]> = {};
+  const doc: any = { body: new FakeElement('body'), activeElement: null, querySelectorAll: () => [], querySelector: (s: string) => (s === '[data-diagrams]' ? {} : null), getElementById: (id: string) => (id === 'gotchas' ? heading : null), createElement: (t: string) => new FakeElement(t), addEventListener: () => {} };
+  runInNewContext(script, {
+    document: doc,
+    location: { pathname: '/pages/p1', hash: '#gotchas' }, navigator: {}, Element: FakeElement, Intl, Date, Number, String, setTimeout: () => 1, clearTimeout: () => {},
+    addEventListener: (type: string, fn: () => void) => { (winL[type] ??= []).push(fn); }, matchMedia: () => ({ matches: false }),
+    ResizeObserver: class { constructor(cb: () => void) { resize = cb; } observe() {} disconnect() { disconnected = true; } },
+  });
+  assert.equal(heading.attrs.tabindex, '-1');
+  assert.equal(JSON.stringify(calls[0]), JSON.stringify(['focus', { preventScroll: true }]));
+  resize!();
+  assert.equal(JSON.stringify(calls.at(-1)), JSON.stringify(['scroll', { block: 'start', behavior: 'instant' }]), 'instant: no smooth behaviour');
+  for (const f of winL.wheel) f();
+  assert.equal(disconnected, true);
+  const n = calls.length;
+  resize!();
+  assert.equal(calls.length, n, 'after the reader took over nothing moves the page');
+});
+
+test('after Approve or Reject the page comes back with its Undo line, and focus goes to that line', () => {
+  const script = readFileSync(new URL('./static/app.js', import.meta.url), 'utf8');
+  const line: any = { attrs: {} as Record<string, string>, setAttribute(k: string, v: string) { this.attrs[k] = v; }, focus() { this.focused = true; }, focused: false };
+  const form: any = { closest: (s: string) => (s === '.notice' ? line : null) };
+  runInNewContext(script, {
+    document: { body: new FakeElement('body'), querySelectorAll: () => [], querySelector: (s: string) => (s.includes('/inbox/undo') ? form : null), getElementById: () => null, createElement: (t: string) => new FakeElement(t), addEventListener: () => {} },
+    navigator: {}, Element: FakeElement, Intl, Date, Number, String, setTimeout: () => 1, clearTimeout: () => {}, addEventListener: () => {}, matchMedia: () => ({ matches: false }),
+  });
+  assert.equal(line.attrs.tabindex, '-1');
+  assert.equal(line.focused, true);
+});
+
+test("a post on the editor page does not hold the editor's own buttons (a Delete cancelled at the leave question would leave Save held)", () => {
+  const p = feedbackPage();
+  const [a, b, c] = p.buttons as any[];
+  (b as any).closest = (s: string) => (s === 'form[data-guarded]' ? {} : null);
+  p.submit(postForm(), a);
+  assert.equal(b.getAttribute('data-held'), null, 'a button inside the guarded editor form stays free');
+  assert.equal(b.getAttribute('aria-disabled'), null);
+  assert.notEqual(c.getAttribute('data-held'), null, 'other buttons are still held');
+});

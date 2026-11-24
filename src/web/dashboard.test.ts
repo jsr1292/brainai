@@ -160,7 +160,7 @@ test('the home page shows when each backup copy last succeeded and warns about e
   writeBackupStatus(dir, 'nightly', { at, ok: true, copies: [{ where: '/mnt/ssd/memory-backups', result: 'copied' }, { where: '/mnt/nas/Backups/memory-backups', result: 'skipped', detail: 'not mounted' }] });
   const home = await (await f('/settings')).text();
   assert.match(home, /<section id="health" class="panel backups attention"/);
-  assert.match(home, /Nightly[\s\S]*ssd ✓[\s\S]*nas\/Backups ✗/);
+  assert.match(home, /Nightly[\s\S]*ssd <span aria-hidden="true">✓<\/span><span class="visually-hidden">copied<\/span>[\s\S]*nas\/Backups <span aria-hidden="true">✗<\/span><span class="visually-hidden">skipped<\/span>/);
   assert.match(home, /The nightly copy to \/mnt\/nas\/Backups\/memory-backups was skipped: not mounted\./);
   assert.doesNotMatch(home, /No off-site copy yet\./, 'an off-site copy that was never set up is not a problem');
   writeBackupStatus(dir, 'nightly', { at, ok: true, copies: [{ where: '/mnt/ssd/memory-backups', result: 'copied' }] });
@@ -170,7 +170,7 @@ test('the home page shows when each backup copy last succeeded and warns about e
   writeFileSync(join(dir, 'export-status.json'), JSON.stringify({ at, ok: true }));
   const fine = await (await f('/settings')).text();
   assert.match(fine, /<section id="health" class="panel backups"/);
-  assert.match(fine, /Off-site[\s\S]*Google Drive ✓/);
+  assert.match(fine, /Off-site[\s\S]*Google Drive <span aria-hidden="true">✓<\/span><span class="visually-hidden">copied<\/span>/);
 });
 
 test('Facts lists facts with the project, kind and text filters, and each fact\'s page links back to it', async (t) => {

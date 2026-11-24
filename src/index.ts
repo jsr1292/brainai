@@ -9,6 +9,7 @@ import { MemoryOAuthProvider } from './auth/provider.js';
 import { RedirectAllowlist } from './auth/redirects.js';
 import { SessionStore } from './auth/sessions.js';
 import { scheduleBackups } from './backup.js';
+import { setBusyDir } from './busyMarker.js';
 import { BackupCopy } from './desktop/backupCopy.js';
 import { systemClock } from './clock.js';
 import { loadConfig } from './config.js';
@@ -63,6 +64,8 @@ const config = loadConfig(process.env);
 let stopWhenGone: (() => void) | null = null;
 watchParent(process.env, process.stdin, () => (stopWhenGone ? stopWhenGone() : process.exit(0)));
 mkdirSync(config.dataDir, { recursive: true });
+// Only the desktop app watches the marker.
+setBusyDir(config.localMode ? config.dataDir : undefined);
 // A restore the app staged is swapped in while the database is still closed (src/saved/restore.ts); it never throws.
 applyPendingRestore(config.dataDir);
 const dbPath = join(config.dataDir, 'memory.db');

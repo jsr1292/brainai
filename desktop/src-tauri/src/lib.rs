@@ -7,6 +7,7 @@ pub mod proof;
 pub mod server;
 pub mod update;
 pub mod updating;
+pub mod watch;
 pub mod week_note;
 
 use server::StartError;
@@ -93,6 +94,12 @@ struct Running {
     epoch: AtomicU32,
     /// A restart is under way: another /app/restart is ignored and the crash watcher stands down.
     restarting: AtomicBool,
+    /// Starts under way (a start can overlap a restart the page asked for): the tray's Restart waits for none.
+    starting: AtomicU32,
+    /// The last restart of the server was after it stopped answering (never two of those in a row).
+    last_was_hang: AtomicBool,
+    /// When a hang restart last counted towards the restart budget.
+    last_hang_counted: Mutex<Option<Instant>>,
     /// The newer release the last check found, kept for Update and restart.
     update: Mutex<Option<tauri_plugin_updater::Update>>,
     /// The release the last check found, downloaded and signature-checked, with its version: kept in memory only (a
@@ -113,6 +120,8 @@ struct Tray {
     menu: Menu<Wry>,
     open_item: MenuItem<Wry>,
     login_item: CheckMenuItem<Wry>,
+    restart_item: MenuItem<Wry>,
+    log_item: MenuItem<Wry>,
     quit_item: MenuItem<Wry>,
     update_item: MenuItem<Wry>,
     shown: AtomicBool,
@@ -168,6 +177,8 @@ fn retitle_tray(app: &AppHandle) {
     let _ = tray.open_item.set_text(tr("tray.open"));
     let _ = tray.login_item.set_text(tr("tray.login"));
     let _ = tray.quit_item.set_text(tr("tray.quit"));
+    let _ = tray.restart_item.set_text(tr("tray.restart"));
+    let _ = tray.log_item.set_text(tr("tray.log"));
     let text = match tray.version.lock().unwrap().as_deref() {
         Some(v) => update_item_text(v, tray.ready.load(Ordering::SeqCst)),
         None => tr("tray.update"),
@@ -336,7 +347,31 @@ fn confirm_link_action(app: &AppHandle, text_key: &str, button_key: &str) -> boo
 /// copy in, and lands on the welcome page's Search step (the third). Not a crash: the watcher of the old start stands down and
 /// the restart counter starts again from zero.
 fn restart_server(app: &AppHandle) {
+    restart_server_to(app, "/welcome?step=3".to_string());
+}
+
+/// The restart for the tray's item: back to the page the window was on.
+fn restart_from_tray(app: &AppHandle) {
+    if !restart_allowed_now(app) {
+        return;
+    }
+    let page = current_page(app);
+    restart_server_to(app, page);
+}
+
+/// Whether the server may be restarted by the owner now.
+fn restart_allowed_now(app: &AppHandle) -> bool {
+    let s = app.state::<Running>();
+    watch::restart_allowed(s.starting.load(Ordering::SeqCst) > 0, FATAL_OPEN.load(Ordering::SeqCst), app_busy(app))
+}
+
+fn restart_server_to(app: &AppHandle, page: String) {
     let state = app.state::<Running>();
+    // Not while a start is under way or the start-failed message is open: a second server on the same data (and the
+    // first one's start would fail for want of its server).
+    if !watch::restart_allowed(state.starting.load(Ordering::SeqCst) > 0, FATAL_OPEN.load(Ordering::SeqCst), false) {
+        return;
+    }
     // Two restarts at once could start two servers and move BrainAI to another port, breaking the connected tools.
     if state.restarting.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
         return;
@@ -350,7 +385,7 @@ fn restart_server(app: &AppHandle) {
     state.epoch.fetch_add(1, Ordering::SeqCst);
     stop_server(app);
     state.restarts.store(0, Ordering::SeqCst);
-    launch_to(app.clone(), "/welcome?step=3");
+    launch_to(app.clone(), page);
 }
 
 /// The running app's `.app` folder, only when this is a real install (the same rule as the login item), so a copy run
@@ -629,28 +664,106 @@ fn tell(app: &AppHandle, kind: MessageDialogKind, text: String) {
     app.dialog().message(text).title("BrainAI").kind(kind).blocking_show();
 }
 
-/// Stops with a message, unless the owner is already quitting (then the stop is the point, not a failure).
+/// The window's page as a path to land on after a start (never an app link or a token), "/" when there is none.
+fn current_page(app: &AppHandle) -> String {
+    let port = app.state::<Running>().port.load(Ordering::SeqCst);
+    app.get_webview_window(MAIN)
+        .and_then(|w| w.url().ok())
+        .and_then(|u| nav::restore_path(u.as_str(), port))
+        .unwrap_or_else(|| "/".to_string())
+}
+
+/// Settings and the tray: the server's log in Finder or Explorer (selected there); its folder when there is no log yet.
+fn reveal_log(app: &AppHandle) {
+    use tauri_plugin_opener::OpenerExt;
+    let log = log_path(app);
+    if log.exists() && app.opener().reveal_item_in_dir(&log).is_ok() {
+        return;
+    }
+    let dir = app_data(app).join("logs");
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = app.opener().open_path(dir.to_string_lossy(), None::<&str>);
+}
+
+/// The start-failed message is on screen.
+static FATAL_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// Stops with a message, unless the owner is already quitting (then the stop is the point, not a failure). The
+/// message offers Try again (the same page again, with the restart budget back), Show the log, and Quit.
 fn give_up(app: &AppHandle, why: &str) {
     if quitting(app) {
         return;
     }
+    // From the first moment (stopping can take seconds), and until the message is answered: nothing may start a
+    // server, so the tray's Restart waits.
+    FATAL_OPEN.store(true, Ordering::SeqCst);
+    struct Open;
+    impl Drop for Open {
+        fn drop(&mut self) {
+            FATAL_OPEN.store(false, Ordering::SeqCst);
+        }
+    }
+    let open = Open;
     stop_server(app);
-    tell(app, MessageDialogKind::Error, tr_with("err.log_at", &[("why", why), ("log", &log_path(app).display().to_string())]));
+    loop {
+        lang::refresh();
+        let (retry, log, quit) = (tr("err.try_again"), tr("err.show_log"), tr("err.quit"));
+        let answer = app
+            .dialog()
+            .message(tr_with("err.log_at", &[("why", why), ("log", &log_path(app).display().to_string())]))
+            .title("BrainAI")
+            .kind(MessageDialogKind::Error)
+            .buttons(MessageDialogButtons::YesNoCancelCustom(retry.clone(), log.clone(), quit))
+            .blocking_show_with_result();
+        match watch::fatal_choice(&answer, &retry, &log) {
+            watch::FatalChoice::ShowLog => reveal_log(app),
+            watch::FatalChoice::Retry => {
+                if quitting(app) {
+                    return;
+                }
+                let state = app.state::<Running>();
+                // A start of the app's own choosing: nothing from before may mistake it for a crash.
+                state.epoch.fetch_add(1, Ordering::SeqCst);
+                state.restarts.store(0, Ordering::SeqCst);
+                // The new start counts as `starting` before the flag comes down, so there is no gap for a Restart.
+                launch_to(app.clone(), current_page(app));
+                drop(open);
+                return;
+            }
+            watch::FatalChoice::Quit => break,
+        }
+    }
     app.exit(1);
 }
 
 /// Starts the server in the background; any failure, even a panic, ends in a message, never a stuck window.
 fn launch(app: AppHandle) {
-    launch_to(app, "/");
+    launch_to(app, "/".to_string());
 }
 
 /// Like launch, landing on `page` once the server is up.
-fn launch_to(app: AppHandle, page: &'static str) {
+fn launch_to(app: AppHandle, page: String) {
+    launch_with(app, page, None);
+}
+
+/// Like launch_to; `notice` is shown in the window once the page is open again (only set for a restart after a stop).
+fn launch_with(app: AppHandle, page: String, notice: Option<String>) {
+    app.state::<Running>().starting.fetch_add(1, Ordering::SeqCst);
     std::thread::spawn(move || {
-        let result = catch_unwind(AssertUnwindSafe(|| start_and_open(&app, page)));
-        app.state::<Running>().restarting.store(false, Ordering::SeqCst);
-        if result.is_err() {
-            give_up(&app, &tr("err.crashed_start"));
+        // Whether the app itself chose another start meanwhile (a restart, Try again): then this one ends quietly.
+        let epoch = app.state::<Running>().epoch.load(Ordering::SeqCst);
+        let result = catch_unwind(AssertUnwindSafe(|| start_and_open(&app, &page, notice)));
+        let state = app.state::<Running>();
+        // The last start under way ends the restart too.
+        if state.starting.fetch_sub(1, Ordering::SeqCst) == 1 {
+            state.restarting.store(false, Ordering::SeqCst);
+        }
+        let superseded = state.epoch.load(Ordering::SeqCst) != epoch;
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(why)) if !superseded => give_up(&app, &why),
+            Err(_) if !superseded => give_up(&app, &tr("err.crashed_start")),
+            _ => {}
         }
     });
 }
@@ -683,14 +796,53 @@ fn wait_for_installer(app: &AppHandle) {
     );
 }
 
+/// A text as the inside of a JavaScript string in single quotes.
+fn js_str(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n").replace('\r', "")
+}
+
+/// The starting page's line, in the owner's language: "Starting BrainAI…", and after 15 s "Taking longer than usual…".
+/// Written only while the window is still on the bundled starting page, and never over the installer wait's own text.
+/// Runs until `done` (the start finished or failed).
+fn start_texts(app: AppHandle, done: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let began = Instant::now();
+        // The same marker wait_for_installer watches: while it is there that text stays.
+        let marker = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("updating")));
+        while !done.load(Ordering::SeqCst) && !quitting(&app) {
+            let installing = marker.as_ref().is_some_and(|m| m.exists());
+            if let (false, Some(w)) = (installing, app.get_webview_window(MAIN)) {
+                if w.url().map(|u| nav::is_start_page(u.as_str())).unwrap_or(false) {
+                    let text = js_str(&tr(watch::start_text_key(began.elapsed())));
+                    // Called on every poll: the first calls may run before the page has loaded.
+                    let _ = w.eval(format!("var p=document.getElementById('msg');if(p){{p.textContent='{text}'}}"));
+                }
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    });
+}
+
+/// Sets `done` when the start ends, however it ends.
+struct StartDone(Arc<AtomicBool>);
+impl Drop for StartDone {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
 /// Starts the server, waits until it proves it is ours, and opens the dashboard in the window with a fresh ticket.
 /// The key is never sent to anything that has not proved it is ours. A new port is saved only once it worked.
-fn start_and_open(app: &AppHandle, page: &str) {
+fn start_and_open(app: &AppHandle, page: &str, notice: Option<String>) -> Result<(), String> {
     lang::refresh();
+    let done = Arc::new(AtomicBool::new(false));
+    let _done = StartDone(done.clone());
+    start_texts(app.clone(), done);
+    let epoch = app.state::<Running>().epoch.load(Ordering::SeqCst);
     // First: the runtime check below looks inside server/node_modules, which an installer may still be replacing.
     wait_for_installer(app);
     if quitting(app) {
-        return;
+        return Ok(());
     }
     // Windows: the search engine and the password hashing need Microsoft's Visual C++ runtime, which Windows itself
     // does not include. The app ships its own copy in the folder of each native module that loads it (B8); should one
@@ -700,7 +852,7 @@ fn start_and_open(app: &AppHandle, page: &str) {
         let dirs = server::runtime_dirs(&resources_dir(app).join("server"));
         let missing = server::missing_runtime(|f| server::runtime_found(f, &dirs, &system32, |p| p.exists()));
         if !missing.is_empty() {
-            return give_up(app, &tr_with("err.vcredist", &[("missing", &missing.join(", "))]));
+            return Err(tr_with("err.vcredist", &[("missing", &missing.join(", "))]));
         }
     }
     let data = app_data(app);
@@ -708,7 +860,7 @@ fn start_and_open(app: &AppHandle, page: &str) {
     // The usual port first, every start; another port is for this run only (see port::after_start).
     let saved = before.usual();
     let Some(mut port) = port::settle(saved, port::is_free, 20, || std::thread::sleep(Duration::from_millis(500))) else {
-        return give_up(app, &tr("err.ports_all"));
+        return Err(tr("err.ports_all"));
     };
     // On a temporary port because the usual one is held: when the holder does not answer like a BrainAI, say so (a notice only: the
     // server refuses a tool's usual-address token on a temporary port whatever the holder is).
@@ -718,16 +870,20 @@ fn start_and_open(app: &AppHandle, page: &str) {
         let secret = proof::random_hex();
         match start_server(app, port, &secret) {
             Ok(child) => *app.state::<Running>().child.lock().unwrap() = Some(child),
-            Err(e) => return give_up(app, &tr_with("err.start", &[("error", &e.to_string())])),
+            Err(e) => return Err(tr_with("err.start", &[("error", &e.to_string())])),
         }
         match server::wait_until_ours(port, &secret, START_TIMEOUT, || alive(app)) {
             Ok(()) => {
                 let ticket = match server::ticket(port, &secret) {
                     Ok(t) => t,
-                    Err(e) => return give_up(app, &tr_with("err.window", &[("error", &e.to_string())])),
+                    Err(e) => return Err(tr_with("err.window", &[("error", &e.to_string())])),
                 };
                 app.state::<Running>().port.store(port, Ordering::SeqCst);
                 *app.state::<Running>().secret.lock().unwrap() = secret.clone();
+                // The notice is armed only now, so no other page that loads meanwhile takes it.
+                if let Some(text) = notice {
+                    *NOTICE.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), text));
+                }
                 if let Some(w) = app.get_webview_window(MAIN) {
                     let _ = w.navigate(nav::open_url(port, &ticket, page).parse().expect("a localhost URL"));
                 }
@@ -737,56 +893,197 @@ fn start_and_open(app: &AppHandle, page: &str) {
                 let _ = port::write_saved(&data, &remembered.saved);
                 // Only a home port given up after several starts in a row is worth a dialog; a temporary port is said on the Tools page.
                 if let Some(old) = remembered.moved_from {
-                    tell(app, MessageDialogKind::Info, tr_with("err.port_changed", &[("old", &old.to_string()), ("port", &port.to_string())]));
+                    // Off this thread: the start is over, and a confirmed restart must not be ignored behind a dialog.
+                    let (app, text) = (app.clone(), tr_with("err.port_changed", &[("old", &old.to_string()), ("port", &port.to_string())]));
+                    std::thread::spawn(move || tell(&app, MessageDialogKind::Info, text));
                 }
                 // Said once per run of the app (a restart after a crash does not repeat it); the server refuses those tokens anyway.
                 static HOLDER_SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
                 if foreign_holder && !HOLDER_SAID.swap(true, Ordering::SeqCst) {
-                    tell(app, MessageDialogKind::Warning, tr_with("err.usual_port_held", &[("old", &saved.unwrap_or(0).to_string())]));
+                    let (app, text) = (app.clone(), tr_with("err.usual_port_held", &[("old", &saved.unwrap_or(0).to_string())]));
+                    std::thread::spawn(move || tell(&app, MessageDialogKind::Warning, text));
                 }
                 watch_server(app.clone());
                 week_note::start(app.clone());
-                return;
+                return Ok(());
             }
             Err(StartError::NotOurs) => {
+                // The app restarted the server meanwhile (its stop made this check fail): that start is not ours to judge.
+                if app.state::<Running>().epoch.load(Ordering::SeqCst) != epoch {
+                    return Ok(());
+                }
                 stop_server(app);
                 tried.push(port);
                 match (port::FIRST..=port::LAST).find(|q| !tried.contains(q) && port::is_free(*q)) {
                     Some(next) => port = next,
-                    None => return give_up(app, &tr("err.ports_all_short")),
+                    None => return Err(tr("err.ports_all_short")),
                 }
             }
-            Err(StartError::Timeout) => return give_up(app, &tr("err.timeout")),
+            Err(StartError::Timeout) => {
+                if app.state::<Running>().epoch.load(Ordering::SeqCst) != epoch {
+                    return Ok(());
+                }
+                return Err(tr("err.timeout"));
+            }
         }
     }
-    give_up(app, &tr("err.squatter"));
+    Err(tr("err.squatter"))
 }
 
-/// After a good start: if the server stops by itself, say so and start it again (a few times), so the window never
-/// just shows "could not connect".
+/// Said in the window (not in a dialog that would hold the restart back) once the page is back after a restart.
+static NOTICE: Mutex<Option<(Instant, String)>> = Mutex::new(None);
+
+/// Shows the pending notice in the window, once, when a BrainAI page has just loaded (never on the starting page).
+fn show_notice(w: &tauri::WebviewWindow<Wry>) {
+    let Some(url) = w.url().ok() else { return };
+    if url.scheme() != "http" || !matches!(url.host_str(), Some("localhost") | Some("127.0.0.1")) {
+        return;
+    }
+    let text = {
+        let mut slot = NOTICE.lock().unwrap_or_else(|e| e.into_inner());
+        match slot.take() {
+            Some((at, text)) if at.elapsed() < Duration::from_secs(120) => text,
+            _ => return,
+        }
+    };
+    let text = js_str(&text);
+    let _ = w.eval(format!(
+        "(function(t){{if(!document.body)return;var d=document.createElement('div');d.setAttribute('role','status');d.textContent=t;\
+d.style.cssText='position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:2147483647;max-width:90vw;padding:10px 16px;border-radius:8px;background:#1c1a17;color:#f2efe9;font:14px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.3);cursor:pointer';\
+d.onclick=function(){{d.remove()}};document.body.appendChild(d);setTimeout(function(){{d.remove()}},20000)}})('{text}')"
+    ));
+}
+
+fn log_line(app: &AppHandle, line: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path(app)) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+/// The app is in the middle of its own restart, update or move: the server may be down or slow on purpose.
+fn app_busy(app: &AppHandle) -> bool {
+    let s = app.state::<Running>();
+    s.restarting.load(Ordering::SeqCst) || s.updating.load(Ordering::SeqCst) || s.quitting_with_update.load(Ordering::SeqCst)
+}
+
+/// The notice after a restart, in the owner's language and for this system's notification icon (the menu bar icon on
+/// the Mac, the notification area on Windows).
+fn restarted_notice(hung: bool) -> String {
+    tr(match (hung, cfg!(windows)) {
+        (false, false) => "err.restarted_page",
+        (false, true) => "err.restarted_page_win",
+        (true, false) => "err.restarted_hung_page",
+        (true, true) => "err.restarted_hung_page_win",
+    })
+}
+
+/// How old the server's busy marker is, when it wrote one (src/busyMarker.ts: long blocking work such as a backup).
+fn busy_marker_age(app: &AppHandle) -> Option<Duration> {
+    let text = std::fs::read_to_string(app_data(app).join("data").join("busy.json")).ok()?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as u64;
+    watch::busy_age(&text, now)
+}
+
+/// After a good start: if the server stops by itself (or stops answering for minutes), start it again (a few times),
+/// landing on the page the window was on, so the window never just shows "could not connect". Ten minutes up give the
+/// restarts back. A server that is only busy is never touched: no check in the first minutes of a start, none while the
+/// server's own busy marker is fresh, and a stop is asked for gently first.
 fn watch_server(app: AppHandle) {
     let epoch = app.state::<Running>().epoch.load(Ordering::SeqCst);
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(3));
-        // The app itself restarted or removed the server: that start has its own watcher (or none).
-        if quitting(&app) || app.state::<Running>().epoch.load(Ordering::SeqCst) != epoch {
-            return;
-        }
-        if !alive(&app) {
-            if app.state::<Running>().restarting.load(Ordering::SeqCst) {
-                continue;
-            }
+    std::thread::spawn(move || {
+        let started = Instant::now();
+        let mut health = watch::Health::new(started);
+        let mut tick: u32 = 0;
+        let mut last_logged: Option<Instant> = None;
+        // Nothing may act on a state the app has since changed on purpose.
+        let stale = |app: &AppHandle| quitting(app) || app.state::<Running>().epoch.load(Ordering::SeqCst) != epoch || app_busy(app);
+        loop {
+            std::thread::sleep(Duration::from_secs(3));
+            // The app itself restarted or removed the server: that start has its own watcher (or none).
             if quitting(&app) || app.state::<Running>().epoch.load(Ordering::SeqCst) != epoch {
                 return;
             }
-            let n = app.state::<Running>().restarts.fetch_add(1, Ordering::SeqCst) + 1;
+            tick += 1;
+            let mut dead = !alive(&app);
+            let mut hung = false;
+            if dead && app_busy(&app) {
+                continue;
+            }
+            if !dead {
+                let state = app.state::<Running>();
+                let n = state.restarts.load(Ordering::SeqCst);
+                if n > 0 && watch::refilled(n, started.elapsed()) == 0 {
+                    state.restarts.store(0, Ordering::SeqCst);
+                }
+                if app_busy(&app) || busy_marker_age(&app).is_some_and(|a| a < watch::BUSY_FRESH) {
+                    health.reset(Instant::now());
+                } else if started.elapsed() >= watch::HEALTH_GRACE && tick % watch::HEALTH_EVERY == 0 {
+                    let port = state.port.load(Ordering::SeqCst);
+                    let secret = state.secret.lock().unwrap().clone();
+                    let ok = matches!(server::check_once(port, &secret), Ok(true));
+                    // The check can take seconds: if the app began its own restart meanwhile, the answer means nothing.
+                    if stale(&app) {
+                        health.reset(Instant::now());
+                    } else if ok {
+                        health.ok(Instant::now());
+                        last_logged = None;
+                        // It answers well again: a later hang may be dealt with.
+                        state.last_was_hang.store(false, Ordering::SeqCst);
+                    } else {
+                        health.fail();
+                        let silent = health.silent_for(Instant::now());
+                        // The first failed check, then one line every 10 minutes while it stays silent.
+                        let say = watch::should_log_silence(last_logged.map(|t| t.elapsed()));
+                        if say {
+                            last_logged = Some(Instant::now());
+                            log_line(&app, &format!("BrainAI: no good answer from the server for {} s ({} failed checks in a row).", silent.as_secs(), health.fails()));
+                        }
+                        if watch::hung(silent, health.fails(), started.elapsed(), busy_marker_age(&app)) {
+                            if !watch::may_hang_kill(state.last_was_hang.load(Ordering::SeqCst)) {
+                                if say {
+                                    log_line(&app, "BrainAI: the server was already restarted once for not answering and still does not; leaving it running.");
+                                }
+                            } else if !stale(&app) {
+                                log_line(&app, &format!("BrainAI: the server has not answered for {} s, so it is being stopped and started again.", silent.as_secs()));
+                                // The gentle way first: closing its input lets a server that is only busy end cleanly.
+                                stop_server(&app);
+                                dead = true;
+                                hung = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if !dead {
+                continue;
+            }
+            // The stop above can take seconds: look again before acting on it.
+            if stale(&app) {
+                return;
+            }
+            let state = app.state::<Running>();
+            state.restarts.store(watch::refilled(state.restarts.load(Ordering::SeqCst), started.elapsed()), Ordering::SeqCst);
+            let counts = if hung {
+                let mut last = state.last_hang_counted.lock().unwrap();
+                let counts = watch::counts_toward_budget(last.map(|t| t.elapsed()));
+                if counts {
+                    *last = Some(Instant::now());
+                }
+                counts
+            } else {
+                true
+            };
+            state.last_was_hang.store(hung, Ordering::SeqCst);
+            let n = if counts { state.restarts.fetch_add(1, Ordering::SeqCst) + 1 } else { state.restarts.load(Ordering::SeqCst) };
             if n > MAX_RESTARTS {
                 return give_up(&app, &tr("err.keeps_stopping"));
             }
-            app.state::<Running>().child.lock().unwrap().take();
-            // Start it again first; the message must not keep BrainAI down until it is read.
-            launch(app.clone());
-            tell(&app, MessageDialogKind::Warning, tr_with("err.restarted", &[("log", &log_path(&app).display().to_string())]));
+            // Where the window was, before the new start moves it.
+            let page = current_page(&app);
+            state.child.lock().unwrap().take();
+            log_line(&app, &format!("BrainAI: the server stopped; starting it again (restart {n} of {MAX_RESTARTS})."));
+            launch_with(app.clone(), page, Some(restarted_notice(hung)));
             return;
         }
     });
@@ -838,6 +1135,11 @@ pub fn run() {
                 .theme(saved_window_theme(app.handle()))
                 .visible(!std::env::args().any(|a| a == HIDDEN_ARG))
                 .initialization_script(NEW_WINDOW_LINKS)
+                .on_page_load(|w, payload| {
+                    if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                        show_notice(&w);
+                    }
+                })
                 .on_navigation(move |url| {
                     if nav::is_goodbye(url.as_str(), port.load(Ordering::SeqCst)) {
                         let app = leaving.clone();
@@ -918,33 +1220,52 @@ pub fn run() {
             let open = MenuItem::with_id(app, "open", tr("tray.open"), true, None::<&str>)?;
             let login = CheckMenuItem::with_id(app, "login", tr("tray.login"), true, app.autolaunch().is_enabled().unwrap_or(false), None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", tr("tray.quit"), true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &login, &PredefinedMenuItem::separator(app)?, &quit_item])?;
+            let restart_item = MenuItem::with_id(app, "restart", tr("tray.restart"), true, None::<&str>)?;
+            let log_item = MenuItem::with_id(app, "log", tr("tray.log"), true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open, &login, &PredefinedMenuItem::separator(app)?, &restart_item, &log_item, &PredefinedMenuItem::separator(app)?, &quit_item])?;
             let update_item = MenuItem::with_id(app, "update", tr("tray.update"), true, None::<&str>)?;
-            app.manage(Tray { menu: menu.clone(), open_item: open.clone(), login_item: login.clone(), quit_item: quit_item.clone(), update_item, shown: AtomicBool::new(false), ready: AtomicBool::new(false), version: Mutex::new(None) });
+            app.manage(Tray { menu: menu.clone(), open_item: open.clone(), login_item: login.clone(), restart_item, log_item, quit_item: quit_item.clone(), update_item, shown: AtomicBool::new(false), ready: AtomicBool::new(false), version: Mutex::new(None) });
             let login_item = login.clone();
             TrayIconBuilder::with_id(TRAY_ID)
                 .icon(app.default_window_icon().expect("the app icon").clone())
                 .tooltip("BrainAI")
                 .menu(&menu)
                 .show_menu_on_left_click(true)
-                .on_menu_event(move |app, event| match event.id().as_ref() {
-                    "open" => show_main(app),
-                    "update" if update::is_ready(app) => {
-                        // Home first, so the card shows the steps of the restart.
-                        let app = app.clone();
-                        std::thread::spawn(move || {
-                            show_home(&app);
-                            update::update_and_restart(&app);
-                        });
+                .on_menu_event(move |app, event| {
+                    use nav::TrayAction as A;
+                    match nav::tray_action(event.id().as_ref()) {
+                        Some(A::Open) => show_main(app),
+                        Some(A::Update) if update::is_ready(app) => {
+                            // Home first, so the card shows the steps of the restart.
+                            let app = app.clone();
+                            std::thread::spawn(move || {
+                                show_home(&app);
+                                update::update_and_restart(&app);
+                            });
+                        }
+                        Some(A::Update) => show_home(app),
+                        Some(A::Login) => {
+                            let on = login_item.is_checked().unwrap_or(false);
+                            let _ = if on { app.autolaunch().enable() } else { app.autolaunch().disable() };
+                            remember_login_choice(app, on);
+                        }
+                        Some(A::Restart) => {
+                            // The same question as the page's restart link (1.10.3): the click alone is not enough.
+                            let app = app.clone();
+                            std::thread::spawn(move || {
+                                if restart_allowed_now(&app) && !quitting(&app) && confirm_link_action(&app, "restart.confirm_tray", "restart.button") {
+                                    restart_from_tray(&app);
+                                }
+                            });
+                        }
+                        Some(A::Log) => {
+                            // Off the menu's thread: on Windows the shell can take a moment to answer.
+                            let app = app.clone();
+                            std::thread::spawn(move || reveal_log(&app));
+                        }
+                        Some(A::Quit) => quit_from_tray(app),
+                        None => {}
                     }
-                    "update" => show_home(app),
-                    "login" => {
-                        let on = login_item.is_checked().unwrap_or(false);
-                        let _ = if on { app.autolaunch().enable() } else { app.autolaunch().disable() };
-                        remember_login_choice(app, on);
-                    }
-                    "quit" => quit_from_tray(app),
-                    _ => {}
                 })
                 .build(app)?;
 

@@ -35,11 +35,33 @@ export function readCookie(req: Request, name: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Where to come back to after logging in. A page view: that page. A form POST has no page of its own (landing on its URL
+ * is "Not found" or a second send): the page the form came from, when the browser says so (Referer, this host only).
+ */
+export function returnPath(req: Request): string {
+  if (req.method === 'GET' || req.method === 'HEAD') return req.originalUrl;
+  try {
+    const from = new URL(req.get('referer') ?? '');
+    if (from.host.toLowerCase() !== String(req.get('host') ?? '').toLowerCase()) return '/';
+    let path = from.pathname + from.search;
+    // A page drawn by a POST to its own URL (Preview, a refused save, a conflict) is the editor: go back to it.
+    const own = req.originalUrl.split('?')[0]!;
+    if (from.pathname === own) {
+      const section = (req.body as Record<string, unknown> | undefined)?.section;
+      const anchor = typeof section === 'string' && /^[\p{L}\p{N}_-]+$/u.test(section) ? `?section=${encodeURIComponent(section)}` : '';
+      if (own === '/pages') path = '/pages/new';
+      else if (/^\/pages\/[^/]+$/.test(own)) path = `${own}/edit${anchor}`;
+    }
+    return /^\/(?![/\\])[\x21-\x7e]*$/.test(path) && !/^\/(login|logout)(\/|\?|$)/i.test(path) ? path : '/';
+  } catch { return '/'; /* no Referer, or not an address */ }
+}
+
 /** Lets the request through only with a valid owner session; otherwise sends the browser to log in. */
 export function requireOwner(sessions: SessionStore): RequestHandler {
   return (req, res, next) => {
     if (sessions.isValid(readCookie(req, SESSION_COOKIE))) return next();
-    res.redirect(302, '/login?next=' + encodeURIComponent(req.originalUrl));
+    res.redirect(302, '/login?next=' + encodeURIComponent(returnPath(req)));
   };
 }
 

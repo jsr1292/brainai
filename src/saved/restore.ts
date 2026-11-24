@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { plain } from './shown.js';
 import Database from 'better-sqlite3';
 import { checkArchive, listLines } from './archive.js';
+import { busy, busyTick } from '../busyMarker.js';
 import { restoredRowsProblem } from './rowChecks.js';
 import { cleanImage, EXT } from '../images/clean.js';
 import { checkBackupFile, kindOfFile, pictureRows, picturesCanBeRemoved, stripSignIn } from './backupFile.js';
@@ -72,7 +73,11 @@ async function extract(archive: string, into: string): Promise<void> {
 }
 
 /** Checks either kind of file and says what it holds; `pictures_missing` counts the pictures only a database can lack. */
-export async function checked(file: string): Promise<{ kind: 'archive' | 'database'; counts: Restored }> {
+export function checked(file: string): Promise<{ kind: 'archive' | 'database'; counts: Restored }> {
+  return busy('checking a copy', () => checkedWork(file));
+}
+
+async function checkedWork(file: string): Promise<{ kind: 'archive' | 'database'; counts: Restored }> {
   const kind = kindOfFile(file);
   if (!kind) throw new Error('This is not a saved BrainAI file or backup (a .tar.gz or a memory-….db).');
   const c = kind === 'archive' ? await checkArchive(file) : checkBackupFile(file);
@@ -120,6 +125,7 @@ function cleanRestoredPictures(into: string): number {
     const at = new Date().toISOString();
     let dropped = 0;
     for (const r of restorablePictures(db)) {
+      busyTick();
       if (!/^[0-9a-f]{3,}$/.test(r.id) || !/^[a-z0-9]{1,8}$/.test(r.type)) continue;
       const file = join(into, 'images', r.id.slice(0, 2), `${r.id}.${r.type === 'jpeg' ? 'jpg' : r.type}`);
       let st;
@@ -178,6 +184,7 @@ async function unpack(file: string, kind: 'archive' | 'database', into: string):
       const mark = db.prepare("UPDATE images SET removed_at = ?, removed_by = 'restore' WHERE id = ?");
       const at = new Date().toISOString();
       for (const r of rows) {
+        busyTick();
         if (here(r)) { if (r.removed_at !== null) back.run(r.id); } else { n++; if (r.removed_at === null) mark.run(at, r.id); }
       }
     } else n = pictureRows(db);
@@ -222,6 +229,7 @@ function copyBesidePictures(from: string, into: string): void {
   const db = new Database(join(into, 'memory.db'), { readonly: true });
   try { rows = restorablePictures(db); } catch { rows = []; } finally { db.close(); }
   for (const r of rows) {
+    busyTick();
     const src = besidePicture(from, r);
     if (!src) continue;
     try {
@@ -306,7 +314,7 @@ async function restoreIntoRaw(file: string, dataDir: string): Promise<Restored> 
   return counts;
 }
 
-export const restoreInto = (file: string, dataDir: string): Promise<Restored> => safely(() => restoreIntoRaw(file, dataDir));
+export const restoreInto = (file: string, dataDir: string): Promise<Restored> => busy('unpacking a copy', () => safely(() => restoreIntoRaw(file, dataDir)));
 
 /** Left by a staging or an upload that never finished: `restore-pending.tmp-<hex>` folders and `restore-upload-<hex>.tmp` files. Only startup removes them (a live staging may own one). */
 const STRAY = /^(restore-pending\.tmp-[0-9a-f]+|restore-upload-[0-9a-f]+\.tmp)$/;
@@ -336,7 +344,7 @@ async function stageRestoreRaw(file: string, dataDir: string): Promise<Restored>
   return counts;
 }
 
-export const stageRestore = (file: string, dataDir: string): Promise<Restored> => safely(() => stageRestoreRaw(file, dataDir));
+export const stageRestore = (file: string, dataDir: string): Promise<Restored> => busy('unpacking a copy', () => safely(() => stageRestoreRaw(file, dataDir)));
 
 /**
  * At startup, before the database opens: swaps a staged restore in when the brain is still empty, and leaves a note in

@@ -68,8 +68,10 @@ export function firstSteps(i: FirstStepsInput): Step[] {
 export const firstStepsDue = (steps: Step[], hidden: boolean): boolean => !hidden && steps.some((s) => !s.done);
 
 export function firstStepsView(steps: Step[], canHide: boolean, localMode: boolean): SafeHtml {
-  return html`<section class="first-steps" aria-labelledby="first-steps-h">
-  <h2 id="first-steps-h">${t('projects.first.title')}</h2>
+  const doneCount = steps.filter((s) => s.done).length;
+  // One fold: on a phone it is a single row ("First steps · 3 of 6 done") that opens in place, so the first project is
+  // not pushed two screens down; on a wide screen app.js opens it at once (data-desk-open) and the owner can still close it.
+  return html`<section class="first-steps" aria-labelledby="first-steps-h"><details class="fs-fold" data-desk-open><summary><h2 id="first-steps-h">${t('projects.first.title')}</h2><span class="fs-count" data-done="${doneCount}" data-total="${steps.length}">${t('projects.first.progress', { done: doneCount, total: steps.length })}</span><span class="chev"></span></summary>
   <p class="first-steps-lede">${t('projects.first.lede')}</p>
   <ol class="first-steps-list">${steps.map((s, n) => html`<li class="fs-item${s.done ? ' is-done' : ''}"${s.addedTick && !s.done && localMode ? html` data-step-added` : ''}>
     <span class="fs-mark" data-n="${n + 1}" aria-hidden="true"></span>
@@ -79,5 +81,5 @@ export function firstStepsView(steps: Step[], canHide: boolean, localMode: boole
       : s.href ? html`<a class="fs-do" href="${s.href}">${s.link} ›</a>` : ''}
   </li>`)}</ol>
   ${canHide ? html`<form method="post" action="/first-steps/hide" class="first-steps-hide"><button type="submit" class="linklike">${t('projects.first.hide')}</button></form>` : ''}
-</section>`;
+</details></section>`;
 }

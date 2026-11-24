@@ -57,7 +57,7 @@ export function savedCodePage(v: { error: string | null }): SafeHtml {
 <h1>${t('data.saved.title')}</h1>
 <p class="lede">${t('data.saved.codeLede')}</p>
 ${v.error ? html`<p class="notice" role="alert">${v.error}</p>` : ''}
-<form method="post" action="/settings/save">
+<form method="post" action="/settings/save" data-download>
 <label>${t('data.saved.code')} <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" required autofocus></label>
 <button type="submit" class="primary">${t('data.saved.download')}</button>
 </form>

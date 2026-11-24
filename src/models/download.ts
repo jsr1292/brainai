@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createWriteStream, existsSync, copyFileSync, mkdirSync, statSync } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync, copyFileSync, mkdirSync, statSync } from 'node:fs';
 import { rename, rm, statfs } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,7 +34,9 @@ export interface DownloadOptions {
   /** free bytes where the models folder lives (tests replace it) */
   freeBytes?: () => Promise<number>;
   /** opens the partial file for writing (tests replace it) */
-  createWriter?: (path: string) => Writable;
+  createWriter?: (path: string, append?: boolean) => Writable;
+  /** no bytes for this long fails the file (default 60 s; tests shorten it) */
+  stallMs?: number;
   /** folder holding licenses/ (default: the folder with package.json) */
   licensesRoot?: string;
 }
@@ -53,22 +55,84 @@ function hasGood(path: string, sha: string): boolean {
   return existsSync(path) && sha256Of(path) === sha;
 }
 
-/** Streams one file from one source to <path>.partial, checks its SHA-256, renames it. Cleans up on any error. */
-async function fetchOne(url: string, path: string, sha: string, f: typeof fetch, signal: AbortSignal | undefined, createWriter: (path: string) => Writable, onBytes: (n: number) => void, onChecking: () => void): Promise<void> {
+/** No bytes for this long: the file fails (the connection is dropped), so "Downloading… 63%" never hangs for good. */
+export const STALL_MS = 60_000;
+
+class Stalled extends Error {}
+
+/** SHA-256 of what is already in a partial file, to carry on hashing from there. */
+async function hashOfFile(path: string, hash: ReturnType<typeof createHash>): Promise<void> {
+  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+}
+
+/**
+ * Streams one file from one source to <path>.partial, checks its SHA-256, renames it. A partial left by an earlier try
+ * (a stall, a cut connection) is carried on with an HTTP Range request when the server honours it; if it does not, or the
+ * finished file's size or checksum is wrong, the file is fetched again whole. The checksum is always of the whole file
+ * and never relaxed. A stall, a cut or an HTTP error keeps the partial for the next try; a wrong checksum, a full disk
+ * or a stop removes it.
+ */
+async function fetchOne(url: string, path: string, sha: string, f: typeof fetch, signal: AbortSignal | undefined, createWriter: (path: string, append?: boolean) => Writable, onBytes: (n: number) => void, onChecking: () => void, stallMs: number): Promise<void> {
   const partial = `${path}.partial`;
   mkdirSync(dirname(path), { recursive: true });
+  let reported = 0;
+  const count = (n: number) => { reported += n; onBytes(n); };
+  const attempt = async (resume: boolean): Promise<void> => {
+    const have = resume && existsSync(partial) ? statSync(partial).size : 0;
+    const ac = new AbortController();
+    let stalled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => { stalled = true; ac.abort(); }, stallMs); };
+    const onAbort = () => ac.abort();
+    if (signal?.aborted) ac.abort(); else signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      arm();
+      const res = await f(url, { signal: ac.signal, headers: { 'accept-encoding': 'identity', ...(have > 0 ? { range: `bytes=${have}-` } : {}) } });
+      let append = false;
+      let expected: number | undefined;
+      if (have > 0 && res.status === 206 && new RegExp(`^bytes ${have}-\\d+/(\\d+|\\*)$`).test(res.headers.get('content-range') ?? '')) {
+        append = true;
+        const m = /\/(\d+)$/.exec(res.headers.get('content-range') ?? '');
+        expected = m ? Number(m[1]) : undefined;
+      } else if (have > 0 && (res.status === 416 || res.status === 206)) {
+        // No usable range (or a slice that does not start where the partial ends): the file is fetched whole.
+        await res.body?.cancel().catch(() => undefined);
+        await rm(partial, { force: true });
+        return attempt(false);
+      } else if (!res.ok || !res.body) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      if (!res.body) throw new Error(`HTTP ${res.status}`);
+      const hash = createHash('sha256');
+      // Hashing what is already there can take a while on a slow disk: not a stall.
+      if (append) { clearTimeout(timer); await hashOfFile(partial, hash); count(have); arm(); }
+      const tap = new Transform({ transform(chunk: Buffer, _e, cb) { arm(); hash.update(chunk); count(chunk.length); cb(null, chunk); } });
+      await pipeline(Readable.fromWeb(res.body as any), tap, createWriter(partial, append), { signal: ac.signal });
+      clearTimeout(timer);
+      onChecking();
+      // The checksum is the real check. The size is only compared for a resumed file, to decide on a whole refetch (a
+      // whole response's Content-Length can describe an encoded body).
+      const wrongSize = append && expected !== undefined && statSync(partial).size !== expected;
+      if (wrongSize || hash.digest('hex') !== sha) {
+        await rm(partial, { force: true });
+        if (append) { onBytes(-reported); reported = 0; return attempt(false); }
+        throw new Mismatch('the file did not match');
+      }
+      await rename(partial, path);
+    } catch (e) {
+      if (stalled && !signal?.aborted) throw new Stalled('no data for a while');
+      throw e;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    }
+  };
   try {
-    const res = await f(url, { signal });
-    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-    const hash = createHash('sha256');
-    const tap = new Transform({ transform(chunk: Buffer, _e, cb) { hash.update(chunk); onBytes(chunk.length); cb(null, chunk); } });
-    await pipeline(Readable.fromWeb(res.body as any), tap, createWriter(partial), { signal });
-    onChecking();
-    if (hash.digest('hex') !== sha) throw new Mismatch('the file did not match');
-    await rename(partial, path);
+    await attempt(true);
   } catch (e) {
-    await rm(partial, { force: true });
     const code = (e as NodeJS.ErrnoException)?.code;
+    const keep = e instanceof Stalled || (!(e instanceof Mismatch) && !signal?.aborted && code !== 'ENOSPC' && code !== 'EDQUOT');
+    if (!keep) await rm(partial, { force: true });
     if (code === 'ENOSPC' || code === 'EDQUOT') throw new DiskFull('disk full');
     throw e;
   }
@@ -104,12 +168,13 @@ export async function downloadModel(m: CatalogueModel, modelsDir: string, o: Dow
   for (const [file, sha] of pending) {
     const path = join(dir, file);
     let sawMismatch = false;
+    let sawStall = false;
     let ok = false;
     for (const source of o.sources) {
       const before = done;
       try {
-        await fetchOne(source(m, file), path, sha, f, o.signal, o.createWriter ?? ((p) => createWriteStream(p)),
-          (n) => { done += n; report('downloading'); }, () => report('checking'));
+        await fetchOne(source(m, file), path, sha, f, o.signal, o.createWriter ?? ((p, append) => createWriteStream(p, { flags: append ? 'a' : 'w' })),
+          (n) => { done += n; report('downloading'); }, () => report('checking'), o.stallMs ?? STALL_MS);
         ok = true;
         break;
       } catch (e) {
@@ -117,9 +182,10 @@ export async function downloadModel(m: CatalogueModel, modelsDir: string, o: Dow
         if (o.signal?.aborted) fail('stopped');
         if (e instanceof DiskFull) fail(`not enough disk space: ${mb(neededBytes || total)} MB needed`);
         if (e instanceof Mismatch) sawMismatch = true;
+        if (e instanceof Stalled) sawStall = true;
       }
     }
-    if (!ok) fail(sawMismatch ? 'the file did not match' : 'could not reach Hugging Face or GitHub');
+    if (!ok) fail(sawMismatch ? 'the file did not match' : sawStall ? 'the download stalled: no data for a while' : 'could not reach Hugging Face or GitHub');
   }
   try { copyNotice(m, modelsDir, { licensesRoot: o.licensesRoot }); } catch (e) { fail((e as Error).message); }
   done = total;

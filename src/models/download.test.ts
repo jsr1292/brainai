@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http';
 import { Writable } from 'node:stream';
 import { writeFileSync as wf } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -75,12 +76,12 @@ test('all sources unreachable: plain reason', async () => {
   } finally { bad.server.close(); }
 });
 
-test('connection cut mid-body: no partial, error', async () => {
+test('connection cut mid-body: error, the partial is kept to carry on from', async () => {
   const { server, base } = await serve((_q, res) => { res.writeHead(200, { 'content-length': 100000 }); res.write('abc'); setTimeout(() => res.destroy(), 20); });
   const dir = tmp();
   try {
     await assert.rejects(downloadModel(model(), dir, { sources: [src(base)], freeBytes: plenty }));
-    assert.deepEqual(noPartials(dir), []);
+    assert.equal(noPartials(dir).length, 1);
   } finally { server.close(); }
 });
 
@@ -193,4 +194,150 @@ test('mixed failures prefer the specific reason', async () => {
   try {
     await assert.rejects(downloadModel(model(), dir, { sources: [src(wrong.base), src(gone.base)], freeBytes: plenty }), /did not match/);
   } finally { wrong.server.close(); gone.server.close(); }
+});
+
+/** A server that honours Range on a.bin / b.bin. */
+const ranged = (log: string[]) => (req: any, res: any) => {
+  const body: Buffer = req.url.endsWith('a.bin') ? A : B;
+  const r = /^bytes=(\d+)-$/.exec(req.headers.range ?? '');
+  log.push(req.headers.range ?? '');
+  if (r) {
+    const from = Number(r[1]);
+    res.writeHead(206, { 'content-length': body.length - from, 'content-range': `bytes ${from}-${body.length - 1}/${body.length}` });
+    res.end(body.subarray(from));
+  } else { res.writeHead(200, { 'content-length': body.length }); res.end(body); }
+};
+const partialOf = (dir: string, m: CatalogueModel, file = 'a.bin') => join(modelDirOf(dir, m), `${file}.partial`);
+const withPartial = (dir: string, m: CatalogueModel, bytes: Buffer) => { mkdirSync(modelDirOf(dir, m), { recursive: true }); writeFileSync(partialOf(dir, m), bytes); };
+
+test('stall: no bytes for the stall time fails the file, and the partial stays', async () => {
+  const { server, base } = await serve((_q, res) => { res.writeHead(200, { 'content-length': 100000 }); res.write('abc'); });
+  const dir = tmp(); const m = model(); const seen: Progress[] = [];
+  try {
+    const t0 = Date.now();
+    await assert.rejects(downloadModel(m, dir, { sources: [src(base)], freeBytes: plenty, stallMs: 150, onProgress: (p) => seen.push({ ...p }) }), /stalled/);
+    assert.ok(Date.now() - t0 < 3000);
+    assert.equal(seen.at(-1)!.state, 'failed');
+    assert.equal(readFileSync(partialOf(dir, m), 'utf8'), 'abc');
+  } finally { server.closeAllConnections(); server.close(); }
+});
+
+test('a stalled source is skipped for the next one', async () => {
+  const slow = await serve((_q, res) => { res.writeHead(200, { 'content-length': 100000 }); res.write('abc'); });
+  const ok = await serve(good); const dir = tmp(); const m = model();
+  try {
+    await downloadModel(m, dir, { sources: [src(slow.base), src(ok.base)], freeBytes: plenty, stallMs: 150 });
+    assert.deepEqual(readFileSync(join(modelDirOf(dir, m), 'a.bin')), A);
+  } finally { slow.server.closeAllConnections(); slow.server.close(); ok.server.close(); }
+});
+
+test('a partial is carried on with a Range request; size and checksum are verified', async () => {
+  const log: string[] = []; const { server, base } = await serve(ranged(log)); const dir = tmp(); const m = model();
+  try {
+    withPartial(dir, m, A.subarray(0, 700));
+    const seen: Progress[] = [];
+    await downloadModel(m, dir, { sources: [src(base)], freeBytes: plenty, onProgress: (p) => seen.push({ ...p }) });
+    assert.equal(log[0], 'bytes=700-');
+    assert.deepEqual(readFileSync(join(modelDirOf(dir, m), 'a.bin')), A);
+    assert.deepEqual(noPartials(dir), []);
+    assert.equal(seen.at(-1)!.doneBytes, m.bytes);
+  } finally { server.close(); }
+});
+
+test('a server without Range: the file is fetched whole again', async () => {
+  const { server, base } = await serve(good); const dir = tmp(); const m = model();
+  try {
+    withPartial(dir, m, A.subarray(0, 700));
+    await downloadModel(m, dir, { sources: [src(base)], freeBytes: plenty });
+    assert.deepEqual(readFileSync(join(modelDirOf(dir, m), 'a.bin')), A);
+  } finally { server.close(); }
+});
+
+test('a partial that does not match the rest: the checksum fails it, then a full download succeeds', async () => {
+  const log: string[] = []; const { server, base } = await serve(ranged(log)); const dir = tmp(); const m = model();
+  try {
+    withPartial(dir, m, Buffer.from('X'.repeat(700)));
+    await downloadModel(m, dir, { sources: [src(base)], freeBytes: plenty });
+    assert.equal(log.filter((r) => r.startsWith('bytes=')).length, 1);
+    assert.ok(log.includes(''), 'a second, whole request');
+    assert.deepEqual(readFileSync(join(modelDirOf(dir, m), 'a.bin')), A);
+    assert.deepEqual(noPartials(dir), []);
+  } finally { server.close(); }
+});
+
+test('a server that answers 416 to the Range: the partial is dropped and the file fetched whole', async () => {
+  const { server, base } = await serve((req: any, res: any) => {
+    if (req.headers.range) { res.writeHead(416); res.end(); } else good(req, res);
+  });
+  const dir = tmp(); const m = model();
+  try {
+    withPartial(dir, m, A.subarray(0, 700));
+    await downloadModel(m, dir, { sources: [src(base)], freeBytes: plenty });
+    assert.deepEqual(readFileSync(join(modelDirOf(dir, m), 'a.bin')), A);
+  } finally { server.close(); }
+});
+
+test('a wrong file is still refused when the server is wrong from the first byte (checksum stays strict)', async () => {
+  const { server, base } = await serve((req: any, res: any) => {
+    if (req.headers.range) { res.writeHead(206, { 'content-range': `bytes 700-${A.length - 1}/${A.length}` }); res.end(Buffer.from('Z'.repeat(A.length - 700))); }
+    else { res.writeHead(200); res.end('garbage'); }
+  });
+  const dir = tmp(); const m = model();
+  try {
+    withPartial(dir, m, A.subarray(0, 700));
+    await assert.rejects(downloadModel(m, dir, { sources: [src(base)], freeBytes: plenty }), /did not match/);
+    assert.equal(existsSync(join(modelDirOf(dir, m), 'a.bin')), false);
+    assert.deepEqual(noPartials(dir), []);
+  } finally { server.close(); }
+});
+
+test('a compressed response with its encoded content-length still gives the right file (the checksum is the check)', async () => {
+  const seenEncoding: (string | undefined)[] = [];
+  const { server, base } = await serve((req: any, res: any) => {
+    seenEncoding.push(req.headers['accept-encoding']);
+    const body = gzipSync(req.url.endsWith('a.bin') ? A : B);
+    res.writeHead(200, { 'content-encoding': 'gzip', 'content-length': body.length }); res.end(body);
+  });
+  const dir = tmp(); const m = model();
+  try {
+    await downloadModel(m, dir, { sources: [src(base)], freeBytes: plenty });
+    assert.deepEqual(readFileSync(join(modelDirOf(dir, m), 'a.bin')), A);
+    assert.ok(seenEncoding.every((e) => e === 'identity'), 'asks for the raw bytes');
+  } finally { server.close(); }
+});
+
+test('a 206 that starts at the wrong offset: the file is fetched whole', async () => {
+  const log: string[] = [];
+  const { server, base } = await serve((req: any, res: any) => {
+    log.push(req.headers.range ?? '');
+    if (req.headers.range) { res.writeHead(206, { 'content-range': `bytes 0-${A.length - 1}/${A.length}` }); res.end(A); } else good(req, res);
+  });
+  const dir = tmp(); const m = model();
+  try {
+    withPartial(dir, m, A.subarray(0, 700));
+    await downloadModel(m, dir, { sources: [src(base)], freeBytes: plenty });
+    assert.deepEqual(readFileSync(join(modelDirOf(dir, m), 'a.bin')), A);
+    assert.ok(log.includes(''), 'a whole request followed');
+  } finally { server.close(); }
+});
+
+test('a stop by the owner removes the partial', async () => {
+  const { server, base } = await serve((_q, res) => { res.writeHead(200, { 'content-length': 100000 }); res.write('abc'); });
+  const dir = tmp(); const m = model(); const ac = new AbortController();
+  try {
+    const p = downloadModel(m, dir, { sources: [src(base)], freeBytes: plenty, signal: ac.signal });
+    setTimeout(() => ac.abort(), 50);
+    await assert.rejects(p, /stopped/);
+    assert.deepEqual(noPartials(dir), []);
+  } finally { server.closeAllConnections(); server.close(); }
+});
+
+test('the second source carries on from the partial the first one left', async () => {
+  const slow = await serve((_q, res) => { res.writeHead(200, { 'content-length': 100000 }); res.write('abc'); });
+  const log: string[] = []; const ok = await serve(ranged(log)); const dir = tmp(); const m = model();
+  try {
+    withPartial(dir, m, A.subarray(0, 700));
+    await downloadModel(m, dir, { sources: [src(slow.base), src(ok.base)], freeBytes: plenty, stallMs: 150 });
+    assert.deepEqual(readFileSync(join(modelDirOf(dir, m), 'a.bin')), A);
+  } finally { slow.server.closeAllConnections(); slow.server.close(); ok.server.close(); }
 });

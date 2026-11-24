@@ -14,7 +14,7 @@ const row = (it: InboxItem, selected: boolean): SafeHtml =>
   html`<li><a class="ir${selected ? ' is-selected' : ''}" href="${it.href}"${selected ? html` aria-current="true"` : ''}><span class="ir-dot d-${it.kind}" aria-hidden="true"></span><span class="ir-txt"><span class="ir-t">${it.title}</span><span class="ir-s">${it.sub}</span></span></a></li>`;
 
 const group = (g: InboxGroup, selectedKey: string | null): SafeHtml =>
-  html`<section class="ig${g.kind === 'tidy' ? ' ig-quiet' : ''}"><h2 class="ig-h"><a href="${g.href}">${g.kind === 'tidy' ? t('inbox.group.quiet', { title: g.title, count: g.items.length }) : html`${g.title} · ${g.items.length}`}</a></h2><ul class="ig-list">${g.items.map((it) => row(it, it.key === selectedKey))}</ul></section>`;
+  html`<section class="ig${g.kind === 'tidy' ? ' ig-quiet' : ''}"><h2 class="ig-h"><a href="${g.href}">${g.kind === 'tidy' ? t('inbox.group.quiet', { title: g.title, count: g.items.length }) : html`${g.title} · ${g.items.length}`}<span class="chev" aria-hidden="true"></span></a></h2><ul class="ig-list">${g.items.map((it) => row(it, it.key === selectedKey))}</ul></section>`;
 
 /** "N things wait for you" under the list's heading. */
 const waits = (n: number, tidy: number): string => {

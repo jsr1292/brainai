@@ -209,7 +209,9 @@ test('on the active pill the Inbox count turns inside out, and "Backup late" tur
   assert.equal(propIn(deskRules, '.side-place[aria-current] .side-warn', 'color', D), 'var(--primary-fg)');
   assert.equal(propIn(deskRules, '.side-place[aria-current] .side-warn .dot', 'box-shadow', D), '0 0 0 2px var(--primary-fg)');
   assert.equal(propIn(deskRules, '.side-place[aria-current]', 'background', D), 'var(--primary)');
-  assert.equal(propIn(deskRules, '.side-sub[aria-current="page"]', 'background', D), 'var(--raised)');
+  // One black pill at a time: a place whose section is the page you are on is only its heading (bold ink, no fill).
+  assert.equal(propIn(deskRules, '.side-sub[aria-current="page"]', 'background', D), 'var(--primary)');
+  assert.equal(propIn(deskRules, '.side-place[aria-current="true"]', 'background', D), 'none');
 });
 
 test('desk.css keeps the one-hand rules: tokens only, three radii, hover for a real pointer, no hex outside :root', () => {
@@ -804,14 +806,14 @@ test('no desk.css selector nests :has() (a nested one is invalid, and the browse
 test('the desktop home: the areas in the main column, For you and the extras in the right column (spec 2026-11-11)', () => {
   assert.equal(propIn(deskRules, P, 'display', D), 'grid');
   assert.equal(propIn(deskRules, P, 'grid-template-columns', D), 'minmax(0, 1fr) var(--desk-right)');
-  assert.equal(propIn(deskRules, P, 'grid-template-rows', D), 'repeat(6, auto) 1fr');
-  assert.equal(propIn(deskRules, `${P} > .pareas`, 'grid-column', D), '1');
-  assert.equal(propIn(deskRules, `${P} > .pareas`, 'grid-row', D), '4 / span 4');
-  for (const [sel, row] of [['.fy-h', '4'], ['.foryou', '5'], ['.pextra', '6']] as const) {
+  assert.equal(propIn(deskRules, P, 'grid-template-rows', D), 'repeat(7, auto) 1fr');
+  assert.equal(propIn(deskRules, `${P} > .pleft`, 'grid-column', D), '1');
+  assert.equal(propIn(deskRules, `${P} > .pleft`, 'grid-row', D), '5 / span 4');
+  for (const [sel, row] of [['.fy-h', '5'], ['.foryou', '6'], ['.pextra', '7']] as const) {
     assert.equal(propIn(deskRules, `${P} > ${sel}`, 'grid-column', D), '2', sel);
     assert.equal(propIn(deskRules, `${P} > ${sel}`, 'grid-row', D), row, sel);
   }
-  assert.equal(propIn(deskRules, `${P}:not(:has(> .foryou)) > .pextra`, 'grid-row', D), '4');
+  assert.equal(propIn(deskRules, `${P}:not(:has(> .foryou)) > .pextra`, 'grid-row', D), '5');
   assert.equal(propIn(deskRules, '.phome:not(.has-panel) .phome-date[hidden]', 'display', D), 'inline');
   assert.doesNotMatch(deskCss, /#ongo\)|#alsoopen|\.pf-h|shelf-names/, 'nothing of the old layout is left but the On the go hint');
 });

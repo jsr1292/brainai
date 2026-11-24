@@ -46,8 +46,9 @@ test('editing one section saves only that section and returns to its anchor', as
   assert.match(now.body, /## Stack\nSwiftUI\.\n\n## Gotchas\nThe simulator needs iOS 18\./);
   assert.equal((await f(`/pages/${page.id}/edit?section=nope`)).status, 404);
   const whole = await (await f(`/pages/${page.id}/edit`)).text();
-  assert.doesNotMatch(whole, /<h1>/, 'the whole-page editor has no heading of its own; the title input is it');
-  assert.match(whole, /<input name="title" class="ptitle-input"[^>]*value="wildlog — wine cellar"/);
+  assert.doesNotMatch(whole, /<h1>/, 'the whole-page editor has no visible heading of its own; the title field is it');
+  assert.match(whole, /<h1 class="visually-hidden">Editing wildlog — wine cellar<\/h1>/, 'a screen reader still gets a heading');
+  assert.match(whole, /<textarea name="title" class="ptitle-input" rows="1"[^>]*>wildlog — wine cellar<\/textarea>/, 'the title wraps, so a long one is shown whole');
 });
 
 test('preview shows the rendered text and keeps what was typed, without saving', async (t) => {
@@ -143,7 +144,7 @@ test('deleting hides the page from the Pages tab and frees its title; undelete b
 test('a page can be deleted from its own side rail, without opening the editor', async (t) => {
   const { f, page } = await start(t);
   const view = await (await f(`/pages/${page.id}`)).text();
-  const rail = view.slice(view.indexOf('<aside class="paside">'), view.indexOf('</aside>'));
+  const rail = view.slice(view.indexOf('<section class="paside"'), view.indexOf('</div></section><nav class="pnav"'));
   assert.match(rail, new RegExp(`Ask an AI to update[\\s\\S]*<details class="pg-danger"><summary>Delete this page…<span class="chev"></span></summary>[\\s\\S]*action="/pages/${page.id}/delete"[\\s\\S]*On this page`));
   assert.match(rail, /you can undelete it from its address/);
 });
@@ -257,7 +258,7 @@ test('a whole-page conflict shows a changed title and project under Yours, next 
   assert.match(current!, /<li>Title: wildlog — wine cellar<\/li><li>Project: wildlog<\/li>/);
   assert.match(yours!, /<li>Title: Cellar app notes<\/li><li>Project: No project<\/li><li>Area: Tools &amp; AI<\/li>/);
   assert.match(yours!, /<pre class="mine">Mine\.<\/pre>/);
-  assert.match(body, /name="title" [^>]*value="Cellar app notes"/, 'the editor below keeps the typed title');
+  assert.match(body, /name="title" [^>]*>Cellar app notes<\/textarea>/, 'the editor below keeps the typed title');
   assert.equal(app.deps.pages.get(page.id)!.title, 'wildlog — wine cellar');
   const same = await (await f(`/pages/${page.id}`, post({ base: '1', title: page.title, project: 'wildlog', area: 'start', body: 'Mine again.', intent: 'save' }))).text();
   assert.doesNotMatch(same, /Title: /, 'nothing extra when only the text differs');
@@ -307,7 +308,7 @@ test('every editor carries the Add picture button, its file input and status lin
   const sec = (await (await f(`/pages/${page.id}`)).text()).match(/href="\/pages\/[^"]+\/edit\?section=([^"]+)"/)![1];
   for (const path of ['/pages/new', `/pages/${page.id}/edit`, `/pages/${page.id}/edit?section=${sec}`]) {
     const body = await (await f(path)).text();
-    assert.match(body, /<form method="post" action="[^"]+" class="peditor" data-pics="\/static\/editor-pics\.js\?v=[0-9a-f]{10}" data-cm="\/static\/editor-cm\.js\?v=[0-9a-f]{10}">/, path);
+    assert.match(body, /<form method="post" action="[^"]+" class="peditor" data-pics="\/static\/editor-pics\.js\?v=[0-9a-f]{10}" data-cm="\/static\/editor-cm\.js\?v=[0-9a-f]{10}" data-own-submit>/, path);
     assert.match(body, /<button type="button" class="ptool add-pic" hidden>＋ Add picture<\/button><input type="file" class="pic-input" accept="image\/\*" multiple hidden>/, path);
     assert.match(body, /<p class="pic-strip" role="status" hidden><\/p>/, path);
     assert.doesNotMatch(body, /image\/heic/, path);
@@ -321,7 +322,7 @@ test('the editor sits alone in the reading column: no pages tree, the title inpu
   const whole = await (await f(`/pages/${page.id}/edit`)).text();
   assert.doesNotMatch(whole, /class="pnav"/, 'no pages tree on the edit screen');
   assert.doesNotMatch(whole, /All pages by area/);
-  assert.match(whole, /<input name="title" class="ptitle-input" aria-label="Title"/);
+  assert.match(whole, /<textarea name="title" class="ptitle-input" rows="1" enterkeyhint="done" aria-label="Title"/);
   assert.match(whole, /<title>Editing wildlog — wine cellar<\/title>/, 'the tab title keeps the page name');
   const section = await (await f(`/pages/${page.id}/edit?section=gotchas`)).text();
   assert.doesNotMatch(section, /class="pnav"/, 'the section editor has no pages tree either');
@@ -379,7 +380,7 @@ test('the body textarea is the mount point for the live editor', async (t) => {
 
 test('every editor screen carries the editor\'s own script, so the live editor can mount', async (t) => {
   const { app, f, page } = await start(t);
-  const cm = /<form method="post" action="[^"]+" class="peditor" data-pics="\/static\/editor-pics\.js\?v=[0-9a-f]{10}" data-cm="\/static\/editor-cm\.js\?v=[0-9a-f]{10}">/;
+  const cm = /<form method="post" action="[^"]+" class="peditor" data-pics="\/static\/editor-pics\.js\?v=[0-9a-f]{10}" data-cm="\/static\/editor-cm\.js\?v=[0-9a-f]{10}" data-own-submit>/;
   assert.match(await (await f('/pages/new')).text(), cm);
   assert.match(await (await f(`/pages/${page.id}/edit`)).text(), cm);
   assert.match(await (await f(`/pages/${page.id}/edit?section=gotchas`)).text(), cm);

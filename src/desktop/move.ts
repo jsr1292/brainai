@@ -9,11 +9,16 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import type { DB } from '../db.js';
 import { ARCHIVE_NAME, packArchive } from '../saved/archive.js';
+import { busy } from '../busyMarker.js';
 
 const folder = (dataDir: string) => join(dataDir, 'move');
 
 /** Makes the moving file in `<dataDir>/move` and gives its path; an earlier moving file there is replaced. */
-export async function makeMoveFile(db: DB, dataDir: string, now: Date): Promise<string> {
+export function makeMoveFile(db: DB, dataDir: string, now: Date): Promise<string> {
+  return busy('preparing the moving file', () => makeMoveFileWork(db, dataDir, now));
+}
+
+async function makeMoveFileWork(db: DB, dataDir: string, now: Date): Promise<string> {
   const dir = folder(dataDir);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   // The local date, as the nightly backup names its copies.

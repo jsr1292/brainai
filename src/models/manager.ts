@@ -8,7 +8,8 @@
  * this version that model becomes the choice and is downloaded: nothing to ask, keyword search meanwhile.
  */
 import { createHash } from 'node:crypto';
-import { copyFileSync, createReadStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { busy } from '../busyMarker.js';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { DB } from '../db.js';
 import { createLocalEmbedder, isZeroVector, type Embedder } from '../memory/embedder.js';
@@ -128,6 +129,11 @@ export class ModelManager {
     await this.#run(this.#choice);
   }
 
+  /** "Try again" after a failure: runs the current choice again (a stalled or cut download carries on from its partial file). */
+  async retry(): Promise<void> {
+    if (this.#choice) await this.#run(this.#choice);
+  }
+
   /**
    * Which of the catalogue's models have their files on disk, for the welcome's button label only: presence, not a
    * hash (hundreds of MB on every page load). The real check is isInstalled, run before any model is loaded.
@@ -210,6 +216,21 @@ export class ModelManager {
     return job.outcome;
   }
 
+  /** Half-downloaded files (kept to carry on from) of models the owner no longer wants are removed, so they never sit on the disk for ever. */
+  #dropStalePartials(c: ModelChoice): void {
+    const keep = new Set<string>([c.search, ...(c.rerank ? [c.rerank] : [])]);
+    const walk = (dir: string): void => {
+      let entries: import('node:fs').Dirent[];
+      try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith('.partial')) { try { rmSync(p, { force: true }); } catch { /* left for next time */ } }
+      }
+    };
+    for (const m of this.#catalogue) if (!keep.has(m.id)) walk(modelDirOf(this.o.modelsDir, m));
+  }
+
   async #apply(c: ModelChoice, signal: AbortSignal): Promise<void> {
     this.#progress.clear();
     this.#problem = undefined;
@@ -217,6 +238,7 @@ export class ModelManager {
     this.#onlineProblem = undefined;
     this.#checked = undefined;
     this.#checkFailed = false;
+    this.#dropStalePartials(c);
     const e = this.o.embedder;
     let reread: Promise<unknown> = Promise.resolve();
     if (!(e.ready() && e.profile()?.id === c.search)) {
@@ -328,12 +350,14 @@ export class ModelManager {
     }
     const target = modelDirOf(this.o.modelsDir, m);
     try {
-      for (const [file, from] of found) {
-        const to = join(target, file);
-        mkdirSync(join(to, '..'), { recursive: true });
-        copyFileSync(from, `${to}.partial`);
-        renameSync(`${to}.partial`, to);
-      }
+      busy('copying model files', () => {
+        for (const [file, from] of found) {
+          const to = join(target, file);
+          mkdirSync(join(to, '..'), { recursive: true });
+          copyFileSync(from, `${to}.partial`);
+          renameSync(`${to}.partial`, to);
+        }
+      });
       copyNotice(m, this.o.modelsDir);
     } catch (e) {
       rmSync(target, { recursive: true, force: true });

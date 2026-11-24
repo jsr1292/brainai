@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import { writeBackupStatus, type BackupRun } from './backupStatus.js';
 import type { BackupCopy } from './desktop/backupCopy.js';
 import { tighten, type DB } from './db.js';
+import { busy, busyTick } from './busyMarker.js';
 
 const NAME = /^memory-\d{4}-\d{2}-\d{2}\.db$/;
 
@@ -42,6 +43,7 @@ export function syncPictures(db: DB, dataDir: string, dir: string, now: Date, ca
   for (const sub of readdirSync(src).filter((d) => /^[0-9a-f]{2}$/.test(d))) {
     const subDir = join(dir, 'images', sub);
     for (const file of readdirSync(join(src, sub))) {
+      busyTick();
       const target = join(subDir, file);
       if (careful) {
         try { if (!lstatSync(join(src, sub, file)).isFile()) continue; } catch { continue; }
@@ -92,7 +94,11 @@ export function syncPictures(db: DB, dataDir: string, dir: string, now: Date, ca
  * folder, which must never see the sign-in data, not even for a moment or after a crash. In `dir` it only
  * ever writes or deletes memory-YYYY-MM-DD.db files and its own .partial file. Returns the path.
  */
-export async function backupNow(db: DB, dir: string, keep: number, now: Date, dataDir?: string): Promise<string> {
+export function backupNow(db: DB, dir: string, keep: number, now: Date, dataDir?: string): Promise<string> {
+  return busy('backing up', () => backupNowWork(db, dir, keep, now, dataDir));
+}
+
+async function backupNowWork(db: DB, dir: string, keep: number, now: Date, dataDir?: string): Promise<string> {
   // A folder made here is the owner's alone: names and dates of the backups are not for other users of the computer.
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   // An existing folder (made earlier, or chosen by the owner) is made owner-only too; never loosened, never fatal.
@@ -152,7 +158,11 @@ export function missingPictures(db: DB, dataDir: string): number | null {
 }
 
 /** One backup run, logged and recorded in `statusDir` for the dashboard; failures are never thrown. Returns the run it recorded. */
-export async function runBackup(db: DB, dir: string, keep: number, now: Date, statusDir: string, copy?: BackupCopy): Promise<BackupRun> {
+export function runBackup(db: DB, dir: string, keep: number, now: Date, statusDir: string, copy?: BackupCopy): Promise<BackupRun> {
+  return busy('backing up', () => runBackupWork(db, dir, keep, now, statusDir, copy));
+}
+
+async function runBackupWork(db: DB, dir: string, keep: number, now: Date, statusDir: string, copy?: BackupCopy): Promise<BackupRun> {
   let run: BackupRun;
   try {
     // statusDir is the data dir (index.ts), where the pictures live.

@@ -270,7 +270,11 @@ const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
     return;
   }
   const title = status === 500 ? t('common.serverError') : t('common.badRequest');
-  res.status(status).type('html').send(page(title, html`<h1>${title}</h1>`, { tab: null }));
+  // A failed send (not a page view): say that nothing was saved, and give the way back to the text (app.js wires data-go-back).
+  const lost = status === 500 && !SAFE_METHODS.has(req.method);
+  res.status(status).type('html').send(page(title, lost
+    ? html`<h1>${title}</h1><p>${t('common.serverErrorPost')}</p><p><a href="#" class="quiet-btn" data-go-back>${t('common.goBack')}</a></p>`
+    : html`<h1>${title}</h1>`, { tab: null }));
 };
 
 /**
@@ -285,7 +289,8 @@ const SKILL_FORM_LIMIT = (MAX_BODY + MAX_SKILL_BYTES + MAX_SKILL_DESCRIPTION) * 
 const pageFormTooLarge: ErrorRequestHandler = (err, _req, res, next) => {
   if (err?.type !== 'entity.too.large' || res.headersSent) return next(err);
   res.status(413).type('html').send(page(t('common.tooLong'), html`<h1>${t('common.tooLong')}</h1>
-<p>${t('common.tooLongBody', { max: fmt.number(MAX_BODY) })}</p>`, { nav: true, tab: null }));
+<p>${t('common.tooLongBody', { max: fmt.number(MAX_BODY) })}</p>
+<p><a href="#" class="quiet-btn" data-go-back>${t('common.goBack')}</a></p>`, { nav: true, tab: null }));
 };
 
 /** True when the request carries an Origin whose host is not the one it was sent to. */

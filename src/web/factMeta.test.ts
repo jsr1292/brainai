@@ -78,7 +78,7 @@ test('a bad date from the form comes back as a message with the editor open, not
   const r = await f(`/memories/${m.id}`, form({ content: m.content, project: 'wildlog', tags: '', valid_until: '2026-02-30' }));
   assert.equal(r.status, 400);
   const body = await r.text();
-  assert.match(body, /valid_until must be a real date/);
+  assert.match(body, /Valid until: pick a real date\./);
   assert.match(body, /<details class="pfold" id="edit" open>/);
   assert.equal(app.deps.store.get(m.id)!.validUntil, null);
 });
@@ -338,7 +338,7 @@ test('the New fact form takes Valid until and Source, set by the owner, and refu
   assert.equal(saved.sourceNote, 'harbour letter');
   const bad = await f('/memories', form({ kind: 'decision', content: 'Another dock fact', project: '', tags: '', valid_until: 'soon', source: '', source_note: '' }));
   assert.equal(bad.status, 400);
-  assert.match(await bad.text(), /valid_until must be a real date/);
+  assert.match(await bad.text(), /Valid until: pick a real date\./);
   // Left empty, nothing is recorded.
   const plain = await f('/memories', { ...form({ kind: 'decision', content: 'A plain dock fact', project: '', tags: '', valid_until: '', source: '', source_note: '' }), redirect: 'manual' });
   const p = app.deps.store.get(plain.headers.get('location')!.split('/').pop()!)!;

@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, existsSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { AutoModelForSequenceClassification, AutoTokenizer, env } from '@huggingface/transformers';
+import { busy, busyTick } from '../busyMarker.js';
 import { modelSessionOptions } from './onnxOptions.js';
 
 export interface Reranker {
@@ -58,11 +59,20 @@ export function rerankerDir(modelDir: string): string {
 
 /** A file's SHA-256, read 1 MB at a time: the 119 MB model is never held in memory twice. */
 export function sha256Of(path: string): string {
+  return busy('checking a model file', () => sha256Raw(path));
+}
+
+function sha256Raw(path: string): string {
   const hash = createHash('sha256');
   const buf = Buffer.alloc(1 << 20);
   const fd = openSync(path, 'r');
   try {
-    for (let n = readSync(fd, buf); n > 0; n = readSync(fd, buf)) hash.update(buf.subarray(0, n));
+    let sinceTick = 0;
+    for (let n = readSync(fd, buf); n > 0; n = readSync(fd, buf)) {
+      hash.update(buf.subarray(0, n));
+      sinceTick += n;
+      if (sinceTick >= 64 * 1024 * 1024) { sinceTick = 0; busyTick(); }
+    }
   } finally { closeSync(fd); }
   return hash.digest('hex');
 }

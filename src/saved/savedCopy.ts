@@ -13,6 +13,7 @@ import type { PageService } from '../pages/service.js';
 import { exportTree, writeTree } from '../pages/exportTree.js';
 import type { SkillService } from '../skills/service.js';
 import { checkArchive, liveCounts, moveAcrossDisks, packArchive } from './archive.js';
+import { busy } from '../busyMarker.js';
 import { plural } from '../web/dashboardViews.js';
 
 export interface SaveDeps { db: DB; dataDir: string; pages: PageService; memoryStore: MemoryStore; memories: MemoryService; skills: SkillService }
@@ -73,7 +74,13 @@ export function writeReadme(folder: string, i: { day: string; facts: number; pag
  * brain moved in between it is packed once more, and a second miss throws and removes the half-made folder.
  * `opts.afterPack` is a test seam, called after each pack.
  */
-export async function makeSavedCopy(
+export function makeSavedCopy(
+  d: SaveDeps, parentDir: string, now: Date, checklist: string[], opts?: { afterPack?: () => void },
+): Promise<{ folder: string; archive: string; day: string; facts: number; pages: number }> {
+  return busy('saving a copy', () => makeSavedCopyWork(d, parentDir, now, checklist, opts));
+}
+
+async function makeSavedCopyWork(
   d: SaveDeps, parentDir: string, now: Date, checklist: string[], opts?: { afterPack?: () => void },
 ): Promise<{ folder: string; archive: string; day: string; facts: number; pages: number }> {
   if (inside(parentDir, d.dataDir)) throw new Error('Choose a folder outside the BrainAI data folder: the saved copy must not live inside what it saves.');

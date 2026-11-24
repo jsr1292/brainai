@@ -4,6 +4,62 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Version shows the version you run.
 
+## 1.10.4 (2026-11-24)
+
+Feedback and state fixes from the 2026-11-23 UX review (nothing to do when updating):
+- **Buttons answer when pressed:** Save, Backup now, Connect and the Settings forms show a busy look at once, the other buttons wait, and a second press is not sent. Going Back to a page leaves no button stuck.
+- **Search (⌘K):** while a search is running it says "Searching…", and Enter waits for the fresh first result instead of opening an old row.
+- **A save that fails** keeps the project sheet as it was and says in place that the change was not saved, and why (offline, the server, changed elsewhere), with Try again or Check again. "Couldn't load this" now only means a load.
+- **Opening a project** from the overview shows the pressed row straight away.
+- **After saving a section** the page puts that section back in view once late diagrams have drawn, and its heading has focus.
+- **Offline:** a quiet strip under the top bar says "Offline. Changes can't be sent"; buttons that need the server wait until you are back online (a window whose own server still answers shows nothing).
+- **After Approve or Reject** focus lands on the "Undo" line, so Undo is one Tab away.
+- **Edit details** in a project's Manage menu opens as a fold in the sheet, so Save is no longer inside a scrolling box.
+
+Lost-work fixes in the page editor (nothing to do when updating):
+- **Leaving the editor warns after Preview, a refused save or a conflict.** Those pages hold text only they have, so Cancel and leaving the page now ask first.
+- **Your text survives an ended session, a server restart or a failed save.** The editor keeps a copy on this computer while you type (never sent anywhere, dropped after a day, removed once the save is confirmed or when you log out). When you open the editor again it says "You have unsaved text from 14:02. Put it back · Discard".
+- **After logging in again you land on the page you were on**, not on a "Not found" page (ticking a step on the desk after the session ended) or the old text.
+- **A failed save says so.** The "Something went wrong" page now says "This may not have been saved" and has a Go back link; the too-long page has the same link.
+- **Save cannot be sent twice** from the page editor: the pressed button shows it is busy and a second ⌘S or click does nothing.
+
+Desktop app and search-model download (from the 2026-11-23 review):
+- **If BrainAI cannot start**, the message now has Try again and Show the log (it opens the log in Finder or Explorer), besides Quit.
+- **If the server stops while you work**, BrainAI starts it again and brings you back to the page you were on (not Home), with a short notice in the window instead of a message you must close first. A server that stops answering (but has not quit) is restarted the same way only after three minutes of silence, never in the first five minutes after a start, and never while it says it is busy with a backup, a saved copy, a move or a restore; it is asked to stop politely first, and never restarted twice in a row for this. After ten quiet minutes the app's allowance of restarts is full again, so an occasional crash over weeks no longer ends in "keeps stopping".
+- **The starting page** is in your language, and after 15 seconds says "Taking longer than usual…".
+- **The menu bar icon** has Restart BrainAI (it asks first, then returns to the same page; it waits while BrainAI is still starting) and Show the log.
+- **Search-model download:** a download that gets no data for a minute now fails instead of sitting at the same percent for ever. A half-finished file is carried on where it stopped (when the server allows it) instead of starting over; the file is still checked exactly as strictly. A failed line has a Try again button, and the progress line keeps trying to reach the server instead of freezing after a few errors.
+
+Layout and readability fixes from the 2026-11-23 UX review (nothing to do when updating):
+- **Projects on a computer:** "For you" (approvals, facts that disagree) now sits beside First steps instead of below it, and the left column never leaves a gap when First steps is closed or a long list is open on the right.
+- **Projects on a phone:** First steps is one row ("First steps · 3 of 6 done") that opens in place, the week card shows only its sentence and Read it, and blocks sit closer together, so the first project is on the first screen. The idea box now comes right after the heading, so Tab reaches it first.
+- **Project dots** differ in shape as well as colour: filled for being worked on, a dot in a ring for waiting on you, a hollow ring for quiet.
+- **"Needs you" is one colour** (the orange accent) on the health label and the waiting dot; amber now only means "soon", like "due Thu".
+- **Buttons that cannot be pressed yet** (or are sending) look dimmed. On Move to a server, "It's moved" is no longer a second black button before the moving file exists.
+- **Page side box:** a task's words no longer break in the middle of a word, and the due date drops under the text when the box is narrow.
+- **Page editor:** a long title wraps and is shown whole, its focus line is dark, and screen readers get a heading ("Editing ...").
+- **Project screen on a phone:** the one-liner is its own paragraph, so you can read all of it.
+- **Links inside sentences** are always underlined, so they do not depend on colour alone.
+- **Inbox:** the section headings (Approvals, Facts that disagree, Tidy-ups) show an arrow and are easier to hit.
+- **Projects list beside an open project:** the cut-off "next step" text is gone from the narrow list (the project screen shows it whole).
+- **Sidebar:** only the page you are on is lit (Skills, Growth and the Week pages), its place above is just a heading.
+- **Screen reader landmarks:** the open item on a computer and the page side box are labelled, and the side box is no longer a second "complementary" area.
+- **Spacing:** more room under the week card and under the Tools list, and the `.brainai-backup` file name keeps its full stop on the same line.
+
+Small fixes to forms and undo, from a review of the screens. Updating needs nothing from you.
+- **A refused fact now explains itself next to the field.** An empty or too long memory, a bad tag or project name and too
+  many search words show a plain sentence in your language ("Write the memory: 1 to 1000 characters."), under the field it
+  is about, and the cursor lands there. What you typed is kept. Assistants still get the same English text as before.
+- **Skills: Delete can be undone.** After deleting a skill, Skills says "Deleted" with an Undo button, and a Deleted list
+  keeps every deleted skill with its own Undo. A skill that comes back is switched Off, so no assistant follows it again until
+  you turn it On. The note that said the history stays in the backups is gone.
+- **Revoke and Log out ask for a second step.** Revoking an assistant and logging out a device now sit behind a short fold,
+  like deleting a page, so one wrong tap does nothing.
+- **Skills no longer hides waiting proposals.** With no skills yet and proposals waiting, the page says "2 skills wait for
+  your approval" and links to Approvals.
+- **Backup ticks are read aloud properly.** The check and cross next to each backup also say "copied", "skipped" or "failed" for screen readers.
+- **"Not now" on the week card has an Undo.** The card's place says last week is set aside, with Undo to bring it back.
+
 ## 1.10.3 (2026-11-23)
 
 Security fixes from the 2026-11-23 review (setup pages, links, updater, installer, stored text, restore, discussions):

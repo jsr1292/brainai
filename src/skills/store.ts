@@ -68,6 +68,19 @@ export class SkillStore {
   remove(id: string): void {
     this.db.prepare('UPDATE skills SET deleted_at = ?, enabled = 0 WHERE id = ?').run(this.ts(), id);
   }
+  /** Deleted skills, newest deletion first. */
+  deleted(limit = 50): (Skill & { deletedAt: string })[] {
+    return (this.db.prepare('SELECT * FROM skills WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC, name LIMIT ?').all(limit) as SkillRow[])
+      .map((r) => ({ ...this.toSkill(r), deletedAt: r.deleted_at! }));
+  }
+  deletedOne(id: string): (Skill & { deletedAt: string }) | undefined {
+    const r = this.db.prepare('SELECT * FROM skills WHERE id = ? AND deleted_at IS NOT NULL').get(id) as SkillRow | undefined;
+    return r ? { ...this.toSkill(r), deletedAt: r.deleted_at! } : undefined;
+  }
+  /** Brings a deleted skill back, Off (a delete already switched it off). */
+  undelete(id: string, by: string): void {
+    this.db.prepare('UPDATE skills SET deleted_at = NULL, enabled = 0, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NOT NULL').run(this.ts(), by, id);
+  }
   recordLoad(id: string, by: string): void {
     this.db.prepare('UPDATE skills SET last_loaded_at = ?, last_loaded_by = ? WHERE id = ?').run(this.ts(), by, id);
   }

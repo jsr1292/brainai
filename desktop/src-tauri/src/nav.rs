@@ -55,6 +55,60 @@ pub fn next_path(current: &str, port: u16) -> String {
     rest.to_string()
 }
 
+/// The page to land on again after the server was started again (a crash or a hung server): where the window was, as
+/// path and query only, and only for BrainAI's own pages on this port. Never one of the app's own links (/app/...,
+/// which include the ticket and the restart link), the login page, or anything that looks like it carries a token.
+pub fn restore_path(current: &str, port: u16) -> Option<String> {
+    let rest = [format!("http://localhost:{port}"), format!("http://127.0.0.1:{port}")].iter().find_map(|p| current.strip_prefix(p.as_str()))?;
+    let rest = rest.split('#').next().unwrap_or("");
+    if !safe_path(rest) || rest == "/app" || rest.starts_with("/app/") || rest.starts_with("/app?") {
+        return None;
+    }
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    if path == "/login" || path.starts_with("/login/") {
+        return None;
+    }
+    for kv in query.split('&') {
+        let (name, value) = kv.split_once('=').unwrap_or((kv, ""));
+        let name = name.to_ascii_lowercase();
+        let secretish = ["token", "ticket", "secret", "password", "passwd", "auth", "key", "code", "session"].iter().any(|w| name.contains(w));
+        let long_run = value.len() >= 32 && value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+        if secretish || long_run {
+            return None;
+        }
+    }
+    Some(rest.to_string())
+}
+
+/// The bundled starting page (before the server's first page opens), the only page the start texts are written to.
+pub fn is_start_page(url: &str) -> bool {
+    url.starts_with("tauri://localhost/") || url.starts_with("http://tauri.localhost/")
+}
+
+/// What a tray menu item (by its id) asks for.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum TrayAction {
+    Open,
+    Update,
+    Login,
+    Restart,
+    Log,
+    Quit,
+}
+
+pub const TRAY_IDS: [(&str, TrayAction); 6] = [
+    ("open", TrayAction::Open),
+    ("update", TrayAction::Update),
+    ("login", TrayAction::Login),
+    ("restart", TrayAction::Restart),
+    ("log", TrayAction::Log),
+    ("quit", TrayAction::Quit),
+];
+
+pub fn tray_action(id: &str) -> Option<TrayAction> {
+    TRAY_IDS.iter().find(|(i, _)| *i == id).map(|(_, a)| *a)
+}
+
 /// Whether showing the window should fetch it a fresh ticket (D4 review): only when it was hidden (its session may
 /// have ended meanwhile), or it is on the login page or not on BrainAI at all. A visible window on one of BrainAI's pages
 /// is only brought forward, so a Dock click never reloads a page with unsaved edits or adds a session.
@@ -221,6 +275,41 @@ pub fn install_location_ok(exe: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn restore_path_keeps_own_pages_only() {
+        let t = "T".repeat(43);
+        assert_eq!(restore_path("http://localhost:3100/pages/abc?tab=2&x=1#top", 3100).as_deref(), Some("/pages/abc?tab=2&x=1"));
+        assert_eq!(restore_path("http://127.0.0.1:3100/projects", 3100).as_deref(), Some("/projects"));
+        assert_eq!(restore_path("http://localhost:3100", 3100), None);
+        for bad in [
+            format!("http://localhost:3100/app/open?ticket={t}&next=%2F"),
+            "http://localhost:3100/app/ticket".to_string(),
+            "http://localhost:3100/app/restart".to_string(),
+            "http://localhost:3100/login?next=%2Fpages".to_string(),
+            "http://localhost:3100/pages?token=abc".to_string(),
+            "http://localhost:3100/x?Access_Token=1".to_string(),
+            format!("http://localhost:3100/x?v={t}"),
+            "http://localhost:3101/pages".to_string(),
+            "https://claude.ai/pages".to_string(),
+            "http://localhost:3100//evil.example".to_string(),
+            "tauri://localhost/index.html".to_string(),
+        ] {
+            assert_eq!(restore_path(&bad, 3100), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn start_page_and_tray_ids() {
+        assert!(is_start_page("tauri://localhost/index.html") && is_start_page("http://tauri.localhost/"));
+        assert!(!is_start_page("http://localhost:3100/"));
+        for (id, action) in TRAY_IDS {
+            assert_eq!(tray_action(id), Some(action));
+        }
+        let ids: std::collections::HashSet<_> = TRAY_IDS.iter().map(|(i, _)| *i).collect();
+        assert_eq!(ids.len(), TRAY_IDS.len(), "ids are unique");
+        assert_eq!(tray_action("nope"), None);
+    }
+
     use super::*;
 
     #[test]

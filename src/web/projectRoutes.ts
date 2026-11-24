@@ -77,6 +77,11 @@ export function projectRoutes(d: AppDeps): Router {
       home,
       // The card's live numbers come from the cards the home just built.
       monday: candidate ? mondayCard(d, candidate, home.healthCounts) : null,
+      // After Not now: the card's place says so, with Undo (only for a week that really was dismissed).
+      weekHidden: (() => {
+        const m = req?.query.weekHidden;
+        return typeof m === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(m) && m === d.reviews.lastMonday() && !candidate && d.reviews.dismissedUnread(m) ? m : undefined;
+      })(),
       selected: asked === undefined ? undefined : d.projects.detail(asked, d.now()),
       approvals: approvalSummary(),
       discussionsWaiting: d.discussions.waitingOnOwner(),

@@ -20,7 +20,10 @@ test('/growth needs the owner', async (t) => {
   const { observation } = await app.deps.growth.note(strength, 'Claude Code');
   const post = await fetch(`${app.baseUrl}/growth/${observation.id}/react`, { method: 'POST', body: new URLSearchParams({ reaction: 'agree' }), redirect: 'manual', headers: { origin: app.baseUrl } });
   assert.equal(post.status, 302);
-  assert.equal(post.headers.get('location'), `/login?next=${encodeURIComponent(`/growth/${observation.id}/react`)}`);
+  // A post never comes back to its own address after login: to the page it was sent from, else Home.
+  assert.equal(post.headers.get('location'), '/login?next=%2F');
+  const fromPage = await fetch(`${app.baseUrl}/growth/${observation.id}/react`, { method: 'POST', body: new URLSearchParams({ reaction: 'agree' }), redirect: 'manual', headers: { origin: app.baseUrl, referer: `${app.baseUrl}/growth` } });
+  assert.equal(fromPage.headers.get('location'), '/login?next=%2Fgrowth');
   assert.equal(app.deps.growth.list()[0]!.observation.reaction, null, 'a reaction without a login changes nothing');
 });
 

@@ -1,7 +1,7 @@
 import { WEEK_NOTICE_SWITCH, weekNoticeOn } from './weekNote.js';
 import { COACHING_SWITCH, coachingOn } from '../learning/coaching.js';
 import { t } from '../i18n/core.js';
-import { errorText } from './errorText.js';
+import { errorField, errorText, type FactField } from './errorText.js';
 import { isUiLanguage, storedChoice, UI_LANGUAGE_SWITCH, writeUiLanguageFile } from '../i18n/uiLanguage.js';
 import { DEFAULT_BACKUP_KEEP } from '../config.js';
 import { runBackup } from '../backup.js';
@@ -106,14 +106,14 @@ export function dashboardRoutes(d: AppDeps): Router {
   };
 
   /** Runs an owner action. A MemoryError becomes `onError(error)`; a missing memory becomes a 404. */
-  const attempt = async (res: Response, action: () => unknown, onError: (message: string) => void): Promise<boolean> => {
+  const attempt = async (res: Response, action: () => unknown, onError: (message: string, field?: FactField) => void): Promise<boolean> => {
     try {
       await action();
       return true;
     } catch (e) {
       if (!(e instanceof MemoryError)) throw e;
       if (e.code === 'not_found') notFound(res);
-      else onError(errorText(e));
+      else onError(errorText(e), errorField(e));
       return false;
     }
   };
@@ -462,7 +462,7 @@ export function dashboardRoutes(d: AppDeps): Router {
         meta: newMeta(values),
       }, OWNER);
       if (r.status === 'saved' || r.status === 'roadmap_updated') id = r.memory.id;
-    }, (m) => send(res, 400, 'newFact', t('inbox.facts.newFact'), newView(values, m)));
+    }, (m, field) => send(res, 400, 'newFact', t('inbox.facts.newFact'), newView({ ...values, errorField: field }, m)));
     if (ok) res.redirect(303, `/memories/${id}`);
   });
 
@@ -563,7 +563,7 @@ export function dashboardRoutes(d: AppDeps): Router {
         t('inbox.facts.clash', { what: clash.reduce((a, b) => t('inbox.facts.clashJoin', { a, b })), now: nowReads, by: by }), false, 'edit', undefined, o.raw);
     }
     if (await attempt(res, () => d.service.update(id, { content: values.content, project: values.project || null, tags: tagList(values.tags), keys: values.keys, meta }, OWNER, { base: values.base }),
-      (msg) => {
+      (msg, field) => {
         // Saved by someone else since this page was opened: show what it says now, keep the draft, and let a second
         // Save (from this page, with the current text in view) go through.
         const now = d.store.get(id);
@@ -572,7 +572,7 @@ export function dashboardRoutes(d: AppDeps): Router {
           return detail(res, now, 409, { ...values, base: now.updatedAt },
             t('inbox.facts.changedSince', { by: by, time: now.updatedAt.slice(0, 16).replace('T', ' '), text: now.content }), false, 'edit', undefined, o.raw);
         }
-        detail(res, m, 400, values, msg, false, 'edit', undefined, o.raw);
+        detail(res, m, 400, { ...values, errorField: field }, msg, false, 'edit', undefined, o.raw);
       })) {
       res.redirect(303, withFrom(`/memories/${id}`, o.raw));
     }

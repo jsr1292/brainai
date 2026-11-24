@@ -74,6 +74,12 @@ export class ReviewStore {
     return this.mark('dismissed_at', monday, at);
   }
 
+  /** Undo of Not now: the card shows again. False when the week isn't stored. */
+  clearDismissed(monday: string): boolean {
+    this.db.prepare('UPDATE weekly_reviews SET dismissed_at = NULL WHERE monday = ?').run(monday);
+    return this.db.prepare('SELECT 1 FROM weekly_reviews WHERE monday = ?').get(monday) !== undefined;
+  }
+
   /** Every roadmap that could have been live during the week, with its history oldest first. */
   roadmapsBetween(start: string, end: string): { memory: Memory; history: HistoryEntry[] }[] {
     const rows = this.db.prepare(`SELECT * FROM memories WHERE kind = 'roadmap' AND created_at < ? AND (deleted_at IS NULL OR deleted_at >= ?)

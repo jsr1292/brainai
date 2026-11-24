@@ -57,7 +57,7 @@ test('Assistants: the added-tools line, the two groups, Set up an app, then the 
 test('Backups and copies in the app: daily backup, Back up now, second folder with the nudge, restore line, no server-only rows', async (t) => {
   const { f } = await local(t, { nightly: true });
   const b = backups(await (await f('/settings')).text());
-  assert.match(b, /Daily backup:<\/span> <time[^>]*>[^<]*<\/time> <span class="place">✓/);
+  assert.match(b, /Daily backup:<\/span> <time[^>]*>[^<]*<\/time> <span class="place"><span aria-hidden="true">✓<\/span><span class="visually-hidden">copied/);
   assert.match(b, /<form method="post" action="\/settings\/backup-now"><button type="submit">Back up now<\/button>/);
   assert.match(b, /Right now every backup is on this (Mac|computer)\. If the disk fails, they go with it\. Pick an external drive or another folder\./);
   assert.match(b, /href="\/settings\/save"/);

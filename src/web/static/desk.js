@@ -340,6 +340,24 @@ export function createLatest() {
   return { next: () => ++n, isLatest: (k) => k === n };
 }
 
+/**
+ * The palette's pending-search state machine. state { pending, want }: a search is pending from the first keystroke until its
+ * rows are drawn; an Enter pressed meanwhile is remembered (want) and runs the first fresh row when they arrive, unless the
+ * search failed or the query changed or the palette closed. Events: input {empty}, search {empty}, enter {own}, results {failed}, close.
+ * Returns { state, choose }: choose { own, at: 'active' | 'first' } says which row to run.
+ */
+export function palNext(state, ev) {
+  const idle = { pending: false, want: null };
+  switch (ev.type) {
+    case 'input': return { state: ev.empty ? idle : { pending: true, want: null } };
+    case 'search': return { state: ev.empty ? idle : { pending: true, want: state.want } };
+    case 'enter': return state.pending ? { state: { pending: true, want: { own: !!ev.own } } } : { state, choose: { own: !!ev.own, at: 'active' } };
+    case 'results': return { state: idle, choose: state.want && !ev.failed ? { own: state.want.own, at: 'first' } : undefined };
+    case 'close': return { state: idle };
+    default: return { state };
+  }
+}
+
 /** The palette's groups in order: In the graph (only on Graph), Projects, Pages, Facts, Do; others are left out. */
 export function paletteOrder(labels, onGraph) {
   return ['In the graph', 'Projects', 'Pages', 'Facts', 'Do'].filter((l) => labels.includes(l) && (onGraph || l !== 'In the graph'));
@@ -640,7 +658,7 @@ function liveSay(text) {
 function buildSheet(place = 'projects') {
   const hide = el('button', { type: 'button', class: 'desk-hide', 'aria-pressed': 'false', text: T('client.desk.hideList', 'Hide list') });
   hide.addEventListener('click', () => toggleList());
-  return el('section', { class: 'desk-sheet', id: 'desk-sheet', tabindex: '-1' },
+  return el('section', { class: 'desk-sheet', id: 'desk-sheet', tabindex: '-1', 'aria-label': T('client.desk.sheet', 'Details') },
     el('div', { class: 'desk-bar' },
       el('nav', { class: 'desk-crumb', 'aria-label': T('client.desk.whereYouAre', 'Where you are') }),
       el('div', { class: 'desk-acts' }, hide, el('a', { class: 'desk-x', href: placeOf(place)?.overview() ?? '/', 'aria-label': T('client.desk.close', 'Close (Esc)') }, svgX()))),
@@ -671,7 +689,7 @@ function setCrumb(parts, lead = null) {
  * Discussions and Facts (and their links) go to the side column; Manage stays (the bar takes it, Task 7).
  */
 function splitPanel(panel, aside, head) {
-  head.append(...panel.querySelectorAll(':scope > .ppanel-back, :scope > #panel-title, :scope > .error, :scope > .meta-line.big, :scope > .jump'));
+  head.append(...panel.querySelectorAll(':scope > .ppanel-back, :scope > #panel-title, :scope > .error, :scope > .pone, :scope > .meta-line.big, :scope > .jump'));
   let n = panel.querySelector(':scope > h3#p-pages, :scope > h3#p-discussions, :scope > h3#p-facts');
   while (n && !(n.nodeType === 1 && n.matches('details.manage'))) {
     const next = n.nextSibling;
@@ -756,6 +774,66 @@ function failLine(href) {
   // Without the hash: a link to the URL already shown plus a fragment would only jump, not load the page.
   const own = String(href).split('#')[0];
   s.querySelector('.desk-main').replaceChildren(el('p', { class: 'desk-fail' }, T('client.desk.failed', 'Couldn’t load this. '), el('a', { href: own, 'data-desk-native': '', text: T('client.desk.openOwn', 'Open it as its own page ›') })));
+}
+
+/**
+ * What a failed post is and what to offer, from the answer's status (or 'threw' when the request itself failed, the
+ * connection dropped). Only a plain server error (500) is known not to have been applied, so only it offers Try again.
+ * Everything else offers Check again, which reads the sheet afresh (a resend could do it twice): a dropped connection
+ * and proxy errors (502, 503, 504: the origin may have acted) are 'unknown', 409 and 412 are 'conflict', other 4xx
+ * (403 Origin, 404, 413) are 'rejected'. `offline` adds "You're offline." to an unknown outcome.
+ */
+export function saveFailAction(status, onLine = true) {
+  const why = status === 'threw' || status === 502 || status === 503 || status === 504 ? 'unknown'
+    : status === 409 || status === 412 ? 'conflict'
+      : status >= 500 ? 'server' : 'rejected';
+  return { why, offline: status === 'threw' && onLine === false, action: why === 'server' ? 'retry' : 'check' };
+}
+
+/**
+ * A failed save (never a failed load): the sheet stays as it was and one line at its top says the change did not go
+ * through, and why when it is known. Try again sends the same form again and keeps the line until the resend really goes
+ * (onSubmit removes it then). Check again reads the sheet afresh, puts back what was typed into the failed form, and
+ * focuses the heading.
+ */
+function saveFailLine(form, submitter, status) {
+  const main = sheet()?.querySelector('.desk-main');
+  if (!main) return;
+  main.querySelector(':scope > .desk-save-fail')?.remove();
+  const f = saveFailAction(status, navigator.onLine);
+  const reason = {
+    conflict: T('client.desk.notSaved.conflict', 'It changed somewhere else since you opened it.'), server: T('client.desk.notSaved.server', 'The server had a problem.'),
+    unknown: T('client.desk.notSaved.unknown', 'The connection dropped, so this change may or may not have been saved.'), rejected: T('client.desk.notSaved.rejected', 'The server refused it.'),
+  }[f.why];
+  const words = `${f.why === 'unknown' ? '' : T('client.desk.notSaved', 'Couldn’t save this change. ')}${reason}${f.offline ? ` ${T('client.desk.notSaved.offline', 'You’re offline.')}` : ''} `;
+  const check = f.action === 'check';
+  const again = el('button', { type: 'button', class: 'linklike', text: check ? T('client.desk.checkAgain', 'Check again') : T('client.desk.tryAgain', 'Try again') });
+  const line = el('p', { class: 'desk-fail desk-save-fail', role: 'alert', tabindex: '-1' }, words, again);
+  again.addEventListener('click', async () => {
+    if (!check && form.isConnected) { form.requestSubmit(submitter && form.contains(submitter) ? submitter : undefined); line.focus(); return; }
+    const kept = new FormData(form);
+    const action = form.getAttribute('action');
+    line.remove();
+    await openInSheet(location.href, { push: false, focus: 'heading' });
+    putBack(kept, action);
+  });
+  main.prepend(line);
+  line.focus();
+}
+/** After Check again: what was typed into the failed form (a field the server's fresh copy still shows unchanged) is put back; the fold holding it opens and its first changed field has focus. */
+function putBack(kept, action) {
+  const form = [...(sheet()?.querySelectorAll('form') ?? [])].find((f) => f.getAttribute('action') === action);
+  if (!form) return;
+  let first = null;
+  for (const field of form.querySelectorAll('input, textarea')) {
+    if (!field.name || field.type === 'hidden' || field.type === 'checkbox' || field.type === 'radio' || field.type === 'submit') continue;
+    const v = kept.get(field.name);
+    if (typeof v === 'string' && v !== field.value && field.value === field.defaultValue) { field.value = v; first ??= field; }
+  }
+  if (!first) return;
+  const fold = first.closest('details');
+  if (fold) fold.open = true;
+  first.focus({ preventScroll: true });
 }
 
 function focusSheet(kind) {
@@ -960,6 +1038,14 @@ async function openInSheet(href, opts = {}) {
 
 /** From the overview: the list slides in and the sheet shows; the overview is kept for Esc. */
 async function mountPanes(kind, url, opts = {}) {
+  // The pressed row answers at once (aria-busy: pressed look, no motion) and a second press on it is dropped, until the panes are in or it failed.
+  const key = pathKey(url);
+  const link = [...document.querySelectorAll('main > .phome:not(.has-panel) a[href]')].find((a) => sameSheet(a.href, key, kind));
+  if (link?.getAttribute('aria-busy') === 'true') return;
+  link?.setAttribute('aria-busy', 'true');
+  try { return await mountPanesNow(kind, url, opts); } finally { link?.removeAttribute('aria-busy'); }
+}
+async function mountPanesNow(kind, url, opts) {
   const { push = true, focus = 'heading', openFold } = opts;
   const home = document.querySelector('main > .phome:not(.has-panel)');
   if (!home) { location.assign(url); return; }
@@ -1313,6 +1399,8 @@ function submitButtons() {
 }
 
 async function onSubmit(e) {
+  // A button held while another post is under way (app.js: data-held + aria-disabled) sends nothing.
+  if (e.submitter && e.submitter.getAttribute && e.submitter.getAttribute('aria-disabled') === 'true') { e.preventDefault(); return; }
   const form = e.target;
   if (!(form instanceof HTMLFormElement) || !form.matches('.desk-panes > .desk-list form, .phome.has-panel > .plist form, .desk-sheet form')) return;
   if (!besideOn() || form.hasAttribute('data-desk-native')) return;
@@ -1327,6 +1415,7 @@ async function onSubmit(e) {
   undoing = false;
   if (posting) return;
   posting = true;
+  sheet()?.querySelector('.desk-main > .desk-save-fail')?.remove();
   forgetHome();
   const gen = sheetGen;
   const kindBefore = sheet()?.dataset.kind ?? null;
@@ -1334,21 +1423,23 @@ async function onSubmit(e) {
   const checks = () => [...document.querySelectorAll('.desk-sheet button.check')];
   const at = checks().indexOf(e.submitter ?? document.activeElement);
   const disabled = submitButtons();
-  for (const b of disabled) { b.disabled = true; b.setAttribute('aria-busy', 'true'); }
+  for (const b of disabled) { b.disabled = true; if (b === e.submitter) b.setAttribute('aria-busy', 'true'); else b.dataset.held = ''; }
   try {
     let res, doc;
     try {
       res = await fetch(req.url, { method: 'POST', body, headers: { Accept: 'text/html' }, credentials: 'same-origin', redirect: 'follow' });
       doc = new DOMParser().parseFromString(await res.text(), 'text/html');
     } catch {
-      // Never sent again: the server may have acted before the connection dropped. Show what it holds now.
-      if (gen === sheetGen) failLine(location.href);
+      // Never sent again: the server may have acted before the connection dropped. The sheet stays, with one line saying so.
+      if (gen === sheetGen) saveFailLine(form, e.submitter ?? null, 'threw');
       refreshList();
       return;
     }
     undoLineToast(doc);
     if (gen !== sheetGen) { refreshList(); sidebarFrom(doc); return; }
     for (const h of hooks.posted) if (h(form, res, doc)) { refreshList(); sidebarFrom(doc); return; }
+    // A refusal or a server error that is not a sheet: the change was not saved, the sheet is kept.
+    if (!res.ok && !res.redirected && !rootOf(doc)) { saveFailLine(form, e.submitter ?? null, res.status); refreshList(); return; }
     const out = postOutcome(res, location.href, framePlace() ?? 'projects');
     if (out.do === 'go') { location.assign(out.url); return; }
     const root = rootOf(doc);
@@ -1391,7 +1482,12 @@ async function onSubmit(e) {
     }
   } finally {
     posting = false;
-    for (const b of disabled) if (b.isConnected) { b.disabled = false; b.removeAttribute('aria-busy'); }
+    for (const b of disabled) {
+      if (!b.isConnected) continue;
+      b.removeAttribute('aria-busy'); delete b.dataset.held;
+      // Offline meanwhile: the offline hold keeps it, and `online` lets it go.
+      if (document.documentElement.dataset.offline !== undefined) b.setAttribute('data-offline', ''); else b.disabled = false;
+    }
   }
 }
 
@@ -1404,6 +1500,20 @@ function manageMenu(kind, node, s) {
   const menu = el('div', { class: 'desk-menu' });
   for (const n of [...manage.childNodes]) if (n !== summary) menu.append(n);
   manage.append(menu);
+  // Edit details is a long form: in the menu it would sit in a box that scrolls inside the popover, with Save out of
+  // view. It becomes a fold at the foot of the sheet itself, and the menu keeps one row that opens it.
+  const info = menu.querySelector(':scope > details.pinfo');
+  if (info) {
+    const go = el('button', { type: 'button', class: 'desk-menu-edit', text: info.querySelector(':scope > summary')?.textContent.trim() ?? '' });
+    go.addEventListener('click', () => {
+      closeMenu();
+      info.open = true;
+      info.scrollIntoView({ block: 'nearest' });
+      info.querySelector('input, select')?.focus({ preventScroll: true });
+    });
+    info.replaceWith(go);
+    node.append(info);
+  }
   manage.open = false;
   s.querySelector('.desk-acts').prepend(manage);
 }
@@ -2227,6 +2337,10 @@ let palItems = [];
 let palAt = -1;
 let palTimer = 0;
 let palAbort = null;
+// A search is pending from the first keystroke until its rows are drawn; an Enter pressed meanwhile waits for them.
+let palState = { pending: false, want: null };
+/** Feeds an event to palNext, keeps the new state, and answers which row to run (if any). */
+const palDo = (ev) => { const r = palNext(palState, ev); palState = r.state; return r.choose; };
 const palLatest = createLatest();
 let graphOverview = null;
 const areaNameOf = (a) => ({
@@ -2267,7 +2381,7 @@ function buildPalette() {
     role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'desk-pal-res', 'aria-autocomplete': 'list' });
   const d = add(el('dialog', { class: 'desk-palette', 'aria-label': T('client.desk.searchOrJump', 'Search or jump to') },
     el('div', { class: 'desk-pal-in' }, svgFind(), input, el('kbd', { text: 'esc' })),
-    el('div', { class: 'desk-pal-body' }, el('div', { class: 'desk-pal-res', id: 'desk-pal-res', role: 'listbox', 'aria-label': T('client.desk.results', 'Results') }), el('aside', { class: 'desk-pal-prev', 'aria-live': 'polite' })),
+    el('div', { class: 'desk-pal-body' }, el('div', { class: 'desk-pal-res', id: 'desk-pal-res', role: 'listbox', 'aria-label': T('client.desk.results', 'Results') }), el('aside', { class: 'desk-pal-prev', 'aria-live': 'polite' }), el('p', { class: 'visually-hidden desk-pal-live', 'aria-live': 'polite' })),
     el('div', { class: 'desk-pal-foot' },
       el('span', {}, el('kbd', { text: '↑' }), ' ', el('kbd', { text: '↓' }), ` ${T('client.desk.palMove', 'move')}`), el('span', { class: 'desk-sep', text: ' · ' }),
       el('span', {}, el('kbd', { text: '↵' }), ` ${T('client.desk.palOpenBeside', 'open beside the list')}`), el('span', { class: 'desk-sep', text: ' · ' }),
@@ -2275,16 +2389,26 @@ function buildPalette() {
       el('span', { class: 'desk-pal-scope', text: T('client.desk.palScope', 'Searches projects, pages, facts and page sections') }))));
   input.addEventListener('input', () => {
     clearTimeout(palTimer);
+    const empty = input.value.trim() === '';
+    palDo({ type: 'input', empty });
+    // An emptied box shows the Do rows at once (nothing is fetched for it, so there is no wait); otherwise the quiet line goes up now.
+    if (empty) { palSearch(''); return; }
+    palSearching(input.value.trim());
     palTimer = setTimeout(() => palSearch(input.value), 120);
   });
   d.addEventListener('keydown', (e) => {
     if (e.isComposing) return;
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePalette(); return; }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); palSelect(palAt + (e.key === 'ArrowDown' ? 1 : -1)); return; }
-    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); palChoose(palItems[palAt], e.metaKey || e.ctrlKey); }
+    if (e.key === 'Enter') {
+      e.preventDefault(); e.stopPropagation();
+      const run = palDo({ type: 'enter', own: e.metaKey || e.ctrlKey });
+      if (run) palChoose(palItems[palAt], run.own);
+    }
   });
   d.addEventListener('close', () => {
     clearTimeout(palTimer);
+    palDo({ type: 'close' });
     palAbort?.abort();
     const back = palReturn;
     palReturn = null;
@@ -2338,7 +2462,9 @@ async function palSearch(q) {
   const ctl = palAbort = new AbortController();
   const t = String(q).trim();
   const doRows = paletteDo(t, goToRows()).map((x) => ({ title: x.label, href: x.href, idea: x.idea, key: x.key, sub: '', meta: '' }));
+  palDo({ type: 'search', empty: t === '' });
   if (t === '') { palRender([{ label: 'Do', rows: doRows }], t); return; }
+  palSearching(t);
   let groups = [], failed = false, empty = false;
   try {
     const [page, graph] = await Promise.all([
@@ -2359,9 +2485,18 @@ async function palSearch(q) {
   const all = [...groups, { label: 'Do', rows: doRows }];
   const shown = order.map((l) => all.find((g) => g.label === l)).filter((g) => g && g.rows.length > 0);
   palRender(shown, t, failed ? T('client.desk.palFailed', 'Couldn’t search right now.') : empty || groups.every((g) => g.rows.length === 0) ? T('client.desk.palNone', 'Nothing matches “{q}”.', { q: t }) : null);
+  // The fresh rows are in: an Enter that waited for them runs the first one (never after a failed search).
+  const run = palDo({ type: 'results', failed });
+  if (run) palChoose(palItems[0], run.own);
 }
 
-function palRender(groups, q, note = null) {
+/** While a search is pending: the Do rows for the typed words and one quiet line, no spinner and no active row, so Enter has nothing stale to run. */
+function palSearching(t) {
+  if (!palette?.open || t === '') return;
+  palRender([{ label: 'Do', rows: paletteDo(t, goToRows()).map((x) => ({ title: x.label, href: x.href, idea: x.idea, key: x.key, sub: '', meta: '' })) }], t, T('client.desk.palSearching', 'Searching…'), true);
+}
+
+function palRender(groups, q, note = null, idle = false) {
   const res = palette.querySelector('.desk-pal-res');
   const kids = [];
   palItems = [];
@@ -2375,7 +2510,7 @@ function palRender(groups, q, note = null) {
       for (const part of g.label === 'Do' ? [{ text: r.title, hit: false }] : markParts(r.title, q)) title.append(part.hit ? el('mark', { text: part.text }) : part.text);
       const side = r.sub || r.meta.split(' · ')[0] || '';
       const opt = el('div', { role: 'option', id: `desk-pal-opt-${i}`, 'aria-selected': 'false', class: 'desk-pal-opt' }, title, side ? el('span', { class: 'desk-pal-s', text: side }) : null, r.key ? el('kbd', { text: r.key }) : null);
-      opt.addEventListener('pointermove', () => { if (palAt !== i) palSelect(i); });
+      opt.addEventListener('pointermove', () => { if (!palState.pending && palAt !== i) palSelect(i); });
       opt.addEventListener('click', (e) => palChoose(r, e.metaKey || e.ctrlKey));
       palItems.push(r);
       box.append(opt);
@@ -2383,7 +2518,10 @@ function palRender(groups, q, note = null) {
     kids.push(box);
   }
   res.replaceChildren(...kids);
-  palSelect(palItems.length ? 0 : -1);
+  // The note sits in a listbox, which is not a live region: "Searching…" is said through one polite node of its own.
+  const live = palette.querySelector('.desk-pal-live');
+  if (live) live.textContent = idle ? (note ?? '') : '';
+  palSelect(palItems.length && !idle ? 0 : -1);
 }
 
 function palSelect(i) {

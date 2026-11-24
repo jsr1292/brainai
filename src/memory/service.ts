@@ -138,7 +138,7 @@ function metaResult(current: FactMeta, input: MetaInput | undefined, fromAi: boo
     const meta = resolveMeta(current, input ?? {}, false, by);
     return { meta, changedSource: meta.source !== current.source || meta.sourceBy !== current.sourceBy, changedNote: meta.sourceNote !== current.sourceNote };
   } catch (e) {
-    if (e instanceof MetaError) throw new MemoryError('invalid', e.message);
+    if (e instanceof MetaError) throw new MemoryError('invalid', e.message, undefined, e.say);
     throw e;
   }
 }
@@ -222,20 +222,21 @@ const day = (iso: string) => iso.slice(0, 10);
 
 function checkKind(kind: unknown): Kind {
   if (typeof kind !== 'string' || !(KINDS as readonly string[]).includes(kind)) {
-    throw new MemoryError('invalid', `kind must be one of: ${KINDS.join(', ')}`);
+    throw new MemoryError('invalid', `kind must be one of: ${KINDS.join(', ')}`, undefined, { key: 'err.fact.kind' });
   }
   return kind as Kind;
 }
 
 function checkContent(content: unknown, max = MAX_CONTENT): string {
-  if (typeof content !== 'string') throw new MemoryError('invalid', `content must be text of 1 to ${max} characters`);
+  if (typeof content !== 'string') throw new MemoryError('invalid', `content must be text of 1 to ${max} characters`, undefined, { key: 'err.fact.contentLength', params: { max } });
   // Browsers send form text with CRLF line endings: stored text always uses plain newlines.
   const c = content.replace(/\r\n?/g, '\n').trim();
-  if (c.length < 1) throw new MemoryError('invalid', `content must be 1 to ${max} characters (got ${c.length})`);
+  if (c.length < 1) throw new MemoryError('invalid', `content must be 1 to ${max} characters (got ${c.length})`, undefined, { key: 'err.fact.contentLength', params: { max } });
   if (c.length > max) {
     // A project has one roadmap and saving it again replaces it, so a split roadmap would lose its first half.
     const split = max === MAX_ROADMAP ? '' : ' or split it into separate memories';
-    throw new MemoryError('invalid', `content is ${c.length} characters; the limit is ${max}. Shorten it (drop detail that is finished or already in the project's files)${split}, then save again now.`);
+    throw new MemoryError('invalid', `content is ${c.length} characters; the limit is ${max}. Shorten it (drop detail that is finished or already in the project's files)${split}, then save again now.`, undefined,
+      { key: max === MAX_ROADMAP ? 'err.fact.contentLongRoadmap' : 'err.fact.contentLong', params: { n: c.length, max } });
   }
   const reason = looksLikeSecret(c);
   if (reason) throw new MemoryError('secret_detected', `This looks like a secret (${reason}). Secrets are never stored in memory.`, undefined, { key: 'err.secret', params: { reason } });
@@ -244,10 +245,10 @@ function checkContent(content: unknown, max = MAX_CONTENT): string {
 
 function checkTags(tags: unknown): string[] {
   if (tags === undefined) return [];
-  if (!Array.isArray(tags) || tags.length > MAX_TAGS) throw new MemoryError('invalid', `tags: at most ${MAX_TAGS} tags`);
+  if (!Array.isArray(tags) || tags.length > MAX_TAGS) throw new MemoryError('invalid', `tags: at most ${MAX_TAGS} tags`, undefined, { key: 'err.fact.tagsMax', params: { max: MAX_TAGS } });
   for (const t of tags) {
     if (typeof t !== 'string' || !TAG_RE.test(t)) {
-      throw new MemoryError('invalid', `tags: each tag must match ${TAG_RE.source} (lowercase letters, digits, hyphens, max 40 characters)`);
+      throw new MemoryError('invalid', `tags: each tag must match ${TAG_RE.source} (lowercase letters, digits, hyphens, max 40 characters)`, undefined, { key: 'err.fact.tagBad', params: { tag: t } });
     }
   }
   return [...new Set(tags as string[])];
@@ -256,7 +257,7 @@ function checkTags(tags: unknown): string[] {
 export function checkProject(project: unknown): string | null {
   if (project === undefined || project === null) return null;
   if (typeof project !== 'string' || !PROJECT_RE.test(project)) {
-    throw new MemoryError('invalid', `project must match ${PROJECT_RE.source} (lowercase letters, digits, hyphens, max 63 characters)`);
+    throw new MemoryError('invalid', `project must match ${PROJECT_RE.source} (lowercase letters, digits, hyphens, max 63 characters)`, undefined, { key: 'err.fact.project' });
   }
   return project;
 }

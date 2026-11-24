@@ -219,8 +219,11 @@ body {
 time, .chip, .n, .prow-when, table, .vers span, .badge { font-variant-numeric: tabular-nums; }
 
 a { color: var(--fg); text-decoration: none; }
+/* A link inside a sentence is never told apart by colour alone. */
+p:not(.crumb, .rail-link, .foot-link, .more-link) a:not([class]), .meta a:not([class]), .quiet a:not([class]), .home-links a { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 2px; }
 /* A link inside a sentence is underlined: its colour alone is under 3:1 against the text around it. */
-.art a:not(.sec-edit, .note-mark, .chip), p.meta a:not(.project), .week .row p a { text-decoration: underline; text-underline-offset: 2px; }
+.art a:not(.sec-edit, .note-mark, .chip) { text-decoration: underline; text-underline-offset: 2px; }
+p.meta a:not(.project), .week .row p a { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 2px; }
 /* Blue only inside page text; everywhere else a link is ink (a name, a row, a button), underlined when inside a sentence. */
 .art a:not(.sec-edit, .note-mark, .chip) { color: var(--link); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -353,6 +356,8 @@ section { margin-bottom: 2rem; }
 .meta-line > li { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .meta-line > li::before { content: "·"; display: inline-block; width: 1em; text-align: center; opacity: .55; }
 .meta-line.big { font-size: var(--t-sub); }
+/* A project's one-liner is its own paragraph, so it wraps and can be read whole (the meta line keeps its ellipsis for short parts). */
+.pone { margin: 6px 0 4px; color: var(--muted); font-size: var(--t-sub); overflow-wrap: anywhere; }
 .error { color: var(--error); font-weight: 600; }
 .held { color: var(--error); }
 .num { font-variant-numeric: tabular-nums; font-weight: 700; }
@@ -900,6 +905,9 @@ details.earlier > summary { cursor: pointer; color: var(--muted); font-weight: 6
 .banner .txt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .phome form.idea { display: flex; width: 100%; }
 .idea input { flex: 1; min-width: 0; }
+/* A button that cannot be pressed (or is sending) looks it: dimmed, no press. A button only held while another posts (data-held) is not dimmed. */
+button:disabled:not([data-held]), button[aria-busy="true"] { opacity: 0.45; cursor: not-allowed; transform: none; }
+button[aria-busy="true"] { cursor: progress; }
 /* For you: approvals and discussions (orange dot), suggestions (no dot, quiet pills). */
 .fy-sug .acts { display: flex; gap: 4px; }
 .fy-more .fold-list .row { padding-left: 16px; }
@@ -907,23 +915,30 @@ details.fold.fy-more > summary { color: var(--muted); font-weight: 400; }
 /* The Monday card: last week in a sentence and three numbers, at the top of Projects until Read it or Not now. */
 .monday-card { margin: 0 0 1rem; padding: 1rem 1.125rem; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: var(--r-card); }
 .monday-card h2 { margin: 0 0 0.375rem; }
+/* On a phone the list's own gap spaces the blocks, so the card and the first-steps fold add no margin of their own (the first project must reach the first screen). */
+@media (max-width: 1099px) { .phome:not(.has-panel) > .plist > .monday-card, .pleft > .first-steps { margin-top: 0; margin-bottom: 0; } }
+/* The plain home's blocks are grouped for the desktop grid; on a phone the list's own gap spaces their children. */
+.pleft, .pnotes { display: contents; }
+@media (max-width: 1099px) { .phome:not(.has-panel) > .plist { gap: var(--s4); } }
 .mc-text { margin: 0 0 0.875rem; color: var(--fg); font-size: var(--t-body); }
 .mc-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; margin: 0 0 1rem; }
 .mc-stat { display: flex; flex-direction: column-reverse; justify-content: flex-end; margin: 0; min-width: 0; }
 .mc-n { margin: 0; font-family: var(--display); font-size: var(--t-title); font-weight: 650; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .mc-l { margin: 0.125rem 0 0; font-weight: 400; color: var(--muted); font-size: var(--t-meta); line-height: 1.3; }
 .mc-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+/* On a phone the card is its sentence and Read it: the three numbers are in the sentence and in the review. */
+@media (max-width: 1099px) { .mc-stats { display: none; } .mc-text { margin-bottom: 0.75rem; } }
 .mc-actions form { margin: 0; }
 /* The health label on a project (computed, never set): needs you and at risk are tinted, stuck is a plain chip, on track is just quiet text. */
 .hl { flex: none; }
-.chip.hl-needs { background: color-mix(in srgb, var(--attention) 12%, var(--surface)); color: var(--attention); }
+.chip.hl-needs { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); color: var(--accent); }
 .chip.hl-risk { background: color-mix(in srgb, var(--error) 12%, var(--surface)); color: var(--error); }
 .chip.hl-stuck { background: var(--raised); color: var(--fg); }
 .hl-ok { display: inline-block; color: var(--muted); font-size: var(--t-meta); font-weight: 500; white-space: nowrap; }
-:root[data-theme="dark"] .chip.hl-needs { background: color-mix(in srgb, var(--attention) 16%, var(--surface)); }
+:root[data-theme="dark"] .chip.hl-needs { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
 :root[data-theme="dark"] .chip.hl-risk { background: color-mix(in srgb, var(--error) 16%, var(--surface)); }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .chip.hl-needs { background: color-mix(in srgb, var(--attention) 16%, var(--surface)); }
+  :root:not([data-theme="light"]) .chip.hl-needs { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
   :root:not([data-theme="light"]) .chip.hl-risk { background: color-mix(in srgb, var(--error) 16%, var(--surface)); }
 }
 .phealth { margin: 0.5rem 0 0; }
@@ -1021,7 +1036,9 @@ details.fold.fy-more > summary { color: var(--muted); font-weight: 400; }
 .ptile .pcard-line { -webkit-line-clamp: 1; line-clamp: 1; }
 .pdot { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); }
 .pdot.d-on { background: var(--added); }
-.pdot.d-wait { background: var(--attention); }
+.pdot.d-wait { box-sizing: border-box; border: 1px solid var(--accent); padding: 1px; background: var(--accent) content-box; }
+/* The three states differ in shape as well as in colour: filled (being worked on), a dot in a ring (waiting on you), a hollow ring (quiet). */
+.pdot.d-quiet { background: transparent; box-shadow: inset 0 0 0 1.5px var(--field-border); }
 .pwarn { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: color-mix(in srgb, var(--attention) 14%, var(--surface)); color: var(--attention); font-size: var(--t-meta); font-weight: 800; line-height: 1; }
 @media (max-width: 599px) { .ptiles { grid-template-columns: 1fr; } }
 /* The project's five areas (2026-11-11): a row each, its dot (green done, amber worth a look, grey not started, a hollow
@@ -1144,7 +1161,13 @@ button.check::after { content: ""; position: absolute; inset: 0; }
 .check.is-done { display: block; background: var(--fg); }
 .check.is-done::before { border-color: var(--fg); }
 .checks > li > .check.is-done::after { content: ""; position: absolute; left: 8px; top: calc(50% - 7px); width: 5px; height: 10px; border-right: 2px solid var(--surface); border-bottom: 2px solid var(--surface); transform: rotate(45deg); }
-.check-text { min-width: 0; overflow-wrap: anywhere; }
+.check-text { min-width: 0; overflow-wrap: break-word; }
+/* A narrow rail: the due chip goes under the task's text instead of squeezing it. */
+.live-cols > div { container-type: inline-size; }
+@container (max-width: 20rem) {
+  .checks > li:has(> .chip) { grid-template-columns: 22px minmax(0, 1fr); row-gap: 2px; }
+  .checks > li > .chip { grid-column: 2; justify-self: start; }
+}
 .checks.done .check-text { color: var(--muted); text-decoration: line-through; }
 .late-text { color: var(--error); font-size: var(--t-meta); }
 .soon-text { color: var(--attention); font-size: var(--t-meta); }
@@ -1271,7 +1294,7 @@ ul.pfacts > li { display: flex; flex-direction: column; gap: 2px; font-size: var
 .conns { list-style: none; margin: 0; padding: 0; }
 .conn { padding: 0.625rem 0; border-top: 1px solid var(--line); }
 .conn:first-child { border-top: 0; }
-.conn-row { display: grid; grid-template-columns: minmax(8rem, 1.2fr) minmax(0, 2fr) auto auto; gap: 0.5rem 1rem; align-items: center; }
+.conn-row { display: grid; grid-template-columns: minmax(8rem, 1.2fr) minmax(0, 2fr) auto; gap: 0.5rem 1rem; align-items: center; }
 .conn-name { min-width: 0; overflow-wrap: anywhere; }
 .conn-access { color: var(--ink2); font-size: var(--t-sub); overflow-wrap: anywhere; }
 .conn-row button { min-height: 2rem; padding: 0 0.75rem; font-size: var(--t-meta); }
@@ -1546,10 +1569,10 @@ summary.link { display: inline-flex; align-items: center; min-height: 44px; }
 
 /* ---- Page editor, conflicts and history (mockups pages-edit.html and pages-history.html) ---- */
 /* The title input is the editor's heading: the reading h1's type, on a borderless field (a rule under it on focus). */
-.ptitle-input { display: block; width: 100%; margin: 6px 0; padding: 4px 0; border: 0; border-bottom: 1px solid transparent; border-radius: 0; background: transparent; color: var(--fg); font: 700 var(--t-display)/1.15 var(--display, var(--text)); letter-spacing: -0.02em; box-shadow: none; }
-.ptitle-input:focus { outline: none; border-bottom-color: var(--line-strong); box-shadow: none; }
+.ptitle-input, .peditor textarea.ptitle-input { display: block; min-height: 0; width: 100%; margin: 6px 0; padding: 4px 0; border: 0; border-bottom: 1px solid transparent; border-radius: 0; background: transparent; color: var(--fg); font: 700 var(--t-display)/1.15 var(--display, var(--text)); letter-spacing: -0.02em; box-shadow: none; resize: none; overflow: hidden; field-sizing: content; }
+.ptitle-input:focus, .peditor textarea.ptitle-input:focus { outline: none; border-bottom-color: var(--fg); box-shadow: none; }
 .ptitle-input::placeholder { color: var(--muted); opacity: 1; }
-@media (max-width: 719px) { .ptitle-input { font-size: var(--t-title); line-height: 1.15; letter-spacing: -0.025em; } }
+@media (max-width: 719px) { .ptitle-input, .peditor textarea.ptitle-input { font-size: var(--t-title); line-height: 1.15; letter-spacing: -0.025em; } }
 /* Project and Area are Details: quiet, folded away once the page has them. */
 .pdetails { margin: 0 0 18px; }
 .pdetails > summary { display: inline-flex; gap: 10px; align-items: baseline; color: var(--muted); font-size: var(--t-sub); }
@@ -1572,10 +1595,12 @@ textarea[data-editor][hidden] { display: none; }
 .psavebar button { flex: 0 0 auto; }
 .psavebar kbd { margin-left: 6px; padding: 0 5px; border: 1px solid color-mix(in srgb, var(--primary-fg) 40%, transparent); border-radius: var(--r-inset); font: 600 var(--t-label) var(--text); opacity: 0.8; }
 .quiet-btn { color: var(--ink2); font-weight: 600; font-size: var(--t-sub); }
+.draft-line { margin: 0 0 12px; color: var(--muted); font-size: var(--t-meta); }
 .psave-note { margin-left: auto; color: var(--muted); font-size: var(--t-meta); }
 details.pg-danger { margin-top: 1.5rem; color: var(--muted); }
 details.pg-danger summary { cursor: pointer; font-size: var(--t-sub); }
 details.pg-danger form { margin-top: 0.5rem; }
+.conn details.pg-danger, .cards .card details.pg-danger { margin-top: 0.5rem; }
 .conflict .warn { margin: 0 0 0.75rem; padding: 0.625rem 0.75rem; border-radius: var(--r-inset); background: color-mix(in srgb, var(--attention) 12%, transparent); color: var(--fg); }
 .conflict .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.75rem; }
 .conflict h2, h2.state { font-size: var(--t-label); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin: 0 0 0.25rem; }
@@ -1992,6 +2017,8 @@ details.fold.filter-fold[open] > summary { margin-bottom: 1rem; }
 /* The Mac skills sync (round 2 §17c): a device's skills with Share, and the "changed on the Mac" choice. */
 .sk-device > li { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.5rem 0; }
 .sk-device form { flex: none; }
+.notice-undo { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.notice-undo form { flex: none; }
 .sk-changed { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .sk-changed form { flex-direction: row; }
 
@@ -2066,6 +2093,9 @@ body.setup main { max-width: 64rem; padding-top: 0; padding-bottom: 0; }
 .setup-actions button.primary, .setup-actions .button.primary { min-width: 8.5rem; }
 /* The ChatGPT row's note is a sentence with a link in it, not a row of tags. */
 .meta.note { display: block; }
+.meta.note + .meta.note { margin-top: var(--s2); }
+/* A footnote under a card keeps the section gap (spacing scale). */
+ul.group + .meta.note, .card + .meta.note { margin-top: var(--s7); }
 @media (max-width: 47.99rem) {
   .setup-frame { grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .setup-rail { position: static; padding: max(1.25rem, env(safe-area-inset-top)) 0 0; }
@@ -2153,8 +2183,14 @@ section.danger-zone h2 { color: var(--error); }
 /* ---- Home layout pass (2026-11-18): phone bar with an Inbox count, first steps, keys, two-column cards ---- */
 .tab-count { display: inline-block; margin-left: 5px; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: var(--r-pill); background: var(--accent); color: var(--primary-fg); font-size: var(--t-label); font-weight: 700; line-height: 18px; text-align: center; }
 .tabs a[aria-current="page"] .tab-count { background: var(--primary-fg); color: var(--primary); }
-.first-steps { margin: 0 0 1.5rem; }
 .first-steps h2 { margin-bottom: 0.25rem; }
+/* One fold: a single row ("First steps · 3 of 6 done") that opens in place; app.js opens it at once on a wide screen. */
+.fs-fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); }
+.fs-fold > summary::-webkit-details-marker { display: none; }
+.fs-fold > summary h2 { margin: 0; font-family: var(--text); font-size: var(--t-body); font-weight: 600; line-height: 1.3; letter-spacing: 0; text-transform: none; color: var(--fg); }
+.fs-count { margin-left: auto; color: var(--muted); font-size: var(--t-sub); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fs-fold > summary .chev { margin: 0; }
+.fs-fold[open] > summary { margin-bottom: var(--s3); }
 .first-steps-lede { margin: 0 0 0.75rem; color: var(--ink2); }
 .first-steps-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); overflow: hidden; }
 .first-steps-list .fs-item { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
@@ -2184,12 +2220,13 @@ section.danger-zone h2 { color: var(--error); }
 .inbox-list h1 { margin: 0 0 4px; }
 .il-sub { margin: 0 0 12px; color: var(--muted); font-size: var(--t-sub); }
 .ig-h { margin: 18px 0 4px; font-size: var(--t-label); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
-.ig-h a { color: inherit; text-decoration: none; }
+.ig-h a { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; color: inherit; text-decoration: none; }
+.ig-h a .chev { margin: 0; }
 .ig-list { list-style: none; margin: 0; padding: 0; }
 .ir { display: flex; gap: 10px; padding: 11px 12px; border: 1px solid transparent; border-radius: var(--r-inset); color: var(--fg); text-decoration: none; }
 .ir.is-selected { background: var(--surface); border-color: var(--line); }
 .ir-dot { flex: none; box-sizing: border-box; width: 8px; height: 8px; margin-top: 7px; border-radius: 50%; background: var(--accent); }
-.ir-dot.d-disagree { background: var(--attention); }
+.ir-dot.d-disagree { background: var(--accent); }
 .ir-dot.d-tidy { background: none; border: 1.5px solid var(--muted); }
 .ir-dot.d-discussion { background: var(--muted); }
 .ir-txt { display: flex; flex-direction: column; min-width: 0; }
@@ -2249,3 +2286,11 @@ section.danger-zone h2 { color: var(--error); }
 /* The pause banner: Resume stays one word. */
 .undo-line > span { min-width: 0; }
 .undo-line form, .undo-line .linklike { flex: none; white-space: nowrap; }
+
+/* ==== Feedback and state: offline bar, sheet notes (UX states review, 2026-11-23). Direction §5: --raised strip under the top bar, never red. ==== */
+.offline-bar { position: sticky; top: 0; z-index: 9; flex: none; display: flex; align-items: center; gap: 0.5rem; box-sizing: border-box; height: 2.25rem; padding: 0 max(1.5rem, var(--gutter-r)) 0 max(1.5rem, var(--gutter)); background: var(--raised); border-bottom: 1px solid var(--line); color: var(--ink2); font-size: var(--t-sub); white-space: nowrap; overflow: hidden; }
+.offline-bar[hidden] { display: none; }
+.offline-bar b { color: var(--fg); font-weight: 600; }
+.offline-ring { flex: none; width: 8px; height: 8px; box-sizing: border-box; border: 1.5px solid var(--muted); border-radius: 50%; }
+/* Focus put on a heading by script (a section just saved) shows no ring, as the sheet headings in desk.css do. */
+:is(h2, h3, h4)[tabindex="-1"]:focus { outline: none; }

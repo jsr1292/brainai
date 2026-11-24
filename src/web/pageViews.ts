@@ -266,7 +266,7 @@ export function pageView(v: {
   const noted = new Set(v.notes.filter((n) => n.status === 'open' && n.anchor !== null).map((n) => n.anchor!));
   // The rail sticks and is capped at the window's height, so what sits low in it is hidden until the rail itself is
   // scrolled. The controls (and a refused note's reason) therefore come first, where they are always in view.
-  const aside = html`<aside class="paside"><div class="sticky">
+  const aside = html`<section class="paside" aria-label="${t('pages.railLabel')}"><div class="sticky">
 <a class="button primary" href="/pages/${p.id}/edit">${t('pages.edit')}</a>
 <p class="rail-link"><a href="/pages/${p.id}/history">${t('pages.history')}</a><span class="n">${t('pages.versions', { count: v.versions })}</span></p>
 ${askForm(p, toc, v.noteDraft)}
@@ -275,7 +275,7 @@ ${tocList}${picsRail}
 ${relatedFacts(v.related, `/pages/${p.id}`)}
 ${v.linkedFrom.length > 0 ? html`<h2>${t('pages.linkedFrom')}</h2><ul class="lk">${v.linkedFrom.map((x) => html`<li><a href="/pages/${x.id}">${x.title}</a></li>`)}</ul>` : ''}
 ${notesPanel(p, v.notes, headings)}
-</div></aside>`;
+</div></section>`;
   // The lead's marker covers the title (it is checked with it); without a flagged lead the title gets its own.
   const titleMarker = looksLikeInstruction(p.title) !== null && !v.sections.some((s) => s.anchor === 'top' && s.instructionLike) ? instrMarker() : '';
   // On a phone (and below 1101px, where the rail's list hides) "On this page" folds under the meta line.
@@ -285,6 +285,6 @@ ${notesPanel(p, v.notes, headings)}
     ? staleLine({ page: p, flag, project: v.project, noteOpen: v.notes.some((n) => n.status === 'open'), keyAnchor: keyAnchorOf(v.sections), sections: toc, askForm: (o) => askForm(p, toc, undefined, o) })
     : stillTrueLine(p, localDay(viewNow()));
   const main = html`${crumb}<h1>${p.title}</h1>${titleMarker}${meta}${v.fileImport ? html`<p class="meta imported-from">${tHtml('pages.importedFrom', { file: html`<span class="path">${v.fileImport.fileName}</span>`, date: localDay(new Date(v.fileImport.importedAt)) })}</p>` : ''}${freshness}${tocFold}${errorBlock(v.error)}${v.live ? liveBox(v.live, p.id, localDay(viewNow())) : ''}
-<article class="art"${pics.length + diagrams > 0 ? html` data-viewer="${asset('viewer.js')}"` : ''}${diagrams > 0 ? html` data-diagrams="${asset('diagrams.js')}" data-renderer="${asset('diagram-frame.js')}" data-page="${p.id}" data-version="${p.version}"` : ''}>${numberDiagrams(v.sections.map((s) => section(p, s, v.resolve, linkDefinitions(p.body), noted, { flag, project: v.project, marks }, v.pictures)), new Set(v.diagramProblems ?? []))}</article>`;
+<article class="art"${pics.length + diagrams > 0 ? html` data-viewer="${asset('viewer.js')}"` : ''}${diagrams > 0 ? html` data-diagrams="${asset('diagrams.js')}" data-renderer="${asset('diagram-frame.js')}"` : ''} data-page="${p.id}" data-version="${p.version}" data-draft="${asset('draft.js')}" data-title="${p.title}" data-by="${p.updatedBy}">${numberDiagrams(v.sections.map((s) => section(p, s, v.resolve, linkDefinitions(p.body), noted, { flag, project: v.project, marks }, v.pictures)), new Set(v.diagramProblems ?? []))}</article>`;
   return layout(pagesNav(v.nav, p.id), main, aside, { onPage: true });
 }

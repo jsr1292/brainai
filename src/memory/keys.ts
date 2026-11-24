@@ -14,8 +14,8 @@ export function normalizeKeys(raw: string | undefined): string {
   const keys = (raw ?? '').replace(/\s+/g, ' ').trim();
   if (keys === '') return '';
   const words = keys.split(' ').length;
-  if (words > MAX_KEY_WORDS) throw new MemoryError('invalid', `keys: at most ${MAX_KEY_WORDS} words; you sent ${words}`);
-  if (keys.length > MAX_KEY_CHARS) throw new MemoryError('invalid', `keys: at most ${MAX_KEY_CHARS} characters; you sent ${keys.length}`);
+  if (words > MAX_KEY_WORDS) throw new MemoryError('invalid', `keys: at most ${MAX_KEY_WORDS} words; you sent ${words}`, undefined, { key: 'err.fact.keysWords', params: { max: MAX_KEY_WORDS, n: words } });
+  if (keys.length > MAX_KEY_CHARS) throw new MemoryError('invalid', `keys: at most ${MAX_KEY_CHARS} characters; you sent ${keys.length}`, undefined, { key: 'err.fact.keysChars', params: { max: MAX_KEY_CHARS, n: keys.length } });
   const secret = looksLikeSecret(keys);
   if (secret) throw new MemoryError('secret_detected', `keys: this looks like a secret (${secret}). Secrets are never stored in memory.`, undefined, { key: 'err.keysSecret', params: { reason: secret } });
   return keys;

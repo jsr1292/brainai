@@ -66,7 +66,7 @@ export const settings_es: Record<keyof typeof settings, Entry> = {
   'settings.runbook': 'consulta la guía de operación',
   'settings.daily.label': 'Copia diaria:',
   'settings.daily.notYet': 'todavía no',
-  'settings.daily.failed': 'ha fallado ✗',
+  'settings.daily.failed': 'ha fallado',
   'settings.daily.where': 'Cada noche, en la carpeta propia de BrainAI en {here}.',
   'settings.backupNow': 'Hacer copia ahora',
   'settings.showFinder': 'Mostrar en el Finder',

@@ -10,6 +10,7 @@ import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import Database from 'better-sqlite3';
 import { backupNow } from '../backup.js';
+import { busy } from '../busyMarker.js';
 import { latestSchema, type DB } from '../db.js';
 import { shown } from './shown.js';
 
@@ -33,7 +34,11 @@ export function liveCounts(db: DB): { facts: number; pages: number } {
  * Packs the archive at `outFile` (mode 600, written whole or not at all) and gives the counts read from the copy, not
  * from the live brain, so they say what the file holds.
  */
-export async function packArchive(db: DB, dataDir: string, outFile: string, now: Date): Promise<{ facts: number; pages: number }> {
+export function packArchive(db: DB, dataDir: string, outFile: string, now: Date): Promise<{ facts: number; pages: number }> {
+  return busy('saving a copy', () => packArchiveWork(db, dataDir, outFile, now));
+}
+
+async function packArchiveWork(db: DB, dataDir: string, outFile: string, now: Date): Promise<{ facts: number; pages: number }> {
   // Staged next to the data (same disk), in this run's own folder, so two runs at once never share a half-written file.
   const staging = mkdtempSync(join(dataDir, '.move-'));
   try {

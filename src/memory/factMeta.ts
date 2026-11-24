@@ -1,3 +1,4 @@
+import type { Key } from '../i18n/core.js';
 import { isDay, todayIn } from './timeRange.js';
 import { looksLikeInstruction } from './instructionLike.js';
 import { looksLikeSecret } from './secrets.js';
@@ -15,7 +16,10 @@ export interface MetaInput { validUntil?: string | null; source?: string | null;
 
 export const NO_META: FactMeta = { validUntil: null, source: null, sourceNote: null, sourceBy: null };
 
-export class MetaError extends Error {}
+export class MetaError extends Error {
+  /** The same text as a catalog key, for the owner's screen (see MemoryError). */
+  constructor(message: string, readonly say?: { key: Key; params?: Record<string, string | number> }) { super(message); }
+}
 
 /** Past its date: strictly before today (the owner's calendar day, as everywhere else). The last day itself is still valid. */
 export const isPastDate = (validUntil: string | null, now: Date): boolean => validUntil !== null && validUntil < todayIn(now);
@@ -51,7 +55,7 @@ export const isSource = (s: unknown): s is Source => typeof s === 'string' && (S
 function checkDate(v: string): string | null {
   const d = v.trim();
   if (d === '') return null;
-  if (!isDay(d)) throw new MetaError(`valid_until must be a real date as YYYY-MM-DD, such as 2026-12-31 (you sent ${JSON.stringify(v.slice(0, 40))}); an empty string clears it.`);
+  if (!isDay(d)) throw new MetaError(`valid_until must be a real date as YYYY-MM-DD, such as 2026-12-31 (you sent ${JSON.stringify(v.slice(0, 40))}); an empty string clears it.`, { key: 'err.meta.date' });
   return d;
 }
 
@@ -63,12 +67,12 @@ function checkSource(v: string): Source | null {
 }
 
 function checkNote(v: string, fromAi: boolean): string | null {
-  if (/[\r\n\v\f\u0085]/.test(v) || v.includes(String.fromCharCode(0x2028)) || v.includes(String.fromCharCode(0x2029))) throw new MetaError('source_note must be one line of plain text (no line breaks).');
+  if (/[\r\n\v\f\u0085]/.test(v) || v.includes(String.fromCharCode(0x2028)) || v.includes(String.fromCharCode(0x2029))) throw new MetaError('source_note must be one line of plain text (no line breaks).', { key: 'err.meta.noteLines' });
   const n = v.trim();
   if (n === '') return null;
-  if (n.length > MAX_SOURCE_NOTE) throw new MetaError(`source_note is ${n.length} characters; the limit is ${MAX_SOURCE_NOTE}.`);
+  if (n.length > MAX_SOURCE_NOTE) throw new MetaError(`source_note is ${n.length} characters; the limit is ${MAX_SOURCE_NOTE}.`, { key: 'err.meta.noteLong', params: { n: n.length, max: MAX_SOURCE_NOTE } });
   const secret = looksLikeSecret(n);
-  if (secret) throw new MetaError(`source_note looks like a secret (${secret}). Secrets are never stored in memory.`);
+  if (secret) throw new MetaError(`source_note looks like a secret (${secret}). Secrets are never stored in memory.`, { key: 'err.meta.noteSecret', params: { reason: secret } });
   if (fromAi) {
     const reason = looksLikeInstruction(n);
     if (reason) throw new MetaError(`source_note reads like an instruction to AI assistants (${reason}). Keep it to a short quote or a session label.`);
@@ -86,7 +90,7 @@ export function resolveMeta(current: FactMeta, input: MetaInput, fromAi: boolean
   let note = input.sourceNote === undefined ? current.sourceNote : input.sourceNote === null ? null : checkNote(input.sourceNote, fromAi);
   if (source === null) {
     if (input.sourceNote !== undefined && note !== null && input.source === undefined && current.source === null) {
-      throw new MetaError('source_note needs a source: give source too.');
+      throw new MetaError('source_note needs a source: give source too.', { key: 'err.meta.noteNeedsSource' });
     }
     note = null;
   }

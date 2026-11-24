@@ -24,14 +24,31 @@ ${d.items.length === 0 ? html`<p class="quiet">${t('skills.allShared')}</p>` : h
   ? html`<form method="post" action="/skills/share"><input type="hidden" name="device" value="${d.deviceId}"><input type="hidden" name="name" value="${x.name}"><button type="submit" class="secondary">${t('skills.share')}</button></form>` : ''}</li>`)}</ul>`}
 </div></details></li></ul>`;
 
-export function skillsListView(skills: Skill[], devices: DeviceFold[] = [], error?: string): SafeHtml {
+/** What the Skills page also shows: a skill just deleted or brought back, the deleted ones, and how many proposals wait. */
+export interface SkillsExtras { deleted?: (Skill & { deletedAt: string })[]; justDeleted?: Skill; restored?: Skill; waiting?: number }
+
+/** The fold of deleted skills, each with Undo. */
+const deletedFold = (list: (Skill & { deletedAt: string })[]): SafeHtml => (list.length === 0 ? html`` : html`<ul class="group nopage-group"><li><details class="fold nopage"><summary class="row nolead">${t('skills.deletedFold')}<span class="n">${list.length}</span><span class="chev"></span></summary>
+<div class="fold-body"><p class="meta">${t('skills.deletedFoldNote')}</p>
+<ul class="rows sk-device">${list.map((x) => html`<li><span class="txt"><b>${x.name}</b><span class="sk-desc">${tHtml('skills.deletedWhen', { when: when(x.deletedAt) })}</span></span>${undoForm(x.id)}</li>`)}</ul>
+</div></details></li></ul>`);
+const undoForm = (id: string): SafeHtml => html`<form method="post" action="/skills/${id}/undelete"><button type="submit" class="secondary">${t('skills.undo')}</button></form>`;
+
+export function skillsListView(skills: Skill[], devices: DeviceFold[] = [], error?: string, extra: SkillsExtras = {}): SafeHtml {
   const rows = skills.map((s) => html`<li><a class="row nolead" href="/skills/${s.id}"><span class="txt"><b>${s.name}</b> ${chip(s.enabled)}<span class="sk-desc">${s.description}</span>${metaLine([origin(s), loaded(s)])}</span><span class="chev"></span></a></li>`);
+  const waiting = extra.waiting ?? 0;
+  // The confirmation stays in the page (no toast): "Deleted." with its Undo, or "back, switched Off".
+  const notice = extra.justDeleted
+    ? html`<div class="notice notice-undo" role="status"><span>${t('skills.deletedNotice', { name: extra.justDeleted.name })}</span>${undoForm(extra.justDeleted.id)}</div>`
+    : extra.restored ? html`<p class="notice" role="status">${t('skills.restoredNotice', { name: extra.restored.name })}</p>` : '';
+  const empty = waiting > 0 ? html`<p class="quiet"><a href="/approvals">${t('skills.waiting', { count: waiting })}</a></p>` : html`<p class="quiet">${t('skills.none')}</p>`;
   return html`<div class="pages-wrap solo"><div class="pmain">${pagesSubnav('/skills')}<h1>${t('shell.nav.skills')}</h1>
 <p class="lede">${t('skills.lede')}</p>
-${errorBlock(error)}
+${errorBlock(error)}${notice}
 <section><div class="panel-head"><h2>${t('skills.count', { count: skills.length })}</h2><a class="button primary" href="/skills/new">${t('skills.new')}</a></div>
-${skills.length === 0 ? html`<p class="quiet">${t('skills.none')}</p>` : html`<ul class="group">${rows}</ul>`}</section>
+${skills.length === 0 ? empty : html`<ul class="group">${rows}</ul>`}</section>
 ${devices.map(deviceFold)}
+${deletedFold(extra.deleted ?? [])}
 </div></div>`;
 }
 

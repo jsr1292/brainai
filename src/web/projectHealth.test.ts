@@ -110,7 +110,7 @@ test('the Monday card shows in the narrow and the wide layouts, with the three n
   for (const path of ['/', '/?pane=projects', '/?project=calm']) {
     const body = await (await f(path)).text();
     assert.ok(body.indexOf('<section class="monday-card"') > 0, path);
-    assert.ok(body.indexOf('<section class="monday-card"') < body.indexOf('class="idea"'), `${path}: above the idea field`);
+    assert.ok(body.indexOf('class="idea"') < body.indexOf('<section class="monday-card"'), `${path}: the idea field is first after the heading, so Tab reaches it before the card`);
     assert.match(body, /<h2 id="monday-h">Your week, 16[^<]*22 Nov<\/h2>/, path);
     assert.match(body, /<dt class="mc-l">step done last week<\/dt><dd class="mc-n">1<\/dd>/, path);
     assert.match(body, /<dt class="mc-l">thing waiting on you<\/dt><dd class="mc-n">1<\/dd>/, path);

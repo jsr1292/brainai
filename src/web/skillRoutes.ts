@@ -41,14 +41,24 @@ export function skillRoutes(d: AppDeps): Router {
   const liveDevices = () => d.devices.list().filter((x) => x.revokedAt === null);
   const deviceName = (id: string) => d.devices.list().find((x) => x.id === id)?.name ?? t('skills.aDevice');
   const folds = () => liveDevices().map((x) => ({ deviceId: x.id, deviceName: x.name, items: d.skillSync.fromDevice(x.id) })).filter((x) => x.items.length > 0);
-  router.get('/skills', owner, (_req, res) => send(res, 200, t('skills.title'), skillsListView(d.skills.list(), folds())));
+  /** The Skills page. `just`/`restored`: the id of the skill just deleted or brought back, from the redirect (only a real one counts). */
+  /** Only a live skill that is Off counts as "just brought back". */
+  const restoredOff = (id: string | undefined) => { const r = id === undefined ? undefined : d.skills.get(id); return r && !r.enabled ? r : undefined; };
+  const listPage = (res: Response, code = 200, error?: string, just?: string, restored?: string) => {
+    const deleted = d.skills.deleted();
+    send(res, code, t('skills.title'), skillsListView(d.skills.list(), folds(), error, {
+      deleted, waiting: d.skills.pendingProposals().length,
+      justDeleted: deleted.find((x) => x.id === just), restored: restoredOff(restored),
+    }));
+  };
+  router.get('/skills', owner, (req, res) => listPage(res, 200, undefined, str(req.query.deleted) || undefined, str(req.query.restored) || undefined));
   router.post('/skills/share', owner, (req, res) => {
     try {
       const s = d.skillSync.share(str(req.body.device), str(req.body.name));
       res.redirect(303, `/skills/${s.id}`);
     } catch (e) {
       if (!(e instanceof SkillError)) throw e;
-      send(res, status(e), t('skills.title'), skillsListView(d.skills.list(), folds(), errorText(e)));
+      listPage(res, status(e), errorText(e));
     }
   });
   const choice = (fn: (id: string, device: string) => unknown) => (req: Request, res: Response) => {
@@ -128,7 +138,19 @@ export function skillRoutes(d: AppDeps): Router {
     const s = skill(req);
     if (!s) return missing(res);
     d.skills.remove(s.id, 'owner');
-    res.redirect(303, '/skills');
+    res.redirect(303, `/skills?deleted=${encodeURIComponent(s.id)}`);
+  });
+  // Undo a delete: the skill returns switched Off (see SkillService.undelete). Same owner + same-origin protections as every skill route.
+  router.post('/skills/:id/undelete', owner, (req, res) => {
+    try {
+      const s = d.skills.undelete(req.params.id as string, 'owner');
+      d.skillSync.relinkRestored(s);
+      res.redirect(303, `/skills?restored=${encodeURIComponent(s.id)}`);
+    } catch (e) {
+      if (!(e instanceof SkillError)) throw e;
+      if (e.code === 'not_found') return missing(res);
+      listPage(res, status(e), errorText(e));
+    }
   });
   router.get('/skills/:id/files', owner, (req, res) => {
     const s = skill(req);

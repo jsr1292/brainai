@@ -133,7 +133,7 @@ test('the runbook is a link to the Moving from the app section, and It\'s moved 
   const { f } = await desktop(t);
   const before = decodeEntities((await (await f('/settings/move')).text()));
   assert.match(before, /<a href="https:\/\/github\.com\/jsr1292\/brainai\/blob\/main\/docs\/RUNBOOK\.md#4-moving-from-the-app"[^>]*>the runbook<\/a>/);
-  assert.match(before, /<button type="submit" class="primary" disabled>It's moved<\/button>/);
+  assert.match(before, /<button type="submit" class="secondary" disabled>It's moved<\/button>/);
   assert.match(before, /Make the moving file first\./);
   await f('/settings/move/file', { method: 'POST', headers: FORM, body: '' });
   const after = decodeEntities((await (await f('/settings/move')).text()));

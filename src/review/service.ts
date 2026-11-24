@@ -138,6 +138,17 @@ export class ReviewService {
     return this.deps.store.markDismissed(monday, this.now().toISOString());
   }
 
+  /** Undo of Not now: the week card shows again. False when the week isn't stored. */
+  undismiss(monday: string): boolean {
+    return this.deps.store.clearDismissed(monday);
+  }
+
+  /** Whether Not now was pressed for this week and Read it was not (the home then offers Undo). */
+  dismissedUnread(monday: string): boolean {
+    const r = this.deps.store.get(monday);
+    return r !== undefined && r.dismissedAt !== null && r.openedAt === null;
+  }
+
   present(r: { monday: string; body: ReviewBody; builtAt: string }, kind: ReviewKind, scope: Scope): ReviewView {
     const d = this.deps;
     return presentReview(r, kind, scope, {

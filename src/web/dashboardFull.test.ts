@@ -366,7 +366,7 @@ test('owner validation: over-long content re-renders with 400 and the message', 
   assert.equal(res.status, 400);
   const body = await res.text();
   assert.match(body, /class="error"/);
-  assert.match(body, /content is 1001 characters; the limit is 1000/);
+  assert.match(body, /The memory is 1001 characters; the limit is 1000/);
   assert.equal(app.deps.store.list({}).length, 0);
 
   const m = await remember(app, 'Fine');

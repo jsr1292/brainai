@@ -51,7 +51,7 @@ export const checkTerm = (a: CheckArea): string => tKey(`projects.area.${a}.term
 export const checkWhy = (a: CheckArea): string => tKey(`projects.area.${a}.why`);
 export const statusWord = (s: ShownStatus): string => tKey(`projects.status.${s}`);
 
-/** The state dot: green while it is being worked on, amber when something waits on the owner, grey when quiet. */
+/** The state dot: green while it is being worked on, a ringed orange dot when something waits on the owner, a hollow ring when quiet. */
 const dotLabel = (dot: ProjectCard['dot']): string => tKey(`projects.dot.${dot}`);
 const stateDot = (c: ProjectCard): SafeHtml => html`<span class="pdot d-${c.dot}" role="img" aria-label="${dotLabel(c.dot)}" title="${dotLabel(c.dot)}"></span>`;
 /** The one learning mark on the home page: work that exists only on the Mac (spec 2026-11-11). */
@@ -172,6 +172,9 @@ function mondayCard(m: MondayCard): SafeHtml {
 </section>`;
 }
 
+/** In the Monday card's place after Not now: the week is set aside, with Undo (confirm in place, no toast). */
+const weekHiddenLine = (monday: string): SafeHtml => html`<div class="notice notice-undo" role="status"><span>${t('projects.monday.hidden')}</span><form method="post" action="/review/${monday}/undismiss"><button type="submit" class="secondary">${t('projects.undo')}</button></form></div>`;
+
 /**
  * The last row: All discussions. It carries, hidden, its count (shown from 1100 px); on the plain home also, for the
  * 1920 px shelf, the first three titles and "N more" or "Open".
@@ -285,7 +288,7 @@ function panel(d: ProjectDetail, now: Date, error?: string): SafeHtml {
   <a class="ppanel-back" href="/">${t('projects.allProjects')}</a>
   <h2 id="panel-title">${p.name}</h2>
   ${errorBlock(error)}
-  ${metaLine([p.oneLiner ?? t('projects.noOneLiner'), html`${areaDot(p)} ${areaName(p)}`, state, d.card.notPushed ? html`<span class="chip plain">${t('projects.notPushed')}</span>` : null], { big: true })}
+  ${p.oneLiner ? html`<p class="pone">${p.oneLiner}</p>` : ''}${metaLine([p.oneLiner ? null : t('projects.noOneLiner'), html`${areaDot(p)} ${areaName(p)}`, state, d.card.notPushed ? html`<span class="chip plain">${t('projects.notPushed')}</span>` : null], { big: true })}
   ${healthLines(d.card.health, now)}
   ${jump}
   <h3>${t('projects.leftOff')}${d.leftOff ? html` <span class="quiet">· ${pastLabel(d.leftOff.updatedAt, now)}</span>` : ''}</h3>
@@ -349,6 +352,8 @@ export interface HomeViewInput {
   home: Home; selected: ProjectDetail | undefined; approvals: ApprovalSummary; discussionsWaiting?: { id: string; title: string }[]; backupProblem: string | null; now: Date; error?: string;
   /** The Monday card, at the top of the page, while last week's review is unread (src/web/mondayCard.ts). */
   monday?: MondayCard | null;
+  /** The Monday of a week whose card was just set aside with Not now: a line with Undo takes its place. */
+  weekHidden?: string;
   /** Folders the owner ignored, each with an Undo under "Not in the brain yet". */
   ignored?: { key: string; name: string }[];
   /** Every discussion, in the Discussions list's order: the All discussions shelf on a wide screen. */
@@ -401,15 +406,21 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   const pextra = plain
     ? (notIn.value.trim() === '' ? html`` : html`<ul class="group pfolds pextra">${notIn}</ul>`)
     : html`<ul class="group pfolds pextra">${coachingShown() ? html`<li><a class="row nolead map-link" href="/map"><span class="txt">${tHtml('projects.mapRow', { areas: html`<b>${t('projects.areas.title')}</b>` })}</span><span class="chev"></span></a></li>` : ''}${notIn}${allDiscussions(v.discussions ?? [], mode)}</ul>`;
+  // On the plain home the first-steps fold, the empty line and the areas are one block (`.pleft`), so the desktop grid has one
+  // left stack and one right stack and neither can open a gap in the other. The system blocks above For you share one wrapper.
+  const fs = plain && v.firstSteps ? v.firstSteps : undefined;
+  const emptyP = !empty ? html`` : html`<p class="quiet empty">${t('projects.empty')}</p>`;
+  const areas = home.sections.length > 0 ? html`<div class="pareas">${dotKey()}${home.sections.map((sec) => areaSection(sec, now, sel, mode))}</div>` : html``;
+  const system = html`${banner}${v.justUpdated ?? ''}${v.nextStep ?? ''}${v.updateCard ?? ''}${fs ? '' : v.offsiteCard ?? ''}${v.modelsLine ?? ''}`;
+  const notes = plain && system.value.trim() !== '' ? html`<div class="pnotes">${system}</div>` : system;
   return html`<div class="plist">
   <h1>${t('projects.title')}${plain ? html`<span class="phome-date" hidden>${longDate(now)}</span>` : ''}</h1>
-  ${errorBlock(v.error)}
-  ${v.monday ? mondayCard(v.monday) : ''}
-  ${banner}${v.justUpdated ?? ''}${v.nextStep ?? ''}${v.updateCard ?? ''}${plain && v.firstSteps ? v.firstSteps : v.offsiteCard ?? ''}${v.modelsLine ?? ''}
   <form method="post" action="/projects/ideas" class="idea"><label class="visually-hidden" for="idea-text">${t('projects.idea.label')}</label><input id="idea-text" name="text" maxlength="140" placeholder="${t('projects.idea.placeholder')}" autocomplete="off"><button type="submit" class="primary">${t('projects.idea.add')}</button></form>
+  ${errorBlock(v.error)}
+  ${v.monday ? mondayCard(v.monday) : v.weekHidden ? weekHiddenLine(v.weekHidden) : ''}
+  ${notes}
   ${forYou.value === '' ? '' : html`<h2 class="fy-h" id="foryou" hidden>${t('projects.forYou')}</h2>`}${forYou}
-  ${!empty ? '' : html`<p class="quiet empty">${t('projects.empty')}</p>`}
-  ${home.sections.length > 0 ? html`<div class="pareas">${dotKey()}${home.sections.map((sec) => areaSection(sec, now, sel, mode))}</div>` : ''}
+  ${plain ? html`<div class="pleft">${fs ?? ''}${emptyP}${areas}</div>` : html`${emptyP}${areas}`}
   ${pextra}
   <p class="home-links">${empty || !coachingShown() ? '' : html`<a href="/map">${t('projects.areas.title')}</a>`}<a href="/graph">${t('projects.link.graph')}</a><a href="/discussions">${t('projects.link.discussions')}</a></p>
 </div>`;

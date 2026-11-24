@@ -45,7 +45,7 @@ ${v.missingPictures > 0 ? html`<p class="notice">${t('data.move.missing', { coun
     : html`<p>${t('data.move.giveAddress', { Computer: ComputerName() })}</p>
 <form method="post" action="/settings/move/done" class="stack">
   <label for="address">${t('data.move.address')}</label><input id="address" name="address" type="url" placeholder="https://brain.example.com" required>
-  <p><button type="submit" class="primary"${v.file ? '' : ' disabled'}>${t('data.move.itsMoved')}</button></p>${v.file ? '' : html`\n  <p class="meta">${t('data.move.makeFirst')}</p>`}
+  <p><button type="submit" class="${v.file ? 'primary' : 'secondary'}"${v.file ? '' : ' disabled'}>${t('data.move.itsMoved')}</button></p>${v.file ? '' : html`\n  <p class="meta">${t('data.move.makeFirst')}</p>`}
 </form>`}</li>
 </ol>
 </div>`;

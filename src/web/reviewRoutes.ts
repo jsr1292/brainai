@@ -80,6 +80,14 @@ export function reviewRoutes(d: AppDeps): Router {
   router.post('/review/:monday/dismiss', owner, (req, res) => {
     const monday = req.params.monday as string;
     if (!MONDAY.test(monday) || !d.reviews.dismiss(monday)) return notFound(res);
+    // Back home, where the card was: the page says it is hidden and offers Undo there.
+    res.redirect(303, `/?weekHidden=${monday}`);
+  });
+
+  // Undo of Not now: the card shows again.
+  router.post('/review/:monday/undismiss', owner, (req, res) => {
+    const monday = req.params.monday as string;
+    if (!MONDAY.test(monday) || monday !== d.reviews.lastMonday() || !d.reviews.undismiss(monday)) return notFound(res);
     res.redirect(303, '/');
   });
 

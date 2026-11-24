@@ -63,8 +63,8 @@ export function toolsPage(v: { tools: ToolState[]; windows: boolean; said: strin
 ${v.said ? html`<p class="notice" role="status">${v.said}</p>` : ''}
 ${v.temporary ? html`<p class="notice" role="status">${t('tools.temporaryAddress')}</p>` : ''}
 <ul class="group tools">${v.tools.map((x) => toolRow(x))}${chatgptRow(v.windows)}</ul>
-${v.tools.some((x) => !x.installed) ? html`<p class="meta">${t('tools.notFoundHint')}</p>` : ''}
-<p class="meta">${tHtml('setup.tools.note', { code: html`<code class="nowrap">.brainai-backup</code>` })}</p>
+${v.tools.some((x) => !x.installed) ? html`<p class="meta note">${t('tools.notFoundHint')}</p>` : ''}
+<p class="meta note">${tHtml('setup.tools.note', { code: html`<code class="nowrap">.brainai-backup</code>` })}</p>
 ${cursor?.installed ? html`<h2>${t('setup.tools.cursorHead')}</h2><p>${t('setup.tools.cursorHow')}</p>${copyBox(v.cursorRules, 'setup.copy.cursorRules')}` : ''}
 </div>`;
 }
@@ -136,7 +136,7 @@ export function modelsLine(s: ModelStatus, o: { onlyWhenBusy?: boolean; dataDir?
   const bar = p.bar === null ? ''
     : p.bar.value === null ? html`<progress class="models-bar" max="100" aria-label="${t('setup.models.barLabel')}"></progress>`
     : html`<progress class="models-bar" max="100" value="${p.bar.value}" aria-label="${t('setup.models.barLabel')}"></progress>`;
-  return html`<div class="conn-setup models-line" role="status" data-models-progress="/models/progress"${p.busy ? raw(' data-busy') : raw('')}>${p.ready ? html`<span class="ok models-ok">✓</span>` : ''}<span class="models-text">${p.text}</span>${p.failed ? html` <a href="/settings#search">${t('setup.models.look')}</a>` : ''}${bar}</div>`;
+  return html`<div class="conn-setup models-line" role="status" data-models-progress="/models/progress"${p.busy ? raw(' data-busy') : raw('')}>${p.ready ? html`<span class="ok models-ok">✓</span>` : ''}<span class="models-text">${p.text}</span>${p.failed ? html` <a href="/settings#search">${t('setup.models.look')}</a>` : ''}${p.failed && s.choice !== null ? html` <form method="post" action="/models/retry" class="inline models-retry"><button type="submit">${t('setup.models.retry')}</button></form>` : ''}${bar}</div>`;
 }
 
 /** The "- " lines of a release's notes, as plain strings (untrusted: only ever interpolated through `html`). */

@@ -305,6 +305,7 @@ export const setup = {
   'setup.models.getting': 'Getting the search models ready… keyword search already works',
   'setup.models.barLabel': 'Search models download progress',
   'setup.models.look': 'Look in Settings › Search',
+  'setup.models.retry': 'Try again',
   'setup.search.pageTitle': 'Settings › Search',
   'setup.search.notChanged': 'Not changed',
   'setup.search.backTo': 'Back to Settings › Search',

@@ -139,7 +139,8 @@ test('the panel shows Continue in Claude Code with the folder when set, otherwis
   assert.equal((await post(f, '/projects/gps-tracklog/info', { oneLiner: 'Karst ride telemetry on iPhone', area: 'apps', folder: 'gps-tracklog-app', url: '' })).status, 303);
   const page = await (await f('/?project=gps-tracklog')).text();
   assert.match(page, /data-copy="cd ~\/Projects\/gps-tracklog-app &amp;&amp; claude"/);
-  assert.match(page, /<li>Karst ride telemetry on iPhone<\/li><li><span class="ring a-apps" aria-hidden="true"><\/span> Apps<\/li>/);
+  // The one-liner is its own paragraph (it wraps, and a phone can read it whole); the meta line starts with the area.
+  assert.match(page, /<p class="pone">Karst ride telemetry on iPhone<\/p><ul class="meta-line big"><li><span class="ring a-apps" aria-hidden="true"><\/span> Apps<\/li>/);
 });
 
 test('the panel\'s Edit details sets Runs on, comma-separated', async (t) => {
@@ -273,13 +274,13 @@ async function monday(t: TestContext, opts: Parameters<typeof startTestApp>[0] =
 }
 const LINE = '3 steps done, all in wildlog. 1 thing is late, and energy went quiet.';
 
-test('on Monday the card sits at the top of Projects, above For you and the idea field, and keeps its two POSTs', async (t) => {
+test('on Monday the card sits at the top of Projects, right after the heading and the idea field, above For you, and keeps its two POSTs', async (t) => {
   const { app, f } = await monday(t);
   const x = app.deps.discussions.open({ name: 'Claude Code', model: 'opus', access: 'full' }, { title: 'Which course?', question: 'Which one?', ask: ['Grok'] });
   for (const text of ['This one.', 'Still this one.']) app.deps.discussions.reply({ name: 'Grok', model: 'g', access: 'full' }, x.id, { text });
   const body = await (await f('/')).text();
   const card = body.indexOf('<section class="monday-card"');
-  assert.ok(card > body.indexOf('<h1>') && card < body.indexOf('class="idea"') && card < body.indexOf('<ul class="group foryou"'), 'the card is first, above the idea field and For you');
+  assert.ok(card > body.indexOf('class="idea"') && body.indexOf('class="idea"') > body.indexOf('<h1>') && card < body.indexOf('<ul class="group foryou"'), 'the idea field follows the heading (Tab order = reading order), then the card, then For you');
   assert.ok(body.includes('<h2 id="monday-h">Your week, 26 Oct – 1 Nov</h2>'));
   assert.ok(body.includes(`<p class="mc-text">${LINE}</p>`), 'the sentence without its lead');
   assert.match(body, /<form method="post" action="\/review\/2026-10-26\/open"><button type="submit" class="secondary">Read it<\/button><\/form>/);
@@ -319,14 +320,14 @@ test('the stuck number counts open projects that are stuck now, and a 0 still sh
   assert.match(body, /<span class="chip hl hl-stuck" data-health="stuck" title="Nothing finished or saved for \d+ days, and “polish” is still to do\.">Stuck<\/span>/);
 });
 
-test('a backup warning is the one banner, above the idea field, with Look; the card waits behind it', async (t) => {
+test('a backup warning is the one banner, below the idea field, with Look; the card waits behind it', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'status-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const warned = await monday(t, { statusDir: dir });
   writeBackupStatus(dir, 'nightly', { at: warned.app.deps.now().toISOString(), ok: false, error: 'disk full' });
   const body = await (await warned.f('/')).text();
   const banner = body.indexOf('class="banner warn"');
-  assert.ok(banner > 0 && banner < body.indexOf('class="idea"'));
+  assert.ok(banner > body.indexOf('class="idea"'));
   assert.match(body.slice(banner), /^class="banner warn"><span class="dot attention" aria-hidden="true"><\/span><span class="txt">[^<]+<\/span><a class="button sm" href="\/settings#health">Look<\/a>/);
   assert.doesNotMatch(body, /monday-card/);
 });

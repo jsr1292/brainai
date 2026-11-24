@@ -382,12 +382,14 @@ const computer = (o: Partial<Hardware> = {}): Hardware => ({ arch: 'arm64', plat
 /** A stand-in for the app's model manager: it records what was chosen and says what it is told. */
 function fakeModels(o: { status?: Partial<ModelStatus>; installed?: string[] } = {}) {
   const chosen: ModelChoice[] = [];
+  const retried: number[] = [];
   const m = {
+    retry: async () => { retried.push(1); },
     status: (): ModelStatus => ({ choice: chosen.at(-1) ?? null, progress: [], searchReady: false, ...o.status }),
     choose: async (c: ModelChoice) => { chosen.push(c); },
     installedIds: async () => o.installed ?? [],
   };
-  return { chosen, manager: m as unknown as ModelManager };
+  return { chosen, retried, manager: m as unknown as ModelManager };
 }
 
 async function withModels(t: TestContext, o: Parameters<typeof fakeModels>[0] = {}, hw: Partial<Hardware> = {}) {
@@ -507,6 +509,27 @@ test('a failed download shows the plain problem and a link to Settings › Searc
   const body = (await openPage(app.baseUrl, '/welcome?step=4', cookie)).body;
   assert.match(body, /no connection to the model server/);
   assert.match(body, /href="\/settings#search"/);
+});
+
+test('a failed download offers Try again, which runs the current choice again and returns to the page it was on', async (t) => {
+  const { app, cookie, retried } = await withModels(t, { status: { choice: { search: 'gemma', rerank: null }, progress: [], problem: 'the download stalled' } });
+  const body = (await openPage(app.baseUrl, '/welcome?step=4', cookie)).body;
+  assert.match(body, /<form method="post" action="\/models\/retry"[^>]*><button type="submit">Try again<\/button><\/form>/);
+  const r = await fetch(app.baseUrl + '/models/retry', { method: 'POST', redirect: 'manual', headers: { Cookie: cookie, Origin: app.baseUrl, Referer: `${app.baseUrl}/welcome?step=4` } });
+  assert.equal(r.status, 303);
+  assert.equal(r.headers.get('location'), '/welcome?step=4');
+  assert.equal(retried.length, 1);
+  const none = await fetch(app.baseUrl + '/models/retry', { method: 'POST', redirect: 'manual', headers: { Cookie: cookie, Origin: app.baseUrl, Referer: 'http://evil.example//x' } });
+  assert.equal(none.headers.get('location'), '/settings#search', '//x is never followed');
+  const st = await fetch(app.baseUrl + '/models/retry', { method: 'POST', redirect: 'manual', headers: { Cookie: cookie, Origin: app.baseUrl, Referer: `${app.baseUrl}/settings` } });
+  assert.equal(st.headers.get('location'), '/settings#search');
+  const appLink = await fetch(app.baseUrl + '/models/retry', { method: 'POST', redirect: 'manual', headers: { Cookie: cookie, Origin: app.baseUrl, Referer: `${app.baseUrl}/app/restart` } });
+  assert.equal(appLink.headers.get('location'), '/settings#search', 'never back to an app link');
+  assert.equal((await post(app.baseUrl, '/models/retry', cookie, {}, 'https://attacker.example')).status, 403, 'same-origin check');
+  assert.equal((await fetch(app.baseUrl + '/models/retry', { method: 'POST', redirect: 'manual', headers: { Origin: app.baseUrl } })).status === 303, false, 'needs the session');
+  assert.equal(retried.length, 4);
+  const progress = await (await fetch(app.baseUrl + '/models/progress', { headers: { Cookie: cookie } })).json() as { retry: boolean };
+  assert.equal(progress.retry, true);
 });
 
 test('when only the reranker failed, the line says search by meaning works and names the reranker', async (t) => {
