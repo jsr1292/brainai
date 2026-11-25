@@ -308,3 +308,28 @@ test('build-apps.sh refuses a real build without a Developer ID, the Apple accou
   assert.match(r.out, /updater\.key/);
   quiet(r.out, 'made-up');
 });
+
+// 1.10.4 shipped a Mac app that crashed a second after start; the build now launches the app once before releasing it.
+test('build-apps.sh launches the built Mac app once and stops the release when it does not stay up', () => {
+  const script = readFileSync(build, 'utf8');
+  const smoke = join(repoRoot, 'desktop', 'scripts', 'smoke-launch-mac.sh');
+  assert.ok(existsSync(smoke), 'desktop/scripts/smoke-launch-mac.sh exists');
+  const launch = script.indexOf('smoke-launch-mac.sh" "$APP"');
+  assert.ok(launch > 0, 'build-apps.sh runs smoke-launch-mac.sh on the built app');
+  assert.match(script.slice(launch, launch + 200), /\|\| \{[^}]*exit 1; \}/, 'a failed launch ends the build');
+  assert.ok(launch < script.indexOf('Building the Windows app'), 'the launch check runs before anything else is built');
+  const smokeText = readFileSync(smoke, 'utf8');
+  assert.match(smokeText, /HOME="\$T\/home"/, 'the app runs with a throwaway HOME');
+  assert.match(smokeText, /CFFIXED_USER_HOME="\$T\/home"/, 'macOS storage by bundle id (WebKit, caches, preferences) goes to the throwaway folder too');
+  assert.match(smokeText, /pgrep -qf/, 'it refuses while another BrainAI is open (one copy at a time)');
+  assert.match(smokeText, /trap cleanup EXIT/, 'the app and its folder are cleaned up on every exit');
+});
+
+// wry 0.57.1 panicked when the window's page was asked for before the first load (the 1.10.4 crash at start).
+test('the desktop app uses wry 0.57.4 or newer, which does not crash on a page not yet loaded', () => {
+  const lock = readFileSync(join(repoRoot, 'desktop', 'src-tauri', 'Cargo.lock'), 'utf8');
+  const versions = [...lock.matchAll(/name = "wry"\nversion = "(\d+)\.(\d+)\.(\d+)"/g)].map((m) => m.slice(1, 4).map(Number));
+  assert.equal(versions.length, 1, 'exactly one wry in Cargo.lock');
+  const [major, minor, patch] = versions[0];
+  assert.ok(major > 0 || minor > 57 || (minor === 57 && patch >= 4), `wry ${versions[0].join('.')} is older than 0.57.4`);
+});

@@ -4,6 +4,12 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Version shows the version you run.
 
+## 1.10.5 (2026-11-25)
+
+A fix for the Mac app (on a Mac with 1.10.4, update by hand as below; nothing to do otherwise):
+- **The Mac app 1.10.4 closed itself a second after opening.** The new "Starting BrainAI…" line asked the window for its page before the first page had loaded, and the web view library (wry 0.57.1) crashed on that. wry 0.57.4 answers it safely. If 1.10.4 is installed on a Mac, it cannot update itself: download the 1.10.5 dmg from the release page and drag it over the old app. Your brain is not affected.
+- Every release build now opens the Mac app once in a throwaway home folder and stops if it does not stay up.
+
 ## 1.10.4 (2026-11-24)
 
 Feedback and state fixes from the 2026-11-23 UX review (nothing to do when updating):

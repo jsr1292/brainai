@@ -143,6 +143,10 @@ DMG="$BUNDLE/dmg/BrainAI_${VERSION}_aarch64.dmg"
 for f in "$APP" "$DMG" "$BUNDLE/macos/BrainAI.app.tar.gz" "$BUNDLE/macos/BrainAI.app.tar.gz.sig"; do
   [ -e "$f" ] || { echo "The Mac build made no $(basename "$f")" >&2; exit 1; }
 done
+# Before notarising: a build that crashes at start fails here, without waiting for Apple. From a logged-in desktop
+# session only (the window must reach the screen).
+echo "Launching the Mac app once (a throwaway home folder) ..."
+"$SRC/desktop/scripts/smoke-launch-mac.sh" "$APP" 25 || { echo "The Mac app does not stay up after starting: not releasing it" >&2; exit 1; }
 
 if [ "$ADHOC" = 0 ]; then
   echo "Notarising the dmg ..."
