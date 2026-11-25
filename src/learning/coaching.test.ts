@@ -65,7 +65,7 @@ test('the rules: coaching off leaves out Growth and Learning and numbers stay co
     assert.doesNotMatch(offText, new RegExp(word), word);
     assert.match(on.join('\n'), new RegExp(word), word);
   }
-  assert.match(off[12]!, /^13\. Facts and pages/);
+  assert.match(off[12]!, /^13\. Pages:/);
   assert.match(off[14]!, /^15\. Skills/);
   assert.equal(OPERATING_RULES, operatingRules(true));
   assert.match(operatingRulesBlock(false), /^BrainAI operating rules/);
@@ -76,7 +76,8 @@ test('the rules: coaching off leaves out Growth and Learning and numbers stay co
 test('rule on pages: language of the owner, no career sentence, work pages keep their limits', () => {
   for (const c of [true, false]) {
     const r = operatingRules(c);
-    assert.match(r, /Write pages in the language the owner uses with you, unless their profile says otherwise; quote UI text in its own language as it is\./);
+    assert.match(r, /in the owner's language/);
+    assert.match(r, /unless their profile says otherwise; quote UI text in its own language as it is/);
     assert.doesNotMatch(r, /Career plans/);
     assert.doesNotMatch(r, /Write pages in English/);
     assert.match(r, /Work pages hold no financial figures, account numbers, colleagues' names or company data\./);
@@ -114,7 +115,7 @@ test('tools: coaching off registers no growth or learning tool and the brief lea
   for (const k of ['five_areas', 'next_area', 'handbook']) assert.doesNotMatch(brief, new RegExp(k), k);
   const profile = await off.call('load_profile');
   assert.doesNotMatch(profile[0]!.text, /note_observation/);
-  assert.match(profile[0]!.text, /13\. Facts and pages/);
+  assert.match(profile[0]!.text, /13\. Pages:/);
 });
 
 test('tools: coaching on (or left out) behaves as before', async () => {

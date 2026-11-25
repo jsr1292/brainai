@@ -8,7 +8,7 @@
 const T = typeof globalThis.T === 'function' ? globalThis.T : (key, english, params) => { const s = english !== undefined ? english : key; return params ? s.replace(/\{(\w+)\}/g, (m, n) => (Object.prototype.hasOwnProperty.call(params, n) ? String(params[n]) : m)) : s; };
 
 export const MERMAID_VERSION = '12.3.0';
-const PURIFY = '/static/vendor/dompurify-3.4.17/purify.es.mjs';
+const PURIFY = '/static/vendor/dompurify-3.5.0/purify.es.mjs';
 const TOO_SMALL = 0.62;
 const CACHE_CAP = 20 * 1024 * 1024;
 const DB_NAME = 'brain';

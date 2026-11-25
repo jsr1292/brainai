@@ -923,6 +923,11 @@ fn start_and_open(app: &AppHandle, page: &str, notice: Option<String>) -> Result
                 if app.state::<Running>().epoch.load(Ordering::SeqCst) != epoch {
                     return Ok(());
                 }
+                // A server that stopped because the brain is from a newer BrainAI says why (its log has both versions).
+                let code = app.state::<Running>().child.lock().unwrap().as_mut().and_then(|c| c.try_wait().ok().flatten()).and_then(|s| s.code());
+                if server::refused_newer_brain(code) {
+                    return Err(tr("err.schema_newer"));
+                }
                 return Err(tr("err.timeout"));
             }
         }

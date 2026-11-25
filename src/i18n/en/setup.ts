@@ -211,6 +211,7 @@ export const setup = {
   'setup.restore.found.another': 'Choose another folder',
   'setup.err.find.none': 'No saved copy was found in that folder. BrainAI looks for a brainai-saved-….tar.gz file or memory-YYYY-MM-DD.db backup files directly inside it.',
   'setup.err.find.invalid': 'The newest copy in that folder cannot be brought back: {why}',
+  'setup.err.find.several': 'This folder holds copies of more than one brain. Choose the brainai-… folder of the one you want: {why}',
   'setup.err.find.gone': 'No copy is chosen, or the choice has expired. Choose the folder again.',
   'setup.err.find.unreadable': 'BrainAI could not open that folder. Check that the drive is connected, or choose another folder.',
   'setup.err.find.changed': 'The copy changed since it was found. Choose the folder again.',

@@ -14,6 +14,8 @@ export const auth_es: Record<keyof typeof auth, Entry> = {
   'auth.window.title': 'Abre la ventana de BrainAI',
   'auth.window.tray': 'En {here}, BrainAI se abre en su propia ventana. Haz clic en su icono de la bandeja y elige Abrir.',
   'auth.window.menuBar': 'En {here}, BrainAI se abre en su propia ventana. Haz clic en su icono de la barra de menús y elige Abrir.',
+  'auth.waiting.fullTitle': 'Hay demasiados inicios de sesión esperando',
+  'auth.waiting.fullText': 'Hay demasiados inicios de sesión esperando. Aprueba o cierra algunos y vuelve a intentarlo.',
   'auth.expired.title': 'Solicitud caducada',
   'auth.expired.text': 'Esta solicitud ha caducado. Vuelve a iniciar la conexión desde la app.',
   'auth.consent.title': '¿Permitir el acceso?',

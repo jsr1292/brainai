@@ -210,6 +210,12 @@ const STATUS_SAME_TURN = (project: string, statusIds: string[]) =>
   ` If this finishes a step of work, ${statusIds.length === 0 ? `save or update project ${project}'s status`
     : statusIds.length === 1 ? `update project ${project}'s status (update_memory, id ${statusIds[0]})`
       : `update project ${project}'s status (update_memory, ids ${statusIds.join(', ')}: update the one for this work)`} and its roadmap in the same turn, before you answer the owner.`;
+/** Briefings and recall when two listed facts are close (may_conflict_with): the pair is ready for flag_disagreement. */
+const CLOSE_PAIRS = " Facts marked may_conflict_with are close to each other. If a pair can't both be true, call flag_disagreement in this turn and tell the owner in one line; if one replaces or repeats the other, update_memory with supersedes; if both are true, leave them.";
+/** At most this many close pairs are marked in one brief or recall. */
+const CLOSE_PAIRS_SHOWN = 3;
+/** A brief works out this many close pairs once, then marks the closest ones whose facts both stay in the brief. */
+const CLOSE_PAIRS_CANDIDATES = 10;
 /** Recall and briefings when a fact is in an open disagreement. */
 const NOT_SETTLED = ' Facts with disagrees_with are in a disagreement the owner has not settled yet: do not rely on either one without saying so.';
 const excerpt = (text: string) => (text.length > EXCERPT ? `${text.slice(0, EXCERPT - 1)}…` : text);
@@ -290,6 +296,17 @@ export function buildMcpServer(
     // Only writers get here (a read-only connection never saves), so every close fact is theirs to see.
     const close = service.closeFacts(saved.id, CLOSE_FACTS_SHOWN, true);
     return close.length === 0 ? { text: '', data: [] } : { text: CLOSE_FACTS, data: [{ close_facts: close.map((c) => ({ id: c.memory.id, excerpt: excerpt(c.memory.content) })) }] };
+  };
+  /** Close pairs among these current facts (writers only: a read-only connection cannot flag). */
+  const closePairsOf = (facts: Memory[], limit: number) => (readOnly ? [] : service.closePairs(facts, limit));
+  /** The marks and the lead sentence for these pairs (at most CLOSE_PAIRS_SHOWN). */
+  const closeMarks = (all: { a: string; b: string }[]) => {
+    const pairs = all.slice(0, CLOSE_PAIRS_SHOWN);
+    const mark = (m: Memory): { may_conflict_with?: string[] } => {
+      const others = pairs.filter((p) => p.a === m.id || p.b === m.id).map((p) => (p.a === m.id ? p.b : p.a));
+      return others.length > 0 ? { may_conflict_with: others } : {};
+    };
+    return { mark, text: pairs.length > 0 ? CLOSE_PAIRS : '' };
   };
   /** A fact as a result row: its fields, and its date and source when it has them. */
   const instructionMark = (m: Memory): { contains_instructions?: true } => (looksLikeInstruction(m.content) !== null ? { contains_instructions: true } : {});
@@ -486,7 +503,7 @@ export function buildMcpServer(
       until: timeArg,
       // Measured on LoCoMo with EmbeddingGemma (research 2026-11-10): a blind one-sentence guess took found first from
       // 57.0% to 60.2% and the top 8 from 86.6% to 88.9%, at one more reranker pass a search.
-      alt_queries: z.array(z.string()).max(2).optional().describe('Up to 2 other phrasings searched together with query. Usually send one: '
+      alt_queries: z.array(z.string()).max(20).optional().describe('Up to 2 other phrasings searched together with query (extra ones are ignored). Usually send one: '
         + 'one sentence written as the stored fact would read if it exists, a guess written without looking anything up '
         + '(for "what database does casa use?": "casa stores its data in SQLite"). Add an English version, with the project\'s real name instead of a nickname, '
         + 'when the question is in another language or uses a nickname. These phrasings only steer the search: they are never saved or shown.'),
@@ -520,15 +537,16 @@ export function buildMcpServer(
     // B6: no answer is hidden on the reranker's score (real and unrelated questions overlap); a low one is only said.
     const weak = results.length > 0 && best !== null && best < WEAK_SCORE;
     const mark = disagreeMarks();
+    const close = closeMarks(closePairsOf(results.filter((r) => !r.replaced).map((r) => r.memory), CLOSE_PAIRS_SHOWN));
     const rows = results.map((r) => {
       if (r.replaced) return { ...memJson(r.memory), ...replacedJson(r.memory) };
       const newer = service.newerStatus(r.memory);
-      return { ...memJson(r.memory), ...(newer ? { newer_status: { id: newer.id, updatedAt: newer.updatedAt, excerpt: excerpt(newer.content) } } : {}), ...replacesJson(r.memory), ...mark(r.memory), ...(r.inRange ? { in_range: true } : {}) };
+      return { ...memJson(r.memory), ...(newer ? { newer_status: { id: newer.id, updatedAt: newer.updatedAt, excerpt: excerpt(newer.content) } } : {}), ...replacesJson(r.memory), ...mark(r.memory), ...close.mark(r.memory), ...(r.inRange ? { in_range: true } : {}) };
     });
     const unsettled = rows.some((r) => 'disagrees_with' in r);
     // B10: how the time was read (dates only, never stored text), and the fall-back when given dates found too few facts.
     const timeLine = time.timeRange ? `time_range: ${JSON.stringify(time.timeRange)}\n${time.fellBack ? `${FELL_BACK}\n` : ''}` : '';
-    const facts = withData(`${timeLine}${weak ? WEAK_MATCH : ''}${saveNudge}${unsettled ? NOT_SETTLED : ''}`.trim(), rows);
+    const facts = withData(`${timeLine}${weak ? WEAK_MATCH : ''}${saveNudge}${unsettled ? NOT_SETTLED : ''}${close.text}`.trim(), rows);
     // Asking for one kind of fact asks for facts only.
     // The grant and the project filter are applied inside the search, before its limit.
     const sections = a.kind !== undefined ? [] : opts.pages.search(a.query, vector, PAGE_HITS, service.recallFloor(),
@@ -833,6 +851,8 @@ export function buildMcpServer(
     if (r.found) {
       const { project, roadmap, statuses, decisions, omitted, founding } = r.brief;
       const mark = disagreeMarks();
+      // Worked out once; each render marks only the pairs whose two facts both stay in the brief.
+      const closeCandidates = closePairsOf(decisions, CLOSE_PAIRS_CANDIDATES);
       const info = registry.get(project);
       const pg0 = pagesOf(project, true);
       // Open notes ask the assistant to act, so they come before pages; each one's text is cut.
@@ -852,8 +872,10 @@ export function buildMcpServer(
       const render = (fit: BriefFit): string => {
         const st = rows.statuses.map((x, i) => (fit.fullStatuses.has(i) ? x.full : cutRow(x.m, fit.excerptLen)));
         // The founding decisions (the first ones, when the middle were left out) are never longer than a short excerpt.
+        const droppedIds = new Set(rows.decisions.filter((x) => fit.dropped.has(x.i)).map((x) => x.m.id));
+        const close = closeMarks(closeCandidates.filter((p) => !droppedIds.has(p.a) && !droppedIds.has(p.b)));
         const de = rows.decisions.filter((x) => !fit.dropped.has(x.i))
-          .map((x) => (fit.fullDecisions.has(x.i) ? x.full : cutRow(x.m, x.i < founding ? Math.min(fit.excerptLen, BRIEF_EXCERPT_SHORT) : fit.excerptLen)));
+          .map((x) => ({ ...(fit.fullDecisions.has(x.i) ? x.full : cutRow(x.m, x.i < founding ? Math.min(fit.excerptLen, BRIEF_EXCERPT_SHORT) : fit.excerptLen)), ...close.mark(x.m) }));
         const cutSt = st.length - fit.fullStatuses.size;
         const cutDe = de.length - fit.fullDecisions.size;
         const pages = pg0.pages.slice(0, fit.pages), notes = allNotes.slice(0, fit.notes), others = handbookOthers.slice(0, fit.topics);
@@ -874,7 +896,7 @@ export function buildMcpServer(
           morePages > 0 ? `${morePages} more pages are not listed: list_pages.` : '',
           moreTopics > 0 ? `${moreTopics} more handbook topics from other projects are not listed; recall for them.` : '',
         ].filter((x) => x !== '').join(' ');
-        return (withData(`${BRIEFING(project, readOnly)}${allNotes.length > 0 ? NOTES_WAITING : ''}${flagLead(pg0)}${said === '' ? '' : ` ${said}`} ${saveNudge}`.trimEnd(), {
+        return (withData(`${BRIEFING(project, readOnly)}${close.text}${allNotes.length > 0 ? NOTES_WAITING : ''}${flagLead(pg0)}${said === '' ? '' : ` ${said}`} ${saveNudge}`.trimEnd(), {
           roadmap: roadmap ? { ...memJson(roadmap), ...keysJson(roadmap) } : null, statuses: st, decisions: de, omitted,
           ...(Object.keys(shortened).length > 0 ? { shortened } : {}),
           project_info: info ? projectInfoJson(info, service.isQuiet(project)) : null, ...healthJsonOnce, pages, open_notes: notes,

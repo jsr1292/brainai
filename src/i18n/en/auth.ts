@@ -11,6 +11,8 @@ export const auth = {
   'auth.window.title': "Open BrainAI's window",
   'auth.window.tray': 'On {here}, BrainAI opens in its own window. Click its icon in the tray and choose Open.',
   'auth.window.menuBar': 'On {here}, BrainAI opens in its own window. Click its icon in the menu bar and choose Open.',
+  'auth.waiting.fullTitle': 'Too many sign-ins are waiting',
+  'auth.waiting.fullText': 'Too many sign-ins are waiting. Approve or close some, then try again.',
   'auth.expired.title': 'Request expired',
   'auth.expired.text': 'This request expired. Start the connection again from the app.',
   'auth.consent.title': 'Allow access?',

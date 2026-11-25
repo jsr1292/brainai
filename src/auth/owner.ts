@@ -50,11 +50,12 @@ export class OwnerAuth {
     try { return await verify(h, pw); } catch { return false; }
   }
 
-  setTotpSecret(secretB32: string): void {
+  /** `usedStep`: the 30-second step of the code that confirmed this secret, so that same code cannot sign in again. */
+  setTotpSecret(secretB32: string, usedStep: number | null = null): void {
     this.db.prepare(
-      `INSERT INTO owner(id, totp_secret, totp_last_step) VALUES(1, ?, NULL)
-       ON CONFLICT(id) DO UPDATE SET totp_secret = excluded.totp_secret, totp_last_step = NULL`,
-    ).run(secretB32);
+      `INSERT INTO owner(id, totp_secret, totp_last_step) VALUES(1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET totp_secret = excluded.totp_secret, totp_last_step = excluded.totp_last_step`,
+    ).run(secretB32, usedStep);
     this.forgetSignIns();
   }
 

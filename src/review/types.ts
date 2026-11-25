@@ -13,7 +13,10 @@ export interface ProjectWeek {
   /** The name at build time. */
   project: string;
   /** Done steps dated inside the week, in date order. */
-  done: { text: string; date: string }[];
+  /** `source`: the roadmap fact the line came from, so a reader's access is checked against where that fact is now (weeks stored before it have none). */
+  done: { text: string; date: string; source?: string }[];
+  /** The roadmap fact the progress line, waiting items and next step came from (weeks stored before it have none). */
+  roadmap?: string;
   progress: { now: string; from: number | null; to: number; total: number } | null;
   /** Page ids saved this week. */
   pages: string[];

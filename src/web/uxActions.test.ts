@@ -109,6 +109,16 @@ test('backup ✓ and ✗ come with words for a screen reader', () => {
   assert.match(ok, /x\/ <span aria-hidden="true">✗<\/span>|<span class="visually-hidden">skipped<\/span>/, 'a skipped copy reads skipped');
 });
 
+test('the backups panel shows the last restore drill with its copy name, and nothing when none was recorded', () => {
+  const base = { nightly: { at: '2026-10-18T03:00:00Z', ok: true }, offsite: { at: '2026-10-18T03:00:00Z', ok: true, where: 'gdrive:memory-backups' } };
+  const none = backupsPanel({ status: base as any, health: { ok: true, problems: [] }, offsite: true }).value;
+  assert.doesNotMatch(none, /Restore drill/);
+  const shown = backupsPanel({ status: { ...base, drill: { date: '2026-10-19T10:00:00Z', copy: 'memory-2026-10-18.tar.gz.age', result: 'pass' } } as any, health: { ok: true, problems: [] }, offsite: true }).value;
+  assert.match(shown, /Restore drill[\s\S]*memory-2026-10-18\.tar\.gz\.age[\s\S]*visually-hidden">The restore drill passed/);
+  const failed = backupsPanel({ status: { ...base, drill: { date: '2026-10-19T10:00:00Z', copy: 'c.age', result: 'fail' } } as any, health: { ok: true, problems: [] }, offsite: true }).value;
+  assert.match(failed, /place bad">c\.age[\s\S]*visually-hidden">The restore drill failed/);
+});
+
 const MONDAY = '2026-10-26';
 test('Not now on the week card comes back home with a line and Undo; Undo shows the card again', async (t) => {
   const app = await startTestApp({ startAt: new Date('2026-10-18T08:00:00Z') });

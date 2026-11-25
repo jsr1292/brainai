@@ -3,7 +3,7 @@
  * dashboard (no terminal), then the switch for the public address (Task 3).
  */
 import { Router, type Request, type Response } from 'express';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import QRCode from 'qrcode';
@@ -16,7 +16,7 @@ import { t } from '../i18n/core.js';
 import { tHtml } from '../i18n/tHtml.js';
 import { viaDoor } from '../desktop/publicDoor.js';
 import { reachPage, reachSwitch, tailscaleBox } from './reachViews.js';
-import { funnelOff, funnelOffSync, funnelOn, tailscaleState, type TailscaleEnv } from '../desktop/tailscale.js';
+import { funnelOff, funnelOffSync, funnelOn, funnelPointsAt, tailscaleState, type TailscaleEnv } from '../desktop/tailscale.js';
 import { cloudflaredState, prepareTunnel, startSignIn, stopLeftover, TunnelRunner, validHostname, type CloudflaredEnv, type SignInRun } from '../desktop/cloudflared.js';
 
 const PENDING_MS = 10 * 60_000;
@@ -62,12 +62,71 @@ export async function answersAt(url: URL, waitMs = 60_000): Promise<boolean> {
 /** A Turn off whose `funnel off` failed leaves this file: the next start asks Tailscale again until it confirms. */
 const pendingOff = (d: AppDeps) => (d.statusDir ? join(d.statusDir, 'funnel-off-pending') : null);
 
+/**
+ * The door port Funnel was last pointed at (`<data>/funnel-on`), written before Funnel is turned on and forgotten when
+ * Tailscale confirms it is off. It survives a hard kill (a crash, kill -9, Task Manager), which no exit handler sees:
+ * the next start reads it to turn a Funnel that was left behind off, or to remove the mapping of an earlier port,
+ * so whatever listens on that port next is never public. Only the CLI calls Reach already makes are used, and none of
+ * them can list what Funnel points at, so this file is the memory of it.
+ */
+const funnelMark = (d: AppDeps) => (d.statusDir ? join(d.statusDir, 'funnel-on') : null);
+function markFunnelOn(d: AppDeps, port: number): void {
+  const f = funnelMark(d);
+  if (f) { try { writeFileSync(f, `${port}\n`); } catch { /* nowhere to say it: the next start's own checks still run */ } }
+}
+function unmarkFunnelOn(d: AppDeps): void {
+  const f = funnelMark(d);
+  if (f) rmSync(f, { force: true });
+}
+/** The port in the mark; `true` when a mark exists but its port cannot be read; null without one. */
+function markedPort(d: AppDeps): number | true | null {
+  const f = funnelMark(d);
+  if (!f || !existsSync(f)) return null;
+  try {
+    const n = Number(readFileSync(f, 'utf8').trim());
+    return Number.isInteger(n) && n > 0 && n < 65536 ? n : true;
+  } catch { return true; }
+}
+
 /** Asks Tailscale to stop sharing; a failure is remembered (the marker), a confirmation forgets it. */
-async function funnelOffRemembered(d: AppDeps): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const r = await funnelOff(tailscaleEnv(d));
+async function funnelOffRemembered(d: AppDeps, env: TailscaleEnv = tailscaleEnv(d)): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const r = await funnelOff(env);
   const marker = pendingOff(d);
   if (marker) { if (r.ok) rmSync(marker, { force: true }); else writeFileSync(marker, ''); }
+  if (r.ok) unmarkFunnelOn(d);
   return r;
+}
+
+/** A short limit for the start-up and Remove checks: Tailscale may be installed but not running. */
+const quickEnv = (d: AppDeps): TailscaleEnv => ({ ...tailscaleEnv(d), timeoutMs: tailscaleEnv(d).statusTimeoutMs ?? 10_000 });
+
+/**
+ * Turns off a Funnel BrainAI left behind, but only one that is BrainAI's: `funnel off` clears everything shared on 443,
+ * the owner's own Funnel included, so the mark's port is checked against `tailscale serve status` first. A share that
+ * is not BrainAI's (or none) only drops the mark. Not sure (Tailscale not running or not answering): nothing is
+ * changed, the marks stay and the next start asks again. A failed Turn off (the pending marker) with no mark to check is
+ * asked again as it always was.
+ */
+export async function leftoverFunnelOff(d: AppDeps, env: TailscaleEnv = quickEnv(d)): Promise<{ ok: true; did: 'off' | 'dropped' | 'nothing' } | { ok: false; reason: string }> {
+  const port = markedPort(d);
+  const marker = pendingOff(d);
+  const pending = !!marker && existsSync(marker);
+  if (port === null && !pending) return { ok: true, did: 'nothing' };
+  if (typeof port === 'number') {
+    const at = await funnelPointsAt(env, port);
+    if (at.at === 'unknown') return { ok: false, reason: at.reason };
+    if (at.at !== 'ours') {
+      unmarkFunnelOn(d);
+      if (marker) rmSync(marker, { force: true });
+      return { ok: true, did: 'dropped' };
+    }
+  } else {
+    // A mark nobody can read says nothing about what Tailscale shares: it is dropped, and only a failed Turn off (the pending marker) still asks Tailscale to stop.
+    if (port === true) unmarkFunnelOn(d);
+    if (!pending) return { ok: true, did: 'dropped' };
+  }
+  const r = await funnelOffRemembered(d, env);
+  return r.ok ? { ok: true, did: 'off' } : r;
 }
 
 /**
@@ -78,7 +137,7 @@ async function funnelOffRemembered(d: AppDeps): Promise<{ ok: true } | { ok: fal
  */
 const gates = new WeakMap<AppDeps, { chain: Promise<unknown>; gen: number; waiting: boolean; reason: string | null }>();
 const gateOf = (d: AppDeps) => { let g = gates.get(d); if (!g) { g = { chain: Promise.resolve(), gen: 0, waiting: false, reason: null }; gates.set(d, g); } return g; };
-function locked<T>(d: AppDeps, fn: () => Promise<T>): Promise<T> {
+export function locked<T>(d: AppDeps, fn: () => Promise<T>): Promise<T> {
   const g = gateOf(d);
   const run = g.chain.then(fn, fn);
   g.chain = run.catch(() => {});
@@ -122,7 +181,8 @@ export function reachRoutes(d: AppDeps): Router {
     gateOf(d).gen++;
     stopRetry();
     runner?.stop();
-    if (!windows && d.reach?.saved() && d.reach.via() === 'tailscale' && !funnelOffSync(ts)) {
+    if (!windows && d.reach?.saved() && d.reach.via() === 'tailscale' && funnelOffSync(ts)) unmarkFunnelOn(d);
+    else if (!windows && d.reach?.saved() && d.reach.via() === 'tailscale') {
       // Tailscale did not confirm within the 3 seconds (slow, hung, or not answering): the share may still point at the door's
       // port, which another program could take. Leave the marker so the next start turns it off first (it exists for
       // the same case in Turn off). Synchronous: this runs in process 'exit'.
@@ -134,7 +194,10 @@ export function reachRoutes(d: AppDeps): Router {
   // Reach from phone and web is Mac-only in D6: on Windows nothing here runs tailscale or cloudflared.
   const windows = (d.tools?.platform ?? process.platform) === 'win32';
   const macOnly = (_req: Request, res: Response, next: () => void) => (windows ? back(res, () => t('setup.reach.noWindows')) : next());
-  let pending: { secret: string; until: number } | null = null;
+  // One pending authenticator per signed-in session: another session's QR code and secret are not shared.
+  const pendingBy = new Map<string, { secret: string; until: number }>();
+  // Keyed by a hash of the session token (the token itself is never kept here); no cookie, no key.
+  const sid = (req: Request): string => { const c = readCookie(req, SESSION_COOKIE); return c ? createHash('sha256').update(c).digest('hex') : ''; };
   // The last result, shown once on the page: kept here, never taken from the URL. A function is worked out when the page is drawn, in the owner's language.
   let said: string | (() => string) | null = null;
 
@@ -148,9 +211,10 @@ export function reachRoutes(d: AppDeps): Router {
   };
   const back = (res: Response, text: string | (() => string) | null) => { said = text; res.redirect(303, '/settings/reach'); };
 
-  router.get('/settings/reach', owner, async (_req, res) => {
+  router.get('/settings/reach', owner, async (req, res) => {
     const now = d.now().getTime();
-    if (pending && pending.until < now) pending = null;
+    let pending = pendingBy.get(sid(req)) ?? null;
+    if (pending && pending.until < now) { pendingBy.delete(sid(req)); pending = null; }
     const view = {
       said: typeof said === 'function' ? said() : said, hasPassword: d.owner.hasPassword(), hasAuthenticator: d.owner.isConfigured(),
       pending: pending ? { secret: pending.secret, svg: await QRCode.toString(otpauthUri(pending.secret, 'owner'), { type: 'svg', margin: 1 }) } : null,
@@ -190,7 +254,16 @@ export function reachRoutes(d: AppDeps): Router {
     const door = d.door;
     // An earlier Turn off that Tailscale did not confirm: ask again until it does (Reach is not on through Tailscale).
     const marker = pendingOff(d);
-    if (marker && existsSync(marker) && !(reach?.saved() && reach.via() === 'tailscale')) await locked(d, () => funnelOffRemembered(d));
+    // Reconcile after a hard kill: Funnel may still point at the door's old port. Tailscale may not be running (each
+    // call can take its whole time limit), so the limit is short, the start never waits for this, and the result is logged.
+    const quick = quickEnv(d);
+    const shouldBeOn = !!reach?.url() && reach.via() === 'tailscale';
+    if (!shouldBeOn) {
+      const r = await locked(d, () => leftoverFunnelOff(d, quick));
+      if (!r.ok) console.log(`Reach is off but BrainAI could not confirm that Tailscale stopped sharing (${r.reason}); it will check again at the next start.`);
+      else if (r.did === 'off') console.log('Reach is off: the Tailscale share BrainAI left behind was turned off.');
+      else if (r.did === 'dropped') console.log('Reach is off: Tailscale shares nothing of BrainAI\'s, so nothing was changed.');
+    }
     if (!reach || !door || !reach.url()) return;
     if (reach.via() === 'cloudflare') {
       const dir = d.statusDir;
@@ -209,6 +282,13 @@ export function reachRoutes(d: AppDeps): Router {
       try { port = await door.open(saved); } catch { /* taken by another program: a new door below */ }
     }
     if (port === null) port = await door.open();
+    // The door moved since Funnel was last pointed (its old port was taken): remove the old mapping first, so that
+    // whatever listens on the old port is not public while this waits for Tailscale; the share below replaces it anyway.
+    const was = markedPort(d);
+    if (reach.via() === 'tailscale' && was !== null && was !== port) {
+      const r = await locked(d, () => leftoverFunnelOff(d, quick));
+      console.log(r.ok ? `The door moved to port ${port}: the old Tailscale share (${r.did === 'off' ? 'removed' : 'none of BrainAI\'s found'}).` : `The door moved to port ${port}, but BrainAI could not confirm the old Tailscale share is gone (${r.reason}); sharing again at the new port.`);
+    }
     // Funnel was turned off when BrainAI stopped: share the door again, at every start.
     await shareAgain(port, 0, gateOf(d).gen);
   };
@@ -224,7 +304,7 @@ export function reachRoutes(d: AppDeps): Router {
     if (g.gen !== gen || !reach.saved() || reach.via() !== 'tailscale') return;
     // Waiting from the first try on: it can last two 30-second Tailscale timeouts, and Funnel is not on until it succeeds.
     g.waiting = true;
-    const on = await funnelOn(ts, port);
+    const on = await funnelOn(ts, port, { before: () => markFunnelOn(d, port), rolledBack: () => unmarkFunnelOn(d) });
     if (g.gen !== gen) { if (on.ok) await funnelOffRemembered(d); return; }
     if (on.ok) {
       const m = pendingOff(d);
@@ -251,9 +331,11 @@ export function reachRoutes(d: AppDeps): Router {
     retry.unref();
   });
   if (d.reach) {
-    d.reach.ready = resume().catch((e: unknown) => {
+    d.reach.ready = resume().catch(async (e: unknown) => {
       console.error('bringing Reach back failed:', e);
       d.reach?.set(null);
+      // The door could not be opened: a Funnel left at the old port must not stay.
+      await locked(d, () => leftoverFunnelOff(d)).catch(() => {});
       said = () => t('setup.reach.noDoor');
     });
   }
@@ -274,19 +356,25 @@ export function reachRoutes(d: AppDeps): Router {
     if (!d.owner.hasPassword()) return back(res, () => t('setup.reach.pwFirst'));
     if (d.owner.isConfigured()) return back(res, () => t('setup.reach.authAlreadySet'));
     if (!(await d.owner.verifyPassword(field(req, 'current')))) return back(res, () => t('setup.reach.pwWrong'));
-    pending = { secret: generateTotpSecret(), until: d.now().getTime() + PENDING_MS };
+    const key = sid(req);
+    if (key === '') return back(res, null);
+    const now = d.now().getTime();
+    for (const [k, v] of pendingBy) if (v.until < now) pendingBy.delete(k);
+    pendingBy.set(key, { secret: generateTotpSecret(), until: now + PENDING_MS });
     back(res, null);
   });
 
   router.post('/settings/reach/authenticator/confirm', owner, (req, res) => {
     const now = d.now().getTime();
-    if (!pending || pending.until < now) { pending = null; return back(res, () => t('setup.reach.qrExpired')); }
+    const pending = sid(req) === '' ? undefined : pendingBy.get(sid(req));
+    if (!pending || pending.until < now) { pendingBy.delete(sid(req)); return back(res, () => t('setup.reach.qrExpired')); }
     const code = field(req, 'code').trim();
     const step = Math.floor(now / 30_000);
-    if (![step - 1, step, step + 1].some((s) => same(totpAt(pending!.secret, s), code))) return back(res, () => t('setup.reach.codeWrong'));
-    if (d.owner.isConfigured()) { pending = null; return back(res, () => t('setup.reach.authAlreadySet')); }
-    d.owner.setTotpSecret(pending.secret);
-    pending = null;
+    const used = [step - 1, step, step + 1].filter((s) => same(totpAt(pending!.secret, s), code)).pop();
+    if (used === undefined) return back(res, () => t('setup.reach.codeWrong'));
+    if (d.owner.isConfigured()) { pendingBy.clear(); return back(res, () => t('setup.reach.authAlreadySet')); }
+    d.owner.setTotpSecret(pending.secret, used);
+    pendingBy.clear();
     keepSignedIn(req, res);
     back(res, () => t('setup.reach.authAdded'));
   });
@@ -300,7 +388,7 @@ export function reachRoutes(d: AppDeps): Router {
     gate.waiting = false;
     await locked(d, async () => {
       const door = await doorOf.open();
-      const r = await funnelOn(ts, door);
+      const r = await funnelOn(ts, door, { before: () => markFunnelOn(d, door), rolledBack: () => unmarkFunnelOn(d) });
       if (!r.ok) { if (!reach.url()) doorOf.close(); return back(res, r.reason); }
       const m = pendingOff(d);
       if (m) rmSync(m, { force: true });

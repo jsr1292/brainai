@@ -533,10 +533,11 @@ test('the separator dot belongs to each part and is clipped at a line start; no 
   for (const r of rules) for (const s of r.selectors) if (/\bli(\s*\+\s*li|:first-child|:last-child)/.test(s)) assert.match(s, />\s*li/, `descendant list rule: ${s}`);
 });
 
-test('a meta part and a chip cannot widen the page', () => {
-  assert.equal(prop('.meta-line > li', 'white-space'), 'nowrap');
+test('a meta part and a chip cannot widen the page (a long part wraps; one-line card rows keep their ellipsis)', () => {
   assert.equal(prop('.meta-line > li', 'max-width'), '100%');
-  assert.equal(prop('.meta-line > li', 'text-overflow'), 'ellipsis');
+  assert.equal(prop('.meta-line > li', 'overflow-wrap'), 'break-word');
+  assert.equal(prop('.pcard-foot .meta-line > li', 'white-space'), 'nowrap');
+  assert.equal(prop('.pcard-foot .meta-line > li', 'text-overflow'), 'ellipsis');
   assert.equal(prop('.chip', 'max-width'), '100%'); assert.equal(prop('.chip', 'text-overflow'), 'ellipsis');
 });
 

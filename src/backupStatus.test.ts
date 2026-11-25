@@ -67,3 +67,17 @@ test('missing pictures in last night\'s check make the backup need a look (audit
   assert.deepEqual(h.problems, ['2 pictures the database lists are missing from the brain\'s folder.']);
   assert.equal(backupHealth({ nightly: { ...ok, pictures: { missing: 0, stray: 3 } }, offsite: { at: '2026-10-19T02:15:00Z', ok: true, where: 'gdrive:memory-backups' } }, now).ok, true);
 });
+
+test('the restore drill file is read when valid and ignored when broken or unfinished', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'bstatus-drill-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const drill = { date: '2026-11-20T10:00:00Z', copy: 'memory-2026-11-16.tar.gz.age', result: 'pass' };
+  writeFileSync(join(dir, 'offsite-drill.json'), JSON.stringify(drill));
+  assert.deepEqual(readBackupStatus(dir), { drill });
+  writeFileSync(join(dir, 'offsite-drill.json'), JSON.stringify({ date: 'x', copy: 'y', result: 'maybe' }));
+  assert.deepEqual(readBackupStatus(dir), {});
+  writeFileSync(join(dir, 'offsite-drill.json'), JSON.stringify({ date: 'last tuesday', copy: 'y', result: 'pass' }));
+  assert.deepEqual(readBackupStatus(dir), {}, 'a date that does not parse would break the panel');
+  writeFileSync(join(dir, 'offsite-drill.json'), 'not json');
+  assert.deepEqual(readBackupStatus(dir), {});
+});

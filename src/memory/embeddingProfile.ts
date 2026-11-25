@@ -21,6 +21,12 @@ export interface EmbeddingProfile {
   /** A save's close facts (same project and kind, below duplicate): fact-to-fact pairs at or above this. */
   closeFacts: number;
   /**
+   * The close facts actually listed after a save (the nudge), and the close pairs a brief or recall marks: at or above
+   * this. A fixed value: unlike the old 40% rule it does not move with a DUPLICATE_THRESHOLD lowered in .env, so keep it
+   * below that threshold if you lower it.
+   */
+  closeNudge: number;
+  /**
    * Forgetting that sticks: a save this far below `duplicate` still matches an owner-deleted fact when it keeps all of that
    * fact's numbers (a time, a port). 0 = only duplicates match.
    */
@@ -46,6 +52,7 @@ export interface EmbeddingProfile {
  *   questions (found first 79% → 85%, top 8 94% → 100%) and confirmed on 20 held-out ones.
  * - confident 0.86: just above the highest unrelated query, so filler never keeps an outdated fact off the stale list.
  * - closeFacts 0.86: the same value, used for a save's close facts before it had its own setting.
+ * - closeNudge 0.89: 40% of the way from closeFacts to duplicate (0.888), the rule both models used before each had its own.
  * - sameProject 0.88: on a real brain one project split in two scored 0.907, related but separate projects 0.897 and
  *   0.906 (accepted: one click on "Different projects"), all others 0.86 or less.
  * - related 0.88: a project's own decisions scored 0.89–0.93 against its page, unrelated projects' up to 0.863
@@ -60,7 +67,7 @@ export interface EmbeddingProfile {
  */
 export const E5_PROFILE: EmbeddingProfile = {
   id: 'e5', dim: 384,
-  duplicate: 0.93, minRecall: 0.75, window: 0.015, confident: 0.86, closeFacts: 0.86, deletedMargin: 0.03,
+  duplicate: 0.93, minRecall: 0.75, window: 0.015, confident: 0.86, closeFacts: 0.86, closeNudge: 0.89, deletedMargin: 0.03,
   sameProject: 0.88, related: 0.88, threadFloor: 0.87,
   keywordWeight: 0.5, rerankPrior: 0,
 };
@@ -83,6 +90,10 @@ export const E5_PROFILE: EmbeddingProfile = {
  *   cut-off 0.86).
  * - closeFacts 0.48: e5 used its confident level (0.86) here too, which put 54% of same-project, same-kind fact pairs
  *   in the close band; that share falls at 0.484 under Gemma (Gemma's 0.35 would have flagged nearly every pair).
+ * - closeNudge 0.65 (2026-11-25): on 276 labelled same-project fact pairs (seeded behaviour brain plus a conflicting, a
+ *   reworded and a same-topic variant of each fact), the conflicts that a save can meet (below duplicate) were listed
+ *   with precision 0.48 and recall 0.79 at 0.65, against 0.22 and 0.86 at the old 0.60; same-topic pairs listed fell
+ *   from 18% to 5%. Reworded copies all score 0.84 and up, so the duplicate check catches them before this applies.
  * - sameProject 0.54: the two models order project pairs a little differently, so this keeps e5's number of offers
  *   (17 of 703 pairs; 15 of them the same pairs).
  * - related 0.46: the share of page × decision pairs at e5's 0.88 (8.2%) falls at 0.460.
@@ -91,7 +102,7 @@ export const E5_PROFILE: EmbeddingProfile = {
  */
 export const GEMMA_PROFILE: EmbeddingProfile = {
   id: 'gemma', dim: 768,
-  duplicate: 0.78, minRecall: 0.3, window: undefined, confident: 0.35, closeFacts: 0.48, deletedMargin: 0,
+  duplicate: 0.78, minRecall: 0.3, window: undefined, confident: 0.35, closeFacts: 0.48, closeNudge: 0.65, deletedMargin: 0,
   sameProject: 0.54, related: 0.46, threadFloor: 0.52,
   keywordWeight: 0, rerankPrior: 1,
 };

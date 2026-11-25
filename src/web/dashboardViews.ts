@@ -161,6 +161,7 @@ export function backupsPanel(b: { status: BackupStatus; health: { ok: boolean; p
   <ul class="backup-runs">
     ${run(t('inbox.settings.nightly'), nightly, nightlyPlaces)}
     ${b.offsite ? run(t('inbox.settings.offsite'), offsite, offsitePlaces) : ''}
+    ${b.offsite && b.status.drill ? html`<li><span class="label-inline">${t('inbox.settings.drill')}</span> ${when(b.status.drill.date)} <span class="place${b.status.drill.result === 'pass' ? '' : ' bad'}">${b.status.drill.copy} <span aria-hidden="true">${b.status.drill.result === 'pass' ? '✓' : '✗'}</span><span class="visually-hidden">${t(b.status.drill.result === 'pass' ? 'inbox.settings.drill.pass' : 'inbox.settings.drill.fail')}</span></span></li>` : ''}
     ${b.jobs ? html`${job(t('inbox.settings.gitCopy'), b.status.git)}${job(t('inbox.settings.mdExport'), b.status.export)}` : ''}
   </ul>
   ${nightly?.counts ? html`<p class="meta">${t('inbox.settings.lastBackup', { facts: t('inbox.facts.nFacts', { count: nightly.counts.facts }), pages: t('inbox.facts.nPages', { count: nightly.counts.pages }) })}</p>` : ''}

@@ -1,0 +1,3 @@
+// Preloaded by `npm test` (node --import): when git runs a hook (pre-push from a linked worktree) it exports GIT_DIR,
+// GIT_WORK_TREE and friends, and every test that runs git in a temp folder would then act on the real worktree instead.
+for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_COMMON_DIR', 'GIT_PREFIX', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_QUARANTINE_PATH', 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_SHALLOW_FILE', 'GIT_GRAFT_FILE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_REPLACE_REF_BASE']) delete process.env[k];

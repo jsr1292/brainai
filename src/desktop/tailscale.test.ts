@@ -77,3 +77,38 @@ test('the status check the page shows has its own short limit, while Turn on kee
   assert.equal(r.ok, false);
   assert.ok(on.f.calls().length >= 1);
 });
+
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { funnelPointsAt } from './tailscale.js';
+
+/** A `tailscale` that answers `serve status --json` with exactly this text and exit code. */
+function serving(t: TestContext, out: string, code = 0): TailscaleEnv {
+  const root = mkdtempSync(join(tmpdir(), 'brainai-ts-serve-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'bin'));
+  writeFileSync(join(root, 'out.txt'), out);
+  writeFileSync(join(root, 'bin', 'tailscale'), `#!/bin/sh\ncat "${join(root, 'out.txt')}"\nexit ${code}\n`);
+  chmodSync(join(root, 'bin', 'tailscale'), 0o755);
+  return { home: root, path: `${join(root, 'bin')}:/usr/bin:/bin`, appPath: '/nonexistent/Tailscale' };
+}
+const shape = (handlers: Record<string, { Proxy: string }>, host = 'mac.tail1234.ts.net:443') =>
+  JSON.stringify({ TCP: { [host.split(':')[1]!]: { HTTPS: true } }, Web: { [host]: { Handlers: handlers } }, AllowFunnel: { [host]: true } });
+
+test('funnelPointsAt says "ours" only when 443 has the single path "/" going to this loopback port', async (t) => {
+  const at = async (out: string, code = 0, port = 3100) => (await funnelPointsAt(serving(t, out, code), port)).at;
+  assert.equal(await at(shape({ '/': { Proxy: 'http://127.0.0.1:3100' } })), 'ours', 'the real shape, with AllowFunnel');
+  assert.equal(await at(shape({ '/': { Proxy: 'http://127.0.0.1:3100/' } })), 'ours', 'trailing slash');
+  assert.equal(await at(shape({ '/': { Proxy: 'http://localhost:3100' } })), 'ours', 'localhost');
+  assert.equal(await at(shape({ '/': { Proxy: 'http://127.0.0.1:3101' } })), 'other', 'another port');
+  assert.equal(await at(shape({ '/': { Proxy: 'http://127.0.0.1:31000' } })), 'other', 'a port that starts with ours');
+  assert.equal(await at(shape({ '/': { Proxy: 'http://127.0.0.1:3100' }, '/photos': { Proxy: 'http://127.0.0.1:9000' } })), 'other', "the owner's other paths would go too");
+  assert.equal(await at(shape({ '/': { Proxy: 'http://127.0.0.1:3100' } }, 'mac.tail1234.ts.net:8443')), 'none', 'only :8443');
+  assert.equal(await at('{}'), 'none');
+  assert.equal(await at(''), 'none');
+  assert.equal(await at('null'), 'none', 'older versions print null');
+  assert.equal(await at('[1]'), 'none');
+  assert.equal(await at('this is not json'), 'unknown');
+  assert.equal(await at('', 1), 'unknown', 'a non-zero exit');
+});

@@ -247,6 +247,18 @@ export class MemoryOAuthProvider implements OAuthServerProvider {
     return url.href;
   }
 
+  /** Drops the sign-in requests still waiting for a decision from clients whose name starts with this (a tool was disconnected). Returns how many. */
+  cancelPendingFor(namePrefix: string): number {
+    const want = namePrefix.toLowerCase();
+    const rows = this.db.prepare('SELECT id, client_id FROM oauth_pending WHERE expires_at > ?').all(this.iso()) as { id: string; client_id: string }[];
+    let n = 0;
+    for (const r of rows) {
+      if (!this.clients.clientName(r.client_id).toLowerCase().startsWith(want)) continue;
+      n += this.db.prepare('DELETE FROM oauth_pending WHERE id = ?').run(r.id).changes;
+    }
+    return n;
+  }
+
   denyPending(id: string): string {
     const pending = this.pendingRow(id);
     const deleted = this.db.prepare('DELETE FROM oauth_pending WHERE id = ?').run(id);

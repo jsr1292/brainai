@@ -1,8 +1,7 @@
 # Not Alpine: onnxruntime-node needs glibc.
 #
-# `npm ci --ignore-scripts`: better-sqlite3 ships prebuilt binaries, but the npm
-# bundled in the node image still runs `node-gyp rebuild` for it (it has a
-# binding.gyp) and fails without a compiler toolchain. Nothing here needs install scripts.
+# `npm ci --ignore-scripts`: better-sqlite3 has no install script and ships prebuilt binaries, so
+# nothing here needs install scripts, and the build needs no compiler toolchain.
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./

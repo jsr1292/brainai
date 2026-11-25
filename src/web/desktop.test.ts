@@ -77,6 +77,23 @@ test('Settings › Tools on this Mac lists the tools and connects and disconnect
   assert.deepEqual(f.servers('claude'), {});
 });
 
+test('Disconnect also cancels a sign-in that tool still has waiting for approval', async (t) => {
+  const { app } = await start(t);
+  const settings = await openPage(app.baseUrl, '/settings');
+  const callback = 'http://localhost:9999/callback';
+  const reg = await fetch(app.baseUrl + '/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uris: [callback], client_name: 'Claude Code', token_endpoint_auth_method: 'none' }) });
+  const { client_id: clientId } = await reg.json() as { client_id: string };
+  const auth = await fetch(app.baseUrl + '/authorize?' + new URLSearchParams({ response_type: 'code', client_id: clientId, redirect_uri: callback, code_challenge: createHash('sha256').update('x').digest('base64url'), code_challenge_method: 'S256', state: 's', resource: `${app.baseUrl}/mcp` }), { redirect: 'manual' });
+  const consent = auth.headers.get('location')!;
+  await fetch(app.baseUrl + consent);
+  assert.deepEqual(await (await fetch(`${app.baseUrl}${consent}/wait`)).json(), { state: 'pending' });
+  assert.equal((await post(app.baseUrl, '/settings/tools/claude-code/connect', settings.cookie)).status, 303);
+  assert.equal((await post(app.baseUrl, '/settings/tools/claude-code/disconnect', settings.cookie)).status, 303);
+  assert.deepEqual(await (await fetch(`${app.baseUrl}${consent}/wait`)).json(), { state: 'gone' });
+  const approve = await post(app.baseUrl, consent, settings.cookie, { decision: 'approve' });
+  assert.equal(approve.status, 404, 'it can no longer be approved');
+});
+
 test('Connect on Codex allows its sign-in site (chatgpt.com), so its sign-in is not refused as an unknown client', async (t) => {
   const { app } = await start(t);
   const { cookie } = await openPage(app.baseUrl, '/settings');

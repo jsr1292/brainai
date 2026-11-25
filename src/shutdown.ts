@@ -1,7 +1,9 @@
 import type { Server } from 'node:http';
 
 /** Connections still open this long after a signal are cut, well inside Docker's 10 s stop timeout. */
-const FORCE_CLOSE_MS = 5000;
+const FORCE_CLOSE_MS = 4000;
+/** The whole stop, from the signal: well inside the desktop shell's 7 s grace and Docker's 10 s. */
+const DEADLINE_MS = 5000;
 
 /**
  * On SIGTERM or SIGINT: stop accepting connections, stop the cleanup timer, let open requests finish,
@@ -13,6 +15,10 @@ export function installShutdown(o: {
   also?: Server[];
   timer: NodeJS.Timeout;
   db: { close(): void };
+  /** Resolves when work that must not be cut short (a backup) has ended, or a few seconds have passed. */
+  waitIdle?: () => Promise<void>;
+  /** Test seam: the whole-stop deadline. */
+  deadlineMs?: number;
   proc?: Pick<NodeJS.EventEmitter, 'on'>;
   exit?: (code: number) => void;
 }): void {
@@ -22,11 +28,15 @@ export function installShutdown(o: {
     if (stopping) return;
     stopping = true;
     clearInterval(o.timer);
+    // The desktop shell gives a stop about 7 s: closing the server and waiting for a running backup share ONE deadline
+    // counted from the signal, and the database closes after both, or when the deadline passes.
+    const idle = (o.waitIdle?.() ?? Promise.resolve()).catch(() => {});
+    const closed = new Promise<void>((resolve) => { o.server.close(() => resolve()); });
+    let finished = false;
+    const finish = () => { if (finished) return; finished = true; try { o.db.close(); } catch { /* exiting anyway */ } exit(0); };
+    setTimeout(finish, o.deadlineMs ?? DEADLINE_MS).unref();
+    void Promise.all([closed, idle]).then(finish);
     for (const s of o.also ?? []) { s.close(); s.closeAllConnections(); }
-    o.server.close(() => {
-      o.db.close();
-      exit(0);
-    });
     o.server.closeIdleConnections();
     setTimeout(() => o.server.closeAllConnections(), FORCE_CLOSE_MS).unref();
   };

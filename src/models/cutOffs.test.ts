@@ -20,7 +20,7 @@ test('the cut-offs in force are the active model\'s; the .env overrides count on
 test('memoryCutOffs reads the active cut-offs at each use', () => {
   let active: EmbeddingProfile = E5_PROFILE;
   const o = memoryCutOffs(() => active, {});
-  assert.deepEqual([o.duplicateThreshold, o.minRecallSimilarity, o.recallConfidentSimilarity, o.recallWindow, o.keywordWeight, o.rerankPrior, o.closeFacts], [0.93, 0.75, 0.86, 0.015, 0.5, 0, 0.86]);
+  assert.deepEqual([o.duplicateThreshold, o.minRecallSimilarity, o.recallConfidentSimilarity, o.recallWindow, o.keywordWeight, o.rerankPrior, o.closeFacts, o.closeNudge], [0.93, 0.75, 0.86, 0.015, 0.5, 0, 0.86, 0.89]);
   active = GEMMA_PROFILE;
-  assert.deepEqual([o.duplicateThreshold, o.minRecallSimilarity, o.recallWindow, o.keywordWeight, o.rerankPrior], [0.78, 0.3, undefined, 0, 1]);
+  assert.deepEqual([o.duplicateThreshold, o.minRecallSimilarity, o.recallWindow, o.keywordWeight, o.rerankPrior, o.closeNudge], [0.78, 0.3, undefined, 0, 1, 0.65]);
 });

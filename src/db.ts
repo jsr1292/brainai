@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import { busy } from './busyMarker.js';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 export type DB = Database.Database;
 
@@ -931,14 +932,54 @@ function tightenPreMigrate(dataDir: string): void {
   }
 }
 
+/**
+ * This brain's own id (brain_switches 'brain_id'): made once, the first time something needs it, and kept. A value that
+ * is not 32 hex digits is replaced. Backups carry it, but a restore (saved/restore.ts) drops it, so a restored brain
+ * makes a new one and never shares a backup folder with the brain it came from.
+ */
+export function brainId(db: DB): string {
+  const have = (db.prepare("SELECT value FROM brain_switches WHERE name = 'brain_id'").get() as { value: string } | undefined)?.value;
+  if (have !== undefined && BRAIN_ID.test(have)) return have;
+  // None yet, or a value no BrainAI wrote (it becomes a folder name, so it must be plain hex): a fresh one replaces it.
+  const fresh = randomBytes(16).toString('hex');
+  db.prepare("INSERT INTO brain_switches(name, value, set_at) VALUES ('brain_id', ?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value, set_at = excluded.set_at").run(fresh, new Date().toISOString());
+  return fresh;
+}
+export const BRAIN_ID = /^[0-9a-f]{32}$/;
+
+/** Exit code of a server that refuses a database from a newer BrainAI (the desktop app reads it; sysexits EX_CONFIG). */
+export const EXIT_SCHEMA_TOO_NEW = 78;
+
+/** The database was written by a newer BrainAI than this one: opening it would risk it, so nothing is opened. */
+export class SchemaTooNewError extends Error {
+  constructor(readonly found: number, readonly known: number) {
+    super(`This brain was saved by a newer BrainAI (its database is at version ${found}; this BrainAI only knows up to version ${known}). Update BrainAI to the newest version. If you cannot, restore the copy BrainAI made before the update (the pre-migrate folder next to memory.db, usually data/pre-migrate/). Its contents were not changed.`);
+    this.name = 'SchemaTooNewError';
+  }
+}
+
 /** `upTo` stops at that schema version (tests of a migration start from the one before it). */
 export function openDb(path: string, opts: { upTo?: number } = {}): DB {
   const db = new Database(path);
+  // Before any pragma or write: a database from a newer BrainAI (a Docker rollback, an older app) is refused as it is.
+  // Reading the version never writes the file; closing right away leaves the main file as it was.
+  try {
+    const has = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'").get() !== undefined;
+    const found = has ? (db.prepare('SELECT version FROM schema_version').get() as { version: number } | undefined)?.version : undefined;
+    if (found !== undefined && found > latestSchema()) throw new SchemaTooNewError(found, latestSchema());
+  } catch (e) {
+    db.close();
+    throw e;
+  }
   db.pragma('foreign_keys = ON');
   if (path !== ':memory:') {
     // The database holds the sign-in data: owner only. SQLite gives -wal and -shm the main file's mode when it creates them.
     tighten(path);
     db.pragma('journal_mode = WAL');
+    // WAL with FULL: a commit is synced to the file before it returns, so a save the server confirmed survives a crash
+    // of the app or the server. (A build of SQLite may default a WAL database to NORMAL; this does not depend on that.
+    // macOS does not flush the drive's own cache without F_FULLFSYNC, so a power cut is not promised.)
+    db.pragma('synchronous = FULL');
     for (const side of ['-wal', '-shm']) tighten(path + side);
     tightenPreMigrate(dirname(path));
   }

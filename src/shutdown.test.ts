@@ -32,3 +32,37 @@ test('docker-compose runs the app under an init process', () => {
   const app = compose.split(/\n  tunnel:/)[0]!;
   assert.match(app, /\n    init: true\n/);
 });
+
+test('a stop waits for a running backup in parallel with closing the server, closes the DB after both, and never later than its deadline', async () => {
+  const server = createServer((_req, res) => res.end('ok'));
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const events: string[] = [];
+  server.on('close', () => events.push('server closed'));
+  const db = { close: () => { events.push('db closed'); } };
+  const proc = new EventEmitter();
+  let release!: () => void;
+  const idle = new Promise<void>((r) => { release = () => { events.push('backup ended'); r(); }; });
+  const began = Date.now();
+  const exited = new Promise<number>((resolve) => installShutdown({ server, timer: setInterval(() => {}, 1000), db, proc, exit: resolve, waitIdle: () => idle }));
+  proc.emit('SIGTERM');
+  await sleep(60);
+  assert.equal(events.join(','), 'server closed', 'the server did not wait for the backup to close');
+  release();
+  assert.equal(await exited, 0);
+  assert.equal(events.join(','), 'server closed,backup ended,db closed');
+  assert.ok(Date.now() - began < 1000);
+});
+
+test('a backup that never ends cannot hold the stop past its deadline', async () => {
+  const server = createServer((_req, res) => res.end('ok'));
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const events: string[] = [];
+  const db = { close: () => { events.push('db closed'); } };
+  const proc = new EventEmitter();
+  const began = Date.now();
+  const exited = new Promise<number>((resolve) => installShutdown({ server, timer: setInterval(() => {}, 1000), db, proc, exit: resolve, waitIdle: () => new Promise<void>(() => {}), deadlineMs: 150 }));
+  proc.emit('SIGTERM');
+  assert.equal(await exited, 0);
+  assert.deepEqual(events, ['db closed']);
+  assert.ok(Date.now() - began < 1500, 'stopped at the deadline');
+});

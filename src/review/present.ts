@@ -142,7 +142,21 @@ export function presentReview(r: { monday: string; body: ReviewBody; builtAt: st
   // Exactly as granted, as the MCP server reads it: a granted name merged into another project since reads nothing.
   const readable = scope.kind === 'read' ? new Set(scope.projects) : undefined;
   const visible = (project: string | null): boolean => readable === undefined || (project !== null && readable.has(project));
-  const rows = [...grouped].filter(([name]) => visible(name)).map(([name, rs]) => mergeRows(rs, name));
+  // A Done line also needs its source roadmap fact to be readable where that fact is now: the roadmap may have moved to
+  // another project since the week was stored (lines stored before the source was kept have no fact to check).
+  const sourceReadable = (source: string | undefined): boolean => {
+    if (source === undefined || readable === undefined) return true;
+    const m = ctx.memories.get(source);
+    return m !== undefined && m.deletedAt === null && visible(m.project === null ? null : ctx.service.projectNamed(m.project));
+  };
+  // Done lines, and the progress line, waiting items and next step, all come from a roadmap fact: when it has moved out of
+  // the reader's projects, none of them is shown. Done before merging, so what is moved or quiet is worked out from what is left.
+  const readableRow = (r: ProjectWeek): ProjectWeek => {
+    const done = r.done.filter((d) => sourceReadable(d.source));
+    if (sourceReadable(r.roadmap)) return { ...r, done };
+    return { ...r, done, progress: null, waiting: [], dated: 0, undated: 0, quiet: r.quiet && { ...r.quiet, next: null } };
+  };
+  const rows = [...grouped].filter(([name]) => visible(name)).map(([name, rs]) => mergeRows(rs.map(readableRow), name));
   const life = new Map(rows.map((p) => [p.project, isLifeArea(ctx.registry.get(p.project))]));
   const lifeOf = (name: string | null) => name !== null && (life.get(name) ?? isLifeArea(ctx.registry.get(name)));
   const lifeLast = <T>(name: (x: T) => string | null) => (a: T, b: T) => Number(lifeOf(name(a))) - Number(lifeOf(name(b)));

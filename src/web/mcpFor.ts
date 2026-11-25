@@ -9,7 +9,7 @@ import type { AppDeps } from './app.js';
 import { coachingOn } from '../learning/coaching.js';
 import { healthOf } from './healthData.js';
 
-export function mcpServerFor(d: AppDeps, o: { actorName: string; access: Access; projects?: string[]; clientId?: string; grantId?: string; onSetup?: (n: number) => void }): McpServer {
+export function mcpServerFor(d: AppDeps, o: { actorName: string; access: Access; projects?: string[]; clientId?: string; grantId?: string; publicUrl?: URL; onSetup?: (n: number) => void }): McpServer {
   return buildMcpServer(d.service, o.actorName, {
     registry: d.registry,
     growth: d.growth,
@@ -26,7 +26,8 @@ export function mcpServerFor(d: AppDeps, o: { actorName: string; access: Access;
     diagramChecks: d.diagramChecks,
     uploadLinks: d.uploadLinks,
     grantId: o.grantId,
-    publicUrl: d.publicUrl,
+    // The address this request actually reached (the Reach address through the public door), for links an assistant must open.
+    publicUrl: o.publicUrl ?? d.publicUrl,
     projects: o.projects,
     onSetup: o.onSetup,
     skills: d.skills,

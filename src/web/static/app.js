@@ -848,13 +848,15 @@ for (const wait of document.querySelectorAll('[data-consent-wait]')) {
       const r = await fetch(wait.dataset.consentWait, { headers: { accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store' });
       if (r.ok) {
         errors = 0;
+        if (status) status.textContent = '';
         const a = await r.json();
         if (a.state === 'done' && typeof a.location === 'string') { location.replace(a.location); return; }
         if (a.state === 'gone') { if (status) status.textContent = T('client.consent.expired', 'This request expired. Start the connection again from the app.'); return; }
       } else errors++;
     } catch { errors++; /* the app may be restarting */ }
-    if (errors >= 20) return;
-    setTimeout(tick, 1500);
+    // Never stops silently: after 20 misses it says so and keeps asking, slower (up to every 15 s).
+    if (errors >= 20 && status) status.textContent = T('client.consent.lost', 'Lost contact with BrainAI. Reload this page, or start the connection again from the app.');
+    setTimeout(tick, errors >= 20 ? Math.min(15000, 1500 * (errors - 18)) : 1500);
   };
   setTimeout(tick, 1500);
 }

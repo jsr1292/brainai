@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -25,6 +26,15 @@ test('openDb is idempotent on an existing file', (t) => {
   const db = openDb(path);
   assert.equal((db.prepare('SELECT version FROM schema_version').get() as any).version, 45);
   assert.equal((db.prepare('SELECT count(*) c FROM redirect_allowlist').get() as any).c, 3);
+});
+
+test('an opened database file keeps WAL mode and syncs fully (synchronous=FULL, 2)', (t) => {
+  const path = join(tmpdir(), `memtest-sync-${process.pid}.db`);
+  t.after(() => { for (const s of ['', '-wal', '-shm']) rmSync(path + s, { force: true }); });
+  const db = openDb(path);
+  assert.equal(db.pragma('synchronous', { simple: true }), 2);
+  assert.equal(db.pragma('journal_mode', { simple: true }), 'wal');
+  db.close();
 });
 
 test('purgeExpired removes expired sessions, pending, codes and long-expired tokens only', () => {
@@ -667,4 +677,54 @@ test('migration 43 adds page_file_imports (a page made from an uploaded file rem
   assert.equal((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version, 45);
   assert.deepEqual((db.pragma('table_info(page_file_imports)') as { name: string }[]).map((c) => c.name), ['page_id', 'file_name', 'imported_at']);
   db.close();
+});
+
+test('openDb refuses a database from a newer BrainAI, names both versions, and leaves the file byte for byte as it was', async (t) => {
+  const { SchemaTooNewError, latestSchema } = await import('./db.js');
+  const dir = mkdtempSync(join(tmpdir(), 'newer-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'memory.db');
+  openDb(path).close();
+  const raw = new Database(path);
+  assert.equal(raw.pragma('journal_mode', { simple: true }), 'wal', 'a real brain is in WAL mode');
+  raw.prepare('UPDATE schema_version SET version = ?').run(latestSchema() + 3);
+  raw.close();
+  const before = readFileSync(path);
+  const files = readdirSync(dir);
+  assert.throws(() => openDb(path), (e: unknown) => {
+    assert.ok(e instanceof SchemaTooNewError);
+    assert.match(e.message, new RegExp(`version ${latestSchema() + 3}`));
+    assert.match(e.message, new RegExp(`version ${latestSchema()}`));
+    assert.match(e.message, /Update BrainAI/);
+    assert.match(e.message, /pre-migrate/);
+    return true;
+  });
+  assert.ok(readFileSync(path).equals(before), 'the file was not written');
+  assert.deepEqual(readdirSync(dir), files, 'no pre-migrate copy, no -wal or -shm was made');
+});
+
+test('openDb still opens a database at the newest version it knows', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'same-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  openDb(join(dir, 'memory.db')).close();
+  openDb(join(dir, 'memory.db')).close();
+});
+
+test('the server process exits with code 78 and a clear log line on a database from a newer BrainAI, leaving it untouched', async (t) => {
+  const { latestSchema } = await import('./db.js');
+  const dir = mkdtempSync(join(tmpdir(), 'srv-newer-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'memory.db');
+  openDb(path).close();
+  const raw = new Database(path);
+  assert.equal(raw.pragma('journal_mode', { simple: true }), 'wal', 'a real brain is in WAL mode');
+  raw.prepare('UPDATE schema_version SET version = ?').run(latestSchema() + 1);
+  raw.close();
+  const before = readFileSync(path);
+  const r = spawnSync(process.execPath, ['--import', 'tsx', join(process.cwd(), 'src/index.ts')], {
+    env: { PATH: process.env.PATH ?? '', HOME: dir, DATA_DIR: dir, PORT: '3199', PUBLIC_URL: 'https://memory.example.com' }, encoding: 'utf8', timeout: 60_000,
+  });
+  assert.equal(r.status, 78, r.stderr);
+  assert.match(r.stderr, /BrainAI cannot start: .*newer BrainAI/);
+  assert.ok(readFileSync(path).equals(before));
 });

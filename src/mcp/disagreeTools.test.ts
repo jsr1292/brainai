@@ -139,3 +139,43 @@ test('the close-facts nudge lists at most two facts, and only those above a floo
   const r = await c.call('remember', { kind: 'decision', project: 'homelab', content: 'The media server listens on port 3200 behind the proxy', allow_duplicate: true });
   assert.equal(dataOf(r.text).at(-1).close_facts.length, 2, 'three or more are above the cut-off, so exactly two are listed');
 });
+
+test('project_brief marks two close decisions with may_conflict_with and says how to settle them; far, flagged and status facts are not marked', async () => {
+  const { service, connect, save } = setup();
+  const a = await save('The media server listens on port 3000 behind the reverse proxy');
+  const b = await save('The media server listens on port 3100 behind the proxy');
+  const far = await save('Nightly backups copy everything offsite');
+  await service.remember({ kind: 'summary', content: 'homelab status: the media server listens on port 3100 behind the proxy now', project: 'homelab' }, owner);
+  const c = await connect('Claude Code');
+  const r = await c.call('project_brief', { project: 'homelab' });
+  assert.match(r.text, /Facts marked may_conflict_with are close to each other\. If a pair can't both be true, call flag_disagreement in this turn/);
+  assert.match(r.text, /if one replaces or repeats the other, update_memory with supersedes; if both are true, leave them\./);
+  const d = dataOf(r.text);
+  const row = (id: string) => d.decisions.find((x: any) => x.id === id);
+  assert.deepEqual(row(a.id).may_conflict_with, [b.id]);
+  assert.deepEqual(row(b.id).may_conflict_with, [a.id]);
+  assert.equal(row(far.id).may_conflict_with, undefined);
+  assert.ok(d.statuses.every((x: any) => x.may_conflict_with === undefined), 'statuses are never marked');
+
+  await c.call('flag_disagreement', { a: a.id, b: b.id, why: 'Two different ports' });
+  const after = await c.call('project_brief', { project: 'homelab' });
+  assert.doesNotMatch(after.text, /may_conflict_with/, 'a flagged pair carries disagrees_with instead');
+
+  const ro = await connect('Grok', 'projects', ['homelab']);
+  const third = await save('The media server listens on port 3200 behind the proxy');
+  const full = dataOf((await c.call('project_brief', { project: 'homelab' })).text);
+  assert.ok(full.decisions.find((x: any) => x.id === third.id).may_conflict_with?.length > 0, 'the full connection marks the new close fact');
+  assert.doesNotMatch((await ro.call('project_brief', { project: 'homelab' })).text, /may_conflict_with/, 'a read-only connection cannot flag, so nothing is marked');
+});
+
+test('recall marks two close facts it returns with may_conflict_with', async () => {
+  const { connect, save } = setup();
+  const a = await save('The media server listens on port 3000 behind the reverse proxy');
+  const b = await save('The media server listens on port 3100 behind the proxy');
+  const c = await connect('Claude Code');
+  const r = await c.call('recall', { query: 'which port does the media server listen on', project: 'homelab', kind: 'decision' });
+  assert.match(r.text, /Facts marked may_conflict_with are close to each other/);
+  const rows = dataOf(r.text);
+  assert.deepEqual(rows.find((x: any) => x.id === a.id).may_conflict_with, [b.id]);
+  assert.deepEqual(rows.find((x: any) => x.id === b.id).may_conflict_with, [a.id]);
+});

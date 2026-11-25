@@ -19,7 +19,9 @@ export interface BackupRun {
 }
 /** A nightly job's last run: the git copy (scripts/backup-git.sh) and the Markdown export (scripts/export-brain.sh). */
 export interface SimpleRun { at: string; ok: boolean; detail?: string }
-export interface BackupStatus { nightly?: BackupRun; offsite?: BackupRun; git?: SimpleRun; export?: SimpleRun }
+/** The last off-site restore drill, written by scripts/offsite-drill.sh --record (data/offsite-drill.json). `date` is an ISO time. */
+export interface DrillRun { date: string; copy: string; result: 'pass' | 'fail' }
+export interface BackupStatus { nightly?: BackupRun; offsite?: BackupRun; git?: SimpleRun; export?: SimpleRun; drill?: DrillRun }
 
 const FILES = { nightly: 'backup-status.json', offsite: 'offsite-status.json', git: 'git-backup-status.json', export: 'export-status.json' } as const;
 /** The git copy and the export run nightly, like the backup. */
@@ -49,12 +51,22 @@ function readRun(path: string): BackupRun | undefined {
 /** A placeholder the screen replaces with its own words ("see the backup log"). */
 const LOG = '';
 
+function readDrill(path: string): DrillRun | undefined {
+  try {
+    const d = JSON.parse(readFileSync(path, 'utf8')) as DrillRun;
+    return typeof d?.date === 'string' && Number.isFinite(Date.parse(d.date)) && typeof d.copy === 'string' && (d.result === 'pass' || d.result === 'fail') ? d : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function readBackupStatus(dir: string): BackupStatus {
+  const drill = readDrill(join(dir, 'offsite-drill.json'));
   const nightly = readRun(join(dir, FILES.nightly));
   const offsite = readRun(join(dir, FILES.offsite));
   const git = readRun(join(dir, FILES.git)) as SimpleRun | undefined;
   const exported = readRun(join(dir, FILES.export)) as SimpleRun | undefined;
-  return { ...(nightly ? { nightly } : {}), ...(offsite ? { offsite } : {}), ...(git ? { git } : {}), ...(exported ? { export: exported } : {}) };
+  return { ...(nightly ? { nightly } : {}), ...(offsite ? { offsite } : {}), ...(git ? { git } : {}), ...(exported ? { export: exported } : {}), ...(drill ? { drill } : {}) };
 }
 
 /** Each problem as a sentence for the owner; none means the backups are fine. */

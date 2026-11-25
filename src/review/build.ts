@@ -61,13 +61,13 @@ const hasAnything = (p: ProjectWeek): boolean => p.done.length > 0 || p.progress
   || p.waiting.length > 0 || p.quiet !== null || p.back !== null || p.notPushed !== null;
 
 /** A project's roadmap as it stood at a moment, from the versions of every roadmap memory (names already folded). */
-function roadmapAt(roadmaps: { versions: Version[] }[], project: string, at: string, fold: (n: string) => string): Roadmap | null {
-  let found: Version | undefined;
+function roadmapAt(roadmaps: { id: string; versions: Version[] }[], project: string, at: string, fold: (n: string) => string): (Roadmap & { sourceId: string }) | null {
+  let found: { v: Version; id: string } | undefined;
   for (const r of roadmaps) {
     const v = versionAt(r.versions, at);
-    if (v && v.project !== null && fold(v.project) === project) found = v;
+    if (v && v.project !== null && fold(v.project) === project) found = { v, id: r.id };
   }
-  return found ? parseRoadmap(found.content) : null;
+  return found ? { ...parseRoadmap(found.v.content), sourceId: found.id } : null;
 }
 
 /** One week, built in memory from what was stored as of its edges. Wording is left to the presenter. */
@@ -83,7 +83,7 @@ export function buildReview(src: BuildSources, w: ReviewWindow): ReviewBody {
   const of = (name: string): ProjectWeek => weeks.get(name) ?? weeks.set(name, blank(name)).get(name)!;
 
   // What moved: Done steps dated inside the week, from every roadmap version live during it.
-  const roadmaps = src.reviews.roadmapsBetween(start, end).map((r) => ({ versions: versionsOf(r.memory, r.history) }));
+  const roadmaps = src.reviews.roadmapsBetween(start, end).map((r) => ({ id: r.memory.id, versions: versionsOf(r.memory, r.history) }));
   const seen = new Set<string>();
   for (const r of roadmaps) {
     for (const v of liveDuring(r.versions, start, end)) {
@@ -94,7 +94,7 @@ export function buildReview(src: BuildSources, w: ReviewWindow): ReviewBody {
         const key = `${project}\n${itemKey(d.text)}\n${d.date}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        of(project).done.push({ text: d.text, date: d.date });
+        of(project).done.push({ text: d.text, date: d.date, source: r.id });
       }
     }
   }
@@ -109,11 +109,13 @@ export function buildReview(src: BuildSources, w: ReviewWindow): ReviewBody {
     const atStart = roadmapAt(roadmaps, project, start, fold);
     if (atEnd.progress && atEnd.now) {
       const same = atStart?.progress && atStart.progress.total === atEnd.progress.total && atStart.now === atEnd.now;
+      of(project).roadmap = atEnd.sourceId;
       of(project).progress = { now: atEnd.now, from: same ? atStart!.progress!.done : null, to: atEnd.progress.done, total: atEnd.progress.total };
     }
     const state = src.registry.get(project)?.state;
     if (state === 'done' || state === 'archived') continue;
     const p = of(project);
+    p.roadmap = atEnd.sourceId;
     for (const item of atEnd.waiting) {
       if (item.due === null) { p.undated++; continue; }
       p.dated++;
@@ -166,6 +168,7 @@ export function buildReview(src: BuildSources, w: ReviewWindow): ReviewBody {
     if (before > quietLine(start) && after <= quietLine(end)) {
       const r = roadmapAt(roadmaps, name, justBeforeEnd, fold);
       of(name).quiet = { lastTouched: after, next: r?.nextSteps[0] ?? r?.now ?? null };
+      if (r && of(name).roadmap === undefined) of(name).roadmap = r.sourceId;
     }
     const firstIn = first.get(name);
     if (firstIn !== undefined && Date.parse(firstIn) - Date.parse(before) >= QUIET_DAYS * DAY_MS) {

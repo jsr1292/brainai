@@ -2,9 +2,10 @@
  * A fake `tailscale` for the Reach tests (D4): it answers `status --json` and `funnel …` the way the real CLI does
  * (BackendState, Self.DNSName with a trailing dot), from a JSON file in a throwaway HOME, and logs every call.
  */
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { removeTempDir } from './tempDir.js';
 
 export interface FakeTailscaleState {
   backend?: 'Running' | 'Stopped' | 'NeedsLogin'; dns?: string; needsApproval?: boolean; hang?: boolean;
@@ -18,6 +19,12 @@ export interface FakeTailscaleState {
   offFails?: boolean;
   /** A successful `funnel … <target>` answers only after this many milliseconds (the call is logged when it starts). */
   delayMs?: number;
+  /** `status --json` answers only after this many milliseconds (the call is logged when it starts). */
+  statusDelayMs?: number;
+  /** `serve status --json` fails (Tailscale not running). */
+  serveFails?: boolean;
+  /** Something of the owner's own is shared on 443 (its target), not BrainAI's. */
+  other?: string;
 }
 
 const SCRIPT = `#!/usr/bin/env node
@@ -27,18 +34,26 @@ fs.appendFileSync(path.join(home, 'tailscale.log'), args.join(' ') + '\\n');
 const s = JSON.parse(fs.readFileSync(path.join(home, 'tailscale.json'), 'utf8'));
 if (s.hang) { setInterval(() => {}, 1000); return; }
 if (args[0] === 'status') {
+  if (s.statusDelayMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, s.statusDelayMs);
   if (s.warn) console.error('Warning: client version "1.104.2" != tailscaled server version "1.104.0"');
   console.log(JSON.stringify({ BackendState: s.backend || 'Running', Self: { DNSName: s.backend === 'Running' || !s.backend ? (s.dns || 'brainai-mac.tail1234.ts.net.') : '' } }));
   process.exit(0);
 }
+if (args[0] === 'serve' && args[1] === 'status') {
+  if (s.serveFails) { console.error('error: not running'); process.exit(1); }
+  const host = (s.dns || 'brainai-mac.tail1234.ts.net.').replace(/\\.$/, '');
+  const web = s.funnel ? { [host + ':443']: { Handlers: { '/': { Proxy: s.target || 'http://127.0.0.1:1' } } } } : s.other ? { [host + ':443']: { Handlers: { '/': { Proxy: s.other } } } } : {};
+  console.log(JSON.stringify(s.funnel || s.other ? { TCP: { '443': { HTTPS: true } }, Web: web } : {}));
+  process.exit(0);
+}
 if (args[0] === 'funnel') {
   if (args.includes('off') && s.offFails) { console.error('error: the change could not be applied'); process.exit(1); }
-  if (args.includes('off')) { s.funnel = false; fs.writeFileSync(path.join(home, 'tailscale.json'), JSON.stringify(s)); process.exit(0); }
-  if (s.hangFunnel) { s.funnel = true; fs.writeFileSync(path.join(home, 'tailscale.json'), JSON.stringify(s)); setInterval(() => {}, 1000); return; }
-  if (s.funnelFails) { s.funnel = true; fs.writeFileSync(path.join(home, 'tailscale.json'), JSON.stringify(s)); console.error('error: could not apply the whole config'); process.exit(1); }
+  if (args.includes('off')) { s.funnel = false; delete s.target; fs.writeFileSync(path.join(home, 'tailscale.json'), JSON.stringify(s)); process.exit(0); }
+  if (s.hangFunnel) { s.funnel = true; s.target = args[args.length - 1]; fs.writeFileSync(path.join(home, 'tailscale.json'), JSON.stringify(s)); setInterval(() => {}, 1000); return; }
+  if (s.funnelFails) { s.funnel = true; s.target = args[args.length - 1]; fs.writeFileSync(path.join(home, 'tailscale.json'), JSON.stringify(s)); console.error('error: could not apply the whole config'); process.exit(1); }
   if (s.needsApproval) { console.log('Funnel is not enabled on your tailnet.\\nTo enable, visit:\\n\\n         https://login.tailscale.com/f/funnel?node=abc123\\n'); process.exit(1); }
   if (s.delayMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, s.delayMs);
-  s.funnel = true; fs.writeFileSync(path.join(home, 'tailscale.json'), JSON.stringify(s));
+  s.funnel = true; s.target = args[args.length - 1]; fs.writeFileSync(path.join(home, 'tailscale.json'), JSON.stringify(s));
   console.log('Available on the internet:\\n\\nhttps://' + (s.dns || 'brainai-mac.tail1234.ts.net.').replace(/\\.$/, '') + '/\\n|-- proxy ' + args[args.length - 1] + '\\n' + (s.linkOnSuccess ? 'Manage it at https://login.tailscale.com/admin/machines\\n' : ''));
   process.exit(0);
 }
@@ -60,6 +75,6 @@ export function fakeTailscale(state: FakeTailscaleState | null): { home: string;
     home, bin,
     calls: () => (existsSync(join(home, 'tailscale.log')) ? readFileSync(join(home, 'tailscale.log'), 'utf8').trim().split('\n').filter(Boolean) : []),
     state: () => JSON.parse(readFileSync(join(home, 'tailscale.json'), 'utf8')) as Record<string, unknown>,
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
+    cleanup: () => removeTempDir(root),
   };
 }

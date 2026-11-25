@@ -24,7 +24,8 @@ function mcpWeek(): ReviewWorld {
 test('moved keeps steps dated inside the week from every version, also one trimmed later in the week', () => {
   const w = mcpWeek();
   const p = buildReview(w.sources(), windowFor('2026-10-26')).projects.find((x) => x.project === 'brainai')!;
-  assert.deepEqual(p.done, [{ text: 'Pages: reading view and editor', date: '2026-10-27' }, { text: 'Page tools', date: '2026-10-30' }]);
+  assert.deepEqual(p.done.map(({ text, date }) => ({ text, date })), [{ text: 'Pages: reading view and editor', date: '2026-10-27' }, { text: 'Page tools', date: '2026-10-30' }]);
+  assert.ok(p.done.every((d) => typeof d.source === 'string' && d.source.length > 0), 'each line keeps the roadmap fact it came from');
 });
 
 test('progress shows from and to only when the Now step and total match at both ends', () => {
@@ -264,7 +265,7 @@ test('facts saved under an alias count toward the current project', () => {
   assert.equal(body.projects.find((p) => p.project === 'coyote'), undefined);
   const inflow = body.projects.find((p) => p.project === 'inflow')!;
   assert.deepEqual([inflow.quiet, inflow.back], [null, null]);
-  assert.deepEqual(inflow.done, [{ text: 'pour', date: '2026-10-28' }]);
+  assert.deepEqual(inflow.done.map(({ text, date }) => ({ text, date })), [{ text: 'pour', date: '2026-10-28' }]);
 });
 
 test('pages saved this week are grouped by project, each page once', () => {

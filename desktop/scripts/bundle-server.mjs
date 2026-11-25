@@ -23,6 +23,8 @@ export const EXTERNAL = ['better-sqlite3', 'onnxruntime-node', 'onnxruntime-comm
 const ENTRIES = [
   { entry: 'src/index.ts', out: 'dist/index.js' },
   { entry: 'src/cli.ts', out: 'dist/cli.js' },
+  // The backup's worker thread (src/offThread.ts starts dist/backupWorker.js beside dist/backup.js): a file of its own.
+  { entry: 'src/backupWorker.ts', out: 'dist/backupWorker.js' },
   // The hooks are copied into the owner's tools and run on their own: each is a complete file of its own.
   { entry: 'src/hooks/memoryStart.ts', out: 'dist/hooks/memoryStart.js' },
   { entry: 'src/hooks/memoryNudge.ts', out: 'dist/hooks/memoryNudge.js' },

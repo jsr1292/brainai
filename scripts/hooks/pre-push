@@ -1,0 +1,55 @@
+#!/bin/sh
+# Tests before every push of main to the mini PC. Other remotes and branches pass straight through.
+# Install once per clone: git config core.hooksPath scripts/hooks
+# Runs `npm run typecheck` and `npm test` unless the pushed sha is already recorded green in .git/brainai-green
+# (scripts/test-and-record.sh writes it, and so does a passing run here). BRAINAI_SKIP_TESTS=1 skips (loudly).
+remote="$1"
+url="$2"
+# Only the remote named minipc, or a push by the URL set in git config brainai.deploy.pushurl.
+if [ "$remote" != "minipc" ]; then
+  pushurl="$(git config brainai.deploy.pushurl 2>/dev/null)"
+  [ -n "$pushurl" ] && [ "$url" = "$pushurl" ] || exit 0
+fi
+
+zero=0000000000000000000000000000000000000000
+need=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = "refs/heads/main" ] || continue
+  [ "$local_sha" = "$zero" ] && continue
+  need="$local_sha"
+done
+[ -n "$need" ] || exit 0
+
+if [ "${BRAINAI_SKIP_TESTS:-}" = "1" ]; then
+  echo "" >&2
+  echo "!!! pre-push: BRAINAI_SKIP_TESTS=1 - pushing main to the mini PC WITHOUT typecheck or tests !!!" >&2
+  echo "" >&2
+  exit 0
+fi
+
+top="$(git rev-parse --show-toplevel)" || exit 1
+. "$top/scripts/lib/green.sh"
+if is_green "$need"; then
+  echo "pre-push: $need is already recorded green; not running the tests again."
+  exit 0
+fi
+
+# The tests run on the working tree, so they only vouch for the pushed commit when it is that tree.
+if [ "$need" != "$(git rev-parse HEAD)" ] || tree_dirty; then
+  echo "pre-push: $need is not recorded green, and the working tree is not exactly that commit, so the tests cannot vouch for it." >&2
+  echo "          Check out main with no uncommitted changes, or run scripts/test-and-record.sh there, or set BRAINAI_SKIP_TESTS=1." >&2
+  exit 1
+fi
+
+# Git exports GIT_DIR etc. into hooks; the tests run git in temp folders and must not act on this worktree.
+clean_git_env
+echo "pre-push: running typecheck and tests before pushing $need to the mini PC ..."
+cd "$top" || exit 1
+if npm run typecheck </dev/null && npm test </dev/null; then
+  record_green "$need"
+  echo "pre-push: green, recorded."
+  exit 0
+fi
+echo "pre-push: typecheck or tests failed; nothing was pushed." >&2
+echo "          Only if you must: BRAINAI_SKIP_TESTS=1 git push ... (or git push --no-verify) skips this. One timing test is known to flake under load: run the failing file alone first." >&2
+exit 1

@@ -108,7 +108,7 @@ test('an idea has five_areas null in its brief', async () => {
 test('the instructions explain the learning rule, numbered in order', async () => {
   const { OPERATING_RULES: SERVER_INSTRUCTIONS } = await import('./instructions.js');
   assert.match(SERVER_INSTRUCTIONS, /\d+\. Learning: the owner is learning to work like a developer/);
-  assert.match(SERVER_INSTRUCTIONS, /Interrupt the current work only for a real risk/);
+  assert.match(SERVER_INSTRUCTIONS, /Interrupt only for a real risk/);
   const numbers = [...SERVER_INSTRUCTIONS.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
   assert.deepEqual(numbers, numbers.map((_, i) => i + 1), 'items numbered 1, 2, 3… with no gap');
   assert.doesNotMatch(SERVER_INSTRUCTIONS, /There is no folder report here/);
@@ -137,5 +137,5 @@ test('review M2: a refused record_lesson saves nothing, not even the handbook pr
 
 test('review M14: the instructions say to explain less and hand steps over', async () => {
   const { OPERATING_RULES: SERVER_INSTRUCTIONS } = await import('./instructions.js');
-  assert.match(SERVER_INSTRUCTIONS, /Use each topic's level to explain less each time, and once the owner has done a step with you, suggest they try it themselves/);
+  assert.match(SERVER_INSTRUCTIONS, /explain less each time, and once the owner has done a step with you, suggest they try it themselves/);
 });

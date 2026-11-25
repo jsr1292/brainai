@@ -2,9 +2,10 @@
  * A fake `cloudflared` for the Cloudflare route of Reach (D5): `tunnel login`, `tunnel create`, `tunnel route dns` and
  * `tunnel run` answer as the real CLI does (2026.9.3), from a JSON file in a throwaway HOME, and every call is logged.
  */
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { removeTempDir } from './tempDir.js';
 
 export interface FakeCloudflaredState {
   /** `tunnel login` writes cert.pem after this long (default 100 ms); `hang` never finishes. */
@@ -91,6 +92,6 @@ export function fakeCloudflared(state: FakeCloudflaredState | null): { home: str
     calls: () => (existsSync(join(home, 'cloudflared.log')) ? readFileSync(join(home, 'cloudflared.log'), 'utf8').trim().split('\n').filter(Boolean) : []),
     state: () => JSON.parse(readFileSync(join(home, 'cloudflared.json'), 'utf8')) as Record<string, unknown>,
     setState: (next) => writeFileSync(join(home, 'cloudflared.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(home, 'cloudflared.json'), 'utf8')), ...next })),
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
+    cleanup: () => removeTempDir(root),
   };
 }

@@ -370,6 +370,8 @@ export class MemoryService {
       keywordWeight?: number; rerankPrior?: number;
       /** A save's close facts start at this similarity (the model's profile); recall's confident level by default. */
       closeFacts?: number;
+      /** The close facts listed after a save start here (the model's profile); 40% of the way from closeFacts to duplicate by default. */
+      closeNudge?: number;
       /** From the profile: how far below duplicateThreshold a save still matches a deleted fact that keeps its numbers (default 0.03). */
       deletedMargin?: number;
     },
@@ -1754,8 +1756,7 @@ export class MemoryService {
     // The nudge after a save is stricter than the floor: 40% of the way from the close-facts floor to the duplicate threshold
     // (Gemma 0.48 -> 0.60, e5 0.86 -> 0.89), so only facts that really look like the new one are listed. e5 is less
     // discriminating near the top (its scores crowd together), so its band is narrow and the cut matters less there.
-    const floor = this.opts.closeFacts ?? this.opts.recallConfidentSimilarity;
-    const cut = nudge ? floor + 0.4 * (this.opts.duplicateThreshold - floor) : floor;
+    const cut = nudge ? this.closeNudgeCut() : this.opts.closeFacts ?? this.opts.recallConfidentSimilarity;
     const m = this.store.get(id);
     if (!m || m.deletedAt || m.kind === 'roadmap' || isStatus(m)) return [];
     const project = (x: Memory) => (x.project === null ? null : this.canonical(x.project));
@@ -1774,6 +1775,36 @@ export class MemoryService {
       .map((x) => ({ memory: this.store.get(x.id)!, similarity: x.similarity }))
       .filter((x) => x.memory && !isStatus(x.memory) && project(x.memory) === mine && !this.store.disagreements.forPair(id, x.memory.id))
       .slice(0, limit);
+  }
+
+  /** The save nudge's cut-off for close facts, also used to mark close pairs in a brief or a recall. */
+  closeNudgeCut(): number {
+    if (this.opts.closeNudge !== undefined) return this.opts.closeNudge;
+    const floor = this.opts.closeFacts ?? this.opts.recallConfidentSimilarity;
+    return floor + 0.4 * (this.opts.duplicateThreshold - floor);
+  }
+
+  /**
+   * Pairs among these facts that look close enough to disagree or repeat each other (the save nudge's cut-off and up,
+   * duplicates included), for a brief or a recall to mark: same kind and project, never statuses or roadmaps, never a
+   * pair already flagged or settled by the owner. The caller passes current facts only. Closest first, at most `limit`.
+   */
+  closePairs(given: Memory[], limit = 3): { a: string; b: string; similarity: number }[] {
+    const cut = this.closeNudgeCut();
+    const facts = [...new Map(given.map((m) => [m.id, m])).values()].filter((m) => !m.deletedAt && m.kind !== 'roadmap' && !isStatus(m));
+    const vectors = this.store.embeddingsOf(facts.map((m) => m.id));
+    const project = (x: Memory) => (x.project === null ? null : this.canonical(x.project));
+    const out: { a: string; b: string; similarity: number }[] = [];
+    for (let i = 0; i < facts.length; i++) {
+      for (let j = i + 1; j < facts.length; j++) {
+        const a = facts[i]!, b = facts[j]!;
+        const va = vectors.get(a.id), vb = vectors.get(b.id);
+        if (!va || !vb || a.kind !== b.kind || project(a) !== project(b)) continue;
+        const similarity = cosine(va, vb);
+        if (similarity >= cut && !this.store.disagreements.forPair(a.id, b.id)) out.push({ a: a.id, b: b.id, similarity });
+      }
+    }
+    return out.sort((x, y) => y.similarity - x.similarity).slice(0, limit);
   }
 
   /** Every fact in an open disagreement, with the facts it disagrees with (and their projects, to check visibility). */

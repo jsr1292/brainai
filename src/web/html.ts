@@ -156,10 +156,10 @@ export function setServerMode(on: boolean): void {
   serverMode = on;
 }
 
-let consentPoller = false;
-/** Local mode: owner pages ask for tool sign-ins waiting for approval (data-consents-waiting on the body). Set by createApp. */
-export function setConsentPoller(on: boolean): void {
-  consentPoller = on;
+let consentPoller: () => boolean = () => false;
+/** Local mode: owner pages ask for tool sign-ins waiting for approval (data-consents-waiting on the body). Set by createApp; read for each page, as the waiting list only exists until the owner account is set up. */
+export function setConsentPoller(on: boolean | (() => boolean)): void {
+  consentPoller = typeof on === 'function' ? on : () => on;
 }
 
 export function page(title: string, body: SafeHtml, opts: { nav?: boolean; /** Which place the desktop sidebar lights, when it is not `tab` (the phone bar keeps using `tab`). */ sideTab?: Tab | null; query?: string; tab?: Tab | null; section?: Section; back?: BackTarget; crumb?: boolean; /** No link out of the page (the brand is plain text): the removal's last pages. */ plain?: boolean; /** The app's first-run setup: its own frame, with the brand in its step list. */ shell?: 'setup' } = {}): string {
@@ -199,7 +199,7 @@ ${raw(`<script type="application/json" id="i18n">${clientJson()}</script>`)}
 <script src="${asset('i18n.js')}"></script>
 <script src="${asset('app.js')}" defer></script>
 </head>
-<body class="${opts.nav ? 'app' : opts.shell === 'setup' ? 'setup' : 'auth'}"${opts.nav ? html` data-desk="${asset('desk.js')}"${goTo().length > 0 ? html` data-goto="${JSON.stringify(goTo().map((g) => ({ label: tKey(g.key, g.params), href: g.href, ...(g.alias ? { alias: g.alias } : {}) })))}"` : ''}` : ''}${opts.nav && serverMode ? raw(' data-server') : ''}${consentPoller ? raw(' data-consents-waiting="/consents/waiting"') : ''}>
+<body class="${opts.nav ? 'app' : opts.shell === 'setup' ? 'setup' : 'auth'}"${opts.nav ? html` data-desk="${asset('desk.js')}"${goTo().length > 0 ? html` data-goto="${JSON.stringify(goTo().map((g) => ({ label: tKey(g.key, g.params), href: g.href, ...(g.alias ? { alias: g.alias } : {}) })))}"` : ''}` : ''}${opts.nav && serverMode ? raw(' data-server') : ''}${consentPoller() ? raw(' data-consents-waiting="/consents/waiting"') : ''}>
 ${header}${opts.nav ? sidebar({ ...opts, tab: sideTabOf(opts) }) : ''}<main>
 ${(() => { const to = opts.nav ? movedTo() : null; return to ? html`<p class="notice" role="status">${tHtml('shell.moved', { address: html`<a href="${to.origin}">${to.origin}</a>` })}</p>
 ` : ''; })()}${(() => { const since = opts.nav ? pausedSince() : null; return since ? html`<div class="notice undo-line" role="status"><span>${t('shell.paused')}</span><form method="post" action="/settings/pause/resume"><button type="submit" class="linklike">${t('shell.resume')}</button></form></div>

@@ -147,7 +147,7 @@ test('a discussions-only connection doesn\'t list the tool', async () => {
 });
 
 test('the instructions tell assistants to use it only when asked', () => {
-  assert.match(OPERATING_RULES, /\n16\. When the owner asks how the week went, what happened last week, or for a weekly review, call weekly_review\. Never bring the review up unasked\.\n17\. Skills: /);
+  assert.match(OPERATING_RULES, /\n16\. Call weekly_review when the owner asks how the week went; never bring it up unasked\.\n17\. Skills: /);
   assert.match(readOnlyInstructions(['wildlog']), /call weekly_review/);
 });
 

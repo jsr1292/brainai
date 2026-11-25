@@ -129,6 +129,9 @@ export function appKeyCheck(d: Pick<AppDeps, 'localMode' | 'appSecret'>): (req: 
   };
 }
 
+/** How many tool sign-ins wait for the owner's decision in the window (set by authRoutes). */
+export let waitingCount: () => number = () => 0;
+
 export function authRoutes(d: AppDeps): Router {
   const router = Router();
   // LoginLimiter.check doesn't consume points, so attempts must not overlap while argon2 awaits:
@@ -299,13 +302,19 @@ ${message ? html`<p class="error" role="alert">${message}</p>` : ''}
   // BrainAI's window. Only ids in these two maps are ever answered, and a decided location is handed out once.
   const PENDING_MS = PENDING_TTL_SEC * 1000;
   const MAX_WAITING = 50;
+  // One tool cannot push the others' waiting sign-ins out: it has its own small share, and its oldest goes first.
+  const MAX_WAITING_PER_CLIENT = 5;
   const waiting = new Map<string, number>();
+  const waitingClient = new Map<string, string>();
   const decided = new Map<string, { location: string; untilMs: number }>();
   const prune = () => {
     const now = d.now().getTime();
-    for (const [id, until] of waiting) if (until <= now) waiting.delete(id);
+    for (const [id, until] of waiting) if (until <= now) { waiting.delete(id); waitingClient.delete(id); }
     for (const [id, v] of decided) if (v.untilMs <= now) decided.delete(id);
   };
+
+  // Sign-ins still waiting: the window keeps asking for them even after the owner account is set up, so none is stranded.
+  waitingCount = () => { prune(); return waiting.size; };
 
   router.get('/consent/:id/wait', (req, res) => {
     prune();
@@ -318,6 +327,7 @@ ${message ? html`<p class="error" role="alert">${message}</p>` : ''}
     }
     if (waiting.has(id) && d.provider.getPending(id)) return res.json({ state: 'pending' });
     waiting.delete(id);
+    waitingClient.delete(id);
     res.json({ state: 'gone' });
   });
 
@@ -343,8 +353,12 @@ ${message ? html`<p class="error" role="alert">${message}</p>` : ''}
     if (!pending) return expired(res, false);
     prune();
     if (!waiting.has(id)) {
-      while (waiting.size >= MAX_WAITING) waiting.delete(waiting.keys().next().value!);
+      const mine = [...waiting.keys()].filter((w) => waitingClient.get(w) === pending.clientId);
+      while (mine.length >= MAX_WAITING_PER_CLIENT) { const old = mine.shift()!; waiting.delete(old); waitingClient.delete(old); }
+      // Full: the newcomer is refused, so a flood of requests can never push out one the owner is about to approve.
+      if (waiting.size >= MAX_WAITING) return send(res, 503, t('auth.waiting.fullTitle'), html`<h1>${t('auth.waiting.fullTitle')}</h1><p>${t('auth.waiting.fullText')}</p>`);
       waiting.set(id, d.now().getTime() + PENDING_MS);
+      waitingClient.set(id, pending.clientId);
     }
     res.set('Cache-Control', 'no-store');
     send(res, 200, t('auth.window.title'), waitingView(id, pending.clientName, new URL(pending.redirectUri).origin));
@@ -385,6 +399,7 @@ ${message ? html`<p class="error" role="alert">${message}</p>` : ''}
       return send(res, 400, t('auth.consent.cannotTitle'), html`<h1>${t('auth.consent.cannot')}</h1><p>${tHtml('auth.consent.cannotText', { reason: e.message, expired: t('auth.expired.text') })}</p>`, true);
     }
     prune();
+    waitingClient.delete(id);
     if (waiting.delete(id)) {
       // The browser that started this sign-in is waiting: it goes on to the tool, the window stays here.
       decided.set(id, { location, untilMs: d.now().getTime() + PENDING_MS });

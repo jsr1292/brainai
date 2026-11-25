@@ -21,7 +21,7 @@ import { prepareEnv } from '../desktop/tools.js';
 import { html, page } from './html.js';
 import { t } from '../i18n/core.js';
 import { revealCommand } from './moveRoutes.js';
-import { cloudflaredEnv, reachOff } from './reachRoutes.js';
+import { cloudflaredEnv, leftoverFunnelOff, locked, reachOff } from './reachRoutes.js';
 import { removeDone, removePage, type ToolOutcome } from './removeViews.js';
 import { parentFor, savedChecklist, documentsOf, homeOf, saveDeps } from './savedRoutes.js';
 
@@ -99,6 +99,11 @@ export function removeRoutes(d: AppDeps): Router {
     const ours = [d.publicUrl.origin, ...(d.reach?.saved() ? [d.reach.saved()!.origin] : [])];
     // 2. Reach off, then 3. the Cloudflare tunnel (stopped by now) if Reach ever used Cloudflare.
     await step('turning Reach off', async () => { await reachOff(d); });
+    // A Funnel a crash left behind (or a Turn off that was not confirmed) is turned off too, if it is BrainAI's.
+    await step('turning off a leftover Tailscale share', async () => {
+      const r = await locked(d, () => leftoverFunnelOff(d));
+      if (!r.ok) kept.push(`Tailscale: BrainAI could not confirm that it stopped sharing (${r.reason}). Open Tailscale and turn off Funnel for BrainAI.`);
+    });
     await step('deleting the Cloudflare tunnel', async () => {
       if (!existsSync(join(dataDir, 'cloudflared', 'tunnel.json'))) return;
       tunnel = await deleteTunnel(cloudflaredEnv(d), dataDir);

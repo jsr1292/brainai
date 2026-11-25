@@ -3,9 +3,10 @@
  * servers in a JSON file in that HOME, print what the real CLIs print (claude mcp get's "URL:" line, codex's --json),
  * and log every call. The real HOME and the real tools are never touched.
  */
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { removeTempDir } from './tempDir.js';
 
 const SCRIPT = (tool: 'claude' | 'codex' | 'opencode' | 'gemini') => `#!/usr/bin/env node
 const fs = require('fs'); const path = require('path');
@@ -50,6 +51,6 @@ export function fakeHome(tools: ('claude' | 'codex' | 'opencode' | 'gemini')[] =
     read: (rel) => (existsSync(join(home, rel)) ? readFileSync(join(home, rel), 'utf8') : null),
     write: (rel, text) => { mkdirSync(join(home, rel, '..'), { recursive: true }); writeFileSync(join(home, rel), text); },
     servers: (tool) => (existsSync(join(home, `.fake-${tool}.json`)) ? JSON.parse(readFileSync(join(home, `.fake-${tool}.json`), 'utf8')) : {}),
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
+    cleanup: () => removeTempDir(root),
   };
 }

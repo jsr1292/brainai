@@ -469,6 +469,14 @@ pub fn usual_holder(port: u16) -> Holder {
     }
 }
 
+/// The server's exit code when it refuses a database from a newer BrainAI (src/db.ts EXIT_SCHEMA_TOO_NEW).
+pub const EXIT_SCHEMA_TOO_NEW: i32 = 78;
+
+/// Whether a server that stopped before it answered did so because the brain is from a newer BrainAI.
+pub fn refused_newer_brain(exit_code: Option<i32>) -> bool {
+    exit_code == Some(EXIT_SCHEMA_TOO_NEW)
+}
+
 /// Polls until our server answers (the first start loads the search model), giving up after `timeout` or as soon as
 /// `alive()` says the server stopped.
 pub fn wait_until_ours(port: u16, secret: &str, timeout: Duration, alive: impl Fn() -> bool) -> Result<(), StartError> {
@@ -659,6 +667,13 @@ mod tests {
             "C:\\Windows\\System32;C:\\Program Files\\nodejs;C:\\Users\\Ana\\AppData\\Roaming\\npm;C:\\Users\\Ana\\.local\\bin;C:\\Users\\Ana\\AppData\\Local\\Microsoft\\WinGet\\Links;C:\\Program Files\\nodejs"
         );
         assert_eq!(windows_tool_path(None, "C:\\U", "C:\\R", "C:\\L", ""), "C:\\R\\npm;C:\\U\\.local\\bin;C:\\L\\Microsoft\\WinGet\\Links");
+    }
+
+    #[test]
+    fn only_the_newer_brain_exit_code_reads_as_a_refused_brain() {
+        assert!(refused_newer_brain(Some(78)));
+        assert!(!refused_newer_brain(Some(1)));
+        assert!(!refused_newer_brain(None), "killed by a signal or still running");
     }
 
     #[test]

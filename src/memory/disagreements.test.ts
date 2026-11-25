@@ -153,3 +153,30 @@ test('close facts have their own floor (the search model\'s closeFacts), not rec
     assert.equal(service.closeFacts(b.id).length, expected, `closeFacts ${floor}`);
   }
 });
+
+test('the close-facts nudge uses the search model\'s own closeNudge cut-off when it has one, for saves and close pairs alike', async () => {
+  const { MemoryService } = await import('./service.js');
+  const { MemoryStore } = await import('./store.js');
+  const { openDb } = await import('../db.js');
+  const { createFakeEmbedder } = await import('./fakeEmbedder.js');
+  for (const [closeNudge, expected] of [[undefined, 1], [0.98, 0]] as const) {
+    const service = new MemoryService(new MemoryStore(openDb(':memory:'), () => new Date()), createFakeEmbedder(),
+      { duplicateThreshold: 0.99, minRecallSimilarity: 0.2, recallConfidentSimilarity: 0.2, closeNudge });
+    const save = async (content: string) => ((await service.remember({ kind: 'decision', content, project: 'homelab', allowDuplicate: true }, owner)) as { memory: Memory }).memory;
+    const a = await save('The media server listens on port 3000 behind the reverse proxy');
+    const b = await save('The media server listens on port 3100 behind the proxy');
+    assert.equal(service.closeFacts(b.id, 3).length, 1, 'the plain floor is unchanged');
+    assert.equal(service.closeFacts(b.id, 3, true).length, expected, `nudge with closeNudge ${closeNudge}`);
+    assert.equal(service.closePairs([a, b]).length, expected, `close pairs with closeNudge ${closeNudge}`);
+  }
+  // Below the 40% default (0.2 + 0.4 × (0.99 − 0.2) = 0.516), a lower closeNudge lists a pair the default leaves out.
+  for (const [closeNudge, expected] of [[undefined, 0], [0.35, 1]] as const) {
+    const service = new MemoryService(new MemoryStore(openDb(':memory:'), () => new Date()), createFakeEmbedder(),
+      { duplicateThreshold: 0.99, minRecallSimilarity: 0.2, recallConfidentSimilarity: 0.2, closeNudge });
+    const save = async (content: string) => ((await service.remember({ kind: 'decision', content, project: 'homelab', allowDuplicate: true }, owner)) as { memory: Memory }).memory;
+    const a = await save('The media server listens on port 3000 behind the reverse proxy');
+    const b = await save('Backups of the media server run every night'); // 0.39 with the fake embedder
+    assert.equal(service.closeFacts(b.id, 3, true).length, expected, `nudge with closeNudge ${closeNudge}`);
+    assert.equal(service.closePairs([a, b]).length, expected, `close pairs with closeNudge ${closeNudge}`);
+  }
+});

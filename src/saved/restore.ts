@@ -7,13 +7,14 @@ import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { plain } from './shown.js';
 import Database from 'better-sqlite3';
 import { checkArchive, listLines } from './archive.js';
 import { busy, busyTick } from '../busyMarker.js';
 import { restoredRowsProblem } from './rowChecks.js';
 import { cleanImage, EXT } from '../images/clean.js';
+import { latestSchema } from '../db.js';
 import { checkBackupFile, kindOfFile, pictureRows, picturesCanBeRemoved, stripSignIn } from './backupFile.js';
 
 const run = promisify(execFile);
@@ -155,6 +156,17 @@ function cleanRestoredPictures(into: string): number {
   } finally { db.close(); }
 }
 
+/**
+ * A restored brain gets a new id when it first needs one (db.ts brainId): the copy may be restored twice, or the old
+ * brain may still be running, and two live brains must never share a backup folder name.
+ */
+function forgetBrainId(file: string): void {
+  const db = new Database(file);
+  try {
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'brain_switches'").get()) db.exec("DELETE FROM brain_switches WHERE name = 'brain_id'");
+  } finally { db.close(); }
+}
+
 /** Puts the database (and an archive's pictures) into `into`, with the sign-in data taken out. The source is never changed. */
 async function unpack(file: string, kind: 'archive' | 'database', into: string): Promise<number> {
   if (kind === 'archive') {
@@ -165,6 +177,7 @@ async function unpack(file: string, kind: 'archive' | 'database', into: string):
   }
   stripSignIn(join(into, 'memory.db'));
   resetSecuritySettings(join(into, 'memory.db'));
+  forgetBrainId(join(into, 'memory.db'));
   const problem = restoredRowsProblem(join(into, 'memory.db'));
   if (problem) throw new Error(`This saved copy holds names BrainAI would never write (${problem}), so it is not brought back.`);
   if (kind === 'archive') return cleanRestoredPictures(into);
@@ -209,6 +222,12 @@ export function restorablePictures(db: Database.Database): PictureRow[] {
  * preview counts by and the copy follows.
  */
 export function besidePicture(folder: string, r: { id: string; type: string }): string | null {
+  // A copy inside a second-folder brain folder (brainai-…) may have its pictures in the folder above (kept there by an earlier version).
+  const own = besideIn(folder, r);
+  return own ?? (/^brainai-[0-9a-f]{8}$/.test(basename(folder)) ? besideIn(dirname(folder), r) : null);
+}
+
+function besideIn(folder: string, r: { id: string; type: string }): string | null {
   if (!/^[0-9a-f]{3,}$/.test(r.id) || !/^[a-z0-9]{1,8}$/.test(r.type)) return null;
   const real = (path: string) => { try { return lstatSync(path).isDirectory(); } catch { return false; } };
   const sub = join(folder, 'images', r.id.slice(0, 2));
@@ -366,6 +385,12 @@ export function applyPendingRestore(dataDir: string): Restored | null {
     const db = new Database(join(pending, 'memory.db'), { readonly: true });
     let counts: Restored;
     try {
+      // The copy was staged by a newer BrainAI and this older one started (an update undone): refused before anything is swapped.
+      const schema = (db.prepare('SELECT version FROM schema_version').get() as { version: number } | undefined)?.version ?? 0;
+      if (schema > latestSchema()) {
+        note({ refused: 'This saved copy is from a newer BrainAI than this one, so it was not brought in. Update BrainAI, then restore it again.' });
+        return null;
+      }
       counts = {
         facts: count(db, 'SELECT COUNT(*) AS n FROM memories WHERE deleted_at IS NULL'),
         pages: count(db, 'SELECT COUNT(*) AS n FROM pages WHERE deleted_at IS NULL'),
@@ -374,6 +399,8 @@ export function applyPendingRestore(dataDir: string): Restored | null {
     } finally {
       db.close();
     }
+    // A copy staged by a build from before restores dropped the id.
+    forgetBrainId(join(pending, 'memory.db'));
     swapIn(pending, dataDir);
     note({ at: new Date().toISOString(), ...counts });
     return counts;

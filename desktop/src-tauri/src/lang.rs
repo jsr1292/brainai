@@ -118,6 +118,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
         "El servidor de BrainAI dejó de responder, así que BrainAI lo ha reiniciado y ha reabierto esta página. Para más detalles usa Mostrar el registro en el icono de BrainAI del área de notificaciones.",
     ),
     ("start.finishing_update", "Finishing the update…", "Terminando la actualización…"),
+    ("err.schema_newer", "This brain was saved by a newer BrainAI than this app. Update BrainAI. If you cannot, restore the copy made before the update (the pre-migrate folder in the data folder). Nothing was changed.", "Este cerebro lo guardó una versión de BrainAI más nueva que esta app. Actualiza BrainAI. Si no puedes, restaura la copia hecha antes de la actualización (la carpeta pre-migrate de la carpeta de datos). No se ha cambiado nada."),
     ("err.timeout", "BrainAI's server did not start.", "El servidor de BrainAI no ha arrancado."),
     ("err.squatter", "Another program keeps answering on BrainAI's port.", "Otro programa sigue respondiendo en el puerto de BrainAI."),
     (

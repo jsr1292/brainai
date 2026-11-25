@@ -353,7 +353,7 @@ section { margin-bottom: 2rem; }
 /* A meta line: one item per part, each with its own dot. The list starts 1em to the left and that 1em is clipped,
    so the first part on every line (also after a wrap) hides its dot: no line ever starts with "·". */
 .meta-line { display: flex; flex-wrap: wrap; list-style: none; padding: 0; margin: 0 0 0 -1em; clip-path: inset(0 0 0 1em); color: var(--muted); font-size: var(--t-meta); font-weight: 500; line-height: 1.4; }
-.meta-line > li { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.meta-line > li { max-width: 100%; overflow-wrap: break-word; }
 .meta-line > li::before { content: "·"; display: inline-block; width: 1em; text-align: center; opacity: .55; }
 .meta-line.big { font-size: var(--t-sub); }
 /* A project's one-liner is its own paragraph, so it wraps and can be read whole (the meta line keeps its ellipsis for short parts). */
@@ -1019,6 +1019,7 @@ details.fold.fy-more > summary { color: var(--muted); font-weight: 400; }
 .pcard-label { color: var(--muted); font-size: var(--t-label); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 0.375rem; }
 .pcard-foot { margin-top: auto; display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: var(--t-meta); }
 .pcard-foot .meta-line { flex-wrap: nowrap; min-width: 0; }
+.pcard-foot .meta-line > li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* The Projects page by area (2026-11-11): a section per area, live projects as calm tiles, the rest folded under it.
    The dot is the project's state (green: being worked on, amber: waiting on you, grey: quiet); the round "!" is the
    one learning mark the home page shows: work that exists only on the Mac. */

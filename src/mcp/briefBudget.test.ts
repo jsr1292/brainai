@@ -294,3 +294,28 @@ test('with notes or no flag, the floor pages are the ones with open notes first,
   assert.equal(d.pages[1].title, 'big page 2', 'then the most recent');
   assert.doesNotMatch(JSON.stringify(d), /May be out of date/);
 });
+
+test('a close pair whose older fact the brief leaves out is not marked, and the lead says nothing of close pairs', async () => {
+  const s = setup();
+  s.registry.create('big', { state: 'open', area: 'apps' }, 'owner');
+  await s.save('roadmap', roadmap);
+  for (let i = 0; i < 5; i++) await s.save('summary', pad(`STATUS${i}`, 1000));
+  // Every decision has its own long search words, so none is close to another, except 25 and 59, which share theirs.
+  const ids: string[] = [];
+  for (let i = 0; i < 60; i++) {
+    const keys = Array(15).fill(i === 25 || i === 59 ? 'mediaserverp' : `k${i}abcdefgh`).join(' ');
+    const r: any = await s.save('decision', pad(`DECISION${String(i).padStart(2, '0')}`, 1000), 'big', keys);
+    ids.push(r.memory.id);
+  }
+  const c = await s.connect();
+  const all = dataOf(await c('project_brief', { project: 'big', all_decisions: true }));
+  assert.deepEqual(all.decisions.find((m: any) => m.id === ids[59]).may_conflict_with, [ids[25]], 'with every decision listed, the pair is marked');
+
+  const text = await c('project_brief', { project: 'big' });
+  const d = dataOf(text);
+  const listed = new Set(d.decisions.map((m: any) => m.id));
+  assert.ok(!listed.has(ids[25]) && listed.has(ids[59]), 'the older fact of the pair is left out, the newer one listed');
+  assert.ok(d.decisions.every((m: any) => (m.may_conflict_with ?? []).every((id: string) => listed.has(id))), 'no mark names a fact the brief left out');
+  assert.equal(d.decisions.find((m: any) => m.id === ids[59]).may_conflict_with, undefined);
+  assert.doesNotMatch(text, /may_conflict_with are close/);
+});

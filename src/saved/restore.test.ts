@@ -832,3 +832,67 @@ test('restore cleaning updates the picture row to the cleaned file, and a folder
   assert.equal((db.prepare('SELECT removed_by FROM images WHERE id = ?').get(dir1) as { removed_by: string }).removed_by, 'restore');
   assert.ok(counts.pictures_missing >= 1);
 });
+
+test('applyPendingRestore refuses a staged copy from a newer BrainAI and leaves the brain as it was', async (t) => {
+  const archive = await saved(t);
+  const dir = emptyData(t);
+  await stageRestore(archive, dir);
+  const staged = new Database(join(dir, 'restore-pending', 'memory.db'));
+  staged.prepare('UPDATE schema_version SET version = ?').run(latestSchema() + 1);
+  staged.close();
+  assert.equal(applyPendingRestore(dir), null);
+  assert.equal(existsSync(join(dir, 'restore-pending')), false);
+  assert.equal(existsSync(join(dir, 'memory.db')) && !isEmptyBrain(join(dir, 'memory.db')), false, 'nothing was swapped in');
+  assert.match(JSON.parse(readFileSync(join(dir, 'restored.json'), 'utf8')).refused, /newer BrainAI/);
+});
+
+test('stageRestore and restoreInto refuse a backup file from a newer BrainAI before anything is staged or swapped', async (t) => {
+  const given = makeService({ now: () => new Date('2026-11-06T10:00:00Z') });
+  const file = await backupNow(given.db, tmp(t), 1, new Date('2026-11-06T10:00:00Z'));
+  const x = new Database(file);
+  x.prepare('UPDATE schema_version SET version = ?').run(latestSchema() + 1);
+  x.close();
+  const dir = emptyData(t);
+  await assert.rejects(stageRestore(file, dir), /newer BrainAI/);
+  await assert.rejects(restoreInto(file, dir), /newer BrainAI/);
+  assert.deepEqual(readdirSync(dir).filter((n) => n.startsWith('restore-') || n.startsWith('.restore')), []);
+  assert.equal(existsSync(join(dir, 'memory.db')) && !isEmptyBrain(join(dir, 'memory.db')), false);
+});
+
+test('a restored brain gets a new brain id, not the id of the brain it came from', async (t) => {
+  const { brainId } = await import('../db.js');
+  const given = makeService({ now: () => new Date('2026-11-06T10:00:00Z') });
+  const original = brainId(given.db);
+  const file = await backupNow(given.db, tmp(t), 1, new Date('2026-11-06T10:00:00Z'));
+  const staged = new Database(file, { readonly: true });
+  assert.equal((staged.prepare("SELECT value FROM brain_switches WHERE name = 'brain_id'").get() as { value: string }).value, original, 'the backup carries the id');
+  staged.close();
+  const dir = emptyData(t);
+  await restoreInto(file, dir);
+  const restored = openDb(join(dir, 'memory.db'));
+  t.after(() => restored.close());
+  assert.equal(restored.prepare("SELECT 1 FROM brain_switches WHERE name = 'brain_id'").get(), undefined, 'no id brought across');
+  assert.notEqual(brainId(restored), original);
+  // The same for a copy staged for the next start.
+  const dir2 = emptyData(t);
+  await stageRestore(file, dir2);
+  applyPendingRestore(dir2);
+  const second = openDb(join(dir2, 'memory.db'));
+  t.after(() => second.close());
+  assert.notEqual(brainId(second), original);
+  assert.notEqual(brainId(second), brainId(restored));
+});
+
+test('applyPendingRestore drops a brain id a copy staged by an older build still carries', async (t) => {
+  const { brainId } = await import('../db.js');
+  const archive = await saved(t);
+  const dir = emptyData(t);
+  await stageRestore(archive, dir);
+  const staged = new Database(join(dir, 'restore-pending', 'memory.db'));
+  staged.prepare("INSERT INTO brain_switches(name, value, set_at) VALUES ('brain_id', ?, 'x')").run('a'.repeat(32));
+  staged.close();
+  applyPendingRestore(dir);
+  const db = openDb(join(dir, 'memory.db'));
+  t.after(() => db.close());
+  assert.notEqual(brainId(db), 'a'.repeat(32));
+});

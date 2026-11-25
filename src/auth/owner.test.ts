@@ -53,3 +53,12 @@ test('isConfigured needs both password and TOTP', async () => {
   o.setTotpSecret(generateTotpSecret());
   assert.equal(o.isConfigured(), true);
 });
+
+test('TOTP: the code that confirmed a new authenticator cannot then be used to log in', () => {
+  const secret = generateTotpSecret();
+  const o = new OwnerAuth(openDb(':memory:'), () => new Date(T));
+  const s = step(T);
+  o.setTotpSecret(secret, s);
+  assert.equal(o.verifyTotp(totpAt(secret, s)), false, 'the confirming code is used up');
+  assert.equal(o.verifyTotp(totpAt(secret, s + 1)), true, 'the next one works');
+});

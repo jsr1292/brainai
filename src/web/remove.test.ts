@@ -498,3 +498,18 @@ test('Remove never moves secret-bearing backups (Cursor mcp.json, Codex config.t
   assert.equal(home.read('.codex/config.toml.brainai-backup'), 'token = "x"');
   assert.equal(home.read('.claude/CLAUDE.md.brainai-backup'), null, 'the plain one moved into the saved folder');
 });
+
+test('Remove turns off a Tailscale share BrainAI left behind (a crash), and leaves one that is not its own', async (t) => {
+  for (const mine of [true, false]) {
+    const ts = fakeTailscale({ backend: 'Running', needsApproval: true });
+    t.after(() => ts.cleanup());
+    const { f, home, app } = await desktop(t, { extraPath: ts.bin });
+    const state = mine ? { backend: 'Running', funnel: true, target: 'http://127.0.0.1:41234' } : { backend: 'Running', funnel: true, target: 'http://127.0.0.1:9999' };
+    writeFileSync(join(home.home, 'tailscale.json'), JSON.stringify(state));
+    writeFileSync(join(app.deps.statusDir!, 'funnel-on'), '41234\n');
+    assert.equal((await post(f)).status, 303);
+    const now = JSON.parse(readFileSync(join(home.home, 'tailscale.json'), 'utf8')) as { funnel: boolean };
+    assert.equal(now.funnel, !mine, mine ? 'its own share is off' : "the owner's own share is untouched");
+    assert.equal(existsSync(join(app.deps.statusDir!, 'funnel-on')), false);
+  }
+});

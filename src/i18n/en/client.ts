@@ -48,6 +48,7 @@ export const client = {
   'client.update.restartNow': 'Restart now',
   'client.update.later': 'Later',
   'client.update.tryAgain': 'Try again',
+  'client.consent.lost': 'Lost contact with BrainAI. Reload this page, or start the connection again from the app.',
   'client.consent.expired': 'This request expired. Start the connection again from the app.',
   'client.consent.wants': '{name} wants access to your memory. ',
   'client.consent.review': 'Review',

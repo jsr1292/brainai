@@ -50,6 +50,7 @@ export const client_es: Record<keyof typeof client, Entry> = {
   'client.update.restartNow': 'Reiniciar ahora',
   'client.update.later': 'Más tarde',
   'client.update.tryAgain': 'Reintentar',
+  'client.consent.lost': 'Se perdió el contacto con BrainAI. Recarga esta página o inicia la conexión de nuevo desde la app.',
   'client.consent.expired': 'Esta solicitud ha caducado. Inicia la conexión de nuevo desde la app.',
   'client.consent.wants': '{name} quiere acceder a tu memoria. ',
   'client.consent.review': 'Revisar',

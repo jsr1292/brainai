@@ -68,7 +68,7 @@ export function reasonText(reason: string): string {
 
 /** A failed copy's code (see CopyWhy) in the owner's language, without paths. */
 export function copyWhyText(why: string): string {
-  return tKey((['folder', 'pictures', 'write', 'stuck'].includes(why) ? `backup.why.${why}` : 'backup.why.other') as 'backup.why.other');
+  return tKey((['folder', 'brainFolder', 'pictures', 'write', 'stuck', 'timeout', 'busy'].includes(why) ? `backup.why.${why}` : 'backup.why.other') as 'backup.why.other');
 }
 
 /** The backup problems (`backupHealth`) in the owner's language; a health value without keys shows its English sentences. */

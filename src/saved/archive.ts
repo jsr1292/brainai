@@ -4,12 +4,14 @@
  * `checkArchive` proves a file is one before anything trusts it, so a restore never unpacks a hostile or damaged file.
  */
 import { execFile } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, unlinkSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import Database from 'better-sqlite3';
 import { backupNow } from '../backup.js';
+import { liveCounts, moveAcrossDisks, readCounts } from '../backupWork.js';
+import { inWorker } from '../offThread.js';
 import { busy } from '../busyMarker.js';
 import { latestSchema, type DB } from '../db.js';
 import { shown } from './shown.js';
@@ -21,14 +23,7 @@ export type ArchiveCheck = { ok: true; facts: number; pages: number; schema: num
 
 const run = promisify(execFile);
 
-/** What a person would count: facts and pages that are not deleted. */
-export function liveCounts(db: DB): { facts: number; pages: number } {
-  const n = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
-  return {
-    facts: n('SELECT COUNT(*) AS n FROM memories WHERE deleted_at IS NULL'),
-    pages: n('SELECT COUNT(*) AS n FROM pages WHERE deleted_at IS NULL'),
-  };
-}
+export { liveCounts, moveAcrossDisks };
 
 /**
  * Packs the archive at `outFile` (mode 600, written whole or not at all) and gives the counts read from the copy, not
@@ -45,7 +40,7 @@ async function packArchiveWork(db: DB, dataDir: string, outFile: string, now: Da
     const copy = await backupNow(db, staging, 1, now, dataDir);
     const dbFile = join(staging, 'memory.db');
     renameSync(copy, dbFile);
-    const counts = readCounts(dbFile);
+    const counts = await inWorker('readCounts', [dbFile], () => readCounts(dbFile));
     const partial = join(staging, 'out.tar.gz');
     const parts = existsSync(join(staging, 'images')) ? ['memory.db', 'images'] : ['memory.db'];
     // The system tar (macOS, Linux and Windows 10+ all have one); the server unpacks it with the same command. Without
@@ -54,43 +49,10 @@ async function packArchiveWork(db: DB, dataDir: string, outFile: string, now: Da
     await run('tar', ['-czf', partial, ...plain, '-C', staging, ...parts], { env: { ...process.env, COPYFILE_DISABLE: '1' } });
     chmodSync(partial, 0o600);
     mkdirSync(join(outFile, '..'), { recursive: true, mode: 0o700 });
-    moveAcrossDisks(partial, outFile);
+    await inWorker('moveAcrossDisks', [partial, outFile], () => moveAcrossDisks(partial, outFile));
     return counts;
   } finally {
     rmSync(staging, { recursive: true, force: true });
-  }
-}
-
-/**
- * Moves a file to `to`, also when that is on another disk (the saved folder in Documents or the home folder can be),
- * where a plain rename fails with EXDEV. Then it is copied to a temporary name next to the destination, so the final
- * rename is on one disk and the destination is whole or absent, and the original is removed. `rename` is a test seam.
- */
-export function moveAcrossDisks(from: string, to: string, rename: (a: string, b: string) => void = renameSync): void {
-  try {
-    rename(from, to);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'EXDEV') throw e;
-    const part = join(dirname(to), `.${basename(to)}.${process.pid}.part`);
-    try {
-      copyFileSync(from, part);
-      chmodSync(part, 0o600);
-      rename(part, to);
-    } catch (err) {
-      rmSync(part, { force: true });
-      throw err;
-    }
-    unlinkSync(from);
-  }
-}
-
-/** Opens a database file read-only and reads what it holds. */
-function readCounts(file: string): { facts: number; pages: number } {
-  const db = new Database(file, { readonly: true });
-  try {
-    return liveCounts(db);
-  } finally {
-    db.close();
   }
 }
 

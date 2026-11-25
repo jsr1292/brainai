@@ -208,6 +208,7 @@ export const setup_es: Record<keyof typeof setup, Entry> = {
   'setup.restore.found.another': 'Elegir otra carpeta',
   'setup.err.find.none': 'No se ha encontrado ninguna copia guardada en esa carpeta. BrainAI busca un archivo brainai-saved-….tar.gz o copias de seguridad memory-AAAA-MM-DD.db directamente dentro de ella.',
   'setup.err.find.invalid': 'La copia más reciente de esa carpeta no se puede recuperar: {why}',
+  'setup.err.find.several': 'Esta carpeta tiene copias de más de un cerebro. Elige la carpeta brainai-… del que quieras: {why}',
   'setup.err.find.gone': 'No hay ninguna copia elegida, o la elección ha caducado. Elige la carpeta de nuevo.',
   'setup.err.find.unreadable': 'BrainAI no ha podido abrir esa carpeta. Comprueba que la unidad está conectada o elige otra carpeta.',
   'setup.err.find.changed': 'La copia ha cambiado desde que se encontró. Elige la carpeta de nuevo.',

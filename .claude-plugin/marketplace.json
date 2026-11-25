@@ -9,7 +9,7 @@
       "name": "brainai",
       "source": "./plugins/claude-code/brainai",
       "description": "MCP server entry, save-reminder hooks and the harvest-session skill for Claude Code.",
-      "version": "1.10.5"
+      "version": "1.10.6"
     }
   ]
 }

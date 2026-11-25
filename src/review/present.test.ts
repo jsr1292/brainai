@@ -83,6 +83,21 @@ test('a read-only grant on wildlog sees nothing of other projects, counts includ
   assert.deepEqual(view.decided.shown.map((d) => d.project), ['wildlog']);
 });
 
+test('a read-only grant on wildlog does not see Done lines whose roadmap has since moved to another project', () => {
+  const w = fullWeek();
+  const body = buildReview(w.sources(), windowFor(W26));
+  assert.match(show(w, { kind: 'read', projects: ['wildlog'] }, 'last', body).moved.map((m) => m.done.map((d) => d.text).join()).join(), /Label scan/, 'seen before the move');
+  assert.match(JSON.stringify(show(w, { kind: 'read', projects: ['wildlog'] }, 'last', body)), /Run release/, 'seen before the move');
+  const road = w.store.list({ project: 'wildlog', kind: 'roadmap', limit: 5 })[0]!;
+  w.at('2026-11-03T08:00:00Z');
+  w.store.update(road.id, { content: road.content, project: 'secretproject', tags: road.tags, embedding: new Float32Array(4), by: 'owner' });
+  const after = show(w, { kind: 'read', projects: ['wildlog'] }, 'last', body);
+  assert.doesNotMatch(JSON.stringify(after.moved), /Label scan|TestFlight|Cellar map/, 'the moved roadmap\'s lines are gone');
+  assert.doesNotMatch(JSON.stringify(after), /Release 0\.2\.2|Run release/, 'its Now line and waiting items are gone too');
+  assert.deepEqual([after.waiting.late.shown, after.waiting.late.folded, after.waiting.after.shown, after.waiting.after.folded, after.waiting.undated], [[], [], [], [], 0], 'no waiting items or counts');
+  assert.ok(show(w, owner, 'last', body).moved.some((m) => m.done.length > 0), 'the owner still sees the week');
+});
+
 test('Full sees Personal and growth but no assistant table and no safety notes', () => {
   const w = fullWeek();
   const view = show(w, { kind: 'full' });

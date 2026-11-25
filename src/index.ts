@@ -8,7 +8,8 @@ import { OwnerAuth } from './auth/owner.js';
 import { MemoryOAuthProvider } from './auth/provider.js';
 import { RedirectAllowlist } from './auth/redirects.js';
 import { SessionStore } from './auth/sessions.js';
-import { scheduleBackups } from './backup.js';
+import { backupsIdle, scheduleBackups } from './backup.js';
+import { sweepBackupTemp } from './backupWork.js';
 import { setBusyDir } from './busyMarker.js';
 import { BackupCopy } from './desktop/backupCopy.js';
 import { systemClock } from './clock.js';
@@ -31,7 +32,7 @@ import { SkillSync } from './skills/sync.js';
 import { PageService } from './pages/service.js';
 import { PageStore } from './pages/store.js';
 import { DiscussionStore } from './discussions/store.js';
-import { openDb, purgeExpired } from './db.js';
+import { EXIT_SCHEMA_TOO_NEW, openDb, purgeExpired, SchemaTooNewError } from './db.js';
 import { applyPendingRestore } from './saved/restore.js';
 import { createLocalEmbedder } from './memory/embedder.js';
 import { embedPending, ensureEmbeddings, staleOverrides } from './memory/reembed.js';
@@ -69,7 +70,17 @@ setBusyDir(config.localMode ? config.dataDir : undefined);
 // A restore the app staged is swapped in while the database is still closed (src/saved/restore.ts); it never throws.
 applyPendingRestore(config.dataDir);
 const dbPath = join(config.dataDir, 'memory.db');
-const db = openDb(dbPath);
+let db: ReturnType<typeof openDb>;
+try {
+  db = openDb(dbPath);
+} catch (e) {
+  // A brain from a newer BrainAI: say so plainly in the log (the desktop app's "Show the log") and stop, the file untouched.
+  if (e instanceof SchemaTooNewError) {
+    console.error(`BrainAI cannot start: ${e.message}`);
+    process.exit(EXIT_SCHEMA_TOO_NEW);
+  }
+  throw e;
+}
 // The search model. A server needs it on disk and loads it before it listens (re-embedding everything first if it
 // changed). The app (local mode) starts on keywords and its model manager loads, downloads and switches models in the
 // background once it listens (src/models/manager.ts), without a restart.
@@ -146,6 +157,8 @@ const cleanup = () => {
 };
 cleanup();
 const timer = setInterval(cleanup, CLEANUP_INTERVAL_MS).unref();
+// A backup that was stopped (a quit, an update) leaves a temporary copy with sign-in data: gone before anything new starts.
+sweepBackupTemp();
 if (config.backupDir) scheduleBackups(db, config.backupDir, config.backupKeep, now, config.dataDir, config.localMode ? new BackupCopy(config.dataDir) : undefined);
 
 const tidy = new TidyService({ db, store, service, pages, now, cuts: () => ({ related: cut().related, duplicate: cut().duplicate }) });
@@ -188,9 +201,9 @@ if (config.localMode) {
   // The desktop app holds both loopback addresses, so no other account can take ::1 (D1 review).
   const [server, ...also] = await listenLocal(app, config.port);
   listening(`127.0.0.1 and ::1, port ${config.port}`);
-  installShutdown({ server: server!, also, timer, db });
+  installShutdown({ server: server!, also, timer, db, waitIdle: () => backupsIdle(4500) });
   stopWhenGone = () => process.kill(process.pid, 'SIGTERM');
 } else {
   const server = app.listen(config.port, config.host, () => listening(`${config.host}:${config.port}`));
-  installShutdown({ server, timer, db });
+  installShutdown({ server, timer, db, waitIdle: () => backupsIdle(4500) });
 }

@@ -4,6 +4,40 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Version shows the version you run.
 
+## 1.10.6 (2026-11-25)
+
+How assistants handle facts, from the 2026-11-25 behaviour experiments (nothing to do when updating):
+- **Facts that may disagree are pointed out.** When two current facts of a project look close, `project_brief` and `recall` mark both with `may_conflict_with` and say what to do: `flag_disagreement` if they can't both be true, `supersedes` if one replaces the other. In the test runs assistants flagged a real contradiction they met while reading about two times in three, up from about one in three, and never flagged a pair that does not conflict.
+- **Fewer "close facts" after a save.** The list of close facts shown after a save now starts at a higher similarity (0.65 instead of 0.60 with the default search model), so it appears less often and names an unrelated fact less often.
+- **Shorter operating rules.** The rules sent with `load_profile` say the same things in about 60% of the words; details a tool already states (the roadmap format, discussion rounds, page titles) are left to that tool.
+
+Small fixes (nothing to do when updating):
+- **Picture upload through Reach:** the link an assistant gets to add a picture now uses the address it reached BrainAI at, so assistants connected through Reach can open it.
+- **New authenticator:** the code you type to confirm a new authenticator can no longer be used to log in right after.
+- **Reach setup:** the authenticator QR code you are adding is now only shown to, and confirmed by, the browser that started it.
+- **Weekly review:** a read-only connection no longer sees Done lines from a roadmap that has since moved to a project it cannot read (weeks saved before this update keep showing as before).
+- **Search (recall):** an assistant that sends more than 2 other phrasings is no longer refused; the first 2 are used.
+- **Tool sign-in page:** while it waits for your decision, it no longer stops silently if BrainAI cannot be reached; it says contact was lost and keeps trying.
+- **Tool sign-ins:** Disconnect on a tool also cancels a sign-in that tool still had waiting; one tool can no longer push another tool's waiting sign-in out of the list; and the window only checks for waiting sign-ins until the owner account is set up.
+- **Reach after a crash:** BrainAI now remembers which port Tailscale Funnel points at. If BrainAI was killed (a crash, Task Manager) and Reach is off, the next start turns that Funnel off. If Reach is on and the port changed, the old share is removed before the new one. This runs in the background with a short time limit, so a Tailscale that is installed but not running never slows the start. Before it turns anything off, BrainAI asks Tailscale what is shared on port 443 and only touches a share that points at its own door, so a Funnel you set up yourself is left alone. Remove BrainAI does the same. A Funnel left by a crash of an older version is not found; turn Reach on and off once to clear it.
+- **Backups one at a time:** two backups started together (Back up now during the nightly one) now wait for each other, and a backup stopped by Quit or an update leaves no half-made files or temporary copies behind. Quit waits up to about 5 seconds for a running backup to finish. A second backup folder that stops answering (a network drive) no longer holds up other backups; the next copy to it says the previous one is still running. The picture copy ignores database rows whose picture name is not a plain hex id.
+- **A big backup no longer freezes BrainAI:** the nightly backup, Back up now, the second backup folder (with pictures), saving a copy and the moving file now do their long work in a separate thread, so pages keep answering meanwhile (a test brain of 100,000 facts and 20,000 pictures froze the server for 50 seconds before, 0.04 seconds now). The files and messages are the same. Nothing to do when updating.
+
+Hardening from the 2026-11-23 outside review (updating needs nothing from you):
+- **A brain from a newer BrainAI is refused:** if you roll back (Docker) or open an older desktop app on a brain that a newer BrainAI already updated, BrainAI now stops at start and says so, naming both versions, and leaves the file untouched. The desktop app shows it in its start-failed message. Update BrainAI, or restore the copy in `data/pre-migrate/`. A saved copy from a newer BrainAI that was staged for restore is refused too.
+- **Saves survive a crash:** the database now syncs fully (`synchronous=FULL`, with WAL kept), so a save the server confirmed survives a crash of the app or the server. (On a Mac a sudden power cut is still not promised.)
+- **Each brain has its own folder in the second backup folder:** copies go to `brainai-<id>/` (owner only, never through a link) inside it, so two brains sharing a folder no longer overwrite or delete each other's copies, and BrainAI only ever prunes its own folder. A brain that is restored gets a new id (and so a new folder), so a restored clone never shares a folder with the brain it came from.
+  - Copies an earlier version left loose in the folder are no longer touched or pruned: delete them by hand when you like. Restoring from them still works.
+  - Pictures are copied again into your brain's own folder. The `images` folder the earlier version kept in the second folder is not touched (it stays where it is, with any pictures deleted for good that it holds); remove it by hand if you want.
+  - Restoring from a second folder that holds the folders of more than one brain asks you to choose the `brainai-…` folder of the one you want, and lists each with the date of its newest copy. After a restore the old brain's folder stays beside the new one; delete it by hand when you no longer need it.
+
+Operations scripts for the home server, run on the Mac (nothing to do when updating; see `docs/RUNBOOK.md` section 7):
+- **`scripts/offsite-drill.sh`** proves the newest Google Drive copy opens with your age key and holds your facts and pages. With `--record`, Settings › Backups also shows the last drill.
+- **A pre-push hook** (`git config core.hooksPath scripts/hooks`) runs typecheck and tests before `main` goes to the mini PC; `scripts/test-and-record.sh` records a tested commit.
+- **`scripts/deploy-minipc.sh`** does the update in one step, with a database copy first, checks afterwards and rollback steps if one fails.
+
+- A long part of a small grey info line (a long tag list or title) now wraps on a phone and in lists instead of ending in "...". Updating needs nothing.
+
 ## 1.10.5 (2026-11-25)
 
 A fix for the Mac app (on a Mac with 1.10.4, update by hand as below; nothing to do otherwise):

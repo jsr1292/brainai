@@ -18,6 +18,8 @@ const ARCHIVE = /^brainai-(?:saved|move)-(\d{4}-\d{2}-\d{2})(?: \(\d+\))?\.tar\.
 const TRIES = 5;
 /** The folders BrainAI itself makes ("BrainAI saved 2026-11-23", "... (2)"): looked into one level down when the chosen folder holds no copy. */
 const SAVED_FOLDER = /^BrainAI saved \d{4}-\d{2}-\d{2}(?: \(\d+\))?$/;
+/** The per-brain folders the second backup folder keeps (src/desktop/backupCopy.ts): looked into one level down, next to any flat copies an earlier version left. */
+const BRAIN_FOLDER = /^brainai-[0-9a-f]{8}$/;
 /** How many such folders are looked into (the newest by name). */
 const FOLDERS = 10;
 
@@ -34,9 +36,9 @@ export type Found = {
   token: string; size: number; mtimeMs: number;
 };
 
-/** why: none (no candidate), invalid (the newest ones are not usable copies), unreadable (the folder or its files could not be read). */
+/** why: several (copies of more than one brain), none (no candidate), invalid (the newest ones are not usable copies), unreadable (the folder or its files could not be read). */
 export class NothingFound extends Error {
-  constructor(readonly why: 'none' | 'invalid' | 'unreadable', message: string) { super(message); }
+  constructor(readonly why: 'none' | 'invalid' | 'unreadable' | 'several', message: string) { super(message); }
 }
 
 type Candidate = { path: string; name: string; kind: 'archive' | 'database'; date: string; mtime: number; /** The folder the file sits in (the pictures of a backup are looked for beside it). */ dir: string };
@@ -62,11 +64,11 @@ export function candidates(folder: string): Candidate[] {
 function newestFirst(a: Candidate, b: Candidate): number { return b.date.localeCompare(a.date) || b.mtime - a.mtime || b.name.localeCompare(a.name); }
 
 /** Candidates inside the saved folders (named like BrainAI's own) directly inside `folder`; a folder that cannot be read is skipped, a link is never followed. */
-function candidatesBelow(folder: string): Candidate[] {
+function candidatesBelow(folder: string, which: RegExp = SAVED_FOLDER): Candidate[] {
   let names: string[];
   try { names = readdirSync(folder); } catch { return []; }
   const out: Candidate[] = [];
-  for (const name of names.filter((n) => SAVED_FOLDER.test(n)).sort().reverse().slice(0, FOLDERS)) {
+  for (const name of names.filter((n) => which.test(n)).sort().reverse().slice(0, FOLDERS)) {
     const sub = join(folder, name);
     try { if (!lstatSync(sub).isDirectory()) continue; out.push(...candidates(sub)); } catch { /* skipped */ }
   }
@@ -95,7 +97,17 @@ function pictureCounts(file: string, folder: string): { total: number; found: nu
 
 /** Finds, checks and counts the newest usable copy in `folder`. Throws NothingFound, never anything else. */
 export async function findCopy(folder: string): Promise<Found> {
-  let list = candidates(folder);
+  // Flat copies (an earlier version's, or a folder of saved copies) and the per-brain folders of the second backup folder, together: the newest wins.
+  const below = candidatesBelow(folder, BRAIN_FOLDER);
+  // Copies of more than one brain are never mixed: the newest of another brain could be the wrong one. A brainai-… folder chosen directly is fine.
+  if (new Set(below.map((c) => c.dir)).size > 1) {
+    // Each brain's folder with its newest copy's date, so the owner can tell which one to choose.
+    const newest = new Map<string, string>();
+    for (const c of below) if ((newest.get(c.dir) ?? '') < c.date) newest.set(c.dir, c.date);
+    const listed = [...newest].map(([d, date]) => `${basename(d)} (${date})`).sort().join(', ');
+    throw new NothingFound('several', listed);
+  }
+  let list = [...candidates(folder), ...below].sort(newestFirst);
   // The owner may have picked the folder that holds the saved folders (Documents, say): one level down, only BrainAI's own names.
   if (list.length === 0) list = candidatesBelow(folder);
   if (list.length === 0) throw new NothingFound('none', 'No saved copy found');

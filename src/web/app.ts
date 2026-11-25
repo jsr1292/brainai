@@ -71,7 +71,7 @@ import { searchRoutes } from './searchRoutes.js';
 import type { MemoryService } from '../memory/service.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { ProjectStore } from '../projects/store.js';
-import { authRoutes, readCookie, SESSION_COOKIE } from './authRoutes.js';
+import { authRoutes, readCookie, SESSION_COOKIE, waitingCount } from './authRoutes.js';
 import { dashboardRoutes } from './dashboardRoutes.js';
 import { discussionRoutes } from './discussionRoutes.js';
 import { DOOR_VIA_SETTING, rateLimitKey, TRUST_CF_SETTING } from './clientIp.js';
@@ -391,7 +391,15 @@ export function createApp(d: AppDeps): express.Express {
   setViewClock(d.now);
   setPausedBanner(() => d.service.savesPausedSince());
   setMovedBanner(() => (d.localMode && d.statusDir ? movedTo(d.statusDir) : null));
-  setConsentPoller(d.localMode === true);
+  // Tool sign-ins only wait in the window while the owner account is not fully set up (see authRoutes), so only then (or while one is still waiting) do pages ask.
+  setConsentPoller(() => {
+    if (d.localMode !== true) return false;
+    // Pages drawn outside a request after the app was closed must not fail on the check; any other error still does.
+    try { return !d.owner.isConfigured() || waitingCount() > 0; } catch (e) {
+      if (e instanceof TypeError && /database connection is not open/.test(e.message)) return false;
+      throw e;
+    }
+  });
   setServerMode(d.localMode !== true);
   setComputer(d.tools?.platform ?? process.platform);
   // The palette's "Go to" rows beyond the sidebar's places: only the pages this mode has.
@@ -547,6 +555,7 @@ export function createApp(d: AppDeps): express.Express {
         access,
         clientId: req.auth!.clientId,
         grantId: typeof grantId === 'string' ? grantId : undefined,
+        publicUrl: onPublic(req) ? reachUrl()! : d.publicUrl,
         // Read at every request, so a change in Settings › Connections applies to the very next call.
         projects: access === 'projects' ? d.provider.grantProjects(req.auth!.extra!.grantId as string) : undefined,
         onSetup: typeof grantId === 'string' ? (n) => d.provider.setGrantSetup(grantId, n) : undefined,
@@ -598,7 +607,7 @@ export function createApp(d: AppDeps): express.Express {
 
   // 7. Static assets.
   // Public on purpose (before the owner guard): the manifest, icons and service worker must load without a session or install fails.
-  // Versioned vendor folders (mermaid-12.3.0, dompurify-3.4.17): the version in the name makes a year-long cache
+  // Versioned vendor folders (mermaid-12.3.0, dompurify-3.5.0): the version in the name makes a year-long cache
   // safe, and these are public open-source files. Everything else in /static keeps express.static's default.
   app.use('/static/vendor', express.static(join(STATIC_DIR, 'vendor'), { index: false, immutable: true, maxAge: '365d' }));
   app.use('/static', express.static(STATIC_DIR, { index: false }));

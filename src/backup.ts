@@ -1,89 +1,22 @@
-import { chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
 import { writeBackupStatus, type BackupRun } from './backupStatus.js';
 import type { BackupCopy } from './desktop/backupCopy.js';
 import { tighten, type DB } from './db.js';
-import { busy, busyTick } from './busyMarker.js';
+import { busy } from './busyMarker.js';
+import { finishDraft, gonePictures, STRIP_SIGN_IN_SQL, PICTURE_KEEP_DAYS, syncPictureFiles, missingPictureCount, sweepPartials, sweepBackupTemp, MAIN_PARTIAL } from './backupWork.js';
+import { inWorker } from './offThread.js';
+
+export { STRIP_SIGN_IN_SQL, PICTURE_KEEP_DAYS };
 
 const NAME = /^memory-\d{4}-\d{2}-\d{2}\.db$/;
 
-/**
- * Sign-in data a backup leaves out: the owner's password hash and authenticator secret, sessions and known devices,
- * the Macs' folder-report tokens (with their latest reports, which point at them), OAuth tokens, codes and pending
- * requests, and client secrets (replaced by random ones, so such a client fails and registers again instead of
- * passing as a public client). A backup is for memories; after a restore the owner sets the password and
- * authenticator again, the apps sign in again and each Mac gets a new token. scripts/strip-signin.sh runs the same
- * statements.
- */
-export const STRIP_SIGN_IN_SQL = `DELETE FROM owner; DELETE FROM sessions; DELETE FROM known_devices; DELETE FROM folder_reports; DELETE FROM device_tokens; DELETE FROM oauth_tokens; DELETE FROM oauth_codes; DELETE FROM oauth_pending; DELETE FROM image_upload_links; UPDATE oauth_clients SET metadata = json_set(metadata, '$.client_secret', lower(hex(randomblob(32)))) WHERE json_extract(metadata, '$.client_secret') IS NOT NULL;`;
 export const BACKUP_INTERVAL_MS = 24 * 60 * 60_000;
-/** Picture files leave the backup copies this many days after Delete for good (as scripts/backup.sh's KEEP_DAYS). */
-export const PICTURE_KEEP_DAYS = 30;
-
-/**
- * Copies the picture files `<dataDir>/images/<2 hex>/` that `dir/images` doesn't have yet (files never change), each
- * to a .partial name and renamed, then removes from `dir/images` the ones deleted for good more than 30 days ago.
- * `<dataDir>/images` itself is never changed, and its tmp folder is the store's own.
- *
- * `careful` is for a folder the owner chose (the second backup folder, maybe a synced one): `dir/images` and its
- * sub-folders must be real folders (never links), a source that is not a regular file is skipped, a name there that
- * is not a regular file is refused (never followed or overwritten), the new files are narrowed to the owner (0600),
- * and only regular files with one name that this user owns are ever deleted.
- */
+/** Copies the pictures a backup folder doesn't have yet and drops the ones deleted for good long ago; see syncPictureFiles. */
 export function syncPictures(db: DB, dataDir: string, dir: string, now: Date, careful = false): void {
-  const src = join(dataDir, 'images');
-  if (!existsSync(src)) return;
-  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
-  const realDir = (path: string): boolean => {
-    try { return lstatSync(path).isDirectory(); } catch { return false; }
-  };
-  const refuse = (path: string): never => { throw new Error(`Pictures could not be copied: ${path} is not an ordinary folder or file.`); };
-  for (const sub of readdirSync(src).filter((d) => /^[0-9a-f]{2}$/.test(d))) {
-    const subDir = join(dir, 'images', sub);
-    for (const file of readdirSync(join(src, sub))) {
-      busyTick();
-      const target = join(subDir, file);
-      if (careful) {
-        try { if (!lstatSync(join(src, sub, file)).isFile()) continue; } catch { continue; }
-        let seen = null;
-        try { seen = lstatSync(target); } catch { /* not there yet */ }
-        if (seen !== null) { if (seen.isFile()) continue; refuse(target); }
-      } else if (existsSync(target)) continue;
-      if (careful) {
-        for (const d of [join(dir, 'images'), subDir]) {
-          let there = true;
-          try { lstatSync(d); } catch { there = false; }
-          if (!there) mkdirSync(d, { mode: 0o700 });
-          else if (!realDir(d)) refuse(d);
-        }
-      } else mkdirSync(subDir, { recursive: true });
-      const partial = `${target}.partial`;
-      try {
-        if (careful) rmSync(partial, { force: true });
-        copyFileSync(join(src, sub, file), partial, careful ? constants.COPYFILE_EXCL : 0);
-        if (careful) chmodSync(partial, 0o600);
-        renameSync(partial, target);
-      } catch (e) {
-        rmSync(partial, { force: true });
-        throw e;
-      }
-    }
-  }
-  // A picture a restore could not bring back (removed_by = 'restore') is never deleted from the copy: it may be the only one left.
-  const before = new Date(now.getTime() - PICTURE_KEEP_DAYS * 86400_000).toISOString();
-  const gone = db.prepare("SELECT id, type FROM images WHERE removed_at IS NOT NULL AND removed_at < ? AND (removed_by IS NULL OR removed_by <> 'restore')").all(before) as { id: string; type: string }[];
-  for (const g of gone) {
-    const path = join(dir, 'images', g.id.slice(0, 2), `${g.id}.${g.type === 'jpeg' ? 'jpg' : g.type}`);
-    if (careful) {
-      try {
-        const st = lstatSync(path);
-        if (!st.isFile() || st.nlink !== 1 || (uid !== null && st.uid !== uid) || !realDir(join(dir, 'images')) || !realDir(join(dir, 'images', g.id.slice(0, 2)))) continue;
-      } catch { continue; }
-    }
-    rmSync(path, { force: true });
-  }
+  syncPictureFiles(dataDir, dir, gonePictures(db, now), careful);
 }
 
 /**
@@ -95,7 +28,24 @@ export function syncPictures(db: DB, dataDir: string, dir: string, now: Date, ca
  * ever writes or deletes memory-YYYY-MM-DD.db files and its own .partial file. Returns the path.
  */
 export function backupNow(db: DB, dir: string, keep: number, now: Date, dataDir?: string): Promise<string> {
-  return busy('backing up', () => backupNowWork(db, dir, keep, now, dataDir));
+  return busy('backing up', () => locked(() => backupNowWork(db, dir, keep, now, dataDir)));
+}
+
+/**
+ * Backup work runs one at a time (startup run, Back up now, the nightly run, a saved copy): the heavy parts are off
+ * the main thread, so two runs would otherwise interleave on the same files. A run that waits starts when the one
+ * before ends, however it ends.
+ */
+let chain: Promise<unknown> = Promise.resolve();
+function locked<T>(fn: () => Promise<T>): Promise<T> {
+  const run = chain.then(fn, fn);
+  chain = run.catch(() => {});
+  return run;
+}
+
+/** Resolves once the backup work in flight has ended, or after `maxMs`: the server waits for it before it exits, so a stop never leaves a half-made copy behind. */
+export function backupsIdle(maxMs: number): Promise<void> {
+  return Promise.race([chain.then(() => {}), new Promise<void>((r) => setTimeout(r, maxMs).unref())]);
 }
 
 async function backupNowWork(db: DB, dir: string, keep: number, now: Date, dataDir?: string): Promise<string> {
@@ -107,41 +57,27 @@ async function backupNowWork(db: DB, dir: string, keep: number, now: Date, dataD
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const name = `memory-${day}.db`;
   const path = join(dir, name);
+  sweepPartials(dir, MAIN_PARTIAL);
+  // Inside the lock no draft of this process is live: what a quit left behind goes now, not at the next start.
+  sweepBackupTemp(tmpdir(), true);
   const work = mkdtempSync(join(tmpdir(), 'brain-backup-'));
   try {
+    writeFileSync(join(work, 'pid'), String(process.pid));
     const draft = join(work, name);
     await db.backup(draft);
-    // Owner-only from here on: the copies made from the draft keep this mode whatever the umask.
-    chmodSync(draft, 0o600);
-    // The copy inherits WAL mode; switching it to a rollback journal keeps each backup a single self-contained file.
-    const copy = new Database(draft);
-    try {
-      copy.pragma('journal_mode = DELETE');
-      copy.exec(STRIP_SIGN_IN_SQL);
-      // Rewrites the file, so the deleted rows are not left behind in free pages.
-      copy.exec('VACUUM');
-      const result = copy.pragma('integrity_check', { simple: true });
-      if (result !== 'ok') throw new Error(`Backup ${path} failed its integrity check: ${String(result)}`);
-    } finally {
-      copy.close();
-    }
-    // Copied under a name that is not a backup's, then renamed, so `dir` never holds a half-written backup.
-    const partial = join(dir, `.${name}.partial`);
-    try {
-      // Cleared first and created exclusively, so a link planted at this name is never followed.
-      rmSync(partial, { force: true });
-      copyFileSync(draft, partial, constants.COPYFILE_EXCL);
-      renameSync(partial, path);
-    } catch (e) {
-      rmSync(partial, { force: true });
-      throw e;
-    }
+    // Everything heavy after the snapshot (strip, VACUUM, integrity check, the copy) runs in a worker thread.
+    // A name of its own for the copy in `dir`, so nothing else ever shares or removes it.
+    const partial = join(dir, `.${name}.${randomBytes(8).toString('hex')}.partial`);
+    await inWorker('finishDraft', [draft, partial, path], () => finishDraft(draft, partial, path));
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
   const snapshots = readdirSync(dir).filter((f) => NAME.test(f)).sort().reverse();
   for (const old of snapshots.slice(keep)) rmSync(join(dir, old));
-  if (dataDir !== undefined) syncPictures(db, dataDir, dir, now);
+  if (dataDir !== undefined) {
+    const gone = gonePictures(db, now);
+    await inWorker('syncPictures', [dataDir, dir, gone, false], () => syncPictureFiles(dataDir, dir, gone, false));
+  }
   return path;
 }
 
@@ -150,45 +86,80 @@ async function backupNowWork(db: DB, dir: string, keep: number, now: Date, dataD
  * at home (audit F11); null when there are none to check.
  */
 export function missingPictures(db: DB, dataDir: string): number | null {
+  const rows = liveRows(db);
+  return rows === null ? null : missingPictureCount(dataDir, rows);
+}
+
+function liveRows(db: DB): { id: string; type: string }[] | null {
   const hasTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'images'").get() !== undefined;
   if (!hasTable) return null;
   const rows = db.prepare('SELECT id, type FROM images WHERE removed_at IS NULL').all() as { id: string; type: string }[];
   if (rows.length === 0) return null;
-  return rows.filter((r) => !existsSync(join(dataDir, 'images', r.id.slice(0, 2), `${r.id}.${r.type === 'jpeg' ? 'jpg' : r.type}`))).length;
+  return rows;
 }
 
-/** One backup run, logged and recorded in `statusDir` for the dashboard; failures are never thrown. Returns the run it recorded. */
-export function runBackup(db: DB, dir: string, keep: number, now: Date, statusDir: string, copy?: BackupCopy): Promise<BackupRun> {
-  return busy('backing up', () => runBackupWork(db, dir, keep, now, statusDir, copy));
+/** The same count, made in a worker thread: with many pictures the per-file checks add up. */
+async function missingPicturesOffThread(db: DB, dataDir: string): Promise<number | null> {
+  const rows = liveRows(db);
+  return rows === null ? null : inWorker('missingPictures', [dataDir, rows], () => missingPictureCount(dataDir, rows));
 }
 
-async function runBackupWork(db: DB, dir: string, keep: number, now: Date, statusDir: string, copy?: BackupCopy): Promise<BackupRun> {
-  let run: BackupRun;
-  try {
-    // statusDir is the data dir (index.ts), where the pictures live.
-    const path = await backupNow(db, dir, keep, now, statusDir);
-    console.log(`Backup written to ${path}`);
-    // The second folder gets this finished file; its failure is recorded by the copy itself and never touches this run.
-    try { copy?.run(path, keep, now, { db, dataDir: statusDir }); } catch (e) { console.error('Backup copy failed:', e); }
-    run = { at: now.toISOString(), ok: true, copies: [{ where: dir, result: 'copied' }] };
-    const missing = missingPictures(db, statusDir);
-    if (missing !== null) run.pictures = { missing, stray: 0 };
-  } catch (e) {
-    console.error('Backup failed:', e);
-    run = { at: now.toISOString(), ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
-  // A status file that cannot be written is logged, never thrown: it must not take the server down.
-  try {
-    writeBackupStatus(statusDir, 'nightly', run);
-  } catch (e) {
-    console.error('Could not record the backup status:', e);
-  }
-  return run;
+/** The second folders a copy is running to right now: a folder that does not answer (a network share) must not stack copies up or hold the backup lock. */
+const copying = new Set<string>();
+
+/**
+ * One backup run, logged and recorded in `statusDir` for the dashboard; failures are never thrown. Returns the run it recorded.
+ * The backup itself holds the lock; the copy to the second folder runs after it is released, one at a time per folder.
+ * `now` may be a function: it is read when the run starts, not when it was queued, so the file carries the day it was made on.
+ */
+export function runBackup(db: DB, dir: string, keep: number, nowIn: Date | (() => Date), statusDir: string, copy?: BackupCopy): Promise<BackupRun> {
+  return busy('backing up', async () => {
+    let now = typeof nowIn === 'function' ? new Date() : nowIn;
+    let path: string | null = null;
+    let run: BackupRun | null = null;
+    await locked(async () => {
+      now = typeof nowIn === 'function' ? nowIn() : nowIn;
+      try {
+        // statusDir is the data dir (index.ts), where the pictures live.
+        path = await backupNowWork(db, dir, keep, now, statusDir);
+        console.log(`Backup written to ${path}`);
+      } catch (e) {
+        console.error('Backup failed:', e);
+        run = { at: now.toISOString(), ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    });
+    if (path !== null) {
+      try {
+        // The second folder gets this finished file; its failure is recorded by the copy itself and never touches this run.
+        const folder = copy?.folder() ?? null;
+        if (copy && folder !== null && (copying.has(folder) || copy.isLingering?.())) copy.skipBusy(now);
+        else {
+          if (folder !== null) copying.add(folder);
+          try { await (copy?.runOffThread ? copy.runOffThread(path, keep, now, { db, dataDir: statusDir }) : copy?.run(path, keep, now, { db, dataDir: statusDir })); } finally { if (folder !== null) copying.delete(folder); }
+        }
+      } catch (e) { console.error('Backup copy failed:', e); }
+      try {
+        run = { at: now.toISOString(), ok: true, copies: [{ where: dir, result: 'copied' }] };
+        const missing = await missingPicturesOffThread(db, statusDir);
+        if (missing !== null) run.pictures = { missing, stray: 0 };
+      } catch (e) {
+        console.error('Backup failed:', e);
+        run = { at: now.toISOString(), ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    // A status file that cannot be written is logged, never thrown: it must not take the server down.
+    try {
+      writeBackupStatus(statusDir, 'nightly', run!);
+    } catch (e) {
+      console.error('Could not record the backup status:', e);
+    }
+    return run!;
+  });
 }
 
 /** Backs up now and then every day; failures are logged and recorded, never fatal. Returns the timer (unref'd). */
 export function scheduleBackups(db: DB, dir: string, keep: number, now: () => Date, statusDir: string, copy?: BackupCopy): NodeJS.Timeout {
-  const run = () => { void runBackup(db, dir, keep, now(), statusDir, copy); };
+  const run = () => { void runBackup(db, dir, keep, now, statusDir, copy); };
   run();
   return setInterval(run, BACKUP_INTERVAL_MS).unref();
 }

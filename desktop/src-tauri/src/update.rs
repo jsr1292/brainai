@@ -725,7 +725,7 @@ pub fn check_now_manual(app: &AppHandle) {
     let now = now_unix();
     // One atomic step: two presses at once cannot both pass the gap check.
     if LAST_MANUAL
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |last| {
+        .try_update(Ordering::SeqCst, Ordering::SeqCst, |last| {
             manual_check_allowed((last != 0).then_some(last), now).then_some(now)
         })
         .is_err()

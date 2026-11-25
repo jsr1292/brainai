@@ -357,3 +357,42 @@ test('find: the folder that holds BrainAI saved folders is looked into one level
   renameSync(await backupFolder(t), join(deep, 'a', 'BrainAI saved 2026-11-04'));
   assert.equal((await find(app.baseUrl, deep)).status, 422);
 });
+
+test('find: the second backup folder holds per-brain folders and old flat copies; the newest of them is brought back, pictures from beside it', async (t) => {
+  const { app, cookie } = await start(t);
+  const second = await backupFolder(t, { days: ['2026-11-01'], pictures: 1 });
+  const brain = await backupFolder(t, { days: ['2026-11-05'], pictures: 1 });
+  renameSync(brain, join(second, 'brainai-0123abcd'));
+  assert.equal((await find(app.baseUrl, second)).status, 200);
+  let shown = await page(app.baseUrl, '/welcome?restore=found', cookie);
+  assert.match(shown.body, /memory-2026-11-05\.db/);
+  assert.match(shown.body, /1 of 1 picture found/);
+  // With only the old flat copies (written before per-brain folders) restoring still works.
+  const old = await backupFolder(t, { days: ['2026-11-02'] });
+  assert.equal((await find(app.baseUrl, old)).status, 200);
+  shown = await page(app.baseUrl, '/welcome?restore=found', cookie);
+  assert.match(shown.body, /memory-2026-11-02\.db/);
+});
+
+test('find: a folder holding the folders of more than one brain is refused with a clear message; one brain folder chosen directly works', async (t) => {
+  const { app, cookie } = await start(t);
+  const second = dir(t, 'brainai-two-');
+  renameSync(await backupFolder(t, { days: ['2026-11-05'] }), join(second, 'brainai-0123abcd'));
+  renameSync(await backupFolder(t, { days: ['2026-11-03'] }), join(second, 'brainai-4567ef01'));
+  const r = await find(app.baseUrl, second);
+  assert.equal(r.status, 422);
+  assert.match(((await r.json()) as { error: string }).error, /more than one brain\. Choose the brainai-… folder of the one you want: brainai-0123abcd \(2026-11-05\), brainai-4567ef01 \(2026-11-03\)/);
+  const es = await page(app.baseUrl, '/welcome?restore=found', cookie, 'es');
+  assert.match(es.body, /más de un cerebro.*brainai-0123abcd \(2026-11-05\)/s);
+  assert.equal((await find(app.baseUrl, join(second, 'brainai-4567ef01'))).status, 200);
+  assert.match((await page(app.baseUrl, '/welcome?restore=found', cookie)).body, /memory-2026-11-03\.db/);
+});
+
+test('find: pictures kept in the folder above a brainai-… folder (an earlier layout) are still found beside its copy', async (t) => {
+  const { app, cookie } = await start(t);
+  const second = await backupFolder(t, { days: ['2026-11-05'], pictures: 1 });
+  mkdirSync(join(second, 'brainai-0123abcd'));
+  renameSync(join(second, 'memory-2026-11-05.db'), join(second, 'brainai-0123abcd', 'memory-2026-11-05.db'));
+  assert.equal((await find(app.baseUrl, join(second, 'brainai-0123abcd'))).status, 200);
+  assert.match((await page(app.baseUrl, '/welcome?restore=found', cookie)).body, /1 of 1 picture found/);
+});

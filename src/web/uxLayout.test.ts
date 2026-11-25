@@ -180,3 +180,14 @@ test('ticking a first step on the client updates the "N of M done" count, in bot
   const { tIn } = await import('../i18n/index.js');
   assert.equal(tIn('es', 'client.firstSteps.progress', { done: 3, total: 6 }), '3 de 6 hechos');
 });
+
+test('a meta line part wraps instead of being cut with an ellipsis; only the one-line card and list rows keep the ellipsis', () => {
+  const li = prop('.meta-line > li', 'white-space');
+  assert.notEqual(li, 'nowrap', 'a long tag list or title must wrap, not end in "…"');
+  assert.equal(prop('.meta-line > li', 'text-overflow'), undefined);
+  assert.match(prop('.meta-line > li', 'overflow-wrap') ?? '', /break-word|anywhere/);
+  // The single-line places say so themselves.
+  assert.equal(prop('.pcard-foot .meta-line > li', 'white-space'), 'nowrap');
+  assert.equal(prop('.pcard-foot .meta-line > li', 'text-overflow'), 'ellipsis');
+  assert.match(desk, /\.desk-list \.cards\.list \.meta-line > li \{[^}]*white-space: nowrap[^}]*text-overflow: ellipsis/);
+});

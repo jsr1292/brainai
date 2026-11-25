@@ -98,6 +98,8 @@ export function toolEnv(d: AppDeps): ToolEnv | null {
   env.endSignIns = (toolName) => {
     const live = d.provider.listGrants().filter((g) => !g.revokedAt && g.clientName.toLowerCase().startsWith(toolName.toLowerCase()));
     for (const g of live) d.provider.revokeGrant(g.id);
+    // A sign-in the tool still has waiting for approval must not be approvable after Disconnect.
+    d.provider.cancelPendingFor(toolName);
     return live.length;
   };
   // Claude's desktop app runs this server's own Node and cli.js as a bridge; its key is a grant of its own (local mode only).
@@ -267,7 +269,7 @@ export function desktopRoutes(d: AppDeps): Router {
   /** The one copy found in the folder the owner picked, waiting for the confirm; replaced by every find, gone after 15 minutes. */
   let choice: { found: Found; at: number } | null = null;
   /** Why the last find or confirm failed, said once on the choose page. */
-  let problem: { key: 'setup.err.find.none' | 'setup.err.find.invalid' | 'setup.err.find.gone' | 'setup.err.find.unreadable' | 'setup.err.find.changed' | 'setup.err.busy' | 'setup.err.notEmpty' | 'setup.err.connected'; why?: string } | null = null;
+  let problem: { key: 'setup.err.find.none' | 'setup.err.find.invalid' | 'setup.err.find.gone' | 'setup.err.find.unreadable' | 'setup.err.find.several' | 'setup.err.find.changed' | 'setup.err.busy' | 'setup.err.notEmpty' | 'setup.err.connected'; why?: string } | null = null;
   const currentChoice = (): Found | null => {
     if (choice && d.now().getTime() - choice.at > CHOICE_MS) choice = null;
     return choice?.found ?? null;
@@ -358,6 +360,7 @@ export function desktopRoutes(d: AppDeps): Router {
       res.json({ ok: true });
     } catch (e) {
       if (e instanceof NothingFound && e.why === 'invalid') return fail(422, { key: 'setup.err.find.invalid', why: clean(e.message) });
+      if (e instanceof NothingFound && e.why === 'several') return fail(422, { key: 'setup.err.find.several', why: clean(e.message) });
       if (e instanceof NothingFound && e.why === 'unreadable') return fail(422, { key: 'setup.err.find.unreadable' });
       return fail(422, { key: 'setup.err.find.none' });
     }
