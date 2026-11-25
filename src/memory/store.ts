@@ -561,6 +561,18 @@ export class MemoryStore {
       .map((r) => ({ id: r.id, createdAt: r.created_at, content: r.content, keys: r.keys }));
   }
 
+  /**
+   * The live, not replaced facts dated from `from` through `to` (YYYY-MM-DD, inclusive), earliest date first, then by id.
+   * Only the columns a coming-up row needs: no embeddings. `project` limits it to one project.
+   */
+  datedBetween(from: string, to: string, project?: string): { id: string; kind: Kind; content: string; project: string | null; validUntil: string }[] {
+    const fs = filterSql({ project }, 'm');
+    return (this.db.prepare(`SELECT m.id, m.kind, m.content, m.project, m.valid_until FROM memories m WHERE m.deleted_at IS NULL
+      AND m.valid_until BETWEEN ? AND ?${fs.sql} ORDER BY m.valid_until, m.id`)
+      .all(from, to, ...fs.params) as { id: string; kind: Kind; content: string; project: string | null; valid_until: string }[])
+      .map((r) => ({ id: r.id, kind: r.kind, content: r.content, project: r.project, validUntil: r.valid_until }));
+  }
+
   /** The embeddings of these live memories only, by id. */
   embeddingsOf(ids: string[]): Map<string, Float32Array> {
     const out = new Map<string, Float32Array>();

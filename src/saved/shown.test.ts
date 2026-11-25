@@ -1,7 +1,7 @@
 /** Values from a crafted saved file, as they appear in messages. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -59,4 +59,9 @@ test('C1 controls and bidi controls are escaped too, one case per range', () => 
   }
   assert.equal(plain('é and … stay'), 'é and … stay');
   assert.ok(plain('q'.repeat(1000)).length <= 301);
+});
+
+test('shown source spells bidi controls with escapes', () => {
+  const source = readFileSync(new URL('./shown.ts', import.meta.url), 'utf8');
+  assert.equal(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(source), false);
 });

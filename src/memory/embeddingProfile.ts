@@ -41,6 +41,9 @@ export interface EmbeddingProfile {
   keywordWeight: number;
   /** Reranking adds rerankPrior × log(1 / search rank), so the search order breaks near-ties; 0 = reranker alone. */
   rerankPrior: number;
+  /** Added to the local reranker's score of an owner_said fact (half when an assistant set the source). The largest
+   *  bonus on src/eval/sourceRank.ts at which no better-matching fact lost its place, with no losses at 1.5x either. */
+  ownerSaidWeight: number;
 }
 
 /**
@@ -70,6 +73,8 @@ export const E5_PROFILE: EmbeddingProfile = {
   duplicate: 0.93, minRecall: 0.75, window: 0.015, confident: 0.86, closeFacts: 0.86, closeNudge: 0.89, deletedMargin: 0.03,
   sameProject: 0.88, related: 0.88, threadFloor: 0.87,
   keywordWeight: 0.5, rerankPrior: 0,
+  // 2026-11-25: 18 of 20 owner statements first (9 at 0), no losses up to 1.2; one from 1.6.
+  ownerSaidWeight: 0.8,
 };
 
 /**
@@ -105,6 +110,8 @@ export const GEMMA_PROFILE: EmbeddingProfile = {
   duplicate: 0.78, minRecall: 0.3, window: undefined, confident: 0.35, closeFacts: 0.48, closeNudge: 0.65, deletedMargin: 0,
   sameProject: 0.54, related: 0.46, threadFloor: 0.52,
   keywordWeight: 0, rerankPrior: 1,
+  // 2026-11-25: 19 of 20 owner statements first (12 at 0), no losses up to 2.4; losses from 3.2.
+  ownerSaidWeight: 1.6,
 };
 
 const PROFILES: Record<EmbedModelId, EmbeddingProfile> = { e5: E5_PROFILE, gemma: GEMMA_PROFILE };

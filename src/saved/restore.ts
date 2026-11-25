@@ -7,10 +7,13 @@ import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { hostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { plain } from './shown.js';
 import Database from 'better-sqlite3';
-import { checkArchive, listLines } from './archive.js';
+import { archiveError, archiveFailure, checkArchive, listLines } from './archive.js';
+import { SayableError } from '../i18n/errors.js';
+import { alive, sweepPartials } from '../backupWork.js';
 import { busy, busyTick } from '../busyMarker.js';
 import { restoredRowsProblem } from './rowChecks.js';
 import { cleanImage, EXT } from '../images/clean.js';
@@ -80,9 +83,9 @@ export function checked(file: string): Promise<{ kind: 'archive' | 'database'; c
 
 async function checkedWork(file: string): Promise<{ kind: 'archive' | 'database'; counts: Restored }> {
   const kind = kindOfFile(file);
-  if (!kind) throw new Error('This is not a saved BrainAI file or backup (a .tar.gz or a memory-….db).');
+  if (!kind) throw archiveError(archiveFailure('data.archive.notSaved'));
   const c = kind === 'archive' ? await checkArchive(file) : checkBackupFile(file);
-  if (!c.ok) throw new Error(c.reason);
+  if (!c.ok) throw archiveError(c);
   // pictures_missing of a database is counted on the staged copy, never on the source.
   return { kind, counts: { facts: c.facts, pages: c.pages, pictures_missing: 0 } };
 }
@@ -179,7 +182,7 @@ async function unpack(file: string, kind: 'archive' | 'database', into: string):
   resetSecuritySettings(join(into, 'memory.db'));
   forgetBrainId(join(into, 'memory.db'));
   const problem = restoredRowsProblem(join(into, 'memory.db'));
-  if (problem) throw new Error(`This saved copy holds names BrainAI would never write (${problem}), so it is not brought back.`);
+  if (problem) throw archiveError(archiveFailure('data.archive.badNames', { problem }));
   if (kind === 'archive') return cleanRestoredPictures(into);
   // A backup file holds no pictures itself. The pictures that sit beside it (an `images` folder, as the second backup
   // folder keeps them) are brought along; the live pictures still without a file are counted, then marked removed on the
@@ -313,6 +316,7 @@ async function safely<T>(work: () => Promise<T>): Promise<T> {
   try {
     return await work();
   } catch (e) {
+    if (e instanceof SayableError) throw e; // The archive checker already quotes and bounds names.
     throw new Error(plain(e instanceof Error ? e.message : e));
   }
 }
@@ -343,6 +347,37 @@ function removeStray(dataDir: string): void {
   } catch { /* no data folder yet */ }
 }
 
+/** Move archives use a private staging directory and, for a move, a temporary archive beside it. */
+function removeMoveStaging(dataDir: string, atStartup: boolean): void {
+  const HOUR = 3_600_000;
+  const here = hostname();
+  // A `cli save-copy` in another process may be mid-way: only old partials go.
+  sweepPartials(dataDir, /^\.move-[0-9a-f]{12}\.tar\.gz$/, HOUR);
+  const uid = process.getuid?.();
+  let names: string[];
+  try { names = readdirSync(dataDir); } catch { return; }
+  for (const name of names) {
+    if (!/^\.move-[a-z0-9]{6}$/i.test(name)) continue;
+    const path = join(dataDir, name);
+    try {
+      const stat = lstatSync(path);
+      if (!stat.isDirectory() || (uid !== undefined && stat.uid !== uid)) continue;
+      // The pid file is `<pid> <host>`. A pid means something only on the machine or container that wrote it (every
+      // container has its own small pids), and only as an integer of 1 to 2**31-1; otherwise the age decides.
+      let pid: number | null = null;
+      try {
+        const [id, host] = readFileSync(join(path, 'pid'), 'utf8').trim().split(/\s+/);
+        const n = Number(id);
+        if (host === here && Number.isInteger(n) && n >= 1 && n <= 2 ** 31 - 1) pid = n;
+      } catch { /* none */ }
+      const age = Date.now() - stat.mtimeMs;
+      // Pids get reused: nothing is kept past a day. At startup our own pid is a leftover of an earlier run of this process id.
+      const gone = age > 24 * HOUR || (pid !== null ? (atStartup && pid === process.pid) || !alive(pid) : age > HOUR);
+      if (gone) rmSync(path, { recursive: true, force: true });
+    } catch { /* gone, or not ours */ }
+  }
+}
+
 /**
  * Checks the file and unpacks it into `<data>/restore-pending/`, for the server to swap in at its next start. It is
  * unpacked into a temporary folder and renamed only when everything succeeded, so a half-unpacked copy is never "ready".
@@ -367,11 +402,12 @@ export const stageRestore = (file: string, dataDir: string): Promise<Restored> =
 
 /**
  * At startup, before the database opens: swaps a staged restore in when the brain is still empty, and leaves a note in
- * `restored.json` either way. It never throws: whatever goes wrong, the current brain stays as it is and the server starts.
+ * `restored.json` either way. `atStartup`: only the server's own start passes it, when this process cannot have staged anything yet. It never throws: whatever goes wrong, the current brain stays as it is and the server starts.
  */
-export function applyPendingRestore(dataDir: string): Restored | null {
+export function applyPendingRestore(dataDir: string, opts: { atStartup?: boolean } = {}): Restored | null {
   const pending = join(dataDir, 'restore-pending');
   removeStray(dataDir);
+  removeMoveStaging(dataDir, opts.atStartup === true);
   if (!existsSync(join(pending, 'memory.db'))) {
     rmSync(pending, { recursive: true, force: true });
     return null;

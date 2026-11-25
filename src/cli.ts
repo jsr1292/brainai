@@ -185,6 +185,7 @@ async function recallTest({ db, args = [], embedder: given, reranker, dbPath }: 
     recallWindow: config.recallWindow,
     keywordWeight: config.embedModel.keywordWeight,
     rerankPrior: config.embedModel.rerankPrior,
+    ownerSaidWeight: config.ownerSaidWeight ?? config.embedModel.ownerSaidWeight,
     closeFacts: config.embedModel.closeFacts,
     deletedMargin: config.embedModel.deletedMargin,
     // What assistants get: the server's reranker setting.

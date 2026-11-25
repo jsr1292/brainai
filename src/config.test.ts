@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { profileFor } from './memory/embeddingProfile.js';
+import { E5_PROFILE, GEMMA_PROFILE, profileFor } from './memory/embeddingProfile.js';
 import { writeChoice } from './models/choice.js';
 import { DEFAULT_BACKUP_KEEP, DEFAULT_DUPLICATE_THRESHOLD, DEFAULT_MIN_RECALL_SIMILARITY, DEFAULT_RECALL_CONFIDENT_SIMILARITY, DEFAULT_RECALL_WINDOW, loadConfig } from './config.js';
 
@@ -159,4 +159,15 @@ test('the app (LOCAL_MODE) keeps its models in the data folder and takes its sea
   assert.equal(server.modelChoice, null);
   assert.equal(server.embedModel.id, 'gemma');
   assert.equal(server.modelDir, './models');
+});
+
+test('OWNER_SAID_WEIGHT: unset means the search model decides (Gemma 1.6, E5 0.8), 0 turns it off, anything that is not a finite number >= 0 is refused', () => {
+  const weight = (v?: string) => loadConfig({ PUBLIC_URL: 'http://localhost', OWNER_SAID_WEIGHT: v }).ownerSaidWeight;
+  assert.equal(weight(undefined), undefined);
+  assert.equal(weight(''), undefined);
+  assert.equal(GEMMA_PROFILE.ownerSaidWeight, 1.6);
+  assert.equal(E5_PROFILE.ownerSaidWeight, 0.8);
+  assert.equal(weight('0'), 0);
+  assert.equal(weight('2.4'), 2.4);
+  for (const bad of ['-1', 'abc', 'Infinity']) assert.throws(() => weight(bad), new RegExp(`OWNER_SAID_WEIGHT.*got ${bad}`));
 });

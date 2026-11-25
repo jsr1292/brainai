@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { STRIP_SIGN_IN_SQL } from '../backup.js';
 import { latestSchema, type DB } from '../db.js';
-import { liveCounts, type ArchiveCheck } from './archive.js';
+import { archiveFailure, liveCounts, type ArchiveCheck } from './archive.js';
 
 /** Which kind of file this is, read from its first bytes (never its name), or null when it is neither. */
 export function kindOfFile(path: string): 'archive' | 'database' | null {
@@ -27,8 +27,6 @@ export function kindOfFile(path: string): 'archive' | 'database' | null {
   if (head.equals(Buffer.from('SQLite format 3\0', 'latin1'))) return 'database';
   return null;
 }
-
-const NOT_BACKUP = 'This is not a BrainAI backup: ';
 
 function tableExists(db: DB, name: string): boolean {
   return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? COLLATE NOCASE").get(name);
@@ -54,25 +52,25 @@ export function picturesCanBeRemoved(db: DB): boolean {
  * is never touched, not even by SQLite's side files.
  */
 export function checkBackupFile(path: string): ArchiveCheck {
-  if (kindOfFile(path) !== 'database') return { ok: false, reason: NOT_BACKUP + 'the file is not a database.' };
+  if (kindOfFile(path) !== 'database') return archiveFailure('data.archive.backupNotDatabase');
   const tmp = mkdtempSync(join(tmpdir(), 'brainai-check-'));
   let db: DB | undefined;
   try {
     const copy = join(tmp, 'memory.db');
     copyFileSync(path, copy);
     db = new Database(copy, { readonly: true });
-    if (!tableExists(db, 'schema_version') || !tableExists(db, 'memories')) return { ok: false, reason: NOT_BACKUP + 'it does not hold BrainAI\'s tables.' };
+    if (!tableExists(db, 'schema_version') || !tableExists(db, 'memories')) return archiveFailure('data.archive.backupTables');
     const schema = (db.prepare('SELECT version FROM schema_version').get() as { version: number } | undefined)?.version;
-    if (schema === undefined) return { ok: false, reason: NOT_BACKUP + 'it has no schema version.' };
+    if (schema === undefined) return archiveFailure('data.archive.backupNoSchema');
     // Before the integrity check: a newer file may not be readable by this version at all, and that is the honest reason.
-    if (schema > latestSchema()) return { ok: false, reason: 'This backup is from a newer BrainAI. Update BrainAI, then try again.' };
+    if (schema > latestSchema()) return archiveFailure('data.archive.backupNewer');
     const verdict = db.pragma('integrity_check', { simple: true });
-    if (verdict !== 'ok') return { ok: false, reason: 'The backup file failed its integrity check.' };
+    if (verdict !== 'ok') return archiveFailure('data.archive.backupIntegrity');
     // A database from before pages existed holds none (the start-up migration adds the table).
     const live = tableExists(db, 'pages') ? liveCounts(db) : { facts: (db.prepare('SELECT COUNT(*) AS n FROM memories WHERE deleted_at IS NULL').get() as { n: number }).n, pages: 0 };
     return { ok: true, ...live, schema };
   } catch {
-    return { ok: false, reason: 'The backup file could not be read (integrity check failed).' };
+    return archiveFailure('data.archive.backupUnreadable');
   } finally {
     db?.close();
     rmSync(tmp, { recursive: true, force: true });

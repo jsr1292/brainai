@@ -40,7 +40,7 @@ export function restoredRowsProblem(dbPath: string): string | null {
       // SQLite matches names without regard to case, so a column declared NAME still answers to `name`.
       const found = columns.find((c) => c.name.toLowerCase() === column);
       if (!found) continue; // an older file lacks this table or column
-      const rows = db.prepare(`SELECT DISTINCT "${found.name}" AS v FROM "${table}" WHERE "${found.name}" IS NOT NULL`).all() as { v: unknown }[];
+      const rows = db.prepare(`SELECT DISTINCT "${found.name}" COLLATE BINARY AS v FROM "${table}" WHERE "${found.name}" IS NOT NULL`).all() as { v: unknown }[];
       for (const { v } of rows) {
         if (typeof v !== 'string' || !ok(v)) return `${table}.${column}: ${shown(v)}`;
       }

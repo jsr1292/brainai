@@ -69,3 +69,26 @@ test('cli save-copy --app writes the app checklist (its Cloudflare name and seco
   assert.match(readme, /Cloudflare: delete the tunnel and the public address brain\.example\.net/);
   assert.match(readme, /Your second backup folder still has copies of your brain: /);
 });
+
+test('the README that cli save-copy writes (no locale) keeps the English heading that scripts/remove.sh looks for', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'save-copy-data-'));
+  const parent = mkdtempSync(join(tmpdir(), 'save-copy-out-'));
+  const saved = { DATA_DIR: process.env.DATA_DIR, PUBLIC_URL: process.env.PUBLIC_URL };
+  t.after(() => {
+    for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true });
+  });
+  process.env.DATA_DIR = dir;
+  process.env.PUBLIC_URL = 'https://brain.example.test';
+  openDb(join(dir, 'memory.db')).close();
+  const lines: string[] = [];
+  t.mock.method(console, 'log', (m: string) => { lines.push(String(m)); });
+  assert.equal(await main(['save-copy', parent]), 0);
+  const readme = readFileSync(join(lines.at(-1)!, 'README.txt'), 'utf8');
+  // The very pattern remove.sh passes to sed, read from the script, so the two cannot drift apart.
+  const script = readFileSync(new URL('../scripts/remove.sh', import.meta.url), 'utf8');
+  const heading = /sed -n '\/\^([^/]+)\/,\$p' "\$SAVED\/README\.txt"/.exec(script)?.[1];
+  assert.equal(heading, 'Things BrainAI could not remove:', 'remove.sh looks for the English heading');
+  assert.ok(readme.split('\n').some((l) => l.startsWith(heading!)), readme);
+});

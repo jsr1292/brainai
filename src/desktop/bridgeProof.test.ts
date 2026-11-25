@@ -268,17 +268,23 @@ test('a listener that accepts and says nothing: the request gets NOT_RUNNING aft
   assert.ok(!/authorization/i.test(l.received()), 'the key was never sent');
 });
 
+/** Polls until `ok()` holds or `ms` pass (a loaded machine can be slow); the caller asserts afterwards. */
+async function settle(ok: () => boolean, ms = 5000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!ok() && Date.now() < end) await sleep(20);
+}
+
 test('the bridge ends when Claude goes, and drops the connection still waiting for its proof', async (t) => {
   const P = await freePort();
   const b = await setup(t, P, () => P, 60_000);
   const l = await rawListener(t, P, null);
   void b.initialize();
-  await sleep(100);
+  await settle(() => l.openConnections() === 1);
   assert.equal(l.openConnections(), 1, 'the bridge is waiting on its proof');
   b.stdin.end();
-  const ended = await Promise.race([b.done.then(() => true), sleep(2000).then(() => false)]);
+  const ended = await Promise.race([b.done.then(() => true), sleep(10_000).then(() => false)]);
   assert.equal(ended, true);
-  await sleep(300);
+  await settle(() => l.openConnections() === 0);
   assert.equal(l.openConnections(), 0, 'the waiting connection was closed');
 });
 

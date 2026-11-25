@@ -12,6 +12,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { ownerSaidWeight } from '../config.js';
 import { profileFor } from '../memory/embeddingProfile.js';
 import { openDb } from '../db.js';
 import { createLocalEmbedder, type Embedder } from '../memory/embedder.js';
@@ -48,6 +49,7 @@ if (only.length) questions = questions.filter((q) => only.includes(q.id));
 else if (sample) questions = stratified(questions, sample);
 
 const profile = profileFor(process.env.EMBED_MODEL);
+const weight = ownerSaidWeight(process.env.OWNER_SAID_WEIGHT) ?? profile.ownerSaidWeight;
 const inner = await createLocalEmbedder({ modelDir: process.env.MODEL_DIR ?? './models', allowRemote: false, model: profile });
 // Passage embeddings kept on disk: records of a 16-byte text hash and the vector (float32), appended as made.
 const embFile = join(cache, `lme-embeddings-${profile.id}.bin`);
@@ -86,7 +88,7 @@ for (const [i, q] of questions.entries()) {
   const service = new MemoryService(store, embedder, {
     duplicateThreshold: profile.duplicate, minRecallSimilarity: profile.minRecall,
     recallConfidentSimilarity: profile.confident, recallWindow: profile.window, reranker,
-    keywordWeight: profile.keywordWeight, rerankPrior: profile.rerankPrior, closeFacts: profile.closeFacts,
+    ownerSaidWeight: weight, keywordWeight: profile.keywordWeight, rerankPrior: profile.rerankPrior, closeFacts: profile.closeFacts,
   });
   const r = await benchQuestion(q, service, { limit, weakBelow: WEAK_SCORE, dated: dated ? (d) => { at = d; } : undefined });
   all.push(r);
@@ -110,6 +112,6 @@ const day = new Date().toISOString().slice(0, 10);
 const variant = `${sample ? `sample${sample}` : only.length ? 'only' : 'full'}${rerank ? '' : '-norerank'}${dated ? '-dated' : ''}`;
 writeFileSync(join(out, `longmemeval-${day}-${variant}.json`), JSON.stringify({
   date: day, data: { variant: 'longmemeval_s_cleaned', revision: LME_REVISION, sha256: LME_SHA256 }, model: profile.id, reranker: rerank ? RERANK_MODEL : null,
-  settings: { ...profile, limit, sample, dated }, seconds, facts: saved, unsaved, scores,
+  settings: { ...profile, ownerSaidWeight: weight, limit, sample, dated }, seconds, facts: saved, unsaved, scores,
   perQuestion: all.map((r) => ({ ...r, type: questions.find((q) => q.id === r.id)?.type, abstention: categoryOf({ id: r.id, type: '' }) === 'abstention' })),
 }, null, 2));

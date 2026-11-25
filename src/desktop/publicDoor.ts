@@ -4,6 +4,7 @@
  * says, so a request from the tunnel can never pass as one from this Mac. A Funnel left behind (BrainAI quit, a failed
  * Turn off, a reinstall) reaches a closed port instead of the dashboard.
  */
+import type { RequestHandler } from 'express';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createServer, type IncomingMessage, type RequestListener, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -21,6 +22,12 @@ export function inDoorRequest(): boolean {
 export function viaDoor(req: IncomingMessage): boolean {
   return throughDoor.has(req);
 }
+
+/** Skip local-only routes when the request arrived through the public door. */
+export const localRouteOnly: RequestHandler = (req, _res, next) => {
+  if (viaDoor(req)) next('router');
+  else next();
+};
 
 /**
  * True when a request path names the desktop app's own endpoints (/app and under it), however it is written: any letter case,

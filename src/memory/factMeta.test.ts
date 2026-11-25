@@ -5,6 +5,7 @@ import { createFakeEmbedder } from './fakeEmbedder.js';
 import { isPastDate, MAX_SOURCE_NOTE, NO_META, resolveMeta } from './factMeta.js';
 import { MemoryService } from './service.js';
 import { MemoryStore } from './store.js';
+import { ProjectStore } from '../projects/store.js';
 
 const ai = { type: 'ai', name: 'Claude Code' } as const;
 const owner = { type: 'owner' } as const;
@@ -258,4 +259,47 @@ test('pastDateFacts follows the service clock and leaves replaced and deleted fa
   now = new Date('2026-11-21T09:00:00Z');
   assert.deepEqual(service.pastDateFacts().map((f) => f.id), [a.id]);
   assert.equal(store.get(old.id)!.validUntil, '2026-11-05', 'the superseded fact is past its date but still not listed');
+});
+
+test('comingUpFacts follows the owner calendar across a clock change and sorts live facts by date then id', async (t) => {
+  const previousZone = process.env.OWNER_TIMEZONE;
+  process.env.OWNER_TIMEZONE = 'Europe/Berlin';
+  t.after(() => {
+    if (previousZone === undefined) delete process.env.OWNER_TIMEZONE;
+    else process.env.OWNER_TIMEZONE = previousZone;
+  });
+  const { service, db } = make('2026-10-24T22:30:00Z');
+  t.after(() => db.close());
+  const last = await save(service, 'Renew the library permit', { validUntil: '2026-11-08' });
+  const yesterday = await save(service, 'File the quarterly report', { validUntil: '2026-10-24' });
+  const todayA = await save(service, 'Book the inspection', { validUntil: '2026-10-25' });
+  const todayB = await save(service, 'Send workshop invites', { validUntil: '2026-10-25' });
+  const deleted = await save(service, 'Close the old account', { validUntil: '2026-10-26' });
+  const replaced = await save(service, 'Return the rented van', { validUntil: '2026-10-27' });
+  const later = await save(service, 'Return the rented van next month', { validUntil: '2026-11-09' });
+  await save(service, 'Keep invoices in the shared folder');
+  service.forget(deleted.id, owner);
+  service.supersede([replaced.id], later.id, owner);
+
+  const today = [todayA.id, todayB.id].sort();
+  assert.deepEqual(service.comingUpFacts().map((m) => m.id), [...today, last.id]);
+  assert.deepEqual(service.comingUpFacts(0).map((m) => m.id), today);
+  assert.deepEqual(service.pastDateFacts().map((m) => m.id), [yesterday.id]);
+});
+
+test('comingUpFacts limits to one project and can leave out done and archived projects, without embeddings', async (t) => {
+  const { service, db } = make('2026-11-18T10:00:00Z');
+  t.after(() => db.close());
+  const registry = new ProjectStore(db, () => new Date('2026-11-18T10:00:00Z'));
+  const dated = { validUntil: '2026-11-20' };
+  const mk = async (project: string | null, content: string) =>
+    ((await service.remember({ kind: 'decision', content, project, newProject: true, meta: dated } as never, owner)) as any).memory;
+  const live = await mk('casa', 'Open project fact');
+  const shelved = await mk('attic', 'Archived project fact');
+  const loose = await mk(null, 'Fact with no project');
+  registry.setState('attic', 'archived', 'owner');
+  assert.deepEqual(service.comingUpFacts().map((m) => m.id).sort(), [live.id, shelved.id, loose.id].sort());
+  assert.deepEqual(service.comingUpFacts(14, undefined, true).map((m) => m.id).sort(), [live.id, loose.id].sort());
+  assert.deepEqual(service.comingUpFacts(14, 'attic').map((m) => m.id), [shelved.id]);
+  assert.ok(!('embedding' in service.comingUpFacts()[0]!));
 });

@@ -4,8 +4,8 @@
  * `checkArchive` proves a file is one before anything trusts it, so a restore never unpacks a hostile or damaged file.
  */
 import { execFile } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import Database from 'better-sqlite3';
@@ -14,12 +14,24 @@ import { liveCounts, moveAcrossDisks, readCounts } from '../backupWork.js';
 import { inWorker } from '../offThread.js';
 import { busy } from '../busyMarker.js';
 import { latestSchema, type DB } from '../db.js';
+import { runWithLocale, tKey, type Key } from '../i18n/core.js';
+import { SayableError } from '../i18n/errors.js';
 import { shown } from './shown.js';
 
 /** The file names an archive has: `brainai-saved-<day>.tar.gz`, and the earlier `brainai-move-<day>.tar.gz`. */
 export const ARCHIVE_NAME = /^brainai-(saved|move)-\d{4}-\d{2}-\d{2}\.tar\.gz$/;
 
-export type ArchiveCheck = { ok: true; facts: number; pages: number; schema: number } | { ok: false; reason: string };
+type ArchiveKey = Extract<Key, `data.archive.${string}`>;
+type ArchiveFailure = { ok: false; reason: string; key: ArchiveKey; params?: Record<string, string> };
+export type ArchiveCheck = { ok: true; facts: number; pages: number; schema: number } | ArchiveFailure;
+
+export function archiveFailure(key: ArchiveKey, params?: Record<string, string>): ArchiveFailure {
+  return { ok: false, reason: runWithLocale('en', () => tKey(key, params)), key, params };
+}
+
+export function archiveError(check: ArchiveFailure): SayableError {
+  return new SayableError(check.reason, check);
+}
 
 const run = promisify(execFile);
 
@@ -37,6 +49,8 @@ async function packArchiveWork(db: DB, dataDir: string, outFile: string, now: Da
   // Staged next to the data (same disk), in this run's own folder, so two runs at once never share a half-written file.
   const staging = mkdtempSync(join(dataDir, '.move-'));
   try {
+    // Names the maker, so the startup sweep leaves a folder alone while this process (maybe `cli save-copy`) is running.
+    writeFileSync(join(staging, 'pid'), `${process.pid} ${hostname()}`);
     const copy = await backupNow(db, staging, 1, now, dataDir);
     const dbFile = join(staging, 'memory.db');
     renameSync(copy, dbFile);
@@ -62,12 +76,12 @@ export function listLines(text: string): string[] {
 }
 
 /** Why an entry is not allowed, or null. `type` is the first column of `tar -tv` (`-` file, `d` folder). */
-function entryProblem(type: string, name: string): string | null {
-  if (type !== '-' && type !== 'd') return `it holds a link or special file (${shown(name)})`;
-  if (name.startsWith('/')) return `it holds an absolute path (${shown(name)})`;
-  if (name.split('/').includes('..')) return `it holds a path that climbs out of its folder (${shown(name)})`;
+function entryProblem(type: string, name: string): ArchiveKey | null {
+  if (type !== '-' && type !== 'd') return 'data.archive.special';
+  if (name.startsWith('/')) return 'data.archive.absolute';
+  if (name.split('/').includes('..')) return 'data.archive.parent';
   // Windows tar treats `\` as a separator, and `:` reaches drive-relative paths and alternate streams.
-  if (/[\\:\0]/.test(name)) return `it holds a name with a backslash or colon (${shown(name)})`;
+  if (/[\\:\0]/.test(name)) return 'data.archive.pathChars';
   return null;
 }
 
@@ -86,25 +100,25 @@ export async function checkArchive(file: string): Promise<ArchiveCheck> {
     kinds = listLines((await run('tar', ['-tvzf', file], opts)).stdout).map((l) => l[0]);
     listed = listLines((await run('tar', ['-tzf', file], opts)).stdout);
   } catch {
-    return { ok: false, reason: 'This is not a BrainAI saved copy: the file could not be read as an archive.' };
+    return archiveFailure('data.archive.unreadable');
   }
-  if (kinds.length !== listed.length) return { ok: false, reason: 'This is not a BrainAI saved copy: its entries could not be understood.' };
+  if (kinds.length !== listed.length) return archiveFailure('data.archive.entries');
   const names: string[] = [];
   for (const [i, name] of listed.entries()) {
     const problem = entryProblem(kinds[i], name);
-    if (problem) return { ok: false, reason: `This is not a safe BrainAI saved copy: ${problem}.` };
+    if (problem) return archiveFailure(problem, { name: shown(name) });
     names.push(name.replace(/^\.\//, '').replace(/\/$/, ''));
   }
-  if (!names.includes('memory.db')) return { ok: false, reason: 'This is not a BrainAI saved copy: it has no memory.db.' };
+  if (!names.includes('memory.db')) return archiveFailure('data.archive.noDatabase');
   const stray = names.find((n) => n.split('/')[0] !== 'memory.db' && n.split('/')[0] !== 'images');
-  if (stray) return { ok: false, reason: `This is not a BrainAI saved copy: it holds something else (${shown(stray)}).` };
+  if (stray) return archiveFailure('data.archive.extra', { name: shown(stray) });
 
   const tmp = mkdtempSync(join(tmpdir(), 'brainai-check-'));
   try {
     try {
       await run('tar', ['-xzf', file, '-C', tmp, 'memory.db']);
     } catch {
-      return { ok: false, reason: 'The saved copy could not be unpacked.' };
+      return archiveFailure('data.archive.unpack');
     }
     return checkDatabase(join(tmp, 'memory.db'));
   } finally {
@@ -117,14 +131,14 @@ function checkDatabase(file: string): ArchiveCheck {
   try {
     db = new Database(file, { readonly: true });
     const schema = (db.prepare('SELECT version FROM schema_version').get() as { version: number } | undefined)?.version;
-    if (schema === undefined) return { ok: false, reason: 'The database in the saved copy has no schema version.' };
+    if (schema === undefined) return archiveFailure('data.archive.noSchema');
     // Before the integrity check: a newer copy may not be readable by this version at all, and that is the honest reason.
-    if (schema > latestSchema()) return { ok: false, reason: 'This copy was saved by a newer BrainAI. Update BrainAI, then try again.' };
+    if (schema > latestSchema()) return archiveFailure('data.archive.newer');
     const verdict = db.pragma('integrity_check', { simple: true });
-    if (verdict !== 'ok') return { ok: false, reason: 'The database in the saved copy failed its integrity check.' };
+    if (verdict !== 'ok') return archiveFailure('data.archive.integrity');
     return { ok: true, ...liveCounts(db), schema };
   } catch {
-    return { ok: false, reason: 'The database in the saved copy could not be read (integrity check failed).' };
+    return archiveFailure('data.archive.databaseUnreadable');
   } finally {
     db?.close();
   }

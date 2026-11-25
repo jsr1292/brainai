@@ -68,7 +68,7 @@ mkdirSync(config.dataDir, { recursive: true });
 // Only the desktop app watches the marker.
 setBusyDir(config.localMode ? config.dataDir : undefined);
 // A restore the app staged is swapped in while the database is still closed (src/saved/restore.ts); it never throws.
-applyPendingRestore(config.dataDir);
+applyPendingRestore(config.dataDir, { atStartup: true });
 const dbPath = join(config.dataDir, 'memory.db');
 let db: ReturnType<typeof openDb>;
 try {
@@ -102,7 +102,7 @@ const now = systemClock;
 // each time: the app can switch models while it runs (src/models/cutOffs.ts).
 const cut = activeCutOffs(config, () => embedder.profile());
 const store = new MemoryStore(db, now);
-const service = new MemoryService(store, embedder, memoryCutOffs(cut, { reranker }));
+const service = new MemoryService(store, embedder, memoryCutOffs(cut, { reranker, ownerSaidWeight: config.ownerSaidWeight }));
 const registry = new ProjectStore(db, now);
 const allowlist = new RedirectAllowlist(db);
 const clients = new ClientsStore(db, allowlist, now);

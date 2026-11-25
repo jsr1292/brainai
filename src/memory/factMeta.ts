@@ -6,7 +6,10 @@ import { OWNER_LABEL, SOURCES, type FactMeta, type Source } from './types.js';
 
 /*
  * A1 (valid_until) and A2 (source, source_note): optional fields of a fact. They are never embedded, never in the
- * keyword index, never hide a fact and never change ranking; views and tool results only show them.
+ * keyword index and never hide a fact; views and tool results show them. One thing reads them for ranking: with the
+ * local reranker, source owner_said adds the search model's ownerSaidWeight (or OWNER_SAID_WEIGHT) to the fact's score (MemoryService.reordered, service.ts). Trust
+ * rule: the full bonus only when the owner set the source (sourceBy === OWNER_LABEL); an assistant's owner_said claim
+ * (with a quote) gets half, and a fact past its date none. It only breaks near-ties, so a clearly better match stays first.
  */
 
 export const MAX_SOURCE_NOTE = 200;

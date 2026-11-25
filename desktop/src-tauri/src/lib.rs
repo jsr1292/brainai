@@ -13,7 +13,7 @@ pub mod week_note;
 use server::StartError;
 use std::fs::OpenOptions;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -208,6 +208,31 @@ fn app_data(app: &AppHandle) -> PathBuf {
 
 fn log_path(app: &AppHandle) -> PathBuf {
     app_data(app).join("logs").join("server.log")
+}
+
+/// A server log over this size is set aside at the shell's start, so the log cannot grow for years.
+const LOG_LIMIT_BYTES: u64 = 5 * 1024 * 1024;
+
+/// If the log at `path` is over `limit` bytes, it becomes `<path>.1` (replacing an older one) and a fresh log starts.
+/// A missing log, or any failure, is not an error: the log is only a convenience.
+fn rotate_log(path: &Path, limit: u64) {
+    let Ok(meta) = std::fs::metadata(path) else { return };
+    if meta.len() <= limit {
+        return;
+    }
+    let mut older = path.as_os_str().to_owned();
+    older.push(".1");
+    let older = PathBuf::from(older);
+    // A rename replaces an older file (also on Windows); if it fails, both files stay as they are.
+    let _ = std::fs::rename(path, &older);
+}
+
+/// `rotate_log`, but only the first time `done` is clear: the log is set aside at the shell's start, not when the server is
+/// started again (a crash trace must stay in server.log, where "Show log" points).
+fn rotate_log_once(path: &Path, limit: u64, done: &std::sync::atomic::AtomicBool) {
+    if !done.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        rotate_log(path, limit);
+    }
 }
 
 /// The app's resource folder in a form Node can open (on Windows, without the `\\?\` that canonicalize adds).
@@ -856,6 +881,8 @@ fn start_and_open(app: &AppHandle, page: &str, notice: Option<String>) -> Result
         }
     }
     let data = app_data(app);
+    static LOG_ROTATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    rotate_log_once(&log_path(app), LOG_LIMIT_BYTES, &LOG_ROTATED);
     let before = port::load_saved(&data);
     // The usual port first, every start; another port is for this run only (see port::after_start).
     let saved = before.usual();
@@ -1309,4 +1336,67 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod log_tests {
+    use super::*;
+
+    fn dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("brainai-log-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn rotate_log_sets_a_big_log_aside() {
+        let d = dir("big");
+        let log = d.join("server.log");
+        std::fs::write(d.join("server.log.1"), b"older").unwrap();
+        std::fs::write(&log, vec![b'x'; 6 * 1024 * 1024]).unwrap();
+        rotate_log(&log, LOG_LIMIT_BYTES);
+        assert!(!log.exists());
+        assert_eq!(std::fs::metadata(d.join("server.log.1")).unwrap().len(), 6 * 1024 * 1024);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn rotate_log_once_rotates_only_the_first_time() {
+        let d = dir("once");
+        let log = d.join("server.log");
+        let done = std::sync::atomic::AtomicBool::new(false);
+        std::fs::write(&log, vec![b'x'; 100]).unwrap();
+        rotate_log_once(&log, 10, &done);
+        assert!(!log.exists() && d.join("server.log.1").exists());
+        std::fs::write(&log, b"crash trace, longer than ten bytes").unwrap();
+        rotate_log_once(&log, 10, &done);
+        assert!(log.exists(), "a restart leaves the log alone");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn rotate_log_keeps_both_files_when_the_rename_fails() {
+        let d = dir("fail");
+        let log = d.join("server.log");
+        std::fs::write(&log, vec![b'x'; 100]).unwrap();
+        std::fs::create_dir_all(d.join("server.log.1").join("inner")).unwrap(); // cannot be replaced by a file
+        rotate_log(&log, 10);
+        assert_eq!(std::fs::metadata(&log).unwrap().len(), 100);
+        assert!(d.join("server.log.1").join("inner").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn rotate_log_leaves_a_small_or_missing_log() {
+        let d = dir("small");
+        let log = d.join("server.log");
+        rotate_log(&log, LOG_LIMIT_BYTES);
+        assert!(!log.exists() && !d.join("server.log.1").exists());
+        std::fs::write(&log, b"small").unwrap();
+        rotate_log(&log, LOG_LIMIT_BYTES);
+        assert_eq!(std::fs::read(&log).unwrap(), b"small");
+        assert!(!d.join("server.log.1").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

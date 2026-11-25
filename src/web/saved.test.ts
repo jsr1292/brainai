@@ -11,6 +11,7 @@ import { savedDone } from './savedViews.js';
 import { removeDone } from './removeViews.js';
 import { loggedIn, startTestApp, TEST_PASSWORD } from '../testing/helpers.js';
 import { decodeEntities } from '../testing/entities.js';
+import { removeTempDir } from '../testing/tempDir.js';
 
 const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
 const PUBLIC = 'https://brainai-mac.tail1234.ts.net';
@@ -143,6 +144,23 @@ test('server: the dashboard has a row for it', async (t) => {
 
 const leftovers = () => readdirSync(tmpdir()).filter((n) => n.startsWith('brainai-saved-tmp-'));
 
+/** A temp folder of this test's own (os.tmpdir() follows TMPDIR), so other tests or runs on the machine can't change the count. */
+function ownTmp(t: TestContext): void {
+  const was = process.env.TMPDIR;
+  const dir = mkdtempSync(join(tmpdir(), 'brainai-saved-own-'));
+  process.env.TMPDIR = dir;
+  t.after(() => { if (was === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = was; removeTempDir(dir); });
+}
+
+/** Waits until `ok()` holds (a loaded machine can be slow); throws after `ms`. */
+async function until(ok: () => boolean, ms = 10_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!ok()) {
+    if (Date.now() > end) throw new Error(`still not so after ${ms} ms`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
 test('server: parallel wrong codes are serialised, so the ones past the limit get 429', async (t) => {
   const { f } = await server(t);
   const rs = await Promise.all(Array.from({ length: 12 }, () => f('/settings/save', { method: 'POST', headers: FORM, body: 'code=000000' })));
@@ -152,12 +170,16 @@ test('server: parallel wrong codes are serialised, so the ones past the limit ge
   assert.ok(rs.every((r) => !/gzip/.test(r.headers.get('content-type') ?? '')));
 });
 
-test('server: a client that aborts during the copy leaves no temp folder and no tar', async (t) => {
+test('server: a client that aborts before the copy starts gets no copy made, and leaves no temp folder and no tar', async (t) => {
   const { app, f } = await server(t);
+  ownTmp(t); // after server(): its hook runs after the app has closed
   const before = leftovers();
   let release!: () => void;
+  let copies = 0;
+  const settled = new Promise<void>((r) => { savedHooks.settled = r; });
   savedHooks.beforeCopy = () => new Promise<void>((r) => { release = r; });
-  t.after(() => { delete savedHooks.beforeCopy; });
+  savedHooks.copyStarted = () => { copies += 1; };
+  t.after(() => { delete savedHooks.beforeCopy; delete savedHooks.copyStarted; delete savedHooks.settled; });
   const ctl = new AbortController();
   const pending = f('/settings/save', { method: 'POST', headers: FORM, body: `code=${app.nextTotp()}`, signal: ctl.signal }).catch(() => null);
   while (!release) await new Promise((r) => setTimeout(r, 10));
@@ -166,12 +188,14 @@ test('server: a client that aborts during the copy leaves no temp folder and no 
   await pending;
   await new Promise((r) => setTimeout(r, 100));
   release();
-  await new Promise((r) => setTimeout(r, 500));
+  await settled; // the handler is done: nothing can make the folder again after this
+  assert.equal(copies, 0);
   assert.deepEqual(leftovers(), before);
 });
 
 test('server: a failing tar ends as a failed download, not a clean 200, and cleans up', async (t) => {
   const { app, f } = await server(t);
+  ownTmp(t);
   const bin = mkdtempSync(join(tmpdir(), 'brainai-saved-bin-'));
   const oldPath = process.env.PATH;
   writeFileSync(join(bin, 'tar'), `#!/bin/sh\nif [ "$2" = - ]; then printf partial; exit 1; fi\nPATH=${oldPath} exec tar "$@"\n`, { mode: 0o755 });
@@ -180,7 +204,7 @@ test('server: a failing tar ends as a failed download, not a clean 200, and clea
   const before = leftovers();
   const r = await f('/settings/save', { method: 'POST', headers: FORM, body: `code=${app.nextTotp()}` }).then((x) => x.arrayBuffer().then(() => 'clean', () => 'failed'), () => 'failed');
   assert.equal(r, 'failed');
-  await new Promise((r2) => setTimeout(r2, 300));
+  await until(() => leftovers().length === before.length);
   assert.deepEqual(leftovers(), before);
 });
 

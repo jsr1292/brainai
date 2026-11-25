@@ -489,3 +489,17 @@ test('a backup\'s temp folder of a process that is gone is swept at once, one of
   sweepBackupTemp(tmp, true);
   assert.deepEqual(readdirSync(tmp).sort(), ['brain-backup-other']);
 });
+
+test('picture backup sweeps orphaned partials even when their source is gone', async (t) => {
+  const { removeTempDir } = await import('./testing/tempDir.js');
+  const { syncPictureFiles } = await import('./backupWork.js');
+  const root = mkdtempSync(join(tmpdir(), 'picture-partials-'));
+  t.after(() => removeTempDir(root));
+  const copies = join(root, 'backup', 'images', 'ab');
+  mkdirSync(copies, { recursive: true });
+  writeFileSync(join(copies, 'abcdef.jpg.partial'), 'old partial');
+  writeFileSync(join(copies, '.abcdef.jpg.0123456789abcdef.partial'), 'new partial');
+  writeFileSync(join(copies, 'notes.partial'), 'unrelated');
+  syncPictureFiles(join(root, 'source'), join(root, 'backup'), []);
+  assert.deepEqual(readdirSync(copies), ['notes.partial']);
+});

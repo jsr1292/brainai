@@ -77,7 +77,7 @@ server later without losing a memory.
   finds things, and whether the whole loop works with real assistants, is measured and published
   (`docs/BENCHMARK.md`, `docs/LIFECYCLE-EVAL.md`, `docs/REPRODUCE.md`).
 - **Facts that say how long they hold and where they came from.** An assistant can mark a fact as valid until a date
-  (a deadline, a version, who holds a job): every assistant then sees when it is past its date. Each fact can say
+  (a deadline, a version, who holds a job): every assistant then sees when it is past its date, and facts dated from today through 14 days from now are listed as "Coming up" in `whats_left`, `project_brief` and on the dashboard. Each fact can say
   whether you said it or an assistant inferred it, and who recorded that. An assistant that says you said something
   has to quote your words, and the label covers only that quote; without one the fact is stored as its own inference.
   Assistants still sometimes write their suggestion into the same fact (`docs/LIFECYCLE-EVAL.md`, S3).

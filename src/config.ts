@@ -11,6 +11,7 @@ export const DEFAULT_RECALL_WINDOW = DEFAULT_PROFILE.window;
 export const DEFAULT_MIN_RECALL_SIMILARITY = DEFAULT_PROFILE.minRecall;
 export const DEFAULT_RECALL_CONFIDENT_SIMILARITY = DEFAULT_PROFILE.confident;
 
+
 export const DEFAULT_BACKUP_KEEP = 14;
 
 export interface Config {
@@ -22,6 +23,8 @@ export interface Config {
   embedModel: EmbeddingProfile;
   /** Recall's results reordered by the local reranker (B3); RERANK=off keeps the search's own order. */
   rerank: boolean;
+  /** OWNER_SAID_WEIGHT; undefined = the search model's own (EmbeddingProfile.ownerSaidWeight). */
+  ownerSaidWeight: number | undefined;
   /**
    * The app (local mode): the owner's choice of models from <data>/models.json, null before one is made. Its search
    * model is `embedModel`; the app loads and downloads them (src/models/manager.ts). Always null on a server.
@@ -59,6 +62,13 @@ function flag(name: string, raw: string | undefined, fallback: boolean): boolean
 
 /** An empty setting (an uncommented `NAME=` line) counts as not set. */
 const given = (raw: string | undefined): string | undefined => (raw === undefined || raw.trim() === '' ? undefined : raw);
+
+export function ownerSaidWeight(raw: string | undefined): number | undefined {
+  if (given(raw) === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) throw new Error(`OWNER_SAID_WEIGHT must be a finite number of 0 or more, got ${raw}`);
+  return value;
+}
 
 function unitInterval(name: string, raw: string | undefined, fallback: number): number {
   const value = given(raw) === undefined ? fallback : Number(raw);
@@ -148,6 +158,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     // The app keeps its models in its data folder (it downloads them there); a server has them in its image.
     publicUrl, dataDir, modelDir: env.MODEL_DIR ?? (localMode ? join(dataDir, 'models') : './models'), port,
     duplicateThreshold, minRecallSimilarity, recallConfidentSimilarity, recallWindow, embedModel, rerank: rerankSetting === 'on', modelChoice,
+    ownerSaidWeight: ownerSaidWeight(env.OWNER_SAID_WEIGHT),
     // This machine only, and no proxy header trusted, unless set: the Docker image sets HOST=0.0.0.0, and a deployment
     // behind a Cloudflare Tunnel (whose origin nothing else can reach) sets TRUST_CF_CONNECTING_IP=true.
     overlayDir: env.OVERLAY_DIR ?? 'overlay',

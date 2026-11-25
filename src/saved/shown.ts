@@ -1,5 +1,5 @@
 /** Controls a terminal acts on: C0 and DEL, C1 (such as CSI, U+009B), and the bidi controls that reorder text. */
-const CONTROL = /[\u0000-\u001f\u007f-\u009f؜‎‏‪-‮⁦-⁩]/;
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 const escape = (ch: string): string => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`;
 
 /** A value from a saved file we do not trust, quoted and cut so it can go into a message (or a terminal) safely. */

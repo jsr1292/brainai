@@ -201,3 +201,49 @@ test('a stray entry with a very long name is refused with a short reason', async
   assert.match(reason, /holds something else/);
   assert.ok(reason.length < 200, `${reason.length}`);
 });
+
+test('archive failures can be rendered in the recovery route language after checking', async (t) => {
+  const { runWithLocale } = await import('../i18n/core.js');
+  const { removeTempDir } = await import('../testing/tempDir.js');
+  const { errorText } = await import('../web/errorText.js');
+  const { stageRestore } = await import('./restore.js');
+  const { findCopy } = await import('./findCopy.js');
+  const dir = mkdtempSync(join(tmpdir(), 'archive-locale-'));
+  t.after(() => removeTempDir(dir));
+  const file = join(dir, 'brainai-saved-2026-11-06.tar.gz');
+  writeFileSync(file, gzipSync('invalid archive'));
+  await assert.rejects(stageRestore(file, dir), (error: Error) => {
+    assert.match(error.message, /could not be read as an archive/);
+    assert.match(runWithLocale('es', () => errorText(error)), /no se pudo leer como un archivo comprimido/);
+    return true;
+  });
+  await assert.rejects(findCopy(dir), (error: Error) => {
+    assert.match(runWithLocale('es', () => errorText(error.cause ?? error)), /no se pudo leer como un archivo comprimido/);
+    return true;
+  });
+});
+
+test('restore errors for a backup file, an unknown file and odd names can be rendered in the recovery route language, and stay English in .message', async (t) => {
+  const { runWithLocale } = await import('../i18n/core.js');
+  const { errorText } = await import('../web/errorText.js');
+  const { stageRestore } = await import('./restore.js');
+  const { default: Database } = await import('better-sqlite3');
+  const dir = tmp(t);
+  const es = (e: Error) => runWithLocale('es', () => errorText(e));
+  const other = join(dir, 'memory-2026-11-06.db');
+  const db = new Database(other);
+  db.exec("CREATE TABLE recipes(id TEXT)");
+  db.close();
+  await assert.rejects(stageRestore(other, dir), (e: Error) => {
+    assert.match(e.message, /This is not a BrainAI backup: it does not hold BrainAI's tables\./);
+    assert.match(es(e), /no es una copia de seguridad de BrainAI/);
+    return true;
+  });
+  const notes = join(dir, 'notes.txt');
+  writeFileSync(notes, 'just notes');
+  await assert.rejects(stageRestore(notes, dir), (e: Error) => {
+    assert.match(e.message, /This is not a saved BrainAI file or backup/);
+    assert.match(es(e), /no es un archivo guardado ni una copia de seguridad de BrainAI/);
+    return true;
+  });
+});

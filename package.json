@@ -1,6 +1,6 @@
 {
   "name": "brainai",
-  "version": "1.10.6",
+  "version": "1.10.7",
   "scripts": {
     "test": "node --import tsx --import ./src/testing/cleanGitEnv.ts --test --test-concurrency=1 \"src/**/*.test.ts\"",
     "test:model": "RUN_MODEL_TESTS=1 node --import tsx --test src/memory/embedder.model.test.ts",

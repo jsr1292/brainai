@@ -76,7 +76,7 @@ issue. Say what you found, how to reproduce it and what it allows.
 | Tool | Level | Reads / writes | Pause | Saves wait | Instruction-like text |
 |---|---|---|---|---|---|
 | `load_profile` | full | reads profile; records setup number on the grant | not a write tool | n/a | n/a (reads) |
-| `recall`, `project_brief`, `list_projects`, `recent_work`, `whats_left` | full, projects | read (record `last_recalled_at`) | not write tools | n/a | page results carry `contains_instructions: true` only when the check matches (omitted otherwise); fact rows in `recall` and `project_brief` are marked the same way |
+| `recall`, `project_brief`, `list_projects`, `recent_work`, `whats_left` | full, projects | read (record `last_recalled_at`) | not write tools | n/a | page results carry `contains_instructions: true` only when the check matches (omitted otherwise); fact rows in `recall` and `project_brief`, and the `coming_up` rows of `whats_left`, are marked the same way |
 | `list_pages`, `read_page`, `view_image` | full, projects | read | no | n/a | page sections carry `contains_instructions: true` only when the check matches (omitted otherwise) |
 | `weekly_review` | full, projects | reads; stores a derived snapshot row when saving is on | while paused the week is built for the call and not stored | n/a | n/a |
 | `list_skills`, `load_skill`, `tidy_session` | full | read (load_skill records a load) | no | n/a | skills are owner-approved |
@@ -154,6 +154,8 @@ the picture upload link is dead while paused, while saves wait, after the grant 
 | Discussions (open, reply, attachments) | MCP | stored live; every read returns them inside the data envelope, with `contains_instructions: true` on a reply that matches the check (and a dashboard marker); `close_discussion` saves a fact and refuses instruction-like text (`src/discussions/service.ts:368`) |
 | Observations, lessons, disagreement reasons, project info | MCP | refused if instruction-like (`src/growth/service.ts:28`, `src/learning/service.ts:39`, `src/memory/service.ts:1590`, `src/mcp/server.ts:726,730`) |
 | Restore of a saved copy | dashboard welcome, CLI | structure checked; row **content** is not screened (see gaps) |
+
+**Ranking and the owner_said label.** Recall adds a small bonus (`OWNER_SAID_WEIGHT`) to the local reranker's score of a fact whose source is `owner_said` (`src/memory/service.ts`). When an assistant sets that label (it must give a quote), the fact gets only half the bonus, and a fact past its `valid_until` gets none, so an assistant's label can only decide between matches within half the bonus; it cannot bring up a fact that matches clearly worse. The bonus depends on the search model (Gemma 1.6, E5 0.8) unless `OWNER_SAID_WEIGHT` is set. It is off with an online reranker, with `RERANK=off` and when the reranker fails.
 
 ### What changed in this review
 

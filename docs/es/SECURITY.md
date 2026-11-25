@@ -76,7 +76,7 @@ pública. Cuenta qué encontraste, cómo reproducirlo y qué permite.
 | Herramienta | Nivel | Lee / escribe | Pausa | Saves wait | Texto que parece instrucción |
 |---|---|---|---|---|---|
 | `load_profile` | full | lee el perfil; registra el número de configuración en la concesión | no es herramienta de escritura | n/a | n/a (lecturas) |
-| `recall`, `project_brief`, `list_projects`, `recent_work`, `whats_left` | full, projects | lectura (registran `last_recalled_at`) | no son herramientas de escritura | n/a | los resultados de página llevan `contains_instructions: true` solo cuando la comprobación coincide (se omite si no); las filas de hechos de `recall` y `project_brief` se marcan igual |
+| `recall`, `project_brief`, `list_projects`, `recent_work`, `whats_left` | full, projects | lectura (registran `last_recalled_at`) | no son herramientas de escritura | n/a | los resultados de página llevan `contains_instructions: true` solo cuando la comprobación coincide (se omite si no); las filas de hechos de `recall` y `project_brief`, y las filas `coming_up` de `whats_left`, se marcan igual |
 | `list_pages`, `read_page`, `view_image` | full, projects | lectura | no | n/a | las secciones de página llevan `contains_instructions: true` solo cuando la comprobación coincide (se omite si no) |
 | `weekly_review` | full, projects | lee; guarda una fila de instantánea derivada cuando el guardado está activado | mientras está en pausa la semana se construye para la llamada y no se guarda | n/a | n/a |
 | `list_skills`, `load_skill`, `tidy_session` | full | lectura (load_skill registra una carga) | no | n/a | las habilidades las aprueba el propietario |
@@ -154,6 +154,8 @@ el enlace de subida de imágenes está muerto en pausa, mientras los guardados e
 | Debates (abrir, responder, adjuntos) | MCP | guardados en vivo; cada lectura los devuelve dentro de la envoltura de datos, con `contains_instructions: true` en una respuesta que cumple la comprobación (y una marca en el panel); `close_discussion` guarda un dato y rechaza el texto que parece instrucción (`src/discussions/service.ts:368`) |
 | Observaciones, lecciones, motivos de desacuerdo, información de proyecto | MCP | rechazados si parecen instrucción (`src/growth/service.ts:28`, `src/learning/service.ts:39`, `src/memory/service.ts:1590`, `src/mcp/server.ts:726,730`) |
 | Restauración de una copia guardada | bienvenida del panel, CLI | se comprueba la estructura; el **contenido** de las filas no se filtra (véanse las carencias) |
+
+**Orden de resultados y la etiqueta owner_said.** La búsqueda suma una pequeña bonificación (`OWNER_SAID_WEIGHT`) a la puntuación del reordenador local de un dato cuya fuente es `owner_said` (`src/memory/service.ts`). Cuando es un asistente quien pone esa etiqueta (debe dar una cita), el dato recibe solo la mitad de la bonificación, y un dato pasado de su `valid_until` no recibe ninguna, así que la etiqueta de un asistente solo decide entre coincidencias que estén a menos de la mitad de la bonificación; no puede subir un dato que coincide claramente peor. La bonificación depende del modelo de búsqueda (Gemma 1,6, E5 0,8) salvo que se fije `OWNER_SAID_WEIGHT`. Está desactivada con un reordenador en línea, con `RERANK=off` y cuando el reordenador falla.
 
 ### Qué cambió en esta revisión
 

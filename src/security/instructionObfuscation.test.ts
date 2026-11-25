@@ -103,7 +103,9 @@ test('ordinary text stays unflagged: accents, other alphabets, lists, headings, 
   ]) assert.equal(looksLikeInstruction(text), null, JSON.stringify(text));
 });
 
-test('the check stays linear on hostile input: 100,000 spaces, newlines, repeats and keyword runs all finish in under 100 ms each', () => {
+// Best of three runs, under 500 ms: linear work on 100,000 characters takes a few ms, while backtracking that grows with
+// the square of the length takes many seconds, so the margin survives a loaded machine without hiding a real regression.
+test('the check stays linear on hostile input: 100,000 spaces, newlines, repeats and keyword runs all finish in under 500 ms each (best of three)', () => {
   const inputs: [string, string][] = [
     ['spaces', ' '.repeat(100_000)],
     ['word then spaces then newline', `a${' '.repeat(100_000)}\nb`],
@@ -116,10 +118,13 @@ test('the check stays linear on hostile input: 100,000 spaces, newlines, repeats
     ['combining marks', `e${'́'.repeat(100_000)}`],
   ];
   for (const [name, text] of inputs) {
-    const started = performance.now();
-    looksLikeInstruction(text);
-    looksLikeInjection(text);
-    const ms = performance.now() - started;
-    assert.ok(ms < 100, `${name}: ${Math.round(ms)} ms`);
+    let ms = Infinity;
+    for (let run = 0; run < 3 && ms >= 500; run++) {
+      const started = performance.now();
+      looksLikeInstruction(text);
+      looksLikeInjection(text);
+      ms = Math.min(ms, performance.now() - started);
+    }
+    assert.ok(ms < 500, `${name}: ${Math.round(ms)} ms`);
   }
 });

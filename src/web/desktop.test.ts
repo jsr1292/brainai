@@ -1197,3 +1197,28 @@ test("the Try it step for Claude's desktop app says to quit it and open it again
   const es = (await openPage(app.baseUrl, '/welcome?step=5', s.cookie)).body;
   assert.match(flat(es), /Te queda una cosa en Claude \(app de escritorio\): Cierra Claude del todo/);
 });
+
+test('the tools page and the welcome\'s name and done steps are not there through the public door, even signed in', async (t) => {
+  const f = fakeHome();
+  t.after(() => f.cleanup());
+  const app = await startTestApp({ localMode: true, statusDir: mkdtempSync(join(tmpdir(), 'brainai-door-')), appSecret: KEY, tools: { home: f.home, path: `${f.bin}:${dirname(process.execPath)}:/usr/bin:/bin`, apps: f.apps, system: {}, claudeConfig: join(f.home, CLAUDE_CONFIG) } });
+  t.after(() => app.close());
+  const host = 'brainai-mac.tail1234.ts.net';
+  const port = await app.deps.door!.open();
+  app.deps.reach!.set(new URL(`https://${host}`), port);
+  const call = (method: string, path: string, headers: Record<string, string>, body?: string) => new Promise<{ status: number; setCookie: string[] }>((resolve, reject) => {
+    const r = request({ host: '127.0.0.1', port, path, method, setHost: false, headers: { Host: host, Origin: `https://${host}`, 'Content-Type': 'application/x-www-form-urlencoded', ...headers } }, (res) => {
+      res.resume();
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, setCookie: (res.headers['set-cookie'] ?? []).map((c) => c.split(';')[0]!) }));
+    });
+    r.on('error', reject);
+    if (body) r.write(body);
+    r.end();
+  });
+  const login = await call('POST', '/login', {}, new URLSearchParams({ password: TEST_PASSWORD, code: app.nextTotp() }).toString());
+  assert.equal(login.status, 302, 'signed in through the door');
+  const Cookie = login.setCookie.join('; ');
+  assert.equal((await call('GET', '/settings/tools', { Cookie })).status, 404);
+  assert.equal((await call('POST', '/welcome/name', { Cookie }, 'name=Sam')).status, 404);
+  assert.equal((await call('POST', '/welcome/done', { Cookie })).status, 404);
+});

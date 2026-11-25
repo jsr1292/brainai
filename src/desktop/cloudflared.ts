@@ -195,7 +195,7 @@ export class TunnelRunner {
   private timer: NodeJS.Timeout | null = null;
   private lines: string[] = [];
 
-  constructor(private readonly env: CloudflaredEnv, private readonly dir: string, private readonly opts: { delays?: number[] } = {}) {}
+  constructor(private readonly env: CloudflaredEnv, private readonly dir: string, private readonly opts: { delays?: number[]; healthyMs?: number } = {}) {}
 
   start(tunnelId: string, credentials: string, port: number): void {
     this.stop();
@@ -214,17 +214,41 @@ export class TunnelRunner {
     this.child = child;
     child.stdin?.on('error', () => { /* the wrapper is gone */ });
     child.stderr?.on('data', (c: Buffer) => { this.lines = [...this.lines, ...c.toString().split('\n').filter(Boolean)].slice(-20); });
-    child.on('error', () => { /* reported through exit */ });
-    child.on('exit', () => {
+    const startedAt = performance.now();
+    let gone = false;
+    // A spawn that fails may give an 'error' and no 'exit'; one that dies gives 'exit' (sometimes after an 'error' too).
+    // Either way it is handled once, and the tunnel is started again.
+    const onGone = () => {
+      if (gone) return;
+      gone = true;
       if (this.child !== child) return;
       this.child = null;
+      if (!this.wanted) return;
+      // A run that stayed up for a while was healthy: the next failure starts the waits from the short one again.
+      if (performance.now() - startedAt >= (this.opts.healthyMs ?? 60_000)) this.failures = 0;
+      const delays = this.opts.delays ?? [2_000, 10_000, 60_000];
+      const wait = delays[Math.min(this.failures, delays.length - 1)]!;
+      this.failures += 1;
+      this.timer = setTimeout(() => { this.timer = null; this.respawn(); }, wait);
+      this.timer.unref();
+    };
+    // An error on a child that did start (no pid means it never did) is left to its 'exit'.
+    child.on('error', () => { if (child.pid === undefined) onGone(); });
+    child.on('exit', onGone);
+  }
+
+  /** A start from the timer: one that throws on the spot (the folder, the spawn) counts as a failure and waits for the next try. */
+  private respawn(): void {
+    try {
+      this.spawn();
+    } catch {
       if (!this.wanted) return;
       const delays = this.opts.delays ?? [2_000, 10_000, 60_000];
       const wait = delays[Math.min(this.failures, delays.length - 1)]!;
       this.failures += 1;
-      this.timer = setTimeout(() => { this.timer = null; this.spawn(); }, wait);
+      this.timer = setTimeout(() => { this.timer = null; this.respawn(); }, wait);
       this.timer.unref();
-    });
+    }
   }
 
   running(): boolean {

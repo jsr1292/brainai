@@ -52,6 +52,12 @@ export const RERANK_MAX_TOKENS = 256;
  */
 export const WEAK_SCORE = -4;
 
+/**
+ * The owner_said bonus (service.ts) when no search model's weight is passed, as in tests: Gemma's. The server and the
+ * app use the active model's EmbeddingProfile.ownerSaidWeight (Gemma 1.6, E5 0.8) unless OWNER_SAID_WEIGHT is set.
+ */
+export const DEFAULT_OWNER_SAID_WEIGHT = 1.6;
+
 /** The reranker's folder inside the model folder. */
 export function rerankerDir(modelDir: string): string {
   return join(modelDir, RERANK_MODEL);

@@ -12,8 +12,9 @@ import type { MemoryStore } from '../memory/store.js';
 import type { PageService } from '../pages/service.js';
 import { exportTree, writeTree } from '../pages/exportTree.js';
 import type { SkillService } from '../skills/service.js';
-import { checkArchive, liveCounts, moveAcrossDisks, packArchive } from './archive.js';
+import { archiveError, checkArchive, liveCounts, moveAcrossDisks, packArchive } from './archive.js';
 import { busy } from '../busyMarker.js';
+import { t } from '../i18n/core.js';
 import { plural } from '../web/dashboardViews.js';
 
 export interface SaveDeps { db: DB; dataDir: string; pages: PageService; memoryStore: MemoryStore; memories: MemoryService; skills: SkillService }
@@ -44,23 +45,24 @@ function claimFolder(parentDir: string, day: string): string {
 export const factsAndPages = (facts: number, pages: number): string => `${plural(facts, 'fact', 'facts')} and ${plural(pages, 'page', 'pages')}`;
 
 export function savedReadme(i: { day: string; facts: number; pages: number; checklist: string[]; originals: string[]; /** Files BrainAI dealt with itself instead of copying here (they can hold tokens). */ handled?: string[] }): string {
+  const summary = t('data.factsAndPages', { facts: t('data.facts', { count: i.facts }), pages: t('data.pages', { count: i.pages }) });
   const lines = [
-    `BrainAI saved ${i.day}`,
+    t('data.readme.title', { day: i.day }),
     '',
-    `This folder is a saved copy of your BrainAI memory from ${i.day}: ${factsAndPages(i.facts, i.pages)}.`,
+    t('data.readme.summary', { day: i.day, summary }),
     '',
-    'It holds every memory in plain text: keep it private.',
+    t('data.readme.private'),
     '',
-    `* ${'brainai-saved-' + i.day}.tar.gz: everything, in the one file BrainAI can bring back.`,
-    '* Markdown/: the same pages and facts as plain text files you can read with any editor.',
+    `* ${t('data.readme.archive', { file: `brainai-saved-${i.day}.tar.gz` })}`,
+    `* ${t('data.readme.markdown')}`,
     '',
-    'To bring it back:',
-    '* The BrainAI app: Open BrainAI and choose I have a saved BrainAI folder.',
-    '* A server: docs/RUNBOOK.md, Coming back from a saved copy.',
+    t('data.readme.restore'),
+    `* ${t('data.readme.app', { choice: t('setup.name.haveFolder') })}`,
+    `* ${t('data.readme.server')}`,
   ];
-  if (i.originals.length > 0) lines.push('', 'Your original tool settings (as they were before BrainAI changed them):', ...i.originals.map((o) => `* Original tool settings/${o}`));
-  if (i.handled?.length) lines.push('', 'Not copied into this folder (they can hold secrets):', ...i.handled.map((h) => `* ${h}`));
-  if (i.checklist.length > 0) lines.push('', 'Things BrainAI could not remove:', ...i.checklist.map((c) => `* ${c}`));
+  if (i.originals.length > 0) lines.push('', t('data.readme.originals'), ...i.originals.map((o) => `* Original tool settings/${o}`));
+  if (i.handled?.length) lines.push('', t('data.readme.handled'), ...i.handled.map((h) => `* ${h}`));
+  if (i.checklist.length > 0) lines.push('', t('data.readme.checklist'), ...i.checklist.map((c) => `* ${c}`));
   return lines.join('\n') + '\n';
 }
 
@@ -96,7 +98,7 @@ async function makeSavedCopyWork(
       opts?.afterPack?.();
       const after = liveCounts(d.db);
       const check = await checkArchive(archive);
-      if (!check.ok) throw new Error(check.reason);
+      if (!check.ok) throw archiveError(check);
       const same = (a: { facts: number; pages: number }) => a.facts === check.facts && a.pages === check.pages;
       if (same(before) && same(after)) counts = { facts: check.facts, pages: check.pages };
     }

@@ -28,8 +28,8 @@ export interface GonePicture { id: string; type: string }
 /** The partial names a backup folder's copier makes: `.memory-DAY.db.<hex>.partial` (and the older `.memory-DAY.db.partial`). */
 export const MAIN_PARTIAL = /^\.memory-\d{4}-\d{2}-\d{2}\.db(\.[0-9a-f]{16})?\.partial$/;
 
-/** Removes the half-made files of an earlier run that was stopped (a quit, an update): regular files with one name that this user owns, in the pattern. Only call while no run of ours is in flight. */
-export function sweepPartials(dir: string, pattern: RegExp): void {
+/** Removes the half-made files of an earlier run that was stopped (a quit, an update): regular files with one name that this user owns, in the pattern, and at least `olderThanMs` old. Only call while no run of ours is in flight. */
+export function sweepPartials(dir: string, pattern: RegExp, olderThanMs = 0): void {
   const uid = typeof process.getuid === 'function' ? process.getuid() : null;
   let names: string[];
   try { names = readdirSync(dir); } catch { return; }
@@ -37,13 +37,13 @@ export function sweepPartials(dir: string, pattern: RegExp): void {
     if (!pattern.test(n)) continue;
     try {
       const st = lstatSync(join(dir, n));
-      if (st.isFile() && st.nlink === 1 && (uid === null || st.uid === uid)) rmSync(join(dir, n), { force: true });
+      if (st.isFile() && st.nlink === 1 && (uid === null || st.uid === uid) && (olderThanMs === 0 || Date.now() - st.mtimeMs >= olderThanMs)) rmSync(join(dir, n), { force: true });
     } catch { /* gone, or not ours */ }
   }
 }
 
 /** True when a process with this id is running. */
-const alive = (pid: number): boolean => {
+export const alive = (pid: number): boolean => {
   try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
 };
 
@@ -85,6 +85,19 @@ export function gonePictures(db: Preparer, now: Date): GonePicture[] {
   return (db.prepare("SELECT id, type FROM images WHERE removed_at IS NOT NULL AND removed_at < ? AND (removed_by IS NULL OR removed_by <> 'restore')").all(before) as GonePicture[]).filter(safePicture);
 }
 
+const PICTURE_PARTIAL = /^(?:[0-9a-f]{3,}\.[a-z0-9]{1,8}|\.[0-9a-f]{3,}\.[a-z0-9]{1,8}\.[0-9a-f]{16})\.partial$/;
+
+function sweepPicturePartials(images: string): void {
+  try {
+    if (!lstatSync(images).isDirectory()) return;
+    for (const sub of readdirSync(images, { withFileTypes: true })) {
+      if (sub.isDirectory() && /^[0-9a-f]{2}$/.test(sub.name)) {
+        sweepPartials(join(images, sub.name), PICTURE_PARTIAL);
+      }
+    }
+  } catch { /* no backup pictures yet, or the folder is unavailable */ }
+}
+
 /**
  * Copies the picture files `<dataDir>/images/<2 hex>/` that `dir/images` doesn't have yet (files never change), each
  * to a .partial name and renamed, then removes from `dir/images` the ones in `gone`.
@@ -97,6 +110,7 @@ export function gonePictures(db: Preparer, now: Date): GonePicture[] {
  */
 export function syncPictureFiles(dataDir: string, dir: string, gone: GonePicture[], careful = false): void {
   const src = join(dataDir, 'images');
+  sweepPicturePartials(join(dir, 'images'));
   if (!existsSync(src)) return;
   const uid = typeof process.getuid === 'function' ? process.getuid() : null;
   const realDir = (path: string): boolean => {
@@ -122,12 +136,9 @@ export function syncPictureFiles(dataDir: string, dir: string, gone: GonePicture
           else if (!realDir(d)) refuse(d);
         }
       } else mkdirSync(subDir, { recursive: true });
-      // One name, cleared first: picture copies run one at a time (the backup lock), so nothing else uses it, and a
-      // stopped copy's leftover is replaced by the next one instead of piling up.
-      const partial = `${target}.partial`;
+      const partial = join(subDir, `.${file}.${randomBytes(8).toString('hex')}.partial`);
+      copyFileSync(join(src, sub, file), partial, constants.COPYFILE_EXCL);
       try {
-        rmSync(partial, { force: true });
-        copyFileSync(join(src, sub, file), partial, careful ? constants.COPYFILE_EXCL : 0);
         if (careful) chmodSync(partial, 0o600);
         renameSync(partial, target);
       } catch (e) {

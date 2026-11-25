@@ -3,7 +3,7 @@ import { t } from '../i18n/core.js';
 import { tHtml } from '../i18n/tHtml.js';
 import { html, type SafeHtml } from './html.js';
 
-/** "3 facts and 1 page" in the request's language, as markup (each part is its own translated run). The saved README keeps its English `factsAndPages`. */
+/** "3 facts and 1 page" in the request's language, as markup (each part is its own translated run). */
 export const factsAndPagesText = (facts: number, pages: number): SafeHtml =>
   tHtml('data.factsAndPages', { facts: t('data.facts', { count: facts }), pages: t('data.pages', { count: pages }) });
 

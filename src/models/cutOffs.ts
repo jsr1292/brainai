@@ -28,7 +28,7 @@ export function activeCutOffs(c: CutOffConfig, active: () => EmbeddingProfile | 
 type MemoryOptions = ConstructorParameters<typeof MemoryService>[2];
 
 /** MemoryService's options with each cut-off read from `cut` whenever the service uses it. */
-export function memoryCutOffs(cut: () => EmbeddingProfile, extra: { reranker?: Reranker }): MemoryOptions {
+export function memoryCutOffs(cut: () => EmbeddingProfile, extra: { reranker?: Reranker; ownerSaidWeight?: number }): MemoryOptions {
   return {
     ...extra,
     get duplicateThreshold() { return cut().duplicate; },
@@ -37,6 +37,8 @@ export function memoryCutOffs(cut: () => EmbeddingProfile, extra: { reranker?: R
     get recallWindow() { return cut().window; },
     get keywordWeight() { return cut().keywordWeight; },
     get rerankPrior() { return cut().rerankPrior; },
+    /** OWNER_SAID_WEIGHT when set, otherwise the active search model's. */
+    get ownerSaidWeight() { return extra.ownerSaidWeight ?? cut().ownerSaidWeight; },
     get closeFacts() { return cut().closeFacts; },
     get closeNudge() { return cut().closeNudge; },
     get deletedMargin() { return cut().deletedMargin; },

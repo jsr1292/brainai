@@ -555,7 +555,10 @@ test('a TERM while it waits at the prompt starts the app again and leaves no tem
   try {
     const c = child();
     let out = '';
-    c.stdout.on('data', (b) => { out += b; if (/Press Enter once/.test(out)) c.kill('SIGTERM'); });
+    // One TERM only: `out` keeps matching as more output arrives (the trap's own lines), and on a loaded machine that
+    // output comes in several chunks, so a check per chunk would send a second TERM while the trap is still running.
+    let sent = false;
+    c.stdout.on('data', (b) => { out += b; if (!sent && /Press Enter once/.test(out)) { sent = true; c.kill('SIGTERM'); } });
     const code = await new Promise<number | null>((resolve) => c.on('close', resolve));
     assert.equal(code, 143, out);
     assert.match(calls(), / stop app\n[\s\S]*save-copy[\s\S]* start\n/);

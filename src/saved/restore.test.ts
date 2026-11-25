@@ -1,9 +1,9 @@
 /** Restoring a saved copy: only into an empty brain, never over memories, never with anything hostile. */
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { execFileSync, spawn } from 'node:child_process';
+import { chmodSync, copyFileSync, utimesSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { openDb } from '../db.js';
@@ -471,6 +471,17 @@ for (const [column, setup] of refused) {
   });
 }
 
+test('a refused name is explained in the recovery route language, and stays English in .message', async (t) => {
+  const { runWithLocale } = await import('../i18n/core.js');
+  const { errorText } = await import('../web/errorText.js');
+  const archive = craftedArchive(t, (c) => addPage(c, null, 'bogus'));
+  await assert.rejects(stageRestore(archive, emptyData(t)), (e: Error) => {
+    assert.match(e.message, /^This saved copy holds names BrainAI would never write \(pages\.area: /);
+    assert.match(runWithLocale('es', () => errorText(e)), /^Esta copia guardada contiene nombres que BrainAI nunca escribiría \(pages\.area: .*\), así que no se recupera\.$/);
+    return true;
+  });
+});
+
 test('a saved copy whose column is declared in upper case is still checked', (t) => {
   const file = join(tmp(t), 'memory.db');
   const c = new Database(file);
@@ -895,4 +906,131 @@ test('applyPendingRestore drops a brain id a copy staged by an older build still
   const db = openDb(join(dir, 'memory.db'));
   t.after(() => db.close());
   assert.notEqual(brainId(db), 'a'.repeat(32));
+});
+
+test('restore checks case variants separately even in a NOCASE column', async (t) => {
+  const { removeTempDir } = await import('../testing/tempDir.js');
+  const dir = mkdtempSync(join(tmpdir(), 'restore-case-'));
+  t.after(() => removeTempDir(dir));
+  const file = join(dir, 'memory.db');
+  const db = new Database(file);
+  db.exec("CREATE TABLE images (type TEXT COLLATE NOCASE); INSERT INTO images VALUES ('png'), ('PNG')");
+  db.close();
+  assert.equal(restoredRowsProblem(file), 'images.type: "PNG"');
+});
+
+/** A `.move-` staging folder, as packArchive makes it, with an optional pid file and an age. */
+function staging(dir: string, opts: { pid?: number | string; host?: string; ageHours?: number }): string {
+  const path = mkdtempSync(join(dir, '.move-'));
+  writeFileSync(join(path, 'memory.db'), 'staged database');
+  if (opts.pid !== undefined) writeFileSync(join(path, 'pid'), `${opts.pid} ${opts.host ?? hostname()}`);
+  if (opts.ageHours) { const at = new Date(Date.now() - opts.ageHours * 3_600_000); utimesSync(path, at, at); }
+  return path;
+}
+
+/** A pid that is not running: a child that has already exited. */
+function deadPid(): number {
+  const r = execFileSync(process.execPath, ['-e', 'console.log(process.pid)']);
+  return Number(r.toString().trim());
+}
+
+test('startup removes abandoned move staging and leaves other files alone', (t) => {
+  const dir = tmp(t);
+  staging(dir, { pid: deadPid() });
+  writeFileSync(join(dir, '.move-0123456789ab.tar.gz'), 'staged archive');
+  const old = new Date(Date.now() - 2 * 3_600_000);
+  utimesSync(join(dir, '.move-0123456789ab.tar.gz'), old, old);
+  writeFileSync(join(dir, '.move-notes.txt'), 'unrelated');
+  mkdirSync(join(dir, 'move'));
+  writeFileSync(join(dir, 'move', 'brainai-saved-2026-11-06.tar.gz'), 'finished archive');
+  assert.equal(applyPendingRestore(dir), null);
+  assert.deepEqual(readdirSync(dir).sort(), ['.move-notes.txt', 'move']);
+  assert.deepEqual(readdirSync(join(dir, 'move')), ['brainai-saved-2026-11-06.tar.gz']);
+});
+
+/** A process that stays alive until the test ends, as a running `cli save-copy` would. */
+function runningProcess(t: TestContext): number {
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
+  t.after(() => { child.kill(); });
+  return child.pid!;
+}
+
+test('startup keeps the staging of a save-copy that is still running', (t) => {
+  const dir = tmp(t);
+  const live = staging(dir, { pid: runningProcess(t) });
+  const dead = staging(dir, { pid: deadPid() });
+  applyPendingRestore(dir);
+  assert.ok(existsSync(live));
+  assert.ok(!existsSync(dead));
+});
+
+test('startup removes a staging over a day old whatever its pid says', (t) => {
+  const dir = tmp(t);
+  const old = staging(dir, { pid: runningProcess(t), ageHours: 25 });
+  applyPendingRestore(dir);
+  assert.ok(!existsSync(old));
+});
+
+test('a pid from another machine or container is not trusted: the age gate decides', (t) => {
+  const dir = tmp(t);
+  const pid = runningProcess(t);
+  const fresh = staging(dir, { pid, host: 'another-container' });
+  const hourOld = staging(dir, { pid, host: 'another-container', ageHours: 2 });
+  applyPendingRestore(dir);
+  assert.ok(existsSync(fresh));
+  assert.ok(!existsSync(hourOld));
+});
+
+test('at startup our own pid is a leftover, but not when applyPendingRestore is called in a running process', (t) => {
+  const dir = tmp(t);
+  const ours = staging(dir, { pid: process.pid });
+  applyPendingRestore(dir);
+  assert.ok(existsSync(ours), 'a drill or a test may run in the process that is staging');
+  applyPendingRestore(dir, { atStartup: true });
+  assert.ok(!existsSync(ours));
+});
+
+test('a pid outside 1 to 2**31-1 counts as no pid', (t) => {
+  const dir = tmp(t);
+  for (const bad of ['0', '-5', '2147483648', '1.5', 'abc']) {
+    const fresh = staging(dir, { pid: bad });
+    const old = staging(dir, { pid: bad, ageHours: 2 });
+    applyPendingRestore(dir);
+    assert.ok(existsSync(fresh), bad);
+    assert.ok(!existsSync(old), bad);
+    rmSync(fresh, { recursive: true, force: true });
+  }
+});
+
+test('startup keeps a fresh staging without a pid file and removes an old one', (t) => {
+  const dir = tmp(t);
+  const fresh = staging(dir, {});
+  const old = staging(dir, { ageHours: 2 });
+  applyPendingRestore(dir);
+  assert.ok(existsSync(fresh));
+  assert.ok(!existsSync(old));
+});
+
+test('startup keeps a fresh temporary move archive and removes an old one', (t) => {
+  const dir = tmp(t);
+  const fresh = join(dir, '.move-aaaaaaaaaaaa.tar.gz');
+  const old = join(dir, '.move-bbbbbbbbbbbb.tar.gz');
+  writeFileSync(fresh, 'x');
+  writeFileSync(old, 'x');
+  const at = new Date(Date.now() - 2 * 3_600_000);
+  utimesSync(old, at, at);
+  applyPendingRestore(dir);
+  assert.ok(existsSync(fresh));
+  assert.ok(!existsSync(old));
+});
+
+test('packArchive writes its pid into the staging folder while it works', async (t) => {
+  const dir = tmp(t);
+  const { db } = makeService({ now: () => T });
+  const seen: string[] = [];
+  const watcher = setInterval(() => {
+    for (const n of readdirSync(dir)) if (/^\.move-/.test(n) && existsSync(join(dir, n, 'pid'))) seen.push(readFileSync(join(dir, n, 'pid'), 'utf8'));
+  }, 1);
+  try { await packArchive(db, dir, join(tmp(t), 'out.tar.gz'), T); } finally { clearInterval(watcher); }
+  assert.ok(seen.includes(`${process.pid} ${hostname()}`));
 });

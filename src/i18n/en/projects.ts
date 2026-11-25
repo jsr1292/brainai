@@ -232,6 +232,7 @@ export const projects = {
   'projects.idea.placeholder': 'An idea…',
   'projects.idea.add': 'Add idea',
   'projects.forYou': 'For you',
+  'projects.comingUp': 'Coming up',
   'projects.empty': 'No projects yet. They appear here as soon as an assistant saves something about one.',
   'projects.mapRow': '{areas} · every project against the five areas',
   'projects.link.graph': 'Graph',

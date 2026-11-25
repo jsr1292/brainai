@@ -1,12 +1,13 @@
 import { CHECK_STATUSES, MAX_NOTE, type CheckArea, type CheckStatus, type ShownStatus } from '../learning/types.js';
 import { t, tHtml, tKey } from '../i18n/index.js';
 import type { Health } from '../health/health.js';
+import type { Memory } from '../memory/types.js';
 import type { Health as ProjectHealth, HealthReason } from '../projects/health.js';
 import type { AreaSection, Home, HomeSuggestion, PanelDiscussion, ProjectCard, ProjectDetail } from '../projects/service.js';
 import { localDay, longDate, shortDay } from '../timezone.js';
 import { AREAS, type Area, type Project } from '../projects/types.js';
 import { withFrom } from './back.js';
-import { errorBlock, plural, writer } from './dashboardViews.js';
+import { errorBlock, excerpt, plural, writer } from './dashboardViews.js';
 import { replacedFold } from './factViews.js';
 import { html, type SafeHtml } from './html.js';
 import { forYouCard, forYouRows, type ApprovalSummary } from './forYou.js';
@@ -350,6 +351,7 @@ ${ignored.length > 0 ? html`<h3 class="nib-ignored">${t('projects.nib.ignored')}
 /** What the Projects screen is drawn from. */
 export interface HomeViewInput {
   home: Home; selected: ProjectDetail | undefined; approvals: ApprovalSummary; discussionsWaiting?: { id: string; title: string }[]; backupProblem: string | null; now: Date; error?: string;
+  comingUp?: (Pick<Memory, 'id' | 'content' | 'project'> & { validUntil: string })[];
   /** The Monday card, at the top of the page, while last week's review is unread (src/web/mondayCard.ts). */
   monday?: MondayCard | null;
   /** The Monday of a week whose card was just set aside with Not now: a line with Undo takes its place. */
@@ -400,6 +402,12 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   const forYou = forYouCard(forYouRows({ approvals: v.approvals, disagreements: v.disagreements ?? 0, health: v.health, discussions: v.discussionsWaiting ?? [], suggestions: home.suggestions }));
   const empty = home.sections.length === 0;
   const plain = mode === 'home';
+  const comingUp = plain && v.comingUp?.length ? html`<section aria-labelledby="coming-up">
+    <h2 id="coming-up">${t('projects.comingUp')}</h2>
+    <ul class="group">${v.comingUp.map((m) => html`<li><a class="row nolead" href="${withFrom(`/memories/${m.id}`, '/')}">
+      <span class="txt">${excerpt(m.content)}${metaLine([m.project, html`<time datetime="${m.validUntil}">${m.validUntil}</time>`])}</span><span class="chev"></span>
+    </a></li>`)}</ul>
+  </section>` : '';
   // The plain home reaches the map and the discussions through its links row: its card of the same two rows would only repeat them.
   // Beside an open project (the list pane) the rows stay: the links row is not drawn there.
   const notIn = notInBrain(home.folders, v.ignored ?? [], plain);
@@ -420,7 +428,7 @@ export function projectList(v: HomeViewInput, mode: ListMode): SafeHtml {
   ${v.monday ? mondayCard(v.monday) : v.weekHidden ? weekHiddenLine(v.weekHidden) : ''}
   ${notes}
   ${forYou.value === '' ? '' : html`<h2 class="fy-h" id="foryou" hidden>${t('projects.forYou')}</h2>`}${forYou}
-  ${plain ? html`<div class="pleft">${fs ?? ''}${emptyP}${areas}</div>` : html`${emptyP}${areas}`}
+  ${plain ? html`<div class="pleft">${fs ?? ''}${comingUp}${emptyP}${areas}</div>` : html`${emptyP}${areas}`}
   ${pextra}
   <p class="home-links">${empty || !coachingShown() ? '' : html`<a href="/map">${t('projects.areas.title')}</a>`}<a href="/graph">${t('projects.link.graph')}</a><a href="/discussions">${t('projects.link.discussions')}</a></p>
 </div>`;

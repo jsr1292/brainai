@@ -175,7 +175,7 @@ const reranker = await createLocalReranker({ modelDir, allowRemote: false });
 async function score(db: DB, embedder: Embedder, p: EmbeddingProfile, label: string): Promise<void> {
   const service = new MemoryService(new MemoryStore(db, now), embedder, {
     duplicateThreshold: p.duplicate, minRecallSimilarity: p.minRecall, recallConfidentSimilarity: p.confident, recallWindow: p.window,
-    keywordWeight: p.keywordWeight, rerankPrior: p.rerankPrior, reranker,
+    keywordWeight: p.keywordWeight, rerankPrior: p.rerankPrior, ownerSaidWeight: p.ownerSaidWeight, reranker,
   });
   const totals = { n: 0, first: 0, top3: 0, top8: 0 };
   for (const c of cases) {

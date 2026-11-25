@@ -157,9 +157,10 @@ export function factDates(m: { createdAt: string; content: string; keys: string 
   return [...days];
 }
 
-/** Today for the owner, as YYYY-MM-DD. */
-export function todayIn(now: Date): string {
-  return iso(dayOf(now));
+/** Today for the owner, optionally offset by calendar days, as YYYY-MM-DD. */
+export function todayIn(now: Date, offset = 0): string {
+  const today = dayOf(now);
+  return iso(offset === 0 ? today : addDays(today, offset));
 }
 
 /** A real calendar day written YYYY-MM-DD (no 30 February). */

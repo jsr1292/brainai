@@ -4,12 +4,13 @@ import type { DB } from '../db.js';
 import { RedirectAllowlist } from '../auth/redirects.js';
 import { ClientsStore } from '../auth/clientsStore.js';
 import { MemoryOAuthProvider } from '../auth/provider.js';
+import { t, type PlainKey } from '../i18n/core.js';
 
-const WEB_APP_LINES: Record<string, string> = {
-  Claude: 'Claude (claude.ai and the phone app): Settings › Connectors › BrainAI › Remove',
-  ChatGPT: 'ChatGPT: Settings › Apps & Connectors › BrainAI › Delete',
-  Grok: 'Grok: Settings › Connectors › BrainAI › Remove',
-};
+const WEB_APP_LINES = new Map<string, PlainKey>([
+  ['Claude', 'data.checklist.claude'],
+  ['ChatGPT', 'data.checklist.chatgpt'],
+  ['Grok', 'data.checklist.grok'],
+]);
 
 /**
  * The names of the web apps connected to this brain, as the dashboard shows them: one per app, from grants that are not
@@ -42,17 +43,20 @@ export interface ChecklistInput {
 
 /** The lines, in the order a person would work through them: the apps, then the tunnel, then what is left behind. */
 export function checklist(i: ChecklistInput): string[] {
-  const lines = i.webApps.map((n) => WEB_APP_LINES[n] ?? `${n}: remove BrainAI from its connector or MCP settings`);
-  lines.push("The text you pasted into each app's instructions to use BrainAI");
+  const lines = i.webApps.map((name) => {
+    const key = WEB_APP_LINES.get(name);
+    return key ? t(key) : t('data.checklist.otherApp', { name });
+  });
+  lines.push(t('data.checklist.instructions'));
   if (i.install === 'server' || (i.tunnel !== null && !i.tunnel.deleted)) {
     const address = i.tunnel?.hostname ? ` ${i.tunnel.hostname}` : '';
-    lines.push(`Cloudflare: delete the tunnel and the public address${address} (Zero Trust › Networks › Tunnels)`);
+    lines.push(t('data.checklist.tunnel', { address }));
   }
   if (i.install === 'server') {
-    lines.push('Your uptime alert, if you set one up');
-    lines.push('The off-site key on your own computer (memory-offsite-key.txt), once you no longer need the Google Drive copies');
+    lines.push(t('data.checklist.uptime'));
+    lines.push(t('data.checklist.offsite'));
   }
-  for (const t of i.leftTools) lines.push(`${t.name}: ${t.reason}`);
+  for (const tool of i.leftTools) lines.push(`${tool.name}: ${tool.reason}`);
   lines.push(...i.kept);
   return lines;
 }

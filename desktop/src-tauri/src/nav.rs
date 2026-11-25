@@ -19,7 +19,7 @@ fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() && bytes[i + 1].is_ascii_hexdigit() && bytes[i + 2].is_ascii_hexdigit() {
             if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
                 out.push(v);
                 i += 3;
@@ -275,6 +275,17 @@ pub fn install_location_ok(exe: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn percent_decode_needs_two_hex_digits() {
+        assert_eq!(percent_decode("%+1"), "%+1".replace('+', " "));
+        assert_eq!(percent_decode("%-1"), "%-1");
+        assert_eq!(percent_decode("%2"), "%2");
+        assert_eq!(percent_decode("%zz"), "%zz");
+        assert_eq!(percent_decode("%41"), "A");
+        assert_eq!(percent_decode("a%41"), "aA");
+        assert_eq!(percent_decode("%aé"), "%aé");
+    }
+
     #[test]
     fn restore_path_keeps_own_pages_only() {
         let t = "T".repeat(43);

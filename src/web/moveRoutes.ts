@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { basename } from 'node:path';
 import { missingPictures } from '../backup.js';
-import { viaDoor } from '../desktop/publicDoor.js';
+import { localRouteOnly } from '../desktop/publicDoor.js';
 import { deleteMoveFile, makeMoveFile, movedTo, moveFile, serverAddress, setMoved } from '../desktop/move.js';
 import { reachOff } from './reachRoutes.js';
 import { html } from './html.js';
@@ -34,11 +34,10 @@ export function moveRoutes(d: AppDeps): Router {
   const db = d.db;
   const owner = requireOwner(d.sessions);
   // Through the public door these pages do not exist.
-  const here: RequestHandler = (req, _res, next) => (viaDoor(req) ? next('router') : next());
   let said: string | null = null;
   const back = (res: Parameters<RequestHandler>[1], text: string | null) => { said = text; res.redirect(303, '/settings/move'); };
 
-  router.get('/settings/move', here, owner, (_req, res) => {
+  router.get('/settings/move', localRouteOnly, owner, (_req, res) => {
     const path = moveFile(dataDir);
     const st = path ? statSync(path) : null;
     const view = {
@@ -52,7 +51,7 @@ export function moveRoutes(d: AppDeps): Router {
     res.type('html').send(page(t('data.move.title'), movePage(view), { nav: true, tab: null, back: { href: '/settings', labelKey: 'shell.nav.settings' } }));
   });
 
-  router.post('/settings/move/file', here, owner, async (_req, res) => {
+  router.post('/settings/move/file', localRouteOnly, owner, async (_req, res) => {
     try {
       await makeMoveFile(db, dataDir, d.now());
       back(res, t('data.move.msgReady'));
@@ -62,7 +61,7 @@ export function moveRoutes(d: AppDeps): Router {
     }
   });
 
-  router.post('/settings/move/show', here, owner, (_req, res) => {
+  router.post('/settings/move/show', localRouteOnly, owner, (_req, res) => {
     const path = moveFile(dataDir);
     if (path) {
       if (d.reveal) d.reveal(path);
@@ -71,11 +70,11 @@ export function moveRoutes(d: AppDeps): Router {
     back(res, path ? null : t('data.move.msgNone'));
   });
 
-  router.post('/settings/move/file/delete', here, owner, (_req, res) => {
+  router.post('/settings/move/file/delete', localRouteOnly, owner, (_req, res) => {
     deleteMoveFile(dataDir);
     back(res, t('data.move.msgDeleted'));
   });
-  router.post('/settings/move/done', here, owner, async (req, res) => {
+  router.post('/settings/move/done', localRouteOnly, owner, async (req, res) => {
     const to = serverAddress(String((req.body as Record<string, unknown> | undefined)?.address ?? ''));
     if (!to) return back(res, t('data.move.msgAddress'));
     setMoved(dataDir, to);
@@ -86,12 +85,12 @@ export function moveRoutes(d: AppDeps): Router {
 
   // After a move, Remove BrainAI does the whole removal (the saved copy, the tools, the leftovers). The old button, and
   // /app/goodbye below for windows that already show it, keep working.
-  router.post('/settings/move/remove', here, owner, (_req, res, next) => {
+  router.post('/settings/move/remove', localRouteOnly, owner, (_req, res, next) => {
     if (!movedTo(dataDir)) return next();
     res.redirect(303, '/settings/remove');
   });
 
-  router.get('/app/goodbye', here, (_req, res, next) => {
+  router.get('/app/goodbye', localRouteOnly, (_req, res, next) => {
     const to = movedTo(dataDir);
     if (!to) return next();
     res.type('html').send(page(t('data.move.goodbyeTitle'), html`<div class="narrow">
@@ -101,7 +100,7 @@ export function moveRoutes(d: AppDeps): Router {
 </div>`, { tab: null }));
   });
 
-  router.post('/settings/move/undo', here, owner, (_req, res) => {
+  router.post('/settings/move/undo', localRouteOnly, owner, (_req, res) => {
     setMoved(dataDir, null);
     back(res, t('data.move.msgUndo', { computer: computerName() }));
   });

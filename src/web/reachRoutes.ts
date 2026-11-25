@@ -14,7 +14,7 @@ import { readCookie, requireOwner, SESSION_COOKIE, sessionCookieOptions } from '
 import { html, page } from './html.js';
 import { t } from '../i18n/core.js';
 import { tHtml } from '../i18n/tHtml.js';
-import { viaDoor } from '../desktop/publicDoor.js';
+import { localRouteOnly, viaDoor } from '../desktop/publicDoor.js';
 import { reachPage, reachSwitch, tailscaleBox } from './reachViews.js';
 import { funnelOff, funnelOffSync, funnelOn, funnelPointsAt, tailscaleState, type TailscaleEnv } from '../desktop/tailscale.js';
 import { cloudflaredState, prepareTunnel, startSignIn, stopLeftover, TunnelRunner, validHostname, type CloudflaredEnv, type SignInRun } from '../desktop/cloudflared.js';
@@ -240,8 +240,7 @@ export function reachRoutes(d: AppDeps): Router {
     return checking;
   };
   // Only on this computer: never through the public door, whatever Host it names (as its siblings in the other route files).
-  const here = (req: Request, _res: Response, next: (arg?: 'router') => void) => (viaDoor(req) ? next('router') : next());
-  router.get('/settings/reach/tailscale', here, owner, macOnly, async (req, res) => {
+  router.get('/settings/reach/tailscale', localRouteOnly, owner, macOnly, async (req, res) => {
     const state = await tailscaleNow(req.query.fresh === '1');
     res.set('Cache-Control', 'no-store').type('html').send(tailscaleBox(state).value);
   });

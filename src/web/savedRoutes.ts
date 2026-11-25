@@ -8,20 +8,27 @@ import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_pro
 import { mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { viaDoor } from '../desktop/publicDoor.js';
+import { localRouteOnly } from '../desktop/publicDoor.js';
 import { documentsFolder } from '../saved/documents.js';
 import { checklist, serverTunnel, webAppNames } from '../saved/checklist.js';
 import { makeSavedCopy, type SaveDeps } from '../saved/savedCopy.js';
 import type { AppDeps } from './app.js';
 import { codeLock, requireOwner } from './authRoutes.js';
 import { page } from './html.js';
+import { errorText } from './errorText.js';
 import { t } from '../i18n/core.js';
 import { rateLimitKey } from './clientIp.js';
 import { revealCommand } from './moveRoutes.js';
 import { savedCodePage, savedDone, savedPage } from './savedViews.js';
 
 /** Test seam: runs before the server's copy is made (to hold it while a test aborts the request). */
-export const savedHooks: { beforeCopy?: () => Promise<void> } = {};
+export const savedHooks: {
+  beforeCopy?: () => Promise<void>;
+  /** Called when the copy itself starts (makeSavedCopy). */
+  copyStarted?: () => void;
+  /** Called once the request's copy work is over (its folder made, cleaned or handed to tar). */
+  settled?: () => void;
+} = {};
 
 /** Windows: the My Documents path (it may have moved, e.g. into OneDrive). A seam: tests replace `read`. */
 export const myDocumentsProbe = {
@@ -67,17 +74,16 @@ export function savedRoutes(d: AppDeps): Router {
 
 function appRoutes(d: AppDeps, router: Router, owner: RequestHandler): Router {
   // Through the public door these pages do not exist.
-  const here: RequestHandler = (req, _res, next) => (viaDoor(req) ? next('router') : next());
   const revealIn = platformOf(d) === 'win32' ? 'Explorer' as const : 'Finder' as const;
   let last: string | null = null;
   const chrome = { nav: true, tab: null, back: { href: '/settings', labelKey: 'shell.nav.settings' } } as const;
 
-  router.get('/settings/save', here, owner, (_req, res) => {
+  router.get('/settings/save', localRouteOnly, owner, (_req, res) => {
     const docs = documentsOf(d);
     res.type('html').send(page(t('data.saved.title'), savedPage({ documents: docs.path, synced: docs.synced, home: homeOf(d), said: null }), chrome));
   });
 
-  router.post('/settings/save', here, owner, async (req, res) => {
+  router.post('/settings/save', localRouteOnly, owner, async (req, res) => {
     const where = (req.body as Record<string, unknown> | undefined)?.where === 'home' ? 'home' : 'documents';
     try {
       const r = await makeSavedCopy(saveDeps(d), parentFor(where, d), d.now(), savedChecklist(d, 'app'));
@@ -86,11 +92,11 @@ function appRoutes(d: AppDeps, router: Router, owner: RequestHandler): Router {
     } catch (e) {
       console.error('saving a copy failed:', e);
       const docs = documentsOf(d);
-      res.status(500).type('html').send(page(t('data.saved.title'), savedPage({ documents: docs.path, synced: docs.synced, home: homeOf(d), said: t('data.saved.failed', { reason: e instanceof Error ? e.message : String(e) }) }), chrome));
+      res.status(500).type('html').send(page(t('data.saved.title'), savedPage({ documents: docs.path, synced: docs.synced, home: homeOf(d), said: t('data.saved.failed', { reason: errorText(e) }) }), chrome));
     }
   });
 
-  router.post('/settings/save/show', here, owner, (_req, res) => {
+  router.post('/settings/save/show', localRouteOnly, owner, (_req, res) => {
     if (last) {
       if (d.reveal) d.reveal(last);
       else { const [cmd, args] = revealCommand(last, platformOf(d)); execFile(cmd, args, () => {}); }
@@ -125,13 +131,23 @@ function serverRoutes(d: AppDeps, router: Router, owner: RequestHandler): Router
     if (outcome.kind === 'failed') return ask(res, 200, t('data.saved.badCode'));
     // Outside the data folder (makeSavedCopy refuses a folder inside it); the folder is private to this process.
     const tmp = mkdtempSync(join(tmpdir(), 'brainai-saved-tmp-'));
-    const cleanup = () => rmSync(tmp, { recursive: true, force: true });
+    // Never throws: it also runs inside the response's 'close' listener.
+    const cleanup = () => {
+      try { rmSync(tmp, { recursive: true, force: true }); } catch (e) { console.error(`could not remove ${tmp}:`, e instanceof Error ? e.message : String(e)); }
+    };
     let tar: ChildProcess | null = null;
-    // Registered before the copy starts: a client that gives up at any point stops tar and deletes the folder.
-    res.on('close', () => { tar?.kill(); cleanup(); });
+    // While the copy is being made the folder is left to it (deleting it under the copy would only have it made again,
+    // with looser permissions); the copy's end cleans up if the client has gone. After that, a client that gives up
+    // stops tar and deletes the folder.
+    let copying = true;
+    res.on('close', () => { tar?.kill(); if (!copying) cleanup(); });
     try {
       await savedHooks.beforeCopy?.();
+      // A client that left while we waited: no copy for nobody.
+      if (res.destroyed || res.writableEnded) { copying = false; return cleanup(); }
+      savedHooks.copyStarted?.();
       const r = await makeSavedCopy(saveDeps(d), tmp, d.now(), savedChecklist(d, 'server', { tunnel: serverTunnel(d.publicUrl) }));
+      copying = false;
       if (res.destroyed || res.writableEnded) return cleanup();
       const name = basename(r.folder);
       res.status(200).set({ 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="${name}.tar.gz"`, 'Cache-Control': 'no-store' });
@@ -145,9 +161,12 @@ function serverRoutes(d: AppDeps, router: Router, owner: RequestHandler): Router
         if (code === 0) res.end(); else if (signal === null) res.destroy();
       });
     } catch (e) {
+      copying = false;
       cleanup();
       console.error('saving a copy failed:', e);
-      if (!res.destroyed) ask(res, 500, t('data.saved.failed', { reason: e instanceof Error ? e.message : String(e) }));
+      if (!res.destroyed) ask(res, 500, t('data.saved.failed', { reason: errorText(e) }));
+    } finally {
+      savedHooks.settled?.();
     }
   });
   return router;

@@ -11,6 +11,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { ownerSaidWeight } from '../config.js';
 import { profileFor } from '../memory/embeddingProfile.js';
 import { openDb } from '../db.js';
 import { createLocalEmbedder } from '../memory/embedder.js';
@@ -60,6 +61,7 @@ const audit = evidence === 'audited'
 
 // EMBED_MODEL picks the model and every cut-off tuned for it, as the server does.
 const profile = profileFor(process.env.EMBED_MODEL);
+const weight = ownerSaidWeight(process.env.OWNER_SAID_WEIGHT) ?? profile.ownerSaidWeight;
 const embedder = await createLocalEmbedder({ modelDir: process.env.MODEL_DIR ?? './models', allowRemote: false, model: profile });
 const reranker = rerank ? await createLocalReranker({ modelDir: process.env.MODEL_DIR ?? './models', allowRemote: false }) : undefined;
 const all: { id: string; category: number; rank: number | null }[] = [];
@@ -72,7 +74,7 @@ for (const c of conversations) {
   const service = new MemoryService(store, embedder, {
     duplicateThreshold: profile.duplicate, minRecallSimilarity: profile.minRecall,
     recallConfidentSimilarity: profile.confident, recallWindow: profile.window, reranker,
-    keywordWeight: profile.keywordWeight, rerankPrior: profile.rerankPrior, closeFacts: profile.closeFacts,
+    ownerSaidWeight: weight, keywordWeight: profile.keywordWeight, rerankPrior: profile.rerankPrior, closeFacts: profile.closeFacts,
   });
   const r = await benchConversation(c, service, { limit, pack, dated: dated ? (d) => { at = d; } : undefined });
   all.push(...r.results);
@@ -104,6 +106,6 @@ if (againstFile) {
 const variant = `${rerank ? '' : '-norerank'}${audit ? '' : '-original'}${pack ? `-pack${pack}` : ''}${dated ? '-dated' : ''}`;
 writeFileSync(join(out, `locomo-${day}-top${limit}${variant}.json`), JSON.stringify({
   date: day, data: { commit: LOCOMO_COMMIT, sha256: LOCOMO_SHA256 }, evidence: audit ? { audit: LOCOMO_AUDIT_COMMIT, sha256: LOCOMO_AUDIT_SHA256, corrected: audit.fixed } : 'original', model: profile.id, reranker: rerank ? RERANK_MODEL : null,
-  settings: { ...profile, limit, pack },
+  settings: { ...profile, ownerSaidWeight: weight, limit, pack },
   turns, skipped, scores, perQuestion,
 }, null, 2));

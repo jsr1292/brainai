@@ -513,3 +513,42 @@ test('Remove turns off a Tailscale share BrainAI left behind (a crash), and leav
     assert.equal(existsSync(join(app.deps.statusDir!, 'funnel-on')), false);
   }
 });
+
+const inSpanish = (f: Awaited<ReturnType<typeof loggedIn>>) => f('/settings/language', { method: 'POST', headers: FORM, body: 'language=es' });
+
+test('the lines of what BrainAI could not remove come in the owner\'s language, in the page and in the README', async (t) => {
+  removeSeams.moveIntoSaved = () => { throw new Error('disk said no'); };
+  t.after(() => { delete removeSeams.moveIntoSaved; });
+  const { f, home, app } = await desktop(t);
+  home.write('.config/opencode/opencode.jsonc', '{ // comments\n}');
+  const second = mkdtempSync(join(tmpdir(), 'brainai-second-'));
+  t.after(() => rmSync(second, { recursive: true, force: true }));
+  app.deps.backupCopy!.set(second);
+  await inSpanish(f);
+  assert.equal((await post(f)).status, 303);
+  const folder = join(home.home, 'Documents', savedFolders(home.home)[0]!);
+  for (const text of [await doneText(f), readFileSync(join(folder, 'README.txt'), 'utf8')]) {
+    assert.match(text, /Falló: los ajustes originales de las herramientas, disk said no/);
+    assert.match(text, /OpenCode: BrainAI no pudo leer sus ajustes/);
+    assert.match(text, /Tu segunda carpeta de copias de seguridad sigue teniendo copias de tu memoria: /);
+    assert.doesNotMatch(text, /Failed:|couldn't read its settings|Your second backup folder/);
+  }
+});
+
+test('the Cloudflare line of the checklist is in the owner\'s language', async (t) => {
+  const cf = fakeCloudflared({});
+  t.after(() => cf.cleanup());
+  const { app, f, statusDir, home } = await desktop(t, { extraPath: cf.bin });
+  app.deps.tools!.extraEnv = cf.extraEnv;
+  const env = { home: cf.home, path: `${cf.bin}:${dirname(process.execPath)}:/usr/bin:/bin` };
+  assert.equal((await startSignIn(env).done).ok, true);
+  assert.equal((await prepareTunnel(env, statusDir, 'brain.example.net')).ok, true);
+  app.deps.reach!.set(new URL('https://brain.example.net'), await app.deps.door!.open(), { via: 'cloudflare' });
+  await inSpanish(f);
+  assert.equal((await post(f)).status, 303);
+  const done = await doneText(f);
+  assert.match(done, /Cloudflare: el nombre brain\.example\.net sigue existiendo en tu DNS; bórralo allí\./);
+  assert.doesNotMatch(done, /still exists in your DNS/);
+  const readme = readFileSync(join(home.home, 'Documents', savedFolders(home.home)[0]!, 'README.txt'), 'utf8');
+  assert.match(readme, /Cloudflare: el nombre brain\.example\.net sigue existiendo en tu DNS/);
+});

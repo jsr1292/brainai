@@ -81,7 +81,7 @@ ordenador y pasar más adelante a un servidor sin perder ningún recuerdo.
   asistentes reales, se mide y se publica (`docs/es/BENCHMARK.md`, `docs/es/LIFECYCLE-EVAL.md`,
   `docs/es/REPRODUCE.md`).
 - **Datos que dicen cuánto duran y de dónde vienen.** Un asistente puede marcar un dato como válido hasta una fecha
-  (un plazo, una versión, quién tiene un trabajo): así todos los asistentes ven cuándo ha pasado su fecha. Cada dato
+  (un plazo, una versión, quién tiene un trabajo): así todos los asistentes ven cuándo ha pasado su fecha, y los datos con fecha desde hoy hasta dentro de 14 días aparecen como «Próximas fechas» en `whats_left`, `project_brief` y en el panel. Cada dato
   puede indicar si lo dijiste tú o lo dedujo un asistente, y quién lo anotó. Un asistente que dice que tú dijiste
   algo tiene que citar tus palabras, y la etiqueta cubre solo esa cita; sin ella, el dato se guarda como deducción
   propia. A veces los asistentes siguen escribiendo su sugerencia dentro del mismo dato (`docs/es/LIFECYCLE-EVAL.md`,

@@ -319,3 +319,16 @@ test('a close pair whose older fact the brief leaves out is not marked, and the 
   assert.equal(d.decisions.find((m: any) => m.id === ids[59]).may_conflict_with, undefined);
   assert.doesNotMatch(text, /may_conflict_with are close/);
 });
+
+test('many long dated facts in one project leave the brief within the budget', async () => {
+  const { c, service } = await bigProject();
+  for (let i = 0; i < 40; i++) {
+    const m = await service.remember({ kind: 'decision', content: `Dated note ${i} ${'z'.repeat(900)}`, project: 'big', allowDuplicate: true, meta: { validUntil: '2026-10-05' } }, owner);
+    assert.equal(m.status, 'saved');
+  }
+  const text = await c('project_brief', { project: 'big' });
+  assert.ok(text.length <= BRIEF_BUDGET, `${text.length} characters`);
+  const d = dataOf(text);
+  assert.equal(d.coming_up.length, 10);
+  assert.equal(d.shortened.coming_up_not_listed, 30);
+});

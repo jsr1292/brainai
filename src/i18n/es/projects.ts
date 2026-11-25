@@ -235,6 +235,7 @@ export const projects_es: Record<keyof typeof projects, Entry> = {
   'projects.idea.placeholder': 'Una idea…',
   'projects.idea.add': 'Añadir idea',
   'projects.forYou': 'Para ti',
+  'projects.comingUp': 'Próximas fechas',
   'projects.empty': 'Aún no hay proyectos. Aparecerán aquí en cuanto un asistente guarde algo sobre uno.',
   'projects.mapRow': '{areas} · cada proyecto frente a las cinco áreas',
   'projects.link.graph': 'Grafo',

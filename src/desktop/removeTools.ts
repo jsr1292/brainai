@@ -35,7 +35,7 @@ export async function takeToolsOut(env: ToolEnv, kept: string[]): Promise<ToolsO
         continue;
       }
       if (traces === 'unreadable') {
-        const reason = `BrainAI couldn't read its settings; if it has a brainai entry for ${host}, remove it by hand.`;
+        const reason = t('data.remove.unreadable', { host });
         tools.push({ name: tool.name, what: 'unreadable', detail: reason });
         leftTools.push({ name: tool.name, reason });
         continue;

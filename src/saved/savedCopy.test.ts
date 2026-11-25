@@ -143,3 +143,20 @@ test('moveIntoSaved gives a file outside home a flat safe name, never a path tha
   assert.equal(readFileSync(join(folder, 'Original tool settings', moved[0]!), 'utf8'), 'original');
   assert.equal(existsSync(file), false);
 });
+
+test('a saved copy writes recovery instructions in the active language', async (t) => {
+  const { runWithLocale } = await import('../i18n/core.js');
+  const { checklist } = await import('./checklist.js');
+  const { removeTempDir } = await import('../testing/tempDir.js');
+  const parent = mkdtempSync(join(tmpdir(), 'savedcopy-locale-'));
+  t.after(() => removeTempDir(parent));
+  const { deps } = await setup(t);
+  const r = await runWithLocale('es', () => makeSavedCopy(deps, parent, T, checklist({
+    install: 'app', webApps: [], tunnel: null, leftTools: [], kept: [],
+  })));
+  const readme = readFileSync(join(r.folder, 'README.txt'), 'utf8');
+  assert.match(readme, /Para recuperarla/);
+  assert.match(readme, /1 dato y 1 página/);
+  assert.match(readme, /El texto que pegaste/);
+  assert.match(readme, /brainai-saved-2026-11-12\.tar\.gz/);
+});

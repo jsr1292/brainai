@@ -4,6 +4,17 @@ Each release says what changed and whether updating needs anything from you. Upd
 `git pull && docker compose up -d --build` in `~/memory`; BrainAI copies its database to `data/pre-migrate/` before
 any change to it. Settings › Version shows the version you run.
 
+## 1.10.7 (2026-11-25)
+
+Nothing to do when updating.
+
+- **Coming up.** The dashboard, `whats_left`, and `project_brief` show facts dated today through the next 14 days in the owner's calendar, so deadlines and renewals show before they lapse (at most 20 in `whats_left` and 10 in a brief; facts of done or archived projects are left out of `whats_left` and the dashboard).
+- **Facts you said rank higher.** With the local reranker (the default), recall puts a fact marked as said by you above one that matches the question only slightly better, such as an assistant's inference about the same thing. The full lift applies when you set the mark; an assistant quoting you gets half (on the same test set its statement came first in 15 of 20 cases). A fact that clearly matches better still comes first, and facts past their date get no lift. Measured on a synthetic set of 40 questions with each search model: with Gemma (the default) your statement came first in 19 of 20 cases instead of 12, with E5 in 18 of 20 instead of 9, and no better-matching fact lost its place with either. Each model uses the largest lift that measured safe with a 1.5x margin (Gemma 1.6, E5 0.8). Servers can set it with `OWNER_SAID_WEIGHT`, and 0 turns it off.
+- **Save a copy** on a server stops when you leave the page before the copy starts, and no longer deletes the folder under a copy that is still being made.
+- **Backups and restore.** Picture copies use unpredictable temporary names; files left by an interrupted move or save are cleaned at start (never one that is still in use, also across Docker containers); restore checks compare values exactly; the recovery instructions and restore errors are in Spanish for a Spanish owner.
+- **This computer only.** Every page that must only work on the Mac now goes through one check, and a test walks every route to keep it so. The Tools page and the welcome steps are no longer reachable through Reach.
+- **Mac and Windows app.** The server log is set aside when it passes 5 MB, at the app's start. The Cloudflare tunnel restarts quickly again after a long healthy run, and restarts when it could not start at all.
+
 ## 1.10.6 (2026-11-25)
 
 How assistants handle facts, from the 2026-11-25 behaviour experiments (nothing to do when updating):

@@ -12,8 +12,8 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { BRIDGE_KEY_FILE } from '../desktop/claudeBridge.js';
 import { syncedCloud } from '../saved/documents.js';
-import { Router, type Request, type RequestHandler, type Response } from 'express';
-import { viaDoor } from '../desktop/publicDoor.js';
+import { Router, type Request, type Response } from 'express';
+import { localRouteOnly, viaDoor } from '../desktop/publicDoor.js';
 import { InvalidNameError } from '../auth/clientsStore.js';
 import { backupHealth, readBackupStatus } from '../backupStatus.js';
 import { readUpdate, readUpdateCheck, updateCheckProblem } from '../desktop/updateState.js';
@@ -213,8 +213,7 @@ export function dashboardRoutes(d: AppDeps): Router {
   };
   // Settings › Backups (the app): the second folder for the daily backups.
   // Through the public door this page does not exist.
-  const here: RequestHandler = (req, _res, next) => (viaDoor(req) ? next('router') : next());
-  router.post('/settings/backup-copy', here, owner, (req, res, next) => {
+  router.post('/settings/backup-copy', localRouteOnly, owner, (req, res, next) => {
     const copy = d.backupCopy;
     if (!d.localMode || !copy) return next();
     if (str(req, 'action') === 'off') { copy.set(null); saySettings('backup-copy', t('inbox.settings.copyOff')); return res.redirect(303, '/settings#backup-copy'); }
@@ -235,7 +234,7 @@ export function dashboardRoutes(d: AppDeps): Router {
 
   // Back up now (the app): the same backup the nightly run and the update make. The owner's session and the same-origin
   // check on every POST guard it; never through the public door; it only writes into the app's own backup folder.
-  router.post('/settings/backup-now', here, owner, async (req, res, next) => {
+  router.post('/settings/backup-now', localRouteOnly, owner, async (req, res, next) => {
     if (!d.localMode || !d.db || !d.backupDir || !d.statusDir) return next();
     const run = await runBackup(d.db, d.backupDir, d.backupKeep ?? DEFAULT_BACKUP_KEEP, d.now(), d.statusDir, d.backupCopy);
     if (run.ok) {
@@ -248,17 +247,17 @@ export function dashboardRoutes(d: AppDeps): Router {
   // Check for updates. The app: the link /app/check-updates is taken by the shell (see below), which runs its normal check
   // and writes update-check.json; the page asks this route whether a newer check is in. A server: one request to GitHub,
   // only on this press (owner session and the same-origin check on every POST), at most one per CHECK_GAP_S.
-  router.get('/settings/space', here, owner, (_req, res, next) => {
+  router.get('/settings/space', localRouteOnly, owner, (_req, res, next) => {
     if (!spaceOn()) return next();
     const s = spaceCache.peek();
     res.set('Cache-Control', 'no-store').json(s ? { ready: true, total: spaceTotalText(s), html: spaceBlock(s).value } : { ready: false });
   });
-  router.get('/settings/version/state', here, owner, (_req, res, next) => {
+  router.get('/settings/version/state', localRouteOnly, owner, (_req, res, next) => {
     if (!d.localMode || !d.statusDir) return next();
     res.set('Cache-Control', 'no-store').json({ at: lastAttempt(readUpdateCheck(d.statusDir)) });
   });
   let lastServerCheckMs = 0;
-  router.post('/settings/version/check', here, owner, async (req, res, next) => {
+  router.post('/settings/version/check', localRouteOnly, owner, async (req, res, next) => {
     if (d.localMode) return next();
     const nowMs = d.now().getTime();
     if (nowMs - lastServerCheckMs < CHECK_GAP_S * 1000) return settings(req, res, 429, undefined, undefined, undefined, true);
@@ -269,7 +268,7 @@ export function dashboardRoutes(d: AppDeps): Router {
   // The shell (BrainAI's own window) takes these two links itself: the native folder picker and Show in Finder. In an
   // ordinary browser tab they land here instead, so the link never dead-ends.
   for (const path of ['/app/choose-folder', '/app/reveal-backups', '/app/check-updates']) {
-    router.get(path, here, owner, (_req, res, next) => {
+    router.get(path, localRouteOnly, owner, (_req, res, next) => {
       if (!d.localMode) return next();
       res.type('html').send(page(t('inbox.settings.windowOnlyTitle'), html`<div class="narrow"><h1>${t('inbox.settings.windowOnlyH1')}</h1><p>${path === '/app/choose-folder' ? t('inbox.settings.windowFolder') : path === '/app/check-updates' ? t('inbox.settings.windowUpdates') : t('inbox.settings.windowReveal')}</p><p><a href="/settings#health">${t('inbox.settings.backToSettings')}</a></p></div>`, { nav: true, tab: null, back: { href: '/settings#health', labelKey: 'shell.nav.settings' } }));
     });

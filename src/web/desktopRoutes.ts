@@ -1,6 +1,6 @@
 /** The Mac app's pages (D3), in local mode only: Settings › Tools on this Mac. */
 import { takeCancelNotice } from '../desktop/removing.js';
-import express, { Router, type RequestHandler } from 'express';
+import express, { Router } from 'express';
 import { createWriteStream, existsSync, readFileSync, lstatSync, rmSync, writeFileSync } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -14,8 +14,9 @@ import { readPorts } from '../desktop/homePort.js';
 import { setupApps, setupText } from '../setup/texts.js';
 import type { AppDeps } from './app.js';
 import { appKeyCheck, requireOwner } from './authRoutes.js';
+import { errorText } from './errorText.js';
 import { html, page, type SafeHtml } from './html.js';
-import { viaDoor } from '../desktop/publicDoor.js';
+import { localRouteOnly } from '../desktop/publicDoor.js';
 import { isEmptyBrain, stageRestore } from '../saved/restore.js';
 import { kindOfFile } from '../saved/backupFile.js';
 import { findCopy, NothingFound, type Found } from '../saved/findCopy.js';
@@ -191,8 +192,7 @@ export function desktopRoutes(d: AppDeps): Router {
 
   // The "added, not signed in yet" line of Settings, off the page's own request (the tools' CLIs can take seconds). Only on
   // this computer: never through the public door, and only for the owner.
-  const sameComputer: RequestHandler = (req, _res, next) => (viaDoor(req) ? next('router') : next());
-  router.get('/settings/tools/added', sameComputer, owner, async (_req, res) => {
+  router.get('/settings/tools/added', localRouteOnly, owner, async (_req, res) => {
     const names = await addedToolNames(d);
     res.set('Cache-Control', 'no-store').type('html').send(addedToolsLine(names).value);
   });
@@ -205,7 +205,7 @@ export function desktopRoutes(d: AppDeps): Router {
     return t('setup.tools.cancelled', { done: done.join('; ') });
   };
 
-  router.get('/settings/tools', owner, async (req, res) => {
+  router.get('/settings/tools', localRouteOnly, owner, async (req, res) => {
     const said = resultFor(req.query.tool) ?? cancelledText();
     const states = withSignIn(await cachedToolStates(d, env), d.provider.listGrants()); // also brings env's address up to date
     res.type('html').send(page(t('setup.toolsOn', { computer: computerName() }), toolsPage({ tools: states, windows: windows(env), said, cursorRules: env.rules('claude-code'), temporary: env.temporary === true }),
@@ -214,7 +214,7 @@ export function desktopRoutes(d: AppDeps): Router {
 
   for (const what of ['connect', 'disconnect'] as const) {
     // Writes the owner's tool settings: only from the window on this computer, never through the public door.
-    router.post(`/settings/tools/:id/${what}`, sameComputer, owner, async (req, res, next) => {
+    router.post(`/settings/tools/:id/${what}`, localRouteOnly, owner, async (req, res, next) => {
       const id = req.params.id as string;
       if (!isId(id)) return next();
       const replace = (req.body as Record<string, unknown> | undefined)?.replace === '1';
@@ -233,7 +233,7 @@ export function desktopRoutes(d: AppDeps): Router {
       res.redirect(303, back + id);
     });
   }
-  router.post('/settings/tools/:id/reminders', sameComputer, owner, async (req, res, next) => {
+  router.post('/settings/tools/:id/reminders', localRouteOnly, owner, async (req, res, next) => {
     const id = req.params.id as string;
     if (!isId(id)) return next();
     applyHome(d, env);
@@ -244,7 +244,6 @@ export function desktopRoutes(d: AppDeps): Router {
     res.redirect(303, `/settings/tools?tool=${id}`);
   });
   // The restore pages exist only on this computer, never through the public door.
-  const here: RequestHandler = (req, _res, next) => (viaDoor(req) ? next('router') : next());
   const dataDir = d.statusDir;
   const fromApp = appKeyCheck(d);
   /** One staging at a time: the upload and the confirm both unpack a whole copy. */
@@ -269,20 +268,23 @@ export function desktopRoutes(d: AppDeps): Router {
   /** The one copy found in the folder the owner picked, waiting for the confirm; replaced by every find, gone after 15 minutes. */
   let choice: { found: Found; at: number } | null = null;
   /** Why the last find or confirm failed, said once on the choose page. */
-  let problem: { key: 'setup.err.find.none' | 'setup.err.find.invalid' | 'setup.err.find.gone' | 'setup.err.find.unreadable' | 'setup.err.find.several' | 'setup.err.find.changed' | 'setup.err.busy' | 'setup.err.notEmpty' | 'setup.err.connected'; why?: string } | null = null;
+  let problem: { key: 'setup.err.find.none' | 'setup.err.find.invalid' | 'setup.err.find.gone' | 'setup.err.find.unreadable' | 'setup.err.find.several' | 'setup.err.find.changed' | 'setup.err.busy' | 'setup.err.notEmpty' | 'setup.err.connected'; why?: unknown } | null = null;
+  const clean = (text: string, replacement = 'the data folder') =>
+    [dataDir, d.backupDir].reduce<string>((s, p) => (p ? s.replaceAll(p, replacement) : s), text);
+  const restoreWhy = (why: unknown) => why === undefined ? '' : clean(errorText(why), t('setup.dataFolder'));
   const currentChoice = (): Found | null => {
     if (choice && d.now().getTime() - choice.at > CHOICE_MS) choice = null;
     return choice?.found ?? null;
   };
 
-  router.get('/welcome', here, owner, async (req, res) => {
+  router.get('/welcome', localRouteOnly, owner, async (req, res) => {
     const step = (['2', '3', '4', '5'] as const).map(Number).find((n) => String(n) === req.query.step) as 2 | 3 | 4 | 5 | undefined ?? 1;
     const said = resultFor(req.query.tool);
     const can = step === 1 && canRestore();
     const pick = can && req.query.restore === 'found' ? currentChoice() : null;
     let restoreProblem: string | null = null;
     if (can && req.query.restore !== undefined && req.query.restore !== 'offer' && !pick) {
-      restoreProblem = problem ? t(problem.key, { why: problem.why ?? '' }) : req.query.restore === 'found' ? t('setup.err.find.gone') : null;
+      restoreProblem = problem ? t(problem.key, { why: restoreWhy(problem.why) }) : req.query.restore === 'found' ? t('setup.err.find.gone') : null;
       problem = null;
     }
     const restore = !can ? null : pick ? 'found' as const : req.query.restore === '1' || req.query.restore === 'found' ? 'choose' as const : 'offer' as const;
@@ -297,7 +299,7 @@ export function desktopRoutes(d: AppDeps): Router {
     res.type('html').send(page(t('setup.welcome.title'), welcomePage({
       step, apps, chosen: step === 5 ? answer?.apps : undefined, yours: step === 4 ? { answer, found, reachOn } : undefined,
       nextCard: step === 5 ? nextCardFor(d, true) : undefined,
-      tools: step >= 4 ? withSignIn(await cachedToolStates(d, env), d.provider.listGrants()) : [], windows: windows(env), said, cursorRules: env.rules('claude-code'), restore, restored, found: pick ? { ...pick, token: choice!.found.token, skipped: pick.skipped ? { name: pick.skipped.name, why: clean(pick.skipped.why) } : null } : null, restoreProblem,
+      tools: step >= 4 ? withSignIn(await cachedToolStates(d, env), d.provider.listGrants()) : [], windows: windows(env), said, cursorRules: env.rules('claude-code'), restore, restored, found: pick ? { ...pick, token: choice!.found.token, skipped: pick.skipped ? { name: pick.skipped.name, why: restoreWhy(pick.skipped.cause ?? pick.skipped.why) } : null } : null, restoreProblem,
       models: step === 3 && d.models ? { hardware: await (d.hardware ?? (() => readHardware(dataDir ?? process.cwd())))(), installed: await d.models.installedIds() } : undefined,
       modelsLine: step >= 4 && d.models ? modelsLine(d.models.status(), { dataDir }) : undefined,
     }),
@@ -308,7 +310,7 @@ export function desktopRoutes(d: AppDeps): Router {
    * The saved file arrives as the raw request body, streamed to disk with a size limit (no buffering, no multipart),
    * checked and staged by stageRestore; the app then restarts the server, which swaps it in. The upload is always deleted.
    */
-  router.post('/welcome/restore', here, owner, async (req, res) => {
+  router.post('/welcome/restore', localRouteOnly, owner, async (req, res) => {
     if (!dataDir) return res.status(404).end();
     const type = (req.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
     if (!UPLOAD_TYPES.includes(type)) return res.status(415).json({ error: notASavedFile() });
@@ -332,7 +334,7 @@ export function desktopRoutes(d: AppDeps): Router {
       await stageRestore(file, dataDir);
       res.json({ next: '/app/restart' });
     } catch (e) {
-      res.status(422).json({ error: e instanceof Error ? e.message : String(e) });
+      res.status(422).json({ error: restoreWhy(e) });
     } finally {
       rmSync(file, { force: true });
       staging = false;
@@ -343,14 +345,14 @@ export function desktopRoutes(d: AppDeps): Router {
    * The desktop app's folder picker found a folder (POST with the app's key, never through the public door): looks for
    * the newest saved copy directly inside it and remembers it for the confirm. The app then opens the preview.
    */
-  router.post('/welcome/restore/find', here, express.json({ limit: '16kb' }), async (req, res) => {
+  router.post('/welcome/restore/find', localRouteOnly, express.json({ limit: '16kb' }), async (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (!dataDir || !fromApp(req)) return res.status(403).json({ error: 'Not allowed.' });
     const folder = (req.body as Record<string, unknown> | undefined)?.path;
     if (typeof folder !== 'string' || folder === '' || folder.length > 4096 || folder.includes('\0') || !isAbsolute(folder)) {
       return res.status(400).json({ error: t('setup.err.find.none') });
     }
-    const fail = (status: number, p: NonNullable<typeof problem>) => { choice = null; problem = p; return res.status(status).json({ error: t(p.key, { why: p.why ?? '' }) }); };
+    const fail = (status: number, p: NonNullable<typeof problem>) => { choice = null; problem = p; return res.status(status).json({ error: t(p.key, { why: restoreWhy(p.why) }) }); };
     if (!emptyBrain()) return fail(409, { key: 'setup.err.notEmpty' });
     if (appConnected()) return fail(409, { key: 'setup.err.connected' });
     try {
@@ -359,19 +361,19 @@ export function desktopRoutes(d: AppDeps): Router {
       problem = null;
       res.json({ ok: true });
     } catch (e) {
-      if (e instanceof NothingFound && e.why === 'invalid') return fail(422, { key: 'setup.err.find.invalid', why: clean(e.message) });
-      if (e instanceof NothingFound && e.why === 'several') return fail(422, { key: 'setup.err.find.several', why: clean(e.message) });
+      if (e instanceof NothingFound && e.why === 'invalid') return fail(422, { key: 'setup.err.find.invalid', why: e.cause ?? e });
+      if (e instanceof NothingFound && e.why === 'several') return fail(422, { key: 'setup.err.find.several', why: e });
       if (e instanceof NothingFound && e.why === 'unreadable') return fail(422, { key: 'setup.err.find.unreadable' });
       return fail(422, { key: 'setup.err.find.none' });
     }
   });
 
   /** The owner's "Bring it back" on the preview: stages the chosen copy from its real place (pictures beside it come along) and restarts. */
-  router.post('/welcome/restore/confirm', here, owner, async (req, res) => {
+  router.post('/welcome/restore/confirm', localRouteOnly, owner, async (req, res) => {
     if (!dataDir) return res.status(404).end();
     const json = (req.get('accept') ?? '').includes('application/json');
     const refuse = (status: number, p: NonNullable<typeof problem>) => {
-      if (json) return res.status(status).json({ error: t(p.key, { why: p.why ?? '' }), back: '/welcome?restore=1' });
+      if (json) return res.status(status).json({ error: t(p.key, { why: restoreWhy(p.why) }), back: '/welcome?restore=1' });
       problem = p;
       return res.redirect(303, '/welcome?restore=1');
     };
@@ -388,7 +390,7 @@ export function desktopRoutes(d: AppDeps): Router {
     try {
       await stageRestore(found.path, dataDir);
     } catch (e) {
-      return refuse(422, { key: 'setup.err.find.invalid', why: clean(e instanceof Error ? e.message : String(e)) });
+      return refuse(422, { key: 'setup.err.find.invalid', why: e });
     } finally {
       staging = false;
     }
@@ -398,12 +400,12 @@ export function desktopRoutes(d: AppDeps): Router {
   });
 
   /** Shown if the desktop app did not intercept the navigation (it normally restarts the server and moves on). */
-  router.get('/app/restart', here, (_req, res) => {
+  router.get('/app/restart', localRouteOnly, (_req, res) => {
     res.type('html').send(page(t('setup.restart.title'), html`<div class="narrow"><h1>${t('setup.restart.head')}</h1>
 <p>${t('setup.restart.text')}</p></div>`, { tab: null }));
   });
 
-  router.post('/welcome/name', owner, async (req, res) => {
+  router.post('/welcome/name', localRouteOnly, owner, async (req, res) => {
     const raw = (req.body as Record<string, unknown> | undefined)?.name;
     const name = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
     if (name !== '') {
@@ -419,7 +421,7 @@ export function desktopRoutes(d: AppDeps): Router {
   });
 
   /** Your apps, screen 1: the ticks are stored (replacing any earlier answer). No tick, or Skip, is an empty answer and carries on to Search. */
-  router.post('/welcome/apps', here, owner, (req, res) => {
+  router.post('/welcome/apps', localRouteOnly, owner, (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const given = body.skip === '1' ? [] : ([] as unknown[]).concat(body.app ?? []);
     const known = [...LOCAL_APPS, ...INTERNET_APPS] as readonly AppId[];
@@ -429,14 +431,14 @@ export function desktopRoutes(d: AppDeps): Router {
   });
 
   /** Dismisses the Home card for the internet apps: for good, until the answer is given again. */
-  router.post('/welcome/next/dismiss', here, owner, (req, res) => {
+  router.post('/welcome/next/dismiss', localRouteOnly, owner, (req, res) => {
     dismissNext(d.store);
     // From the welcome's last screen the person stays in the welcome.
     res.redirect(303, (req.body as Record<string, unknown> | undefined)?.back === 'welcome' ? '/welcome?step=5' : '/');
   });
 
   /** Your apps, screen 2: how the internet apps will reach BrainAI. Stored with the ticks; setup carries on to Search either way. */
-  router.post('/welcome/apps/way', here, owner, (req, res) => {
+  router.post('/welcome/apps/way', localRouteOnly, owner, (req, res) => {
     const answer = readAnswer(d.store);
     const way = (req.body as Record<string, unknown> | undefined)?.way;
     // Only a way this computer offers counts; with a choice shown, anything else is "not now".
@@ -462,7 +464,7 @@ export function desktopRoutes(d: AppDeps): Router {
   });
 
   /** "Try again" on a failed download: the current choice is run again (same session and same-origin check as the other posts here). */
-  router.post('/models/retry', here, owner, (req, res) => {
+  router.post('/models/retry', localRouteOnly, owner, (req, res) => {
     if (!d.models) return res.status(404).end();
     d.models.retry().catch(() => {});
     // Back to the page the button was on (a same-origin Referer's path only, never an app link), else Settings › Search.
@@ -474,10 +476,9 @@ export function desktopRoutes(d: AppDeps): Router {
     res.redirect(303, to);
   });
 
-  const clean = (t: string) => [dataDir, d.backupDir].reduce<string>((s, p) => (p ? s.replaceAll(p, 'the data folder') : s), t);
 
   /** The shell's call before it installs an update: a backup now. Only the app's key passes; anything else is the unknown page. */
-  router.post('/app/backup-now', here, async (req, res, next) => {
+  router.post('/app/backup-now', localRouteOnly, async (req, res, next) => {
     if (!fromApp(req)) return next('router');
     res.set('Cache-Control', 'no-store');
     if (!dataDir || !d.backupDir) return res.status(500).json({ error: 'No backup folder is set up, so no backup was made.' });
@@ -487,29 +488,29 @@ export function desktopRoutes(d: AppDeps): Router {
   });
 
   /** Shown if the desktop app did not intercept the navigation (for example in a normal browser tab). */
-  router.get('/app/update', here, (_req, res) => {
+  router.get('/app/update', localRouteOnly, (_req, res) => {
     res.type('html').send(page(t('setup.update.title'), html`<div class="narrow"><h1>${t('setup.update.title')}</h1>
 <p>${t('setup.update.text')}</p></div>`, { tab: null }));
   });
 
-  router.post('/app/update/later', here, owner, (_req, res) => {
+  router.post('/app/update/later', localRouteOnly, owner, (_req, res) => {
     const u = dataDir ? readUpdate(dataDir, BRAIN_VERSION) : null;
     if (dataDir && u) setLater(dataDir, u.version);
     res.redirect(303, '/');
   });
 
   /** Dismisses the "Updated to x" line on Home: its file goes. */
-  router.post('/app/update/dismiss', here, owner, (_req, res) => {
+  router.post('/app/update/dismiss', localRouteOnly, owner, (_req, res) => {
     if (dataDir) clearJustUpdated(dataDir);
     res.redirect(303, '/');
   });
 
-  router.post('/app/offsite/later', here, owner, (_req, res) => {
+  router.post('/app/offsite/later', localRouteOnly, owner, (_req, res) => {
     if (dataDir) setOffsiteLater(dataDir, d.now());
     res.redirect(303, '/');
   });
 
-  router.get('/app/update/state', here, owner, (_req, res) => {
+  router.get('/app/update/state', localRouteOnly, owner, (_req, res) => {
     const u = dataDir ? readUpdate(dataDir, BRAIN_VERSION) : null;
     if (!u) return res.status(404).end();
     const l = updateLine(u);
@@ -517,7 +518,7 @@ export function desktopRoutes(d: AppDeps): Router {
   });
 
   /** "Choose for me" or the owner's own pair; Online is set up later in Settings › Search, so it is refused here. */
-  router.post('/welcome/models', here, owner, async (req, res) => {
+  router.post('/welcome/models', localRouteOnly, owner, async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     let choice: ModelChoice | null = null;
     if (body.mode === 'suggested') {
@@ -540,7 +541,7 @@ export function desktopRoutes(d: AppDeps): Router {
   const modelId = (v: unknown) => (typeof v === 'string' ? CATALOGUE.find((m) => m.id === v)?.id : undefined);
   const keySaved = () => !!dataDir && readKey(dataDir) !== null;
 
-  router.post('/settings/search/models', here, owner, (req, res) => {
+  router.post('/settings/search/models', localRouteOnly, owner, (req, res) => {
     if (!d.models) return res.status(404).end();
     const choice = customChoice((req.body ?? {}) as Record<string, unknown>, { online: true, keySaved: keySaved() });
     if (!choice) return refuseSearch(res, t('setup.err.choice'));
@@ -549,7 +550,7 @@ export function desktopRoutes(d: AppDeps): Router {
     back(res);
   });
 
-  router.post('/settings/search/key', here, owner, (req, res) => {
+  router.post('/settings/search/key', localRouteOnly, owner, (req, res) => {
     if (!d.models) return res.status(404).end();
     const key = (req.body as Record<string, unknown> | undefined)?.key;
     if (!dataDir || typeof key !== 'string' || !isKeyShaped(key.trim())) return refuseSearch(res, t('setup.err.keyShape'));
@@ -562,7 +563,7 @@ export function desktopRoutes(d: AppDeps): Router {
     back(res);
   });
 
-  router.post('/settings/search/key/remove', here, owner, async (_req, res) => {
+  router.post('/settings/search/key/remove', localRouteOnly, owner, async (_req, res) => {
     if (!dataDir || !d.models) return res.status(404).end();
     deleteKey(dataDir);
     const c = d.models.status().choice;
@@ -574,7 +575,7 @@ export function desktopRoutes(d: AppDeps): Router {
     back(res);
   });
 
-  router.post('/settings/search/remove', here, owner, (req, res) => {
+  router.post('/settings/search/remove', localRouteOnly, owner, (req, res) => {
     const id = modelId((req.body as Record<string, unknown> | undefined)?.model);
     if (!d.models || !id) return refuseSearch(res, t('setup.err.notModel'));
     try {
@@ -586,7 +587,7 @@ export function desktopRoutes(d: AppDeps): Router {
     back(res);
   });
 
-  router.post('/settings/search/load', here, owner, async (req, res) => {
+  router.post('/settings/search/load', localRouteOnly, owner, async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const id = modelId(body.model);
     if (!d.models || !id || typeof body.folder !== 'string') return refuseSearch(res, t('setup.err.chooseFolder'));
@@ -609,7 +610,7 @@ export function desktopRoutes(d: AppDeps): Router {
     }).value);
   });
 
-  router.post('/welcome/done', owner, (_req, res) => {
+  router.post('/welcome/done', localRouteOnly, owner, (_req, res) => {
     if (d.statusDir) writeFileSync(join(d.statusDir, DONE_FILE), '');
     doneInMemory = true;
     res.redirect(303, '/');

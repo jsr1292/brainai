@@ -247,7 +247,8 @@ elif [ "$OFFSITE_SET" = 1 ]; then
   fi
 fi
 
-# 5. What only the owner can remove, from the saved folder's README.
+# 5. What only the owner can remove, from the saved folder's README. The heading below is English on purpose: the README
+# `cli save-copy` writes has no locale, and src/cliSaveCopy.test.ts (README heading test) reads this line to keep the two in step.
 if [ -f "$SAVED/README.txt" ]; then
   echo
   sed -n '/^Things BrainAI could not remove:/,$p' "$SAVED/README.txt"

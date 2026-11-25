@@ -73,6 +73,7 @@ export function projectRoutes(d: AppDeps): Router {
     const backupProblem = backupProblemOf(d);
     const candidate = weekCandidate(d, backupProblem);
     const home = d.projects.home(d.now(), { holdBackPark: candidate ? holdBackParkOf(candidate) : undefined });
+    const selected = asked === undefined ? undefined : d.projects.detail(asked, d.now());
     return {
       home,
       // The card's live numbers come from the cards the home just built.
@@ -82,7 +83,8 @@ export function projectRoutes(d: AppDeps): Router {
         const m = req?.query.weekHidden;
         return typeof m === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(m) && m === d.reviews.lastMonday() && !candidate && d.reviews.dismissedUnread(m) ? m : undefined;
       })(),
-      selected: asked === undefined ? undefined : d.projects.detail(asked, d.now()),
+      selected,
+      comingUp: req && !selected ? d.service.comingUpFacts(14, undefined, true) : undefined,
       approvals: approvalSummary(),
       discussionsWaiting: d.discussions.waitingOnOwner(),
       discussions: d.discussions.ownerTitles(),

@@ -48,8 +48,8 @@ const memoryJson = (m: Memory) => ({
   id: m.id, kind: m.kind, content: m.content, project: m.project, tags: m.tags, updatedAt: m.updatedAt, updatedBy: m.updatedBy,
 });
 /**
- * A1/A2 in a result, only when set: valid_until, past_date (true only; the service's calendar day, never hiding or
- * re-ranking the fact), source, source_by (who set it) and, unless `note` is false (a brief's excerpt rows), source_note (on an owner_said an assistant set, the owner's own words).
+ * A1/A2 in a result, only when set: valid_until, past_date (true only; the service's calendar day, never hiding the fact; an
+ * owner_said fact past its date loses its ranking lift), source, source_by (who set it) and, unless `note` is false (a brief's excerpt rows), source_note (on an owner_said an assistant set, the owner's own words).
  */
 const metaJson = (m: Memory, past: boolean, note = true) => ({
   ...(m.validUntil ? { valid_until: m.validUntil, ...(past ? { past_date: true } : {}) } : {}),
@@ -197,6 +197,9 @@ const NEW_PROJECT = (project: string) =>
   `Not saved: there is no project ${project} yet, and the projects below are probably the same one under another name. Save under one of them, or call again with new_project: true if this really is a new project. ${KEEP_FLAGS}`;
 /** Long enough to tell statuses apart in a search result. */
 const EXCERPT = 160;
+/** Most coming-up facts project_brief lists, and whats_left lists. */
+const COMING_UP_BRIEF = 10;
+const COMING_UP_LEFT = 20;
 /** Done steps shown per project: the latest ones. */
 const RECENT_DONE = 5;
 /** At most this many page sections in a recall. */
@@ -311,6 +314,8 @@ export function buildMcpServer(
   /** A fact as a result row: its fields, and its date and source when it has them. */
   const instructionMark = (m: Memory): { contains_instructions?: true } => (looksLikeInstruction(m.content) !== null ? { contains_instructions: true } : {});
   const memJson = (m: Memory) => ({ ...memoryJson(m), ...metaJson(m, service.isPastDate(m)), ...instructionMark(m) });
+  /** Facts dated from today through 14 days from now this connection can read, earliest first: all of them (the caller caps). */
+  const comingUpFor = (project?: string, openOnly = false) => service.comingUpFacts(14, project, openOnly).filter((m) => visible(m.project));
   const pageVisible = pageVisibility(service, readable);
   /** Another fact's excerpt, only when this connection can read its project (a fact moved across projects never leaks). */
   const peek = (m: Memory) => (visible(m.project) ? excerpt(m.content) : null);
@@ -836,7 +841,7 @@ export function buildMcpServer(
   server.registerTool('project_brief', {
     title: 'Project briefing',
     annotations: { readOnlyHint: true, openWorldHint: false },
-    description: "Returns everything about one project in one call: its statuses, newest first, and its decisions, oldest first. Call it before working on a named project.",
+    description: "Returns everything about one project in one call: its statuses, newest first, its decisions, oldest first, and facts dated from today through 14 days from now. Call it before working on a named project.",
     inputSchema: {
       project: z.string(),
       all_decisions: z.boolean().optional().describe('Return every decision in full instead of older ones as one-line excerpts (up to 40, the most the brief holds). The text can then pass the usual size.'),
@@ -850,6 +855,7 @@ export function buildMcpServer(
     const r = await service.brief(a.project);
     if (r.found) {
       const { project, roadmap, statuses, decisions, omitted, founding } = r.brief;
+      const comingUp = comingUpFor(project);
       const mark = disagreeMarks();
       // Worked out once; each render marks only the pairs whose two facts both stay in the brief.
       const closeCandidates = closePairsOf(decisions, CLOSE_PAIRS_CANDIDATES);
@@ -881,8 +887,12 @@ export function buildMcpServer(
         const pages = pg0.pages.slice(0, fit.pages), notes = allNotes.slice(0, fit.notes), others = handbookOthers.slice(0, fit.topics);
         const morePages = pg0.pages.length - pages.length, moreNotes = allNotes.length - notes.length, moreTopics = handbookOthers.length - others.length;
         const notesCutShown = notes.filter((n) => 'text_cut' in n).length;
+        const shownIds = new Set([...(roadmap ? [roadmap.id] : []), ...st.map((x) => x.id), ...de.map((x) => x.id)]);
+        const comingShown = comingUp.slice(0, COMING_UP_BRIEF).map((m) => (shownIds.has(m.id) ? { id: m.id, date: m.validUntil }
+          : { id: m.id, date: m.validUntil, kind: m.kind, excerpt: excerpt(m.content), ...(looksLikeInstruction(m.content) !== null ? { contains_instructions: true as const } : {}) }));
+        const moreComing = comingUp.length - comingShown.length;
         const shortened = {
-          ...(cutSt > 0 ? { statuses_as_excerpts: cutSt } : {}), ...(cutDe > 0 ? { decisions_as_excerpts: cutDe } : {}),
+          ...(moreComing > 0 ? { coming_up_not_listed: moreComing } : {}), ...(cutSt > 0 ? { statuses_as_excerpts: cutSt } : {}), ...(cutDe > 0 ? { decisions_as_excerpts: cutDe } : {}),
           ...(fit.dropped.size > 0 ? { decisions_not_listed: fit.dropped.size } : {}), ...(omitted > 0 ? { not_included: omitted } : {}), ...(notesCutShown > 0 ? { notes_cut: notesCutShown } : {}),
           ...(morePages > 0 ? { pages_not_listed: morePages } : {}), ...(moreNotes > 0 ? { notes_not_listed: moreNotes } : {}), ...(moreTopics > 0 ? { handbook_topics_not_listed: moreTopics } : {}),
         };
@@ -895,9 +905,10 @@ export function buildMcpServer(
           moreNotes > 0 ? `${moreNotes} more notes are waiting: list_pages, then read_page for the pages they are on.` : '',
           morePages > 0 ? `${morePages} more pages are not listed: list_pages.` : '',
           moreTopics > 0 ? `${moreTopics} more handbook topics from other projects are not listed; recall for them.` : '',
+          moreComing > 0 ? `${moreComing} more dated facts are not listed; recall for them.` : '',
         ].filter((x) => x !== '').join(' ');
         return (withData(`${BRIEFING(project, readOnly)}${close.text}${allNotes.length > 0 ? NOTES_WAITING : ''}${flagLead(pg0)}${said === '' ? '' : ` ${said}`} ${saveNudge}`.trimEnd(), {
-          roadmap: roadmap ? { ...memJson(roadmap), ...keysJson(roadmap) } : null, statuses: st, decisions: de, omitted,
+          roadmap: roadmap ? { ...memJson(roadmap), ...keysJson(roadmap) } : null, statuses: st, decisions: de, omitted, coming_up: comingShown,
           ...(Object.keys(shortened).length > 0 ? { shortened } : {}),
           project_info: info ? projectInfoJson(info, service.isQuiet(project)) : null, ...healthJsonOnce, pages, open_notes: notes,
           ...(learn.handbook ? { ...learn, handbook: handbookHere, ...(others.length > 0 ? { handbook_other_topics: others } : {}) } : learn),
@@ -916,7 +927,7 @@ export function buildMcpServer(
       const morePages = Math.max(0, pg.pages.length - 20), moreNotes = Math.max(0, pg.open_notes.length - 10);
       const more = `${moreNotes > 0 ? ` ${moreNotes} more notes: read_page.` : ''}${morePages > 0 ? ` ${morePages} more pages: list_pages.` : ''}`;
       return withData(`${BRIEFING(bare.name, readOnly)} It has no memories yet.${pg.open_notes.length > 0 ? NOTES_WAITING : ''}${flagLead(pg)}${more}`, {
-        roadmap: null, statuses: [], decisions: [], omitted: 0, project_info: projectInfoJson(bare, false), ...healthData(bare.name), pages: pg.pages.slice(0, 20),
+        roadmap: null, statuses: [], decisions: [], omitted: 0, coming_up: [], project_info: projectInfoJson(bare, false), ...healthData(bare.name), pages: pg.pages.slice(0, 20),
         open_notes: pg.open_notes.slice(0, 10).map((n) => (n.text.length > BRIEF_NOTE_MAX ? { ...n, text: `${n.text.slice(0, BRIEF_NOTE_MAX - 1)}…`, text_cut: true } : n)), ...learningJson(bare.name),
       });
     }
@@ -960,14 +971,19 @@ export function buildMcpServer(
   server.registerTool('whats_left', {
     title: "What's left",
     annotations: { readOnlyHint: true, openWorldHint: false },
-    description: "Use when the owner asks what's left, what's pending, a roadmap, or what is waiting on them: the roadmap of every project not marked done or archived (now, next, later; with its state: open, idea or parked) and the items waiting on the owner, dated ones first. One project's full roadmap: project_brief.",
+    description: "Use when the owner asks what's left, what's pending, a roadmap, or what is waiting on them: the roadmap of every project not marked done or archived (now, next, later; with its state: open, idea or parked), the items waiting on the owner, dated ones first, and facts dated from today through 14 days from now. One project's full roadmap: project_brief.",
     inputSchema: {},
   }, guard('whats_left', () => {
     const all = service.whatsLeft(new Date());
     const healths = opts.allProjectHealth?.();
     const left = readOnly ? { projects: all.projects.filter((p) => visible(p.project)), waiting: all.waiting.filter((w) => visible(w.project)) } : all;
-    return withData("What is left, from each project's roadmap. Items waiting on the owner come first: dated ones soonest first, then the oldest.", {
+    const coming = comingUpFor(undefined, true);
+    const comingMore = Math.max(0, coming.length - COMING_UP_LEFT);
+    const hint = comingMore > 0 ? ` ${comingMore} more dated facts are not listed: project_brief or recall for them.` : '';
+    return withData(`What is left, from each project's roadmap. Items waiting on the owner come first: dated ones soonest first, then the oldest.${hint}`, {
       waiting_on_owner: left.waiting.map((w) => ({ project: w.project, item: w.text, ...(w.due ? { due: w.due } : {}) })),
+      coming_up: coming.slice(0, COMING_UP_LEFT).map((m) => ({ date: m.validUntil, project: m.project, content: excerpt(m.content), id: m.id, ...(looksLikeInstruction(m.content) !== null ? { contains_instructions: true } : {}) })),
+      ...(comingMore > 0 ? { coming_up_not_listed: comingMore } : {}),
       projects: left.projects.map((p) => ({
         project: p.project, state: p.state, done: p.parsed.done.slice(-RECENT_DONE), now: p.parsed.now, progress: p.parsed.progress, next: p.parsed.nextSteps, later: p.parsed.laterSteps,
         updatedAt: p.roadmap.updatedAt, updatedBy: p.roadmap.updatedBy, quiet: p.quiet, ...(p.state === 'open' && healths ? { health: healths.get(p.project)?.state ?? null } : {}),

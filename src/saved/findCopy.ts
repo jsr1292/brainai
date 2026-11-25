@@ -8,6 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import Database from 'better-sqlite3';
+import { SayableError } from '../i18n/errors.js';
 import { kindOfFile } from './backupFile.js';
 import { besidePicture, checked, restorablePictures } from './restore.js';
 
@@ -31,14 +32,14 @@ export type Found = {
   /** Pictures of a backup the copy could bring (live, or left out by an earlier restore) and how many files sit beside it; null for an archive (it carries its own) or a copy with no pictures. */
   pictures: { total: number; found: number } | null;
   /** The newest candidate, when it could not be used and an older one was taken instead (with the checker's reason). */
-  skipped: { name: string; why: string } | null;
+  skipped: { name: string; why: string; cause?: SayableError } | null;
   /** Proves the confirm is for this choice and this file as it was: a random token, and the file's size and mtime. */
   token: string; size: number; mtimeMs: number;
 };
 
 /** why: several (copies of more than one brain), none (no candidate), invalid (the newest ones are not usable copies), unreadable (the folder or its files could not be read). */
 export class NothingFound extends Error {
-  constructor(readonly why: 'none' | 'invalid' | 'unreadable' | 'several', message: string) { super(message); }
+  constructor(readonly why: 'none' | 'invalid' | 'unreadable' | 'several', message: string, cause?: SayableError) { super(message, cause && { cause }); }
 }
 
 type Candidate = { path: string; name: string; kind: 'archive' | 'database'; date: string; mtime: number; /** The folder the file sits in (the pictures of a backup are looked for beside it). */ dir: string };
@@ -112,14 +113,15 @@ export async function findCopy(folder: string): Promise<Found> {
   if (list.length === 0) list = candidatesBelow(folder);
   if (list.length === 0) throw new NothingFound('none', 'No saved copy found');
   // The newest candidate's reason is the one worth saying; a copy from a newer BrainAI is never skipped for an older one.
-  let first: { name: string; why: string } | null = null;
+  let first: Found['skipped'] = null;
   for (const c of list.slice(0, TRIES)) {
     let result;
     try { result = await checked(c.path); } catch (e) {
       const why = e instanceof Error ? e.message : String(e);
       const newest = first === null;
-      first ??= { name: c.name, why };
-      if (newest && /newer BrainAI/.test(why)) break;
+      const cause = e instanceof SayableError ? e : undefined;
+      first ??= { name: c.name, why, ...(cause && { cause }) };
+      if (newest && (cause ? (cause.key === 'data.archive.newer' || cause.key === 'data.archive.backupNewer') : /newer BrainAI/.test(why))) break;
       continue;
     }
     const st = stat(c.path);
@@ -131,5 +133,5 @@ export async function findCopy(folder: string): Promise<Found> {
       skipped: first, token: randomBytes(16).toString('hex'), size: st.size, mtimeMs: st.mtimeMs,
     };
   }
-  throw new NothingFound('invalid', first?.why ?? 'no usable copy');
+  throw new NothingFound('invalid', first?.why ?? 'no usable copy', first?.cause);
 }

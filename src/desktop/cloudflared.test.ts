@@ -1,7 +1,7 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -211,4 +211,81 @@ test('deleteTunnel says why when Cloudflare refuses, and when there is no tunnel
   const missing = await deleteTunnel({ ...none.env, path: none.env.path }, dir);
   assert.equal(missing.deleted, false);
   assert.match(missing.reason!, /Install cloudflared/);
+});
+
+test('after a long healthy run the next stop is retried quickly, not after the longest wait', async (t) => {
+  const { env, f, dir } = world(t, {});
+  await startSignIn(env).done;
+  const p = await prepareTunnel(env, dir, 'brain.example.net') as { tunnelId: string; credentials: string };
+  const runner = new TunnelRunner(env, dir, { delays: [50, 8000], healthyMs: 400 });
+  t.after(() => runner.stop());
+  runner.start(p.tunnelId, p.credentials, 4123);
+  await until(() => !!f.state().running);
+  const first = (f.state().running as { pid: number }).pid;
+  process.kill(first, 'SIGKILL'); // a quick failure: counted (the next wait would be 8 s)
+  await until(() => { const r = f.state().running as { pid: number } | null; return !!r && r.pid !== first && alive(r.pid); });
+  const second = (f.state().running as { pid: number }).pid;
+  await sleep(600); // healthy for longer than healthyMs
+  process.kill(second, 'SIGKILL');
+  // The failures reset after the healthy run, so the wait is the short one.
+  await until(() => { const r = f.state().running as { pid: number } | null; return !!r && r.pid !== second && alive(r.pid); }, 2500);
+});
+
+type Emitter = { pid?: number; emit(e: string, ...a: unknown[]): boolean };
+const childOf = (r: TunnelRunner) => (r as unknown as { child: Emitter }).child;
+const runningPid = (f: { state(): Record<string, unknown> }) => (f.state().running as { pid: number } | null)?.pid;
+
+test('a spawn failure (an error with no pid and no exit) starts the tunnel again, and the late exit does not start a second one', async (t) => {
+  const { env, f, dir } = world(t, {});
+  await startSignIn(env).done;
+  const p = await prepareTunnel(env, dir, 'brain.example.net') as { tunnelId: string; credentials: string };
+  const runner = new TunnelRunner(env, dir, { delays: [50] });
+  t.after(() => runner.stop());
+  runner.start(p.tunnelId, p.credentials, 4123);
+  await until(() => !!runningPid(f));
+  const first = runningPid(f)!;
+  t.after(() => { try { process.kill(first, 'SIGKILL'); } catch { /* gone */ } });
+  const child = childOf(runner);
+  Object.defineProperty(child, 'pid', { value: undefined, configurable: true }); // as for a spawn that failed
+  child.emit('error', new Error('spawn failed')); // no 'exit' follows
+  await until(() => { const r = runningPid(f); return !!r && r !== first && alive(r); });
+  const second = runningPid(f)!;
+  child.emit('exit', 1, null); // a late exit from the first child
+  await sleep(300);
+  assert.equal(runningPid(f), second, 'no second restart from the late exit');
+});
+
+test('an error on a child that did start (it has a pid) is left to its exit: no second cloudflared', async (t) => {
+  const { env, f, dir } = world(t, {});
+  await startSignIn(env).done;
+  const p = await prepareTunnel(env, dir, 'brain.example.net') as { tunnelId: string; credentials: string };
+  const runner = new TunnelRunner(env, dir, { delays: [50] });
+  t.after(() => runner.stop());
+  runner.start(p.tunnelId, p.credentials, 4123);
+  await until(() => !!runningPid(f));
+  const first = runningPid(f)!;
+  childOf(runner).emit('error', new Error('could not signal'));
+  await sleep(300);
+  assert.equal(runningPid(f), first);
+  assert.ok(runner.running());
+});
+
+test('a start that throws (the data folder is not usable) is retried after the next wait instead of crashing', async (t) => {
+  const { env, f, dir } = world(t, {});
+  await startSignIn(env).done;
+  const p = await prepareTunnel(env, dir, 'brain.example.net') as { tunnelId: string; credentials: string };
+  const runner = new TunnelRunner(env, dir, { delays: [50] });
+  t.after(() => runner.stop());
+  runner.start(p.tunnelId, p.credentials, 4123);
+  await until(() => !!runningPid(f));
+  const first = runningPid(f)!;
+  const folderPath = join(dir, 'cloudflared');
+  const saved = join(dir, 'cloudflared-saved');
+  renameSync(folderPath, saved);
+  writeFileSync(folderPath, 'in the way'); // mkdirSync now throws
+  process.kill(first, 'SIGKILL');
+  await sleep(300); // several tries have thrown
+  rmSync(folderPath);
+  renameSync(saved, folderPath);
+  await until(() => { const r = runningPid(f); return !!r && r !== first && alive(r); });
 });

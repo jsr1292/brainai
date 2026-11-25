@@ -12,14 +12,15 @@ import { movableBackups, removeClaudeHooks, secretBackupNote, takeToolsOut } fro
 import { deleteTunnel } from '../desktop/cloudflared.js';
 import { removeFolderReport, type Launchctl } from '../desktop/leftovers.js';
 import { setCancelNotice, setRemoving, writesDrained } from '../desktop/removing.js';
-import { viaDoor } from '../desktop/publicDoor.js';
+import { localRouteOnly } from '../desktop/publicDoor.js';
 import { makeSavedCopy, moveIntoSaved, writeReadme } from '../saved/savedCopy.js';
 import type { AppDeps } from './app.js';
 import { appKeyCheck, requireOwner } from './authRoutes.js';
 import { toolEnv } from './desktopRoutes.js';
 import { prepareEnv } from '../desktop/tools.js';
 import { html, page } from './html.js';
-import { t } from '../i18n/core.js';
+import { errorText } from './errorText.js';
+import { runWithLocale, t, type PlainKey } from '../i18n/core.js';
 import { revealCommand } from './moveRoutes.js';
 import { cloudflaredEnv, leftoverFunnelOff, locked, reachOff } from './reachRoutes.js';
 import { removeDone, removePage, type ToolOutcome } from './removeViews.js';
@@ -35,7 +36,6 @@ export function removeRoutes(d: AppDeps): Router {
   if (!d.localMode || !d.statusDir || !d.db) return router;
   const dataDir = d.statusDir;
   const owner = requireOwner(d.sessions);
-  const here: RequestHandler = (req, _res, next) => (viaDoor(req) ? next('router') : next());
   const platform = d.tools?.platform ?? process.platform;
   const revealIn = platform === 'win32' ? 'Explorer' as const : 'Finder' as const;
   const chrome = { nav: true, tab: null, back: { href: '/settings', labelKey: 'shell.nav.settings' } } as const;
@@ -48,7 +48,7 @@ export function removeRoutes(d: AppDeps): Router {
     res.status(status).type('html').send(page(t('data.remove.pageTitle'), removePage({ documents: docs.path, synced: docs.synced, home: homeOf(d), said, mac: platform === 'darwin', copies: d.backupCopy?.folder() ?? null }), chrome));
   };
 
-  router.get('/settings/remove', here, owner, (_req, res) => ask(res, 200, null));
+  router.get('/settings/remove', localRouteOnly, owner, (_req, res) => ask(res, 200, null));
 
   /** The whole removal. Returns why nothing was removed (the save failed), or null once the result is set. */
   async function removeAll(where: 'home' | 'documents'): Promise<string | null> {
@@ -77,7 +77,7 @@ export function removeRoutes(d: AppDeps): Router {
     } catch (e) {
       console.error('saving the copy before removing failed:', e);
       setRemoving(false);
-      return t('data.remove.failed', { reason: e instanceof Error ? e.message : String(e) });
+      return t('data.remove.failed', { reason: errorText(e) });
     }
     const env = toolEnv(d);
     const kept: string[] = [];
@@ -87,10 +87,10 @@ export function removeRoutes(d: AppDeps): Router {
     let originals: string[] = [];
     const handled: string[] = [];
     // Every step after the save is on its own: one that throws becomes a line in the result, and the rest still run.
-    const step = async (what: string, fn: () => Promise<void> | void) => {
+    const step = async (what: PlainKey, fn: () => Promise<void> | void) => {
       try { await fn(); } catch (e) {
-        console.error(`removing: ${what} failed:`, e);
-        kept.push(`Failed: ${what}, ${e instanceof Error ? e.message : String(e)}`);
+        console.error(`removing: ${runWithLocale('en', () => t(what))} failed:`, e);
+        kept.push(t('data.remove.failedStep', { what: t(what), reason: errorText(e) }));
       }
     };
     // This app's own addresses, read before Reach is turned off (it forgets its address then).
@@ -98,46 +98,46 @@ export function removeRoutes(d: AppDeps): Router {
     let hooksRemoved = false;
     const ours = [d.publicUrl.origin, ...(d.reach?.saved() ? [d.reach.saved()!.origin] : [])];
     // 2. Reach off, then 3. the Cloudflare tunnel (stopped by now) if Reach ever used Cloudflare.
-    await step('turning Reach off', async () => { await reachOff(d); });
+    await step('data.remove.step.reach', async () => { await reachOff(d); });
     // A Funnel a crash left behind (or a Turn off that was not confirmed) is turned off too, if it is BrainAI's.
-    await step('turning off a leftover Tailscale share', async () => {
+    await step('data.remove.step.funnel', async () => {
       const r = await locked(d, () => leftoverFunnelOff(d));
-      if (!r.ok) kept.push(`Tailscale: BrainAI could not confirm that it stopped sharing (${r.reason}). Open Tailscale and turn off Funnel for BrainAI.`);
+      if (!r.ok) kept.push(t('data.remove.tailscale', { reason: r.reason }));
     });
-    await step('deleting the Cloudflare tunnel', async () => {
+    await step('data.remove.step.tunnel', async () => {
       if (!existsSync(join(dataDir, 'cloudflared', 'tunnel.json'))) return;
       tunnel = await deleteTunnel(cloudflaredEnv(d), dataDir);
-      if (tunnel.deleted && tunnel.hostname) kept.push(`Cloudflare: the name ${tunnel.hostname} still exists in your DNS; delete it there.`);
+      if (tunnel.deleted && tunnel.hostname) kept.push(t('data.todo.dns', { host: tunnel.hostname }));
     });
     if (env) {
       // 4. Every tool that is connected to this brain or holds a piece of it.
-      await step('disconnecting the tools', async () => {
+      await step('data.remove.step.tools', async () => {
         await prepareEnv(env); // a tool installed since the app started, and which left-behind ports are really stale
         const out = await takeToolsOut(env, kept);
         tools.push(...out.tools);
         leftTools.push(...out.leftTools);
       });
       // 5. Claude Code's hooks, unless a brain may still use them; 6. the folder report.
-      await step("Claude Code's hooks", async () => { hooksRemoved = await removeClaudeHooks(env, kept, handled); });
-      await step('the folder report', () => {
+      await step('data.remove.step.hooks', async () => { hooksRemoved = await removeClaudeHooks(env, kept, handled); });
+      await step('data.remove.step.report', () => {
         const report = removeFolderReport({ home: env.home, platform }, ours, removeSeams.launchctl);
         if (report.kept) kept.push(report.kept);
       });
       // 7. The tools' originals go into the saved folder.
-      await step("the tools' original settings", () => { originals = (removeSeams.moveIntoSaved ?? moveIntoSaved)(saved.folder, movableBackups(env), env.home); });
+      await step('data.remove.step.originals', () => { originals = (removeSeams.moveIntoSaved ?? moveIntoSaved)(saved.folder, movableBackups(env), env.home); });
       // Backups that can hold other apps' keys stayed where they are: say so, and where.
-      await step('the backups left beside their originals', () => { const note = secretBackupNote(env); if (note) handled.push(note); });
+      await step('data.remove.step.backups', () => { const note = secretBackupNote(env); if (note) handled.push(note); });
     }
     // The second backup folder is the owner's and still has their brain's backups: it is never deleted, and is listed.
     const second = d.backupCopy?.folder();
-    if (second) kept.push(`Your second backup folder still has copies of your brain: ${second}`);
+    if (second) kept.push(t('data.todo.copies', { folder: second }));
     // The README is written again with the final checklist, whatever happened above.
     const checklist = savedChecklist(d, 'app', { tunnel, leftTools, kept });
     try {
       writeReadme(saved.folder, { day: saved.day, facts: saved.facts, pages: saved.pages, checklist, originals, handled });
     } catch (e) {
       console.error('writing the final README failed:', e);
-      kept.push(`Failed: the README in the saved folder, ${e instanceof Error ? e.message : String(e)}`);
+      kept.push(t('data.remove.failedStep', { what: t('data.remove.step.readme'), reason: errorText(e) }));
       checklist.push(kept[kept.length - 1]!);
     }
     result = { folder: saved.folder, facts: saved.facts, pages: saved.pages, tools, checklist, kept, reachWasOn, hooksRemoved };
@@ -146,7 +146,7 @@ export function removeRoutes(d: AppDeps): Router {
 
   // One removal at a time: a second submit while one runs waits for it and shows its result, never a second saved copy.
   let running: Promise<string | null> | null = null;
-  router.post('/settings/remove', here, owner, async (req, res) => {
+  router.post('/settings/remove', localRouteOnly, owner, async (req, res) => {
     const where = (req.body as Record<string, unknown> | undefined)?.where === 'home' ? 'home' : 'documents';
     const mine = running === null;
     if (mine) running = removeAll(where);
@@ -156,12 +156,12 @@ export function removeRoutes(d: AppDeps): Router {
     res.redirect(303, '/settings/remove/done');
   });
 
-  router.get('/settings/remove/done', here, owner, (_req, res) => {
+  router.get('/settings/remove/done', localRouteOnly, owner, (_req, res) => {
     if (!result) return res.redirect(303, '/settings/remove');
     res.type('html').send(page(t('data.removed.title'), removeDone({ ...result, revealIn }), bare));
   });
 
-  router.post('/settings/remove/show', here, owner, (_req, res) => {
+  router.post('/settings/remove/show', localRouteOnly, owner, (_req, res) => {
     if (result) {
       if (d.reveal) d.reveal(result.folder);
       else { const [cmd, args] = revealCommand(result.folder, platform); execFile(cmd, args, () => {}); }
@@ -175,7 +175,7 @@ export function removeRoutes(d: AppDeps): Router {
    * saved folder is. Anything else is the unknown-page answer; no finished removal (or its folder gone) is 409.
    */
   const fromApp = appKeyCheck(d);
-  router.get('/app/removed/ready', here, (req, res, next) => {
+  router.get('/app/removed/ready', localRouteOnly, (req, res, next) => {
     if (!fromApp(req)) return next('router');
     res.set('Cache-Control', 'no-store');
     if (!result || !existsSync(result.folder)) return res.status(409).json({ error: 'No saved copy was made for a removal.' });
@@ -183,7 +183,7 @@ export function removeRoutes(d: AppDeps): Router {
   });
 
   /** The owner said no to the app's last confirmation: writes open again, and the half-done removal is forgotten. */
-  router.post('/app/removed/cancel', here, (req, res, next) => {
+  router.post('/app/removed/cancel', localRouteOnly, (req, res, next) => {
     if (!fromApp(req)) return next('router');
     setRemoving(false);
     if (result) setCancelNotice({ tools: result.tools.filter((o) => o.what === 'disconnected').map((o) => o.name), reach: result.reachWasOn, hooks: result.hooksRemoved });
@@ -192,7 +192,7 @@ export function removeRoutes(d: AppDeps): Router {
   });
 
   // The address the app intercepts to stop and quit; a browser that reaches it anyway sees this.
-  router.get('/app/removed', here, (_req, res) => {
+  router.get('/app/removed', localRouteOnly, (_req, res) => {
     res.type('html').send(page(t('data.finishing.title'), html`<div class="narrow"><h1>${t('data.finishing.head')}</h1><p>${t('data.finishing.text')}</p></div>`, bare));
   });
   return router;

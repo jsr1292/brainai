@@ -4,7 +4,7 @@ import { embedText, normalizeKeys } from './keys.js';
 import { EPOCH, factDates, parseTimeRange, todayIn } from './timeRange.js';
 import { cosine, isZeroVector, type Embedder } from './embedder.js';
 import { findSimilar, hybridSearch, type SearchHit } from './search.js';
-import { RERANK_POOL, type Reranker } from './reranker.js';
+import { DEFAULT_OWNER_SAID_WEIGHT, RERANK_POOL, type Reranker } from './reranker.js';
 import { SwitchableReranker } from '../models/switchable.js';
 import { looksLikeInstruction, looksLikeInstructionForHold } from './instructionLike.js';
 import { looksLikeAssistantSuggestion, MIXED_SOURCE_REASON } from './mixedSource.js';
@@ -368,6 +368,8 @@ export class MemoryService {
       /** From the embedding model's profile: keyword vs meaning rank weight (default 0.5), and the search-order prior
        *  added to reranker scores (default 0, the reranker alone). */
       keywordWeight?: number; rerankPrior?: number;
+      /** Added once to the final local reranker score of an owner_said fact. */
+      ownerSaidWeight?: number;
       /** A save's close facts start at this similarity (the model's profile); recall's confident level by default. */
       closeFacts?: number;
       /** The close facts listed after a save start here (the model's profile); 40% of the way from closeFacts to duplicate by default. */
@@ -386,6 +388,16 @@ export class MemoryService {
   pastDateFacts(): Memory[] {
     return this.store.list({}).filter((m) => this.isPastDate(m))
       .sort((a, b) => (a.validUntil ?? '').localeCompare(b.validUntil ?? '') || a.id.localeCompare(b.id));
+  }
+
+  /**
+   * Current facts dated between today and the end of the owner's calendar window, inclusive, earliest first. `project`
+   * limits it to one project; `openOnly` leaves out the facts of projects marked done or archived.
+   */
+  comingUpFacts(days = 14, project?: string, openOnly = false): { id: string; kind: Kind; content: string; project: string | null; validUntil: string }[] {
+    const now = this.store.nowDate();
+    const rows = this.store.datedBetween(todayIn(now), todayIn(now, days), project);
+    return openOnly ? rows.filter((m) => m.project === null || !isFinished(this.store.projectState(m.project) ?? 'open')) : rows;
   }
 
   get(id: string): Memory | undefined {
@@ -583,9 +595,21 @@ export class MemoryService {
       }
       // The rank prior (Gemma profile): log(1 / rank) favours the search's own order, so the reranker changes it only
       // where it clearly disagrees. `best` stays the reranker's raw score (the weak-match cut-off reads it). An online
-      // reranker is the only voice (prior 0, as measured) and its scale is not the local one's: no weak-match note.
+      // reranker is the only voice (prior 0, as measured) and its scale is not the local one's: no weak-match note, and no
+      // owner_said bonus either. The bonus is local-reranker only: with RERANK=off or a failed reranker this function
+      // returns before here, so the search's own order stays.
       const prior = many.online ? 0 : this.opts.rerankPrior ?? 0;
-      return { hits: hits.map((h, i) => ({ h, s: best[i]! + prior * Math.log(1 / (i + 1)) })).sort((a, b) => b.s - a.s).map((x) => x.h), best: many.online ? null : Math.max(...best), ran: true };
+      const weight = many.online ? 0 : this.opts.ownerSaidWeight ?? DEFAULT_OWNER_SAID_WEIGHT;
+      const now = this.store.nowDate();
+      const ranked = hits.map((hit, i) => {
+        // owner_said adds the bonus to the local reranker's score: in full when the owner set the source, half when an
+        // assistant claims it, none past the fact's date. Never with an online reranker, RERANK=off or a failed reranker.
+        const m = hit.memory;
+        const bonus = m.source !== 'owner_said' || isPastDate(m.validUntil ?? null, now) ? 0 : m.sourceBy === OWNER ? weight : weight / 2;
+        return { hit, score: best[i]! + prior * Math.log(1 / (i + 1)) + bonus };
+      });
+      ranked.sort((a, b) => b.score - a.score);
+      return { hits: ranked.map(({ hit }) => hit), best: many.online ? null : Math.max(...best), ran: true };
     } catch (e) {
       console.error(`reranker failed: ${e instanceof Error ? e.message : String(e)}`);
       return { hits, best: null, ran: false };

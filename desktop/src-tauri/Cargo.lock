@@ -332,7 +332,7 @@ dependencies = [
 
 [[package]]
 name = "brainai"
-version = "1.10.6"
+version = "1.10.7"
 dependencies = [
  "chrono",
  "hex",
